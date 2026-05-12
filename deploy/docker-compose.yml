@@ -1,17 +1,40 @@
 name: clevis
 
 services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: clevis
+      POSTGRES_USER: clevis
+      POSTGRES_PASSWORD: clevis
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clevis"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - clevis
+
   api:
     build:
       context: ..
       dockerfile: apps/api/Dockerfile
     env_file:
       - ../.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://clevis:clevis@db:5432/clevis
     volumes:
-      - ../data:/app/data
       - ../packages/checks:/app/packages/checks
     ports:
       - "${API_PORT:-8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"]
@@ -27,8 +50,8 @@ services:
       context: ../apps/worker
     env_file:
       - ../.env
-    volumes:
-      - ../data:/app/data
+    environment:
+      DATABASE_URL: postgresql+psycopg://clevis:clevis@db:5432/clevis
     depends_on:
       api:
         condition: service_healthy
@@ -53,3 +76,6 @@ services:
 networks:
   clevis:
     driver: bridge
+
+volumes:
+  pgdata:
