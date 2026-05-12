@@ -1,30 +1,21 @@
 import json
-import os
-import sqlite3
 import time
 
 import httpx
+import psycopg
 
 from config import settings
 
-DB_PATH = os.getenv("DATABASE_PATH", "data/app.db")
 SLEEP = settings.worker_poll_seconds
 BASE = settings.github_api_base
+# psycopg.connect() expects a plain postgresql:// URI, not the SQLAlchemy +psycopg dialect form
+_DB_URL = settings.database_url.replace("postgresql+psycopg://", "postgresql://")
 
 
-def process_job(conn: sqlite3.Connection, row: tuple):
-    job_id, payload_raw = row
+def process_job(conn: psycopg.Connection, job_id: int, payload_raw: str) -> None:
     payload = json.loads(payload_raw)
-    owner = payload["owner"]
-    repo = payload["repo"]
-    token = payload["token"]
-
-    params = {}
-    if payload.get("key"):
-        params["key"] = payload["key"]
-    if payload.get("ref"):
-        params["ref"] = payload["ref"]
-
+    owner, repo, token = payload["owner"], payload["repo"], payload["token"]
+    params = {k: payload[k] for k in ("key", "ref") if payload.get(k)}
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
@@ -33,25 +24,53 @@ def process_job(conn: sqlite3.Connection, row: tuple):
 
     try:
         with httpx.Client(timeout=20) as client:
-            resp = client.delete(f"{BASE}/repos/{owner}/{repo}/actions/caches", headers=headers, params=params)
+            resp = client.delete(
+                f"{BASE}/repos/{owner}/{repo}/actions/caches",
+                headers=headers,
+                params=params,
+            )
         if resp.status_code >= 300:
             raise RuntimeError(f"GitHub API error: {resp.status_code} {resp.text}")
         result = json.dumps({"ok": True, "status": resp.status_code})
-        conn.execute("UPDATE jobs SET status='done', result=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (result, job_id))
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE jobs SET status='done', result=%s, updated_at=NOW() WHERE id=%s",
+                (result, job_id),
+            )
     except Exception as error:
-        conn.execute("UPDATE jobs SET status='failed', result=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (str(error), job_id))
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE jobs SET status='failed', result=%s, updated_at=NOW() WHERE id=%s",
+                (str(error), job_id),
+            )
+    conn.commit()
 
 
 def run() -> None:
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     while True:
-        with sqlite3.connect(DB_PATH) as conn:
-            row = conn.execute("SELECT id, payload FROM jobs WHERE status='queued' AND job_type='github.clear_actions_cache' ORDER BY id LIMIT 1").fetchone()
-            if row:
-                conn.execute("UPDATE jobs SET status='processing', updated_at=CURRENT_TIMESTAMP WHERE id=?", (row[0],))
-                conn.commit()
-                process_job(conn, row)
-                conn.commit()
+        try:
+            with psycopg.connect(_DB_URL) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE jobs SET status = 'processing', updated_at = NOW()
+                        WHERE id = (
+                            SELECT id FROM jobs
+                            WHERE status = 'queued'
+                              AND job_type = 'github.clear_actions_cache'
+                            ORDER BY id
+                            LIMIT 1
+                            FOR UPDATE SKIP LOCKED
+                        )
+                        RETURNING id, payload
+                    """)
+                    row = cur.fetchone()
+
+                if row:
+                    conn.commit()
+                    process_job(conn, *row)
+        except Exception as error:
+            print(f"Worker error: {error}", flush=True)
+
         time.sleep(SLEEP)
 
 

@@ -1,28 +1,43 @@
-"""Worker job processing: unit-style tests with mocked GitHub HTTP."""
+"""Worker job processing: unit-style tests with mocked GitHub HTTP and psycopg connection."""
 
 import json
-import sqlite3
 from unittest.mock import MagicMock, patch
 
 from worker import process_job
 
 
-def _jobs_conn(tmp_path):
-    db = tmp_path / "jobs.db"
-    conn = sqlite3.connect(str(db))
-    conn.execute(
-        "CREATE TABLE jobs (id INTEGER PRIMARY KEY, status TEXT, result TEXT, updated_at TEXT)"
-    )
-    return conn
+class _FakeCursor:
+    def __init__(self):
+        self.calls = []
+
+    def execute(self, sql, params=None):
+        self.calls.append((sql, params))
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
 
 
-def test_process_job_marks_done_on_success(tmp_path):
-    conn = _jobs_conn(tmp_path)
-    payload = {"owner": "acme", "repo": "demo", "token": "secret"}
-    conn.execute(
-        "INSERT INTO jobs (id, status, result) VALUES (1, 'processing', NULL)"
-    )
-    conn.commit()
+class _FakeConn:
+    def __init__(self):
+        self.committed = False
+        self._cursor = _FakeCursor()
+
+    def cursor(self):
+        return self._cursor
+
+    def commit(self):
+        self.committed = True
+
+
+def _payload(**kwargs):
+    return json.dumps({"owner": "acme", "repo": "demo", "token": "secret", **kwargs})
+
+
+def test_process_job_marks_done_on_success():
+    conn = _FakeConn()
 
     mock_response = MagicMock()
     mock_response.status_code = 204
@@ -35,26 +50,19 @@ def test_process_job_marks_done_on_success(tmp_path):
         mock_client.delete = MagicMock(return_value=mock_response)
         mock_client_cls.return_value = mock_client
 
-        process_job(conn, (1, json.dumps(payload)))
-        conn.commit()
+        process_job(conn, 1, _payload())
 
-    row = conn.execute("SELECT status, result FROM jobs WHERE id=1").fetchone()
-    conn.close()
-    assert row is not None
-    assert row[0] == "done"
-    assert row[1] is not None
-    saved = json.loads(row[1])
-    assert saved["ok"] is True
-    assert saved["status"] == 204
+    sql, params = conn._cursor.calls[0]
+    assert "status='done'" in sql
+    assert params[1] == 1
+    result = json.loads(params[0])
+    assert result["ok"] is True
+    assert result["status"] == 204
+    assert conn.committed is True
 
 
-def test_process_job_marks_failed_on_http_error(tmp_path):
-    conn = _jobs_conn(tmp_path)
-    payload = {"owner": "acme", "repo": "demo", "token": "secret"}
-    conn.execute(
-        "INSERT INTO jobs (id, status, result) VALUES (2, 'processing', NULL)"
-    )
-    conn.commit()
+def test_process_job_marks_failed_on_http_error():
+    conn = _FakeConn()
 
     mock_response = MagicMock()
     mock_response.status_code = 500
@@ -67,11 +75,28 @@ def test_process_job_marks_failed_on_http_error(tmp_path):
         mock_client.delete = MagicMock(return_value=mock_response)
         mock_client_cls.return_value = mock_client
 
-        process_job(conn, (2, json.dumps(payload)))
-        conn.commit()
+        process_job(conn, 2, _payload())
 
-    row = conn.execute("SELECT status, result FROM jobs WHERE id=2").fetchone()
-    conn.close()
-    assert row is not None
-    assert row[0] == "failed"
-    assert "GitHub API error" in (row[1] or "")
+    sql, params = conn._cursor.calls[0]
+    assert "status='failed'" in sql
+    assert params[1] == 2
+    assert "GitHub API error" in params[0]
+    assert conn.committed is True
+
+
+def test_process_job_marks_failed_on_network_error():
+    conn = _FakeConn()
+
+    with patch("worker.httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.delete = MagicMock(side_effect=ConnectionError("timeout"))
+        mock_client_cls.return_value = mock_client
+
+        process_job(conn, 3, _payload())
+
+    sql, params = conn._cursor.calls[0]
+    assert "status='failed'" in sql
+    assert "timeout" in params[0]
+    assert conn.committed is True
