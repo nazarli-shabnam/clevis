@@ -3,7 +3,7 @@ import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 const uiRoot = path.resolve(__dirname);
-const repoRoot = path.resolve(__dirname, "../..");
+const repoRoot = path.resolve(__dirname, "..");
 
 export default defineConfig({
   root: uiRoot,
@@ -16,7 +16,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./vitest.setup.ts"],
-    include: ["../../tests/ui/**/*.{test,spec}.{ts,tsx}"],
+    include: ["./tests/**/*.{test,spec}.{ts,tsx}"],
     passWithNoTests: false,
   },
   resolve: {

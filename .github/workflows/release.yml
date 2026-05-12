@@ -29,7 +29,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: apps/api/Dockerfile
+          file: api/Dockerfile
           push: true
           tags: |
             ghcr.io/${{ github.repository }}-api:latest
@@ -38,8 +38,8 @@ jobs:
       - name: Build + Push Worker
         uses: docker/build-push-action@v6
         with:
-          context: apps/worker
-          file: apps/worker/Dockerfile
+          context: worker
+          file: worker/Dockerfile
           push: true
           tags: |
             ghcr.io/${{ github.repository }}-worker:latest
@@ -48,8 +48,8 @@ jobs:
       - name: Build + Push UI
         uses: docker/build-push-action@v6
         with:
-          context: apps/ui
-          file: apps/ui/Dockerfile
+          context: ui
+          file: ui/Dockerfile
           push: true
           tags: |
             ghcr.io/${{ github.repository }}-ui:latest
