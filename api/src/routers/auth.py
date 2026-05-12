@@ -1,25 +1,20 @@
-from fastapi import APIRouter
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
-from src.core.storage import get_conn
+from src.core.db import get_db
+from src.repositories import installation_repo
+from src.schemas.installation import SyncInstallationsInput, SyncInstallationsResponse
 
 router = APIRouter()
 
 
-class SyncInstallationsInput(BaseModel):
-    token: str
-    auth_mode: str = "app"
-    account_login: str
-    account_type: str = "Organization"
-    installation_id: int | None = None
-
-
-@router.post("/github/app/installations/sync")
-def sync_installation(payload: SyncInstallationsInput):
-    token_ref = f"tok_{payload.account_login}"
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO github_installations(account_login, account_type, installation_id, auth_mode, token_ref) VALUES (?, ?, ?, ?, ?)",
-            (payload.account_login, payload.account_type, payload.installation_id, payload.auth_mode, token_ref),
-        )
-    return {"synced": True, "token_ref": token_ref}
+@router.post("/github/app/installations/sync", response_model=SyncInstallationsResponse)
+def sync_installation(payload: SyncInstallationsInput, db: Session = Depends(get_db)):
+    row = installation_repo.create(
+        db,
+        account_login=payload.account_login,
+        account_type=payload.account_type,
+        auth_mode=payload.auth_mode,
+        installation_id=payload.installation_id,
+    )
+    return {"synced": True, "token_ref": row.token_ref}

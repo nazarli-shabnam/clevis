@@ -1,10 +1,13 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
-from src.services.jobs import list_jobs
+from src.core.db import get_db
+from src.repositories import job_repo
+from src.schemas.job import JobOut
 
 router = APIRouter()
 
 
-@router.get("")
-def jobs():
-    return {"jobs": list_jobs()}
+@router.get("", response_model=list[JobOut])
+def jobs(db: Session = Depends(get_db)):
+    return job_repo.list_jobs(db)
