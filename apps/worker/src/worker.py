@@ -5,9 +5,11 @@ import time
 
 import httpx
 
+from config import settings
+
 DB_PATH = os.getenv("DATABASE_PATH", "data/app.db")
-SLEEP = int(os.getenv("WORKER_POLL_SECONDS", "5"))
-BASE = os.getenv("GITHUB_API_BASE", "https://api.github.com")
+SLEEP = settings.worker_poll_seconds
+BASE = settings.github_api_base
 
 
 def process_job(conn: sqlite3.Connection, row: tuple):
