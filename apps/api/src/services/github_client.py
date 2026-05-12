@@ -1,11 +1,12 @@
-import os
 import time
 import httpx
+
+from src.core.config import settings
 
 
 class GitHubClient:
     def __init__(self, token: str):
-        self.base = os.getenv("GITHUB_API_BASE", "https://api.github.com")
+        self.base = settings.github_api_base
         self.headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
