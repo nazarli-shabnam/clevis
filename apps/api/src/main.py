@@ -4,11 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.core.config import settings
 from src.core.logging import setup_logging
 from src.core.middleware import RequestIdMiddleware
-from src.core.storage import init_storage
 from src.routers import actions_cache, analytics, auth, health, jobs
 
 setup_logging()
-init_storage()
 
 app = FastAPI(title="clevis API", version="0.1.0")
 app.add_middleware(RequestIdMiddleware)
