@@ -29,10 +29,10 @@
     "**/*.tsx",
     "vitest-env.d.ts",
     ".next/types/**/*.ts",
-    "../../tests/ui/**/*.test.ts",
-    "../../tests/ui/**/*.test.tsx",
-    "../../tests/ui/**/*.spec.ts",
-    "../../tests/ui/**/*.spec.tsx"
+    "tests/**/*.test.ts",
+    "tests/**/*.test.tsx",
+    "tests/**/*.spec.ts",
+    "tests/**/*.spec.tsx"
   ],
   "exclude": ["node_modules"]
 }
