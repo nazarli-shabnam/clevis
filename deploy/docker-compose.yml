@@ -1,5 +1,11 @@
 name: clevis
 
+# Profiles:
+#   docker compose --profile backend up           → db + api + worker
+#   docker compose --profile frontend up          → db + ui (point NEXT_PUBLIC_API_BASE at a running api)
+#   docker compose --profile backend --profile frontend up  → full stack
+#   docker compose up db                          → db only (for running services locally)
+
 services:
   db:
     image: postgres:17-alpine
@@ -21,6 +27,7 @@ services:
       - clevis
 
   api:
+    profiles: ["backend"]
     build:
       context: ..
       dockerfile: apps/api/Dockerfile
@@ -46,6 +53,7 @@ services:
       - clevis
 
   worker:
+    profiles: ["backend"]
     build:
       context: ../apps/worker
     env_file:
@@ -60,6 +68,7 @@ services:
       - clevis
 
   ui:
+    profiles: ["frontend"]
     build:
       context: ../apps/ui
     env_file:
@@ -69,6 +78,7 @@ services:
     depends_on:
       api:
         condition: service_healthy
+        required: false
     restart: unless-stopped
     networks:
       - clevis
