@@ -1,2 +1,2 @@
 #!/usr/bin/env sh
-npm --prefix ui run typecheck
+npm --prefix apps/ui run typecheck

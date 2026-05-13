@@ -30,7 +30,7 @@ services:
     profiles: ["backend"]
     build:
       context: ..
-      dockerfile: api/Dockerfile
+      dockerfile: apps/api/Dockerfile
     env_file:
       - ../.env
     environment:
@@ -55,7 +55,7 @@ services:
   worker:
     profiles: ["backend"]
     build:
-      context: ../worker
+      context: ../apps/worker
     env_file:
       - ../.env
     environment:
@@ -70,7 +70,7 @@ services:
   ui:
     profiles: ["frontend"]
     build:
-      context: ../ui
+      context: ../apps/ui
     env_file:
       - ../.env
     ports:
