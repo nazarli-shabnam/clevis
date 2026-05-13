@@ -1,4 +1,8 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_ROOT = Path(__file__).parents[4]  # apps/api/src/core/ -> repo root
 
 
 class Settings(BaseSettings):
@@ -8,7 +12,7 @@ class Settings(BaseSettings):
     default_rbac_role: str = "viewer"
     worker_poll_seconds: int = 5
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=str(_ROOT / ".env"), extra="ignore")
 
 
 settings = Settings()
