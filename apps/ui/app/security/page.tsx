@@ -108,7 +108,7 @@ export default function SecurityPage() {
             <div className="divide-y divide-border/50">
               {data.checks.map((c: any) => (
                 <div key={c.id} className="flex items-start gap-4 py-4 first:pt-0 last:pb-0">
-                  {c.status === "passed" ? (
+                  {c.status === "pass" ? (
                     <CheckCircle className="mt-0.5 size-5 shrink-0 text-accent" />
                   ) : (
                     <XCircle className="mt-0.5 size-5 shrink-0 text-destructive" />
