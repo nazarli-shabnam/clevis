@@ -12,5 +12,5 @@ class CheckMetadata:
 class Check:
     metadata: CheckMetadata
 
-    def run(self, owner: str, token: str) -> dict:
+    def run(self, owner: str, token: str, base_url: str = "https://api.github.com") -> dict:
         raise NotImplementedError
