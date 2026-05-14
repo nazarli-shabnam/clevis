@@ -2,7 +2,7 @@ import json
 
 from sqlalchemy.orm import Session
 
-from src.models.job import Job
+from src.core.db import Job
 
 
 def enqueue(db: Session, job_type: str, payload: dict) -> int:

@@ -3,12 +3,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from src.core.config import settings
-from src.models.base import Base
+from src.core.db import Base
 
 
 @pytest.fixture(scope="session")
 def _engine():
-    eng = create_engine(settings.database_url)
+    eng = create_engine(settings.database_url.get_secret_value())
     Base.metadata.create_all(eng)  # no-op if alembic already ran
     yield eng
 

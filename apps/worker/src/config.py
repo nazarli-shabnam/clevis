@@ -1,12 +1,14 @@
 from pathlib import Path
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ROOT = Path(__file__).parents[3]  # apps/worker/src/ -> repo root
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+psycopg://clevis:clevis@localhost:5432/clevis"
+    database_url: SecretStr
+    job_secret_key: SecretStr
     github_api_base: str = "https://api.github.com"
     worker_poll_seconds: int = 5
 

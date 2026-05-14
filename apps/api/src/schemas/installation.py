@@ -2,7 +2,6 @@ from pydantic import BaseModel
 
 
 class SyncInstallationsInput(BaseModel):
-    token: str
     auth_mode: str = "app"
     account_login: str
     account_type: str = "Organization"

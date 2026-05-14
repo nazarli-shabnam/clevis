@@ -8,7 +8,13 @@ from src.routers import actions_cache, analytics, auth, health, jobs
 
 setup_logging()
 
-app = FastAPI(title="clevis API", version="0.1.0")
+app = FastAPI(
+    title="clevis API",
+    version="0.1.0",
+    openapi_url="/openapi.json" if settings.debug else None,
+    docs_url="/docs" if settings.debug else None,
+    redoc_url="/redoc" if settings.debug else None,
+)
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(
     CORSMiddleware,

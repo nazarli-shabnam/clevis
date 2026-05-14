@@ -1,20 +1,29 @@
 import json
+import logging
 import time
 
 import httpx
 import psycopg
 
+from _crypto import decrypt_job_token
 from config import settings
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+log = logging.getLogger(__name__)
 
 SLEEP = settings.worker_poll_seconds
 BASE = settings.github_api_base
-# psycopg.connect() expects a plain postgresql:// URI, not the SQLAlchemy +psycopg dialect form
-_DB_URL = settings.database_url.replace("postgresql+psycopg://", "postgresql://")
+# psycopg.connect() expects plain postgresql://, not the SQLAlchemy +psycopg dialect prefix
+_DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg://", "postgresql://")
 
 
 def process_job(conn: psycopg.Connection, job_id: int, payload_raw: str) -> None:
     payload = json.loads(payload_raw)
-    owner, repo, token = payload["owner"], payload["repo"], payload["token"]
+    owner, repo = payload["owner"], payload["repo"]
+    token = decrypt_job_token(payload["token"], settings.job_secret_key.get_secret_value())
     params = {k: payload[k] for k in ("key", "ref") if payload.get(k)}
     headers = {
         "Authorization": f"Bearer {token}",
@@ -30,14 +39,16 @@ def process_job(conn: psycopg.Connection, job_id: int, payload_raw: str) -> None
                 params=params,
             )
         if resp.status_code >= 300:
-            raise RuntimeError(f"GitHub API error: {resp.status_code} {resp.text}")
+            raise RuntimeError(f"GitHub API error: {resp.status_code}")
         result = json.dumps({"ok": True, "status": resp.status_code})
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE jobs SET status='done', result=%s, updated_at=NOW() WHERE id=%s",
                 (result, job_id),
             )
+        log.info("job %d done", job_id)
     except Exception as error:
+        log.error("job %d failed: %s", job_id, error)
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE jobs SET status='failed', result=%s, updated_at=NOW() WHERE id=%s",
@@ -47,6 +58,7 @@ def process_job(conn: psycopg.Connection, job_id: int, payload_raw: str) -> None
 
 
 def run() -> None:
+    log.info("worker started, polling every %ds", SLEEP)
     while True:
         try:
             with psycopg.connect(_DB_URL) as conn:
@@ -68,8 +80,10 @@ def run() -> None:
                 if row:
                     conn.commit()
                     process_job(conn, *row)
+        except psycopg.OperationalError:
+            log.error("database connection failed, retrying in %ds", SLEEP)
         except Exception as error:
-            print(f"Worker error: {error}", flush=True)
+            log.error("worker poll error: %s", type(error).__name__)
 
         time.sleep(SLEEP)
 

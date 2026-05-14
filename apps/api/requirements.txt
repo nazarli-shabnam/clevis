@@ -6,3 +6,4 @@ pydantic-settings==2.14.1
 sqlalchemy==2.0.41
 psycopg[binary]==3.2.9
 alembic==1.16.1
+cryptography==44.0.2

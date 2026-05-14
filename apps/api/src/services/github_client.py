@@ -14,16 +14,18 @@ class GitHubClient:
         }
 
     def request(self, method: str, path: str, params: dict | None = None, json: dict | None = None) -> dict | list:
-        retries = 3
         url = f"{self.base}{path}"
-        for attempt in range(retries):
-            with httpx.Client(timeout=20) as client:
-                resp = client.request(method, url, headers=self.headers, params=params, json=json)
-            if resp.status_code in (403, 429) and attempt < retries - 1:
+        for attempt in range(3):
+            try:
+                with httpx.Client(timeout=20) as client:
+                    resp = client.request(method, url, headers=self.headers, params=params, json=json)
+            except httpx.RequestError:
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise
+            if resp.status_code == 429 and attempt < 2:
                 time.sleep(2 ** attempt)
                 continue
             resp.raise_for_status()
-            if not resp.text:
-                return {}
-            return resp.json()
-        return {}
+            return resp.json() if resp.text else {}

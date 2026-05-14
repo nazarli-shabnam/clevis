@@ -1,9 +1,9 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 
 class AnalyticsInput(BaseModel):
     owner: str
-    token: str
+    token: SecretStr
 
 
 class AnalyticsResponse(BaseModel):

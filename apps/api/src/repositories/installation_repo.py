@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 
-from src.models.installation import GitHubInstallation
+from src.core.db import GitHubInstallation
 
 
 def create(

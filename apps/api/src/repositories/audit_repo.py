@@ -2,7 +2,7 @@ import json
 
 from sqlalchemy.orm import Session
 
-from src.models.audit_log import AuditLog
+from src.core.db import AuditLog
 
 
 def write(db: Session, actor: str, action: str, target: str, payload: dict) -> None:

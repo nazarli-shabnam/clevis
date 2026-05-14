@@ -4,8 +4,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from src.core.config import settings
-from src.models.base import Base
-import src.models  # noqa: F401 — register all models for autogenerate
+from src.core.db import Base  # noqa: F401 — imports models, registers metadata
 
 config = context.config
 if config.config_file_name is not None:
@@ -16,7 +15,7 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=settings.database_url,
+        url=settings.database_url.get_secret_value(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -27,7 +26,7 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     configuration = config.get_section(config.config_ini_section, {})
-    configuration["sqlalchemy.url"] = settings.database_url
+    configuration["sqlalchemy.url"] = settings.database_url.get_secret_value()
     connectable = engine_from_config(
         configuration,
         prefix="sqlalchemy.",

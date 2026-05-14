@@ -1,12 +1,12 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 
 class CacheListInput(BaseModel):
-    token: str
+    token: SecretStr
 
 
 class CacheClearInput(BaseModel):
-    token: str
+    token: SecretStr
     actor: str
     key: str | None = None
     ref: str | None = None
