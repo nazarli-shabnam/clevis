@@ -3,7 +3,11 @@ from pathlib import Path
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_ROOT = Path(__file__).parents[3]  # apps/worker/src/ -> repo root
+_ROOT = Path(__file__).resolve().parent
+while _ROOT != _ROOT.parent:
+    if (_ROOT / ".env").exists():
+        break
+    _ROOT = _ROOT.parent
 
 
 class Settings(BaseSettings):

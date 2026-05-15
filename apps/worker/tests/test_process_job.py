@@ -3,6 +3,8 @@
 import json
 from unittest.mock import MagicMock, patch
 
+from _crypto import encrypt_job_token
+from config import settings
 from worker import process_job
 
 
@@ -33,7 +35,8 @@ class _FakeConn:
 
 
 def _payload(**kwargs):
-    return json.dumps({"owner": "acme", "repo": "demo", "token": "secret", **kwargs})
+    enc = encrypt_job_token("secret", settings.job_secret_key.get_secret_value())
+    return json.dumps({"owner": "acme", "repo": "demo", "token": enc, **kwargs})
 
 
 def test_process_job_marks_done_on_success():

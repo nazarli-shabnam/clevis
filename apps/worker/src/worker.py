@@ -21,17 +21,16 @@ _DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg:/
 
 
 def process_job(conn: psycopg.Connection, job_id: int, payload_raw: str) -> None:
-    payload = json.loads(payload_raw)
-    owner, repo = payload["owner"], payload["repo"]
-    token = decrypt_job_token(payload["token"], settings.job_secret_key.get_secret_value())
-    params = {k: payload[k] for k in ("key", "ref") if payload.get(k)}
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-
     try:
+        payload = json.loads(payload_raw)
+        owner, repo = payload["owner"], payload["repo"]
+        token = decrypt_job_token(payload["token"], settings.job_secret_key.get_secret_value())
+        params = {k: payload[k] for k in ("key", "ref") if payload.get(k)}
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
         with httpx.Client(timeout=20) as client:
             resp = client.delete(
                 f"{BASE}/repos/{owner}/{repo}/actions/caches",
