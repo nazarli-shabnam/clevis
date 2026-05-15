@@ -5,60 +5,40 @@
 
 import { useParams } from "next/navigation"
 import { useState } from "react"
+import { useMutation } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Database, Trash2, Eye, Loader2 } from "lucide-react"
-
-const API = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
+import { api } from "@/lib/api/client"
+import type { CacheEntry } from "@/lib/api/types"
 
 export default function CachePage() {
   const params = useParams<{ repo: string }>()
   const [token, setToken] = useState("")
   const [actor, setActor] = useState("admin@example.local")
-  const [caches, setCaches] = useState<any[]>([])
-  const [result, setResult] = useState("")
-  const [loading, setLoading] = useState("")
 
   const [owner, repo] = (params.repo || "").split("~")
-
-  async function loadCaches() {
-    setLoading("load")
-    try {
-      const res = await fetch(`${API}/repos/${owner}/${repo}/actions-caches`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token }),
-      })
-      const json = await res.json()
-      setCaches(json.actions_caches || [])
-    } finally {
-      setLoading("")
-    }
-  }
-
-  async function clearCaches(dryRun: boolean) {
-    setLoading(dryRun ? "dry" : "clear")
-    try {
-      const res = await fetch(`${API}/repos/${owner}/${repo}/actions-caches/clear`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Role": "admin" },
-        body: JSON.stringify({ token, actor, dry_run: dryRun }),
-      })
-      const json = await res.json()
-      setResult(JSON.stringify(json, null, 2))
-    } finally {
-      setLoading("")
-    }
-  }
 
   function formatBytes(bytes: number) {
     if (bytes < 1024) return `${bytes} B`
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   }
+
+  const listMutation = useMutation({
+    mutationFn: () => api.cache.list(owner, repo, token),
+  })
+
+  const clearMutation = useMutation({
+    mutationFn: (dryRun: boolean) =>
+      api.cache.clear(owner, repo, { token, actor, dry_run: dryRun }),
+  })
+
+  const isLoading = listMutation.isPending || clearMutation.isPending
+  const caches: CacheEntry[] = listMutation.data?.actions_caches ?? []
 
   return (
     <>
@@ -88,15 +68,32 @@ export default function CachePage() {
               value={actor}
               onChange={(e) => setActor(e.target.value)}
             />
-            <Button onClick={loadCaches} disabled={!!loading || !token}>
-              {loading === "load" ? <><Loader2 className="mr-2 size-4 animate-spin" />Loading...</> : "Load caches"}
+            <Button onClick={() => listMutation.mutate()} disabled={isLoading || !token}>
+              {listMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                  Loading...
+                </>
+              ) : (
+                "Load caches"
+              )}
             </Button>
             <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => clearCaches(true)} disabled={!!loading || !token}>
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => clearMutation.mutate(true)}
+                disabled={isLoading || !token}
+              >
                 <Eye className="mr-2 size-4" />
                 Dry run
               </Button>
-              <Button variant="destructive" className="flex-1" onClick={() => clearCaches(false)} disabled={!!loading || !token}>
+              <Button
+                variant="destructive"
+                className="flex-1"
+                onClick={() => clearMutation.mutate(false)}
+                disabled={isLoading || !token}
+              >
                 <Trash2 className="mr-2 size-4" />
                 Clear
               </Button>
@@ -111,11 +108,16 @@ export default function CachePage() {
           </CardHeader>
           <CardContent>
             {caches.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No caches loaded. Click &quot;Load caches&quot; to fetch.</p>
+              <p className="text-sm text-muted-foreground">
+                No caches loaded. Click &quot;Load caches&quot; to fetch.
+              </p>
             ) : (
               <div className="divide-y">
                 {caches.map((c) => (
-                  <div key={c.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
+                  <div
+                    key={c.id}
+                    className="flex items-center justify-between py-3 first:pt-0 last:pb-0"
+                  >
                     <span className="truncate font-mono text-sm">{c.key}</span>
                     <Badge variant="secondary">{formatBytes(c.size_in_bytes)}</Badge>
                   </div>
@@ -126,13 +128,15 @@ export default function CachePage() {
         </Card>
       </div>
 
-      {result && (
+      {clearMutation.data && (
         <Card className="mt-6">
           <CardHeader>
             <CardTitle>Result</CardTitle>
           </CardHeader>
           <CardContent>
-            <pre className="overflow-auto rounded-md bg-muted p-4 text-sm">{result}</pre>
+            <pre className="overflow-auto rounded-md bg-muted p-4 text-sm">
+              {JSON.stringify(clearMutation.data, null, 2)}
+            </pre>
           </CardContent>
         </Card>
       )}
