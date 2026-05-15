@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -6,11 +8,17 @@ from src.core.logging import setup_logging
 from src.core.middleware import RequestIdMiddleware
 from src.routers import actions_cache, analytics, auth, health, jobs
 
-setup_logging()
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    setup_logging()
+    yield
+
 
 app = FastAPI(
     title="clevis API",
     version="0.1.0",
+    lifespan=lifespan,
     openapi_url="/openapi.json" if settings.debug else None,
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,

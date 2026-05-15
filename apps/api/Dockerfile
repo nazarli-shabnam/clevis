@@ -5,6 +5,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY apps/api/src ./src
 COPY apps/api/alembic ./alembic
 COPY apps/api/alembic.ini .
+COPY apps/api/entrypoint.sh .
 COPY packages/checks /app/packages/checks
 ENV PYTHONPATH=/app:/app/packages/checks/src
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080"]
+RUN chmod +x entrypoint.sh
+ENTRYPOINT ["./entrypoint.sh"]

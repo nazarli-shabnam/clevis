@@ -11,10 +11,10 @@ class _RequestIdFilter(logging.Filter):
 
 
 def setup_logging() -> None:
-    handler = logging.StreamHandler()
-    handler.addFilter(_RequestIdFilter())
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s request_id=%(request_id)s %(message)s",
-        handlers=[handler],
-    )
+    filter_ = _RequestIdFilter()
+    root = logging.getLogger()
+    for handler in root.handlers:
+        handler.addFilter(filter_)
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        for handler in logging.getLogger(name).handlers:
+            handler.addFilter(filter_)
