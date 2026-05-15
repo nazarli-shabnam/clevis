@@ -8,6 +8,7 @@ name: clevis
 
 services:
   db:
+    container_name: db
     image: postgres:17-alpine
     environment:
       POSTGRES_DB: clevis
@@ -27,6 +28,7 @@ services:
       - clevis
 
   api:
+    container_name: api
     profiles: ["backend"]
     build:
       context: ..
@@ -45,14 +47,15 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"]
-      interval: 30s
+      interval: 15s
       timeout: 5s
-      retries: 3
-      start_period: 10s
+      retries: 5
+      start_period: 30s
     networks:
       - clevis
 
   worker:
+    container_name: worker
     profiles: ["backend"]
     build:
       context: ../apps/worker
@@ -61,13 +64,14 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://clevis:clevis@db:5432/clevis
     depends_on:
-      api:
+      db:
         condition: service_healthy
     restart: unless-stopped
     networks:
       - clevis
 
   ui:
+    container_name: ui
     profiles: ["frontend"]
     build:
       context: ../apps/ui

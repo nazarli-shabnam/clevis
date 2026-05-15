@@ -1,9 +1,22 @@
 {
   "version": 1,
   "skills": {
+    "backend-code-review": {
+      "source": "langgenius/dify",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/backend-code-review/SKILL.md",
+      "computedHash": "77087ca3d4c8fba12833dd954da166a9bb1fdb0ddbddf4e0a73a549712aa1b39"
+    },
+    "backend-dev-guidelines": {
+      "source": "langfuse/langfuse",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/backend-dev-guidelines/SKILL.md",
+      "computedHash": "4e97d335c0cd6ac1f05d8e14f5c993ae9101749bfd09e2de2e54b0a09039c233"
+    },
     "uncodixfy": {
       "source": "cyxzdev/Uncodixfy",
       "sourceType": "github",
+      "skillPath": "SKILL.md",
       "computedHash": "deac2e88f3fc4a66aa95c77b509b5d22c189dfdb87caa24d3db85516f4600776"
     }
   }

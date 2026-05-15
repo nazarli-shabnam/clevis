@@ -85,6 +85,7 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgresql+psycopg://clevis:clevis@localhost:5432/clevis
+      JOB_SECRET_KEY: ${{ secrets.JOB_SECRET_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -99,6 +100,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r apps/api/requirements.txt
           python -m pip install -r apps/worker/requirements.txt
+          python -m pip install -e packages/checks
           python -m pip install -r requirements-test.txt
 
       - name: Run migrations
