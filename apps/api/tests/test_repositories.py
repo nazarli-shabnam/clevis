@@ -1,0 +1,47 @@
+from src.repositories import audit_repo, installation_repo, job_repo
+
+
+def test_installation_create(db):
+    row = installation_repo.create(
+        db,
+        account_login="acme",
+        account_type="Organization",
+        auth_mode="app",
+        installation_id=42,
+    )
+    assert row.id is not None
+    assert row.token_ref == "tok_acme"
+    assert row.account_login == "acme"
+
+
+def test_audit_write(db):
+    audit_repo.write(db, actor="bot", action="test.event", target="acme/repo", payload={"x": 1})
+    # no exception means the row was inserted and committed via savepoint
+
+
+def test_job_enqueue_and_list(db):
+    job_id = job_repo.enqueue(db, "github.clear_actions_cache", {"owner": "acme", "repo": "api"})
+    assert isinstance(job_id, int)
+
+    jobs = job_repo.list_jobs(db)
+    assert any(j["id"] == job_id for j in jobs)
+    match = next(j for j in jobs if j["id"] == job_id)
+    assert match["status"] == "queued"
+    assert match["job_type"] == "github.clear_actions_cache"
+
+
+def test_job_mark_done(db):
+    job_id = job_repo.enqueue(db, "github.clear_actions_cache", {"owner": "acme", "repo": "api"})
+    job_repo.mark_done(db, job_id, '{"ok": true}')
+    jobs = job_repo.list_jobs(db)
+    match = next(j for j in jobs if j["id"] == job_id)
+    assert match["status"] == "done"
+
+
+def test_job_mark_failed(db):
+    job_id = job_repo.enqueue(db, "github.clear_actions_cache", {"owner": "acme", "repo": "api"})
+    job_repo.mark_failed(db, job_id, "timeout")
+    jobs = job_repo.list_jobs(db)
+    match = next(j for j in jobs if j["id"] == job_id)
+    assert match["status"] == "failed"
+    assert match["result"] == "timeout"

@@ -1,0 +1,31 @@
+import time
+import httpx
+
+from src.core.config import settings
+
+
+class GitHubClient:
+    def __init__(self, token: str):
+        self.base = settings.github_api_base
+        self.headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+
+    def request(self, method: str, path: str, params: dict | None = None, json: dict | None = None) -> dict | list:
+        url = f"{self.base}{path}"
+        for attempt in range(3):
+            try:
+                with httpx.Client(timeout=20) as client:
+                    resp = client.request(method, url, headers=self.headers, params=params, json=json)
+            except httpx.RequestError:
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise
+            if resp.status_code == 429 and attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            resp.raise_for_status()
+            return resp.json() if resp.text else {}
