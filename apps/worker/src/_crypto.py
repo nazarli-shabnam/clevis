@@ -9,5 +9,9 @@ def _fernet(raw_key: str) -> Fernet:
     return Fernet(derived)
 
 
+def encrypt_job_token(token: str, key: str) -> str:
+    return _fernet(key).encrypt(token.encode()).decode()
+
+
 def decrypt_job_token(encrypted: str, key: str) -> str:
     return _fernet(key).decrypt(encrypted.encode()).decode()
