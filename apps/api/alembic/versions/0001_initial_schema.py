@@ -39,7 +39,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("job_type", sa.String(), nullable=False),
         sa.Column("payload", sa.Text(), nullable=False),
-        sa.Column("status", sa.String(), nullable=False, server_default="queued"),
+        sa.Column("status", sa.String(), nullable=False, server_default="'queued'"),
         sa.Column("result", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
