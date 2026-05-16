@@ -1,0 +1,92 @@
+import httpx
+
+from checks.base import Check, CheckMetadata
+
+
+def _get(url: str, token: str) -> dict | list:
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    with httpx.Client(timeout=20) as client:
+        r = client.get(url, headers=headers)
+    r.raise_for_status()
+    return r.json()
+
+
+def _get_all_pages(base_url: str, path: str, token: str) -> list:
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    results = []
+    url: str | None = f"{base_url}{path}?per_page=100"
+    with httpx.Client(timeout=20) as client:
+        while url:
+            r = client.get(url, headers=headers)
+            r.raise_for_status()
+            results.extend(r.json())
+            url = None
+            for part in r.headers.get("Link", "").split(","):
+                part = part.strip()
+                if 'rel="next"' in part:
+                    url = part.split(";")[0].strip().strip("<>")
+    return results
+
+
+class OrgMFARequired(Check):
+    metadata = CheckMetadata(
+        check_id="organization_members_mfa_required",
+        title="Organization requires 2FA/MFA",
+        severity="high",
+        remediation="Require two-factor authentication for all org members in org settings.",
+    )
+
+    def run(self, owner: str, token: str, base_url: str = "https://api.github.com") -> dict:
+        org = _get(f"{base_url}/orgs/{owner}", token)
+        enabled = bool(org.get("two_factor_requirement_enabled", False))
+        return {"status": "pass" if enabled else "fail", "value": enabled}
+
+
+class BranchProtectionEnabled(Check):
+    metadata = CheckMetadata(
+        check_id="repository_default_branch_protection_enabled",
+        title="Default branch has protection rules",
+        severity="high",
+        remediation="Enable branch protection for default branch on all active repositories.",
+    )
+
+    def run(self, owner: str, token: str, base_url: str = "https://api.github.com") -> dict:
+        repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
+        checked = 0
+        protected = 0
+        for repo in repos:
+            checked += 1
+            branch = repo.get("default_branch")
+            details = _get(f"{base_url}/repos/{owner}/{repo['name']}/branches/{branch}", token)
+            if details.get("protected"):
+                protected += 1
+        compliant = checked > 0 and checked == protected
+        return {"status": "pass" if compliant else "fail", "value": {"checked": checked, "protected": protected}}
+
+
+class SecretScanningEnabled(Check):
+    metadata = CheckMetadata(
+        check_id="repository_secret_scanning_enabled",
+        title="Secret scanning enabled",
+        severity="medium",
+        remediation="Enable secret scanning for repositories where available.",
+    )
+
+    def run(self, owner: str, token: str, base_url: str = "https://api.github.com") -> dict:
+        repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
+        enabled = 0
+        total = len(repos)
+        for repo in repos:
+            sec = _get(f"{base_url}/repos/{owner}/{repo['name']}", token).get("security_and_analysis", {})
+            if sec.get("secret_scanning", {}).get("status") == "enabled":
+                enabled += 1
+        compliant = total > 0 and enabled == total
+        return {"status": "pass" if compliant else "fail", "value": {"enabled": enabled, "total": total}}
