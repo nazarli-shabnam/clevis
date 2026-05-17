@@ -85,7 +85,7 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgresql+psycopg://clevis:clevis@localhost:5432/clevis
-      JOB_SECRET_KEY: ${{ secrets.JOB_SECRET_KEY }}
+      JOB_SECRET_KEY: ${{ secrets.JOB_SECRET_KEY || 'ci-dummy-secret-key-not-for-production-use-00' }}
       GITHUB_API_BASE: https://api.github.com
       CORS_ORIGINS: '["http://localhost:3000"]'
       DEFAULT_RBAC_ROLE: viewer

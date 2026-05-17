@@ -1,5 +1,6 @@
 import json
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from src.core.db import Job
@@ -29,10 +30,14 @@ def list_jobs(db: Session, limit: int = 50) -> list[dict]:
 
 
 def mark_done(db: Session, job_id: int, result: str) -> None:
-    db.query(Job).filter(Job.id == job_id).update({"status": "done", "result": result})
+    db.query(Job).filter(Job.id == job_id).update(
+        {"status": "done", "result": result, "updated_at": func.now()}
+    )
     db.commit()
 
 
 def mark_failed(db: Session, job_id: int, error: str) -> None:
-    db.query(Job).filter(Job.id == job_id).update({"status": "failed", "result": error})
+    db.query(Job).filter(Job.id == job_id).update(
+        {"status": "failed", "result": error, "updated_at": func.now()}
+    )
     db.commit()

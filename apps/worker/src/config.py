@@ -3,11 +3,14 @@ from pathlib import Path
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_ROOT = Path(__file__).resolve().parent
-while _ROOT != _ROOT.parent:
-    if (_ROOT / ".env").exists():
+_root = Path(__file__).resolve().parent
+_env_file: str | None = None
+while _root != _root.parent:
+    candidate = _root / ".env"
+    if candidate.exists():
+        _env_file = str(candidate)
         break
-    _ROOT = _ROOT.parent
+    _root = _root.parent
 
 
 class Settings(BaseSettings):
@@ -16,7 +19,7 @@ class Settings(BaseSettings):
     github_api_base: str
     worker_poll_seconds: int
 
-    model_config = SettingsConfigDict(env_file=str(_ROOT / ".env"), extra="ignore")
+    model_config = SettingsConfigDict(env_file=_env_file, extra="ignore")
 
 
 settings = Settings()
