@@ -1,7 +1,18 @@
+# Environment secrets — copy .env.example to .env and fill in values
+.env
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
 *$py.class
+
+/prowler/
+.agents/
+.claude/
+./apps/ui/node_modules/
+
+# Local SQLite + runtime dir (Docker Compose mounts ../data → do not commit)
+/data/
 
 # C extensions
 *.so
@@ -14,8 +25,9 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# Root-only: unqualified lib/ would ignore apps/ui/lib (Next/shadcn).
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -205,3 +217,26 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Node / Next.js (apps/ui and any JS tooling at repo root)
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+.vercel/
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# Playwright / Cypress (if added later)
+test-results/
+playwright-report/
+playwright/.cache/
+
+# OS
+.DS_Store
+Thumbs.db
