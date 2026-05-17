@@ -65,9 +65,12 @@ class BranchProtectionEnabled(Check):
         for repo in repos:
             checked += 1
             branch = repo.get("default_branch")
-            details = _get(f"{base_url}/repos/{owner}/{repo['name']}/branches/{branch}", token)
-            if details.get("protected"):
-                protected += 1
+            try:
+                details = _get(f"{base_url}/repos/{owner}/{repo['name']}/branches/{branch}", token)
+                if details.get("protected"):
+                    protected += 1
+            except httpx.HTTPStatusError:
+                pass  # treat inaccessible branches as unprotected
         compliant = checked > 0 and checked == protected
         return {"status": "pass" if compliant else "fail", "value": {"checked": checked, "protected": protected}}
 
@@ -85,7 +88,7 @@ class SecretScanningEnabled(Check):
         enabled = 0
         total = len(repos)
         for repo in repos:
-            sec = _get(f"{base_url}/repos/{owner}/{repo['name']}", token).get("security_and_analysis", {})
+            sec = repo.get("security_and_analysis", {})
             if sec.get("secret_scanning", {}).get("status") == "enabled":
                 enabled += 1
         compliant = total > 0 and enabled == total
