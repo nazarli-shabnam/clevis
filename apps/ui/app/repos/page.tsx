@@ -3,10 +3,8 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { PageHeader } from "@/components/page-header"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Database } from "lucide-react"
 
 export default function ReposPage() {
   const router = useRouter()
@@ -26,32 +24,33 @@ export default function ReposPage() {
         description="Manage GitHub Actions caches for your repositories."
       />
 
-      <Card className="max-w-lg">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Database className="size-5" />
-            Select Repository
-          </CardTitle>
-          <CardDescription>
-            Enter the owner and repository name to manage its Actions cache.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4">
-          <Input
-            placeholder="Owner (e.g. octocat)"
-            value={owner}
-            onChange={(e) => setOwner(e.target.value)}
-          />
-          <Input
-            placeholder="Repository (e.g. hello-world)"
-            value={repo}
-            onChange={(e) => setRepo(e.target.value)}
-          />
-          <Button onClick={navigate} disabled={!owner || !repo}>
+      <div className="bg-card border border-border rounded-lg max-w-sm">
+        <div className="px-4 py-3 border-b border-border">
+          <span className="section-title">Select repository</span>
+        </div>
+        <div className="p-4 flex flex-col gap-3">
+          <div>
+            <label className="text-xs font-medium text-foreground block mb-1.5">Owner</label>
+            <Input
+              placeholder="e.g. octocat"
+              value={owner}
+              onChange={(e) => setOwner(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-foreground block mb-1.5">Repository</label>
+            <Input
+              placeholder="e.g. hello-world"
+              value={repo}
+              onChange={(e) => setRepo(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && navigate()}
+            />
+          </div>
+          <Button onClick={navigate} disabled={!owner || !repo} className="mt-1">
             Open cache manager
           </Button>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </>
   )
 }
