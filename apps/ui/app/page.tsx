@@ -1,88 +1,65 @@
 import { PageHeader } from "@/components/page-header"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import {
-  FolderGit2,
-  GitPullRequest,
-  ShieldCheck,
-  Users,
-  ArrowRight,
-  Radio,
-} from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { StatCard } from "@/components/stat-card"
+import { FolderGit2, GitPullRequest, ShieldCheck, Users, ArrowRight, Radio } from "lucide-react"
 
 const stats = [
-  { label: "Repositories", value: "\u2014", icon: FolderGit2 },
-  { label: "Open PRs", value: "\u2014", icon: GitPullRequest },
-  { label: "Security Score", value: "\u2014", icon: ShieldCheck },
-  { label: "Team Members", value: "\u2014", icon: Users },
+  { label: "Repositories", value: "—", icon: FolderGit2 },
+  { label: "Open PRs", value: "—", icon: GitPullRequest },
+  { label: "Security Score", value: "—", icon: ShieldCheck },
+  { label: "Team Members", value: "—", icon: Users },
+]
+
+const quickActions = [
+  { label: "Run Security Scan", href: "/security" },
+  { label: "Manage Caches", href: "/repos" },
+  { label: "View Collaborators", href: "/collaborators" },
 ]
 
 export default function OverviewPage() {
   return (
     <>
-      <PageHeader
-        title="Overview"
-        description="Your GitHub organization at a glance."
-      />
+      <PageHeader title="Overview" description="Your GitHub organization at a glance." />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
         {stats.map((s) => (
-          <Card key={s.label} className="group glow-border transition-all hover:glow-sm">
-            <CardContent className="flex items-center gap-4 pt-0">
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                <s.icon className="size-5 text-primary" />
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">{s.label}</p>
-                <p className="text-2xl font-bold tracking-tight">{s.value}</p>
-              </div>
-            </CardContent>
-          </Card>
+          <StatCard key={s.label} label={s.label} value={s.value} icon={s.icon} />
         ))}
       </div>
 
-      <div className="mt-8 grid gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2 glow-border">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Radio className="size-4 text-primary" />
-              Recent Activity
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <div className="flex size-12 items-center justify-center rounded-full bg-muted/50 mb-3">
-                <Radio className="size-5 text-muted-foreground" />
-              </div>
-              <p className="text-sm font-medium text-muted-foreground">
-                No activity yet
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground/60">
-                Connect a GitHub account to see your feed
-              </p>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-2 bg-card border border-border rounded-lg">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
+            <Radio className="size-3.5 text-muted-foreground" />
+            <span className="section-title">Recent Activity</span>
+          </div>
+          <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
+            <div className="p-3 bg-muted/60 rounded-lg mb-4">
+              <Radio className="size-5 text-muted-foreground" />
             </div>
-          </CardContent>
-        </Card>
+            <p className="text-sm font-medium text-foreground mb-1">No activity yet</p>
+            <p className="text-sm text-muted-foreground max-w-xs leading-relaxed">
+              Connect a GitHub account to see your organization&apos;s event feed here.
+            </p>
+          </div>
+        </div>
 
-        <Card className="glow-border">
-          <CardHeader>
-            <CardTitle className="text-base">Quick Actions</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-2">
-            <Button variant="outline" className="justify-between" render={<a href="/security" />}>
-              Run Security Scan
-              <ArrowRight className="size-3.5 text-muted-foreground" />
-            </Button>
-            <Button variant="outline" className="justify-between" render={<a href="/repos" />}>
-              Manage Caches
-              <ArrowRight className="size-3.5 text-muted-foreground" />
-            </Button>
-            <Button variant="outline" className="justify-between" render={<a href="/collaborators" />}>
-              View Collaborators
-              <ArrowRight className="size-3.5 text-muted-foreground" />
-            </Button>
-          </CardContent>
-        </Card>
+        <div className="bg-card border border-border rounded-lg">
+          <div className="px-4 py-3 border-b border-border">
+            <span className="section-title">Quick Actions</span>
+          </div>
+          <div className="p-2">
+            {quickActions.map((action) => (
+              <a
+                key={action.href}
+                href={action.href}
+                className="flex items-center justify-between px-3 py-2.5 rounded text-sm text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors group"
+              >
+                {action.label}
+                <ArrowRight className="size-3.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </a>
+            ))}
+          </div>
+        </div>
       </div>
     </>
   )

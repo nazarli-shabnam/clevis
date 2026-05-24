@@ -8,6 +8,7 @@ __pycache__/
 
 /prowler/
 .agents/
+agency-agents/
 .claude/
 ./apps/ui/node_modules/
 
@@ -236,6 +237,10 @@ pnpm-debug.log*
 test-results/
 playwright-report/
 playwright/.cache/
+.playwright-mcp/
+
+# Claude Code planning artifacts
+plan.md
 
 # OS
 .DS_Store
