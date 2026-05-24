@@ -1,9 +1,19 @@
-export function PageHeader({ title, description }: { title: string; description: string }) {
+interface PageHeaderProps {
+  title: string
+  description?: string
+  actions?: React.ReactNode
+}
+
+export function PageHeader({ title, description, actions }: PageHeaderProps) {
   return (
-    <div className="mb-8">
-      <h1 className="text-3xl font-bold tracking-tight text-gradient">{title}</h1>
-      <p className="mt-1 text-muted-foreground">{description}</p>
-      <div className="mt-4 h-px bg-gradient-to-r from-primary/40 via-primary/10 to-transparent" />
+    <div className="mb-5 pb-4 border-b border-border flex items-start justify-between gap-4">
+      <div>
+        <h1 className="text-base font-semibold text-foreground">{title}</h1>
+        {description && (
+          <p className="text-sm text-muted-foreground mt-0.5">{description}</p>
+        )}
+      </div>
+      {actions && <div className="shrink-0">{actions}</div>}
     </div>
   )
 }
