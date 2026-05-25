@@ -1,4 +1,4 @@
-import type { AnalyticsOverviewResponse, CacheListResponse, CacheClearResponse } from "./types"
+import type { AnalyticsOverviewResponse, AuditLogOut, CacheListResponse, CacheClearResponse, JobOut } from "./types"
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
 // Role sent in X-Role header for privileged operations (e.g. cache clear).
@@ -10,6 +10,15 @@ async function post<T>(path: string, body: unknown, headers?: Record<string, str
     method: "POST",
     headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body),
+  })
+  const json = await res.json()
+  if (!res.ok) throw new Error((json as { detail?: string }).detail ?? `Request failed: ${res.status}`)
+  return json as T
+}
+
+async function get<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { "Content-Type": "application/json" },
   })
   const json = await res.json()
   if (!res.ok) throw new Error((json as { detail?: string }).detail ?? `Request failed: ${res.status}`)
@@ -32,5 +41,12 @@ export const api = {
       post<CacheClearResponse>(`/repos/${owner}/${repo}/actions-caches/clear`, body, {
         "X-Role": ROLE,
       }),
+  },
+  jobs: {
+    list: () => get<JobOut[]>("/jobs"),
+  },
+  audit: {
+    list: (action?: string) =>
+      get<AuditLogOut[]>(`/audit${action ? `?action=${encodeURIComponent(action)}` : ""}`),
   },
 }
