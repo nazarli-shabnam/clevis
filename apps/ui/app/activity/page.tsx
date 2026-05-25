@@ -9,7 +9,7 @@ export default function ActivityPage() {
         title="Activity"
         description="Recent events across your GitHub organization."
       />
-      <div className="bg-card border border-border rounded-lg">
+      <div className="bg-card border border-border">
         <EmptyState
           icon={Radio}
           title="Activity feed coming soon"
