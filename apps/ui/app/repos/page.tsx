@@ -24,7 +24,7 @@ export default function ReposPage() {
         description="Manage GitHub Actions caches for your repositories."
       />
 
-      <div className="bg-card border border-border rounded-lg max-w-sm">
+      <div className="bg-card border border-border max-w-sm">
         <div className="px-4 py-3 border-b border-border">
           <span className="section-title">Select repository</span>
         </div>

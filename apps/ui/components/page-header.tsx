@@ -5,18 +5,19 @@ interface PageHeaderProps {
 }
 
 /**
- * Inverted label pattern: small muted category label on top, large value below.
- * Reads "data dashboard" not "generic page". Actions slot for per-page CTAs.
+ * Inverted label pattern: small muted category label on top, larger value below.
+ * Bottom border separates the header zone from page content.
+ * Actions slot for per-page CTAs (e.g. "Run Scan" button).
  */
 export function PageHeader({ title, description, actions }: PageHeaderProps) {
   return (
-    <div className="flex items-baseline justify-between mb-6">
-      <div>
-        <p className="text-[0.6875rem] font-medium font-mono text-muted-foreground uppercase tracking-[0.12em] mb-0.5">
+    <div className="flex items-end justify-between pb-4 mb-6 border-b border-border/60">
+      <div className="flex flex-col gap-1">
+        <p className="text-[0.6875rem] font-medium font-mono text-muted-foreground uppercase tracking-[0.12em]">
           {title}
         </p>
         {description && (
-          <h1 className="text-2xl font-semibold text-foreground leading-tight">
+          <h1 className="text-xl font-semibold text-foreground leading-tight">
             {description}
           </h1>
         )}

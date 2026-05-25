@@ -20,7 +20,7 @@ function ScoreGauge({ score, failed, total }: { score: number; failed: number; t
     <div className="flex items-center gap-5 px-4 py-4 border-b border-border">
       <div className="relative shrink-0">
         <svg width="96" height="96" className="-rotate-90" aria-hidden>
-          <circle cx="48" cy="48" r={r} fill="none" stroke="#3f3f46" strokeWidth="7" />
+          <circle cx="48" cy="48" r={r} fill="none" stroke="#1c1c1c" strokeWidth="7" />
           <circle
             cx="48" cy="48" r={r} fill="none"
             stroke={color} strokeWidth="7"
@@ -63,7 +63,7 @@ export default function SecurityPage() {
       />
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <div className="bg-card border border-border rounded-lg">
+        <div className="bg-card border border-border">
           <div className="px-4 py-3 border-b border-border">
             <span className="section-title">Scan configuration</span>
           </div>
@@ -107,7 +107,7 @@ export default function SecurityPage() {
         </div>
 
         {scan.data && (
-          <div className="bg-card border border-border rounded-lg lg:col-span-2">
+          <div className="bg-card border border-border lg:col-span-2">
             <div className="px-4 py-3 border-b border-border">
               <span className="section-title">Results — {scan.data.owner}</span>
             </div>
