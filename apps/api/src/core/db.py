@@ -47,6 +47,19 @@ class Job(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class SavedToken(Base):
+    __tablename__ = "saved_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    org: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
+    encrypted_token: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 engine = create_engine(settings.database_url.get_secret_value())
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
