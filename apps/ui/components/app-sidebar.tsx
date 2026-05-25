@@ -1,11 +1,12 @@
 "use client"
 
 import { usePathname } from "next/navigation"
+import { useEffect, useState } from "react"
 import Link from "next/link"
+import { Settings } from "lucide-react"
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarHeader,
@@ -43,6 +44,15 @@ const groups = [
 
 export function AppSidebar() {
   const pathname = usePathname()
+  const [profile, setProfile] = useState({ name: "Guest", org: "no org connected" })
+
+  useEffect(() => {
+    const name = localStorage.getItem("profile_name") || "Guest"
+    const org  = localStorage.getItem("default_org")  || "no org connected"
+    setProfile({ name, org })
+  }, [])
+
+  const initials = profile.name.charAt(0).toUpperCase()
 
   function isActive(href: string) {
     if (href === "/") return pathname === "/"
@@ -51,11 +61,25 @@ export function AppSidebar() {
 
   return (
     <Sidebar>
-      {/* Wordmark — no decorative mark */}
-      <SidebarHeader className="border-b border-sidebar-border px-4 py-3.5">
-        <span className="font-mono font-medium tracking-tight text-sidebar-foreground text-sm">
-          clvs
-        </span>
+      {/* Profile widget — links to /settings */}
+      <SidebarHeader className="border-b border-sidebar-border p-0">
+        <Link
+          href="/settings"
+          className="flex items-center gap-2.5 px-3.5 py-3 hover:bg-sidebar-accent/60 transition-colors group"
+        >
+          <div className="size-7 rounded-full bg-primary/15 border border-primary/25 flex items-center justify-center shrink-0">
+            <span className="text-[0.6875rem] font-semibold text-primary leading-none">{initials}</span>
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-[0.8125rem] font-medium text-sidebar-foreground leading-none truncate">
+              {profile.name}
+            </p>
+            <p className="text-[0.6875rem] text-sidebar-foreground/40 mt-0.5 leading-none truncate">
+              {profile.org}
+            </p>
+          </div>
+          <Settings className="size-3 text-sidebar-foreground/20 group-hover:text-sidebar-foreground/50 transition-colors shrink-0" />
+        </Link>
       </SidebarHeader>
 
       <SidebarContent>
@@ -96,11 +120,6 @@ export function AppSidebar() {
         ))}
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-sidebar-border px-4 py-3">
-        <p className="font-mono text-[0.6875rem] text-sidebar-foreground/25">
-          no organization connected
-        </p>
-      </SidebarFooter>
     </Sidebar>
   )
 }
