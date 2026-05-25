@@ -1,5 +1,5 @@
 import "@/app/globals.css"
-import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google"
+import { Inter } from "next/font/google"
 import { cn } from "@/lib/utils"
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -7,16 +7,10 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { QueryProvider } from "@/components/query-provider"
 import { Breadcrumb } from "@/components/breadcrumb"
 
-const plexSans = IBM_Plex_Sans({
+const inter = Inter({
   subsets: ["latin"],
-  weight: ["400", "500", "600"],
+  weight: ["300", "400", "500", "600", "700"],
   variable: "--font-sans",
-})
-
-const plexMono = IBM_Plex_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--font-mono",
 })
 
 export const metadata = {
@@ -26,7 +20,7 @@ export const metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={cn("dark font-sans", plexSans.variable, plexMono.variable)}>
+    <html lang="en" className={cn("dark font-sans", inter.variable)}>
       <body className="min-h-screen bg-background">
         <QueryProvider>
           <TooltipProvider>
