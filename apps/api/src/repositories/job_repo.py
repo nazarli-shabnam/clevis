@@ -22,8 +22,8 @@ def list_jobs(db: Session, limit: int = 50) -> list[dict]:
             "job_type": r.job_type,
             "status": r.status,
             "result": r.result,
-            "created_at": str(r.created_at),
-            "updated_at": str(r.updated_at),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
         }
         for r in rows
     ]
