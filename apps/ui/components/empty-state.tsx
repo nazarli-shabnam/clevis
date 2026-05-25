@@ -1,22 +1,63 @@
-import type { LucideIcon } from "lucide-react"
-import type { ReactNode } from "react"
+/**
+ * Two empty state variants — no icons, no centered layouts, just text.
+ *
+ * <EmptyStateInline>  — inside a card/table where data would be
+ * <EmptyStatePage>    — when a whole feature section has no data yet
+ */
 
-interface EmptyStateProps {
-  icon: LucideIcon
-  title: string
-  description: string
-  cta?: ReactNode
+interface EmptyStateInlineProps {
+  noun: string         // e.g. "jobs", "caches", "members"
+  qualifier?: string   // e.g. filter value currently applied
 }
 
-export function EmptyState({ icon: Icon, title, description, cta }: EmptyStateProps) {
+export function EmptyStateInline({ noun, qualifier }: EmptyStateInlineProps) {
   return (
-    <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-      <div className="p-3 bg-muted/60 rounded-lg mb-4">
-        <Icon className="size-6 text-muted-foreground" />
-      </div>
-      <h3 className="text-sm font-medium text-foreground mb-1">{title}</h3>
-      <p className="text-sm text-muted-foreground max-w-xs leading-relaxed">{description}</p>
-      {cta && <div className="mt-4">{cta}</div>}
+    <div className="px-4 py-8 border-t border-border/60">
+      <p className="text-sm text-muted-foreground font-mono">
+        — no {noun}{qualifier ? ` matching "${qualifier}"` : ""}
+      </p>
     </div>
   )
+}
+
+interface EmptyStatePageProps {
+  message: string
+  action?: { href: string; label: string }
+}
+
+export function EmptyStatePage({ message, action }: EmptyStatePageProps) {
+  return (
+    <div className="border border-dashed border-border px-6 py-12">
+      <p className="text-sm text-muted-foreground">
+        {message}
+        {action && (
+          <>
+            {" — "}
+            <a
+              href={action.href}
+              className="text-primary underline-offset-2 hover:underline"
+            >
+              {action.label}
+            </a>
+          </>
+        )}
+      </p>
+    </div>
+  )
+}
+
+/**
+ * Legacy compat shim — existing pages that pass icon/title/description
+ * are redirected to EmptyStatePage so the old pattern doesn't crash.
+ * Remove once all callers are migrated.
+ */
+interface LegacyEmptyStateProps {
+  icon?: unknown
+  title: string
+  description: string
+  cta?: React.ReactNode
+}
+
+export function EmptyState({ title, description }: LegacyEmptyStateProps) {
+  return <EmptyStatePage message={`${title} — ${description}`} />
 }
