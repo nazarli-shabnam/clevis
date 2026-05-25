@@ -3,37 +3,42 @@
 import { usePathname } from "next/navigation"
 import Link from "next/link"
 import {
-  LayoutDashboard,
-  Activity,
-  FolderGit2,
-  ShieldCheck,
-  Users,
-  Zap,
-  GitBranch,
-} from "lucide-react"
-import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarSeparator,
 } from "@/components/ui/sidebar"
 
-const analyticsItems = [
-  { title: "Overview", href: "/", icon: LayoutDashboard },
-  { title: "Activity", href: "/activity", icon: Activity },
-  { title: "Repositories", href: "/repos", icon: FolderGit2 },
-  { title: "Health & Security", href: "/security", icon: ShieldCheck },
-]
-
-const managementItems = [
-  { title: "Collaborators", href: "/collaborators", icon: Users },
-  { title: "Automation", href: "/automation", icon: Zap },
+// Each group is an array of nav items. Groups are separated by a thin line — no labels.
+const groups = [
+  [
+    { title: "Overview",         href: "/",             shortcut: "g o" },
+    { title: "Activity",         href: "/activity",     shortcut: "g a" },
+    { title: "Pull Requests",    href: "/pulls",        shortcut: "g p" },
+    { title: "Releases",         href: "/releases",     shortcut: "g r" },
+  ],
+  [
+    { title: "Repositories",     href: "/repos",        shortcut: "g R" },
+    { title: "Health & Security",href: "/security",     shortcut: "g s" },
+  ],
+  [
+    { title: "Collaborators",    href: "/collaborators", shortcut: undefined },
+    { title: "Automation",       href: "/automation",    shortcut: undefined },
+    { title: "Audit Log",        href: "/audit",         shortcut: undefined },
+    { title: "Job Queue",        href: "/jobs",          shortcut: undefined },
+    { title: "Settings",         href: "/settings",      shortcut: undefined },
+  ],
+  [
+    { title: "My PRs",     href: "/my/prs",     shortcut: undefined },
+    { title: "My Reviews", href: "/my/reviews", shortcut: undefined },
+    { title: "My Issues",  href: "/my/issues",  shortcut: undefined },
+  ],
 ]
 
 export function AppSidebar() {
@@ -44,62 +49,57 @@ export function AppSidebar() {
     return pathname === href || pathname.startsWith(href + "/")
   }
 
-  function NavGroup({ label, items }: { label: string; items: typeof analyticsItems }) {
-    return (
-      <SidebarGroup>
-        <SidebarGroupLabel className="text-[0.6875rem] font-medium text-sidebar-foreground/30 uppercase tracking-widest px-3 pt-4 pb-1">
-          {label}
-        </SidebarGroupLabel>
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {items.map((item) => {
-              const active = isActive(item.href)
-              return (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton
-                    isActive={active}
-                    className={
-                      active
-                        ? "relative bg-sidebar-accent text-sidebar-primary before:absolute before:left-0 before:top-1/2 before:-translate-y-1/2 before:h-4 before:w-0.5 before:rounded-full before:bg-sidebar-primary"
-                        : "text-sidebar-foreground/45 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
-                    }
-                    render={<Link href={item.href} />}
-                  >
-                    <item.icon className="size-4 shrink-0" />
-                    <span className="text-sm">{item.title}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )
-            })}
-          </SidebarMenu>
-        </SidebarGroupContent>
-      </SidebarGroup>
-    )
-  }
-
   return (
     <Sidebar>
+      {/* Wordmark — no decorative mark */}
       <SidebarHeader className="border-b border-sidebar-border px-4 py-3.5">
-        <div className="flex items-center gap-2">
-          <div className="size-5 rounded bg-sidebar-primary/20 flex items-center justify-center">
-            <div className="size-2 rounded-full bg-sidebar-primary" />
-          </div>
-          <span className="text-sm font-semibold text-sidebar-foreground tracking-tight">
-            clevis
-          </span>
-        </div>
+        <span className="font-mono font-medium tracking-tight text-sidebar-foreground text-sm">
+          clvs
+        </span>
       </SidebarHeader>
 
       <SidebarContent>
-        <NavGroup label="Analytics" items={analyticsItems} />
-        <NavGroup label="Management" items={managementItems} />
+        {groups.map((items, groupIndex) => (
+          <div key={groupIndex}>
+            {groupIndex > 0 && <SidebarSeparator className="my-1 bg-sidebar-border/60" />}
+            <SidebarGroup className="py-1">
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {items.map((item) => {
+                    const active = isActive(item.href)
+                    return (
+                      <SidebarMenuItem key={item.title}>
+                        <SidebarMenuButton
+                          isActive={active}
+                          className={[
+                            "group/item relative flex items-center justify-between rounded-none px-3 py-1.5 text-[0.8125rem]",
+                            active
+                              ? "bg-sidebar-accent text-sidebar-foreground font-medium"
+                              : "text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent/60",
+                          ].join(" ")}
+                          render={<Link href={item.href} />}
+                        >
+                          <span>{item.title}</span>
+                          {item.shortcut && (
+                            <span className="font-mono text-[0.625rem] text-sidebar-foreground/20 opacity-0 group-hover/item:opacity-100 transition-opacity">
+                              {item.shortcut}
+                            </span>
+                          )}
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    )
+                  })}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </div>
+        ))}
       </SidebarContent>
 
       <SidebarFooter className="border-t border-sidebar-border px-4 py-3">
-        <div className="flex items-center gap-2">
-          <GitBranch className="size-3.5 text-sidebar-foreground/30 shrink-0" />
-          <p className="text-xs text-sidebar-foreground/30 truncate">No organization connected</p>
-        </div>
+        <p className="font-mono text-[0.6875rem] text-sidebar-foreground/25">
+          no organization connected
+        </p>
       </SidebarFooter>
     </Sidebar>
   )
