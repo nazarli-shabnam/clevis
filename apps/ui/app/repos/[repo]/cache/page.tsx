@@ -16,7 +16,7 @@ import type { CacheEntry } from "@/lib/api/types"
 export default function CachePage() {
   const params = useParams<{ repo: string }>()
   const [token, setToken] = useState("")
-  const [actor, setActor] = useState("admin@example.local")
+  const [actor, setActor] = useState("")
 
   const [owner, repo] = (params.repo || "").split("~")
 
@@ -91,7 +91,7 @@ export default function CachePage() {
               <Button
                 variant="outline"
                 onClick={() => clearMutation.mutate(true)}
-                disabled={isLoading || !token}
+                disabled={isLoading || !token || !actor}
               >
                 <Eye className="size-3.5" />
                 Dry run
@@ -99,7 +99,7 @@ export default function CachePage() {
               <Button
                 variant="destructive"
                 onClick={() => clearMutation.mutate(false)}
-                disabled={isLoading || !token}
+                disabled={isLoading || !token || !actor}
               >
                 <Trash2 className="size-3.5" />
                 Clear

@@ -1,6 +1,7 @@
 "use client"
 
 import { usePathname } from "next/navigation"
+import Link from "next/link"
 import {
   LayoutDashboard,
   Activity,
@@ -62,7 +63,7 @@ export function AppSidebar() {
                         ? "relative bg-sidebar-accent text-sidebar-primary before:absolute before:left-0 before:top-1/2 before:-translate-y-1/2 before:h-4 before:w-0.5 before:rounded-full before:bg-sidebar-primary"
                         : "text-sidebar-foreground/45 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
                     }
-                    render={<a href={item.href} />}
+                    render={<Link href={item.href} />}
                   >
                     <item.icon className="size-4 shrink-0" />
                     <span className="text-sm">{item.title}</span>
