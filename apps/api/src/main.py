@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.core.config import settings
 from src.core.logging import setup_logging
 from src.core.middleware import RequestIdMiddleware
-from src.routers import actions_cache, analytics, audit, auth, health, jobs
+from src.routers import actions_cache, analytics, audit, auth, health, jobs, tokens
 
 
 @asynccontextmanager
@@ -37,3 +37,4 @@ app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 app.include_router(actions_cache.router, prefix="/repos", tags=["actions-cache"])
 app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 app.include_router(audit.router, prefix="/audit", tags=["audit"])
+app.include_router(tokens.router, prefix="/tokens", tags=["tokens"])
