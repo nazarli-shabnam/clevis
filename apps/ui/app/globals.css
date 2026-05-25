@@ -103,6 +103,9 @@
 
   /* Sharp corners — terminal tools don't have soft corners */
   --radius: 0.1875rem;   /* 3px */
+
+  /* Mono stack — system fonts, no custom load */
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Fira Code", Consolas, "Courier New", monospace;
 }
 
 @layer base {
@@ -124,8 +127,8 @@
 @layer utilities {
   /*
    * Typography usage rules:
-   *   font-sans  (IBM Plex Sans):  page titles, body text, labels, navigation
-   *   font-mono  (IBM Plex Mono):  stat values, code, cache keys, IDs, timestamps
+   *   font-sans  (Inter):         page titles, body text, labels, navigation
+   *   font-mono  (system mono):   stat values, code, cache keys, IDs, timestamps
    */
 
   /* Monospace numeric values — used on stat cards, table cells, badges */
