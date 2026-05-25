@@ -4,21 +4,39 @@
 // syntax (not a literal path); param holds owner and repo joined with "~" (see repos/page.tsx).
 
 import { useParams } from "next/navigation"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Eye, Loader2, Trash2 } from "lucide-react"
+import { Eye, KeyRound, Loader2, Trash2 } from "lucide-react"
 import { api } from "@/lib/api/client"
 import type { CacheEntry } from "@/lib/api/types"
 
 export default function CachePage() {
   const params = useParams<{ repo: string }>()
   const [token, setToken] = useState("")
+  const [tokenSaved, setTokenSaved] = useState(false)
   const [actor, setActor] = useState("")
 
   const [owner, repo] = (params.repo || "").split("~")
+
+  // Auto-resolve saved token for this owner
+  const resolveMutation = useMutation({
+    mutationFn: (org: string) => api.tokens.resolve(org),
+    onSuccess: (data) => { setToken(data.token); setTokenSaved(true) },
+    onError: () => setTokenSaved(false),
+  })
+
+  useEffect(() => {
+    if (owner) resolveMutation.mutate(owner)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [owner])
+
+  const saveTokenMutation = useMutation({
+    mutationFn: () => api.tokens.upsert(owner, token.trim()),
+    onSuccess: () => setTokenSaved(true),
+  })
 
   function formatBytes(bytes: number) {
     if (bytes < 1024) return `${bytes} B`
@@ -57,17 +75,33 @@ export default function CachePage() {
           </div>
           <div className="p-4 flex flex-col gap-3">
             <div>
-              <label className="text-xs font-medium text-foreground block mb-1.5">
+              <label className="text-xs font-medium text-foreground mb-1.5 flex items-center gap-1.5">
                 GitHub Token
+                {tokenSaved && (
+                  <span className="inline-flex items-center gap-1 text-[0.6875rem] text-primary">
+                    <KeyRound className="size-3" />saved
+                  </span>
+                )}
               </label>
               <Input
                 placeholder="ghp_..."
                 type="password"
                 value={token}
-                onChange={(e) => setToken(e.target.value)}
+                onChange={(e) => { setToken(e.target.value); setTokenSaved(false) }}
                 className="font-mono"
               />
             </div>
+            {!tokenSaved && token && (
+              <Button
+                variant="outline"
+                onClick={() => saveTokenMutation.mutate()}
+                disabled={saveTokenMutation.isPending}
+                className="w-full"
+              >
+                <KeyRound className="size-3.5" />
+                {saveTokenMutation.isPending ? "Saving…" : "Save token for this org"}
+              </Button>
+            )}
             <div>
               <label className="text-xs font-medium text-foreground block mb-1.5">Actor</label>
               <Input

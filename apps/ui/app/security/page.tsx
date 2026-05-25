@@ -1,12 +1,12 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { CheckCard } from "@/components/check-card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { AlertTriangle } from "lucide-react"
+import { AlertTriangle, KeyRound } from "lucide-react"
 import { api } from "@/lib/api/client"
 import type { CheckResult } from "@/lib/api/types"
 
@@ -50,6 +50,41 @@ function ScoreGauge({ score, failed, total }: { score: number; failed: number; t
 export default function SecurityPage() {
   const [owner, setOwner] = useState("")
   const [token, setToken] = useState("")
+  const [tokenSaved, setTokenSaved] = useState(false)
+
+  // Pre-fill org from profile settings
+  useEffect(() => {
+    const defaultOrg = localStorage.getItem("default_org") || ""
+    if (defaultOrg) setOwner(defaultOrg)
+  }, [])
+
+  // Auto-resolve saved token when org changes
+  const resolveMutation = useMutation({
+    mutationFn: (org: string) => api.tokens.resolve(org),
+    onSuccess: (data) => {
+      setToken(data.token)
+      setTokenSaved(true)
+    },
+    onError: () => {
+      // No saved token — user enters manually
+      setTokenSaved(false)
+    },
+  })
+
+  useEffect(() => {
+    if (owner.trim().length > 2) {
+      resolveMutation.mutate(owner.trim())
+    } else {
+      setTokenSaved(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [owner])
+
+  // Save token after successful scan
+  const saveTokenMutation = useMutation({
+    mutationFn: () => api.tokens.upsert(owner.trim(), token.trim()),
+    onSuccess: () => setTokenSaved(true),
+  })
 
   const scan = useMutation({
     mutationFn: () => api.analytics.overview(owner, token),
@@ -79,14 +114,19 @@ export default function SecurityPage() {
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-foreground block mb-1.5">
+              <label className="text-xs font-medium text-foreground block mb-1.5 flex items-center gap-1.5">
                 GitHub Token
+                {tokenSaved && (
+                  <span className="inline-flex items-center gap-1 text-[0.6875rem] text-primary">
+                    <KeyRound className="size-3" />saved
+                  </span>
+                )}
               </label>
               <Input
                 placeholder="ghp_..."
                 type="password"
                 value={token}
-                onChange={(e) => setToken(e.target.value)}
+                onChange={(e) => { setToken(e.target.value); setTokenSaved(false) }}
                 className="font-mono"
               />
             </div>
@@ -97,6 +137,16 @@ export default function SecurityPage() {
             >
               {scan.isPending ? "Scanning…" : "Run scan"}
             </Button>
+            {!tokenSaved && token && owner && (
+              <Button
+                variant="outline"
+                onClick={() => saveTokenMutation.mutate()}
+                disabled={saveTokenMutation.isPending}
+              >
+                <KeyRound className="size-3.5" />
+                {saveTokenMutation.isPending ? "Saving…" : "Save token for this org"}
+              </Button>
+            )}
             {scan.isError && (
               <div className="flex items-start gap-2 text-xs text-destructive">
                 <AlertTriangle className="size-3.5 mt-0.5 shrink-0" />
