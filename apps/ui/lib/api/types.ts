@@ -37,3 +37,21 @@ export interface CacheClearResponse {
   job_id?: number | null
   message?: string | null
 }
+
+export interface JobOut {
+  id: number
+  job_type: string
+  status: "queued" | "processing" | "done" | "failed"
+  result: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AuditLogOut {
+  id: number
+  actor: string
+  action: string
+  target: string
+  payload: string
+  created_at: string
+}
