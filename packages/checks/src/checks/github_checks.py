@@ -44,7 +44,13 @@ class OrgMFARequired(Check):
         remediation="Require two-factor authentication for all org members in org settings.",
     )
 
-    def run(self, owner: str, token: str, base_url: str = "https://api.github.com") -> dict:
+    def run(
+        self,
+        owner: str,
+        token: str,
+        base_url: str = "https://api.github.com",
+        repos: list | None = None,  # unused — MFA check operates at org level
+    ) -> dict:
         org = _get(f"{base_url}/orgs/{owner}", token)
         enabled = bool(org.get("two_factor_requirement_enabled", False))
         return {"status": "pass" if enabled else "fail", "value": enabled}
@@ -58,8 +64,15 @@ class BranchProtectionEnabled(Check):
         remediation="Enable branch protection for default branch on all active repositories.",
     )
 
-    def run(self, owner: str, token: str, base_url: str = "https://api.github.com") -> dict:
-        repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
+    def run(
+        self,
+        owner: str,
+        token: str,
+        base_url: str = "https://api.github.com",
+        repos: list | None = None,
+    ) -> dict:
+        if repos is None:
+            repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
         checked = 0
         protected = 0
         for repo in repos:
@@ -83,8 +96,15 @@ class SecretScanningEnabled(Check):
         remediation="Enable secret scanning for repositories where available.",
     )
 
-    def run(self, owner: str, token: str, base_url: str = "https://api.github.com") -> dict:
-        repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
+    def run(
+        self,
+        owner: str,
+        token: str,
+        base_url: str = "https://api.github.com",
+        repos: list | None = None,
+    ) -> dict:
+        if repos is None:
+            repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
         enabled = 0
         total = len(repos)
         for repo in repos:

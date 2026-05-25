@@ -15,17 +15,18 @@ class GitHubClient:
 
     def request(self, method: str, path: str, params: dict | None = None, json: dict | None = None) -> dict | list:
         url = f"{self.base}{path}"
-        for attempt in range(3):
-            try:
-                with httpx.Client(timeout=20) as client:
+        with httpx.Client(timeout=20) as client:
+            for attempt in range(3):
+                try:
                     resp = client.request(method, url, headers=self.headers, params=params, json=json)
-            except httpx.RequestError:
-                if attempt < 2:
+                except httpx.RequestError:
+                    if attempt < 2:
+                        time.sleep(2 ** attempt)
+                        continue
+                    raise
+                if resp.status_code == 429 and attempt < 2:
                     time.sleep(2 ** attempt)
                     continue
-                raise
-            if resp.status_code == 429 and attempt < 2:
-                time.sleep(2 ** attempt)
-                continue
-            resp.raise_for_status()
-            return resp.json() if resp.text else {}
+                resp.raise_for_status()
+                return resp.json() if resp.text else {}
+        raise RuntimeError("request loop exhausted without returning")
