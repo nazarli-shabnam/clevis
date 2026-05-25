@@ -13,7 +13,7 @@ export function PageHeader({ title, description, actions }: PageHeaderProps) {
   return (
     <div className="flex items-end justify-between pb-4 mb-6 border-b border-border/60">
       <div className="flex flex-col gap-1">
-        <p className="text-[0.6875rem] font-medium font-mono text-muted-foreground uppercase tracking-[0.12em]">
+        <p className="text-[0.6875rem] font-medium text-muted-foreground uppercase tracking-[0.08em]">
           {title}
         </p>
         {description && (
