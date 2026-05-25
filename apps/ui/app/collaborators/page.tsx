@@ -9,7 +9,7 @@ export default function CollaboratorsPage() {
         title="Collaborators"
         description="Manage your organization's team and invitations."
       />
-      <div className="bg-card border border-border rounded-lg">
+      <div className="bg-card border border-border">
         <EmptyState
           icon={Users}
           title="Collaborators coming soon"

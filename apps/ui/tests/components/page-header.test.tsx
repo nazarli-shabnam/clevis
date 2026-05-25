@@ -9,9 +9,10 @@ describe("PageHeader", () => {
       <PageHeader title="Repositories" description="Manage GitHub repos." />,
     );
 
+    // description is now the h1; title is a small label above it
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-      "Repositories",
+      "Manage GitHub repos.",
     );
-    expect(screen.getByText("Manage GitHub repos.")).toBeInTheDocument();
+    expect(screen.getByText("Repositories")).toBeInTheDocument();
   });
 });

@@ -9,7 +9,7 @@ export default function AutomationPage() {
         title="Automation"
         description="Manage workflows and automated actions."
       />
-      <div className="bg-card border border-border rounded-lg">
+      <div className="bg-card border border-border">
         <EmptyState
           icon={Zap}
           title="Automation coming soon"

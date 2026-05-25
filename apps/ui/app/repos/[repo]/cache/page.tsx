@@ -9,7 +9,7 @@ import { useMutation } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Database, Eye, Loader2, Trash2 } from "lucide-react"
+import { Eye, Loader2, Trash2 } from "lucide-react"
 import { api } from "@/lib/api/client"
 import type { CacheEntry } from "@/lib/api/types"
 
@@ -51,9 +51,9 @@ export default function CachePage() {
       <PageHeader title="Actions Cache" description={`${owner}/${repo}`} />
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <div className="bg-card border border-border rounded-lg">
+        <div className="bg-card border border-border">
           <div className="px-4 py-3 border-b border-border">
-            <span className="section-title">Configuration</span>
+            <span className="section-label">Configuration</span>
           </div>
           <div className="p-4 flex flex-col gap-3">
             <div>
@@ -108,21 +108,17 @@ export default function CachePage() {
           </div>
         </div>
 
-        <div className="bg-card border border-border rounded-lg lg:col-span-2">
+        <div className="bg-card border border-border lg:col-span-2">
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-            <span className="section-title">Cache entries</span>
+            <span className="section-label">Cache entries</span>
             {caches.length > 0 && (
               <span className="stat-chip">{caches.length} total</span>
             )}
           </div>
           {caches.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-              <div className="p-3 bg-muted/60 rounded-lg mb-4">
-                <Database className="size-5 text-muted-foreground" />
-              </div>
-              <p className="text-sm font-medium text-foreground mb-1">No caches loaded</p>
-              <p className="text-sm text-muted-foreground">
-                Enter a token and click &ldquo;Load caches&rdquo; to list entries.
+            <div className="px-4 py-8">
+              <p className="text-sm text-muted-foreground font-mono">
+                — enter a token and click &ldquo;Load caches&rdquo; to list entries
               </p>
             </div>
           ) : (
@@ -160,9 +156,9 @@ export default function CachePage() {
       </div>
 
       {clearMutation.data && (
-        <div className="bg-card border border-border rounded-lg mt-4">
+        <div className="bg-card border border-border mt-4">
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-            <span className="section-title">Result</span>
+            <span className="section-label">Result</span>
             {clearMutation.data.dry_run && (
               <span className="stat-chip text-yellow-400 border-yellow-500/30">dry run</span>
             )}
