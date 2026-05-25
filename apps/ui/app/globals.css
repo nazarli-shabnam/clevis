@@ -49,38 +49,60 @@
 }
 
 :root {
-  --background: #18181b;
-  --foreground: #f4f4f5;
-  --card: #27272a;
-  --card-foreground: #f4f4f5;
-  --popover: #27272a;
-  --popover-foreground: #f4f4f5;
-  --primary: #a855f7;
-  --primary-foreground: #fafafa;
-  --secondary: #3f3f46;
-  --secondary-foreground: #f4f4f5;
-  --muted: #3f3f46;
-  --muted-foreground: #a1a1aa;
-  --accent: #22c55e;
-  --accent-foreground: #18181b;
-  --destructive: #f87171;
-  --border: #3f3f46;
-  --input: #27272a;
-  --ring: #a855f7;
-  --radius: 0.25rem;
-  --chart-1: #a855f7;
-  --chart-2: #22c55e;
-  --chart-3: #f59e0b;
-  --chart-4: #f87171;
-  --chart-5: #71717a;
-  --sidebar: #0f0f11;
-  --sidebar-foreground: #f4f4f5;
-  --sidebar-primary: #a855f7;
-  --sidebar-primary-foreground: #fafafa;
-  --sidebar-accent: #27272a;
-  --sidebar-accent-foreground: #f4f4f5;
-  --sidebar-border: #27272a;
-  --sidebar-ring: #a855f7;
+  /* Surfaces — 4-stop depth system */
+  --background:  #090909;   /* page bg — true near-black */
+  --card:        #111111;   /* primary card surface */
+  --elevated:    #171717;   /* inputs, hover states */
+  --overlay:     #1e1e1e;   /* modals, dropdowns */
+
+  /* Text */
+  --foreground:         #f5f5f5;
+  --muted-foreground:   #737373;
+  --subtle-foreground:  #404040;
+
+  /* Borders */
+  --border:       #1c1c1c;
+  --border-muted: #141414;
+
+  /* Brand accent — amber, not purple */
+  --primary:            #f59e0b;
+  --primary-foreground: #0a0a0a;
+  --ring:               #f59e0b;
+
+  /* Semantic */
+  --accent:             #22c55e;
+  --accent-foreground:  #0a0a0a;
+  --destructive:        #ef4444;
+  --warning:            #f59e0b;
+
+  /* Sidebar */
+  --sidebar:                    #060606;
+  --sidebar-foreground:         #f5f5f5;
+  --sidebar-primary:            #f59e0b;
+  --sidebar-primary-foreground: #0a0a0a;
+  --sidebar-accent:             #141414;
+  --sidebar-accent-foreground:  #f5f5f5;
+  --sidebar-border:             #1a1a1a;
+  --sidebar-ring:               #f59e0b;
+
+  /* Popover / card foreground */
+  --card-foreground:      #f5f5f5;
+  --popover:              #111111;
+  --popover-foreground:   #f5f5f5;
+  --secondary:            #1c1c1c;
+  --secondary-foreground: #f5f5f5;
+  --muted:                #1c1c1c;
+  --input:                #111111;
+
+  /* Charts */
+  --chart-1: #f59e0b;   /* amber  — primary data */
+  --chart-2: #22c55e;   /* green  — positive */
+  --chart-3: #38bdf8;   /* sky    — secondary */
+  --chart-4: #ef4444;   /* red    — negative */
+  --chart-5: #a78bfa;   /* violet — tertiary (charts only, not UI) */
+
+  /* Sharp corners — terminal tools don't have soft corners */
+  --radius: 0.1875rem;   /* 3px */
 }
 
 @layer base {
@@ -89,7 +111,8 @@
   }
   body {
     @apply bg-background text-foreground;
-    background-image: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(168, 85, 247, 0.07) 0%, transparent 70%);
+    /* No decorative glow — clean engineering tool aesthetic */
+    background-image: none;
     font-feature-settings: "kern" 1, "liga" 1;
     -webkit-font-smoothing: antialiased;
   }
@@ -99,15 +122,48 @@
 }
 
 @layer utilities {
-  .section-title {
-    font-size: 0.8125rem;
+  /*
+   * Typography usage rules:
+   *   font-sans  (IBM Plex Sans):  page titles, body text, labels, navigation
+   *   font-mono  (IBM Plex Mono):  stat values, code, cache keys, IDs, timestamps
+   */
+
+  /* Monospace numeric values — used on stat cards, table cells, badges */
+  .data-value {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+
+  /*
+   * Section label — uppercase monospace treatment for card headers and group titles.
+   * Replaces the old .section-title. Used across Linear, Vercel, Raycast.
+   * Reads "engineering dashboard", not "generic page".
+   */
+  .section-label {
+    font-size: 0.6875rem;
     font-weight: 500;
-    color: var(--foreground);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted-foreground);
+    font-family: var(--font-mono);
   }
+
+  /* Keep old name as alias during the transition */
+  .section-title {
+    font-size: 0.6875rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted-foreground);
+    font-family: var(--font-mono);
+  }
+
   .card {
-    @apply bg-card border border-border rounded-lg;
+    @apply bg-card border border-border;
   }
+
   .stat-chip {
-    @apply inline-flex items-center gap-1 text-xs border border-border rounded px-1.5 py-0.5 text-muted-foreground;
+    @apply inline-flex items-center gap-1 text-xs border border-border px-1.5 py-0.5 text-muted-foreground font-mono;
   }
 }
