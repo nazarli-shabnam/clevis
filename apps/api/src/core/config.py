@@ -14,13 +14,10 @@ while _root != _root.parent:
 
 
 class Settings(BaseSettings):
+    # The three required secrets — everything else lives in the app_config DB table.
     database_url: SecretStr
-    job_secret_key: SecretStr
-    github_api_base: str
-    cors_origins: list[str]
-    default_rbac_role: str
-    worker_poll_seconds: int
-    debug: bool
+    job_secret_key: SecretStr   # Fernet key for saved-token + job token encryption
+    auth_secret: SecretStr      # JWT signing secret
 
     model_config = SettingsConfigDict(env_file=_env_file, extra="ignore")
 

@@ -1,11 +1,11 @@
 import "@/app/globals.css"
 import { Inter } from "next/font/google"
 import { cn } from "@/lib/utils"
-import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { AppSidebar } from "@/components/app-sidebar"
 import { QueryProvider } from "@/components/query-provider"
-import { Breadcrumb } from "@/components/breadcrumb"
+import { AuthProvider } from "@/lib/auth-context"
+import { AuthGuard } from "@/components/auth-guard"
+import { ShellRouter } from "@/components/shell-router"
 
 const inter = Inter({
   subsets: ["latin"],
@@ -24,20 +24,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-screen bg-background">
         <QueryProvider>
           <TooltipProvider>
-            <SidebarProvider>
-              <AppSidebar />
-              <SidebarInset>
-                <header className="flex h-10 shrink-0 items-center justify-between border-b border-border/60 px-4">
-                  <div className="flex items-center gap-3">
-                    <SidebarTrigger className="size-6 text-muted-foreground hover:text-foreground" />
-                    <Breadcrumb />
-                  </div>
-                </header>
-                <main className="flex-1 p-5">
-                  {children}
-                </main>
-              </SidebarInset>
-            </SidebarProvider>
+            <AuthProvider>
+              <AuthGuard>
+                <ShellRouter>{children}</ShellRouter>
+              </AuthGuard>
+            </AuthProvider>
           </TooltipProvider>
         </QueryProvider>
       </body>

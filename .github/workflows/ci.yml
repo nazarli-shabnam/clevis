@@ -86,11 +86,7 @@ jobs:
     env:
       DATABASE_URL: postgresql+psycopg://clevis:clevis@localhost:5432/clevis
       JOB_SECRET_KEY: ${{ secrets.JOB_SECRET_KEY || 'ci-dummy-secret-key-not-for-production-use-00' }}
-      GITHUB_API_BASE: https://api.github.com
-      CORS_ORIGINS: '["http://localhost:3000"]'
-      DEFAULT_RBAC_ROLE: viewer
-      WORKER_POLL_SECONDS: "5"
-      DEBUG: "false"
+      AUTH_SECRET: ${{ secrets.AUTH_SECRET || 'ci-dummy-auth-secret-not-for-production-use-000' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

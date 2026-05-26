@@ -5,8 +5,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.core.auth import UserOut, require_auth
 from src.routers.analytics import router
 
+_MOCK_USER = UserOut(id=1, email="test@example.com", name=None, is_owner=False)
 
 MOCK_OVERVIEW = {
     "owner": "acme",
@@ -29,6 +31,7 @@ MOCK_OVERVIEW = {
 @pytest.fixture()
 def app():
     a = FastAPI()
+    a.dependency_overrides[require_auth] = lambda: _MOCK_USER
     a.include_router(router, prefix="/analytics")
     return a
 
@@ -39,7 +42,8 @@ def http(app):
 
 
 def test_overview_returns_expected_shape(http):
-    with patch("src.routers.analytics.anyio.to_thread.run_sync", return_value=MOCK_OVERVIEW):
+    # Mock get_overview directly; anyio.to_thread.run_sync runs the lambda for real
+    with patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW):
         resp = http.post(
             "/analytics/overview",
             json={"owner": "acme", "token": "ghp_test"},
@@ -54,7 +58,7 @@ def test_overview_github_http_error_returns_400(http):
     import httpx
 
     with patch(
-        "src.routers.analytics.anyio.to_thread.run_sync",
+        "src.routers.analytics.get_overview",
         side_effect=httpx.HTTPStatusError(
             "not found",
             request=MagicMock(),
@@ -73,7 +77,7 @@ def test_overview_request_error_returns_503(http):
     import httpx
 
     with patch(
-        "src.routers.analytics.anyio.to_thread.run_sync",
+        "src.routers.analytics.get_overview",
         side_effect=httpx.RequestError("timeout"),
     ):
         resp = http.post(
@@ -86,7 +90,7 @@ def test_overview_request_error_returns_503(http):
 def test_overview_unexpected_exception_logs_and_returns_500(http):
     with (
         patch(
-            "src.routers.analytics.anyio.to_thread.run_sync",
+            "src.routers.analytics.get_overview",
             side_effect=RuntimeError("unexpected"),
         ),
         patch("src.routers.analytics.logger") as mock_logger,
