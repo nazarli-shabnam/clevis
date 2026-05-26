@@ -18,7 +18,7 @@ def upgrade() -> None:
     op.create_table(
         "users",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column("email", sa.Text, nullable=False, unique=True),
+        sa.Column("email", sa.Text, nullable=False, unique=True),  # unique=True implies an index
         sa.Column("name", sa.Text, nullable=True),
         sa.Column("password_hash", sa.Text, nullable=False),
         sa.Column("is_owner", sa.Boolean, nullable=False, server_default="false"),
@@ -29,7 +29,6 @@ def upgrade() -> None:
             nullable=False,
         ),
     )
-    op.create_index("ix_users_email", "users", ["email"])
 
     op.create_table(
         "app_config",
