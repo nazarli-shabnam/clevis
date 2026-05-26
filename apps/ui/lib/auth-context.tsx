@@ -1,0 +1,89 @@
+"use client"
+
+import { createContext, useCallback, useContext, useEffect, useState } from "react"
+
+export interface AuthUser {
+  id: number
+  email: string
+  name: string | null
+  is_owner: boolean
+}
+
+interface AuthContextValue {
+  user: AuthUser | null
+  token: string | null
+  isLoading: boolean
+  login(email: string, password: string): Promise<void>
+  logout(): void
+  updateUser(u: Partial<AuthUser>): void
+}
+
+const AuthContext = createContext<AuthContextValue | null>(null)
+
+const _TOKEN_KEY = "clevis:token"
+const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<AuthUser | null>(null)
+  const [token, setToken] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+
+  const logout = useCallback(() => {
+    localStorage.removeItem(_TOKEN_KEY)
+    setToken(null)
+    setUser(null)
+  }, [])
+
+  // On mount: restore token from localStorage and validate it
+  useEffect(() => {
+    const stored = localStorage.getItem(_TOKEN_KEY)
+    if (!stored) {
+      setIsLoading(false)
+      return
+    }
+    fetch(`${BASE}/auth/me`, {
+      headers: { Authorization: `Bearer ${stored}` },
+    })
+      .then(async (res) => {
+        if (res.status === 401) {
+          logout()
+          return
+        }
+        const data = await res.json()
+        setToken(stored)
+        setUser(data as AuthUser)
+      })
+      .catch(() => logout())
+      .finally(() => setIsLoading(false))
+  }, [logout])
+
+  const login = useCallback(async (email: string, password: string) => {
+    const res = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail ?? "Login failed")
+    const { access_token, user: u } = data as { access_token: string; user: AuthUser }
+    localStorage.setItem(_TOKEN_KEY, access_token)
+    setToken(access_token)
+    setUser(u)
+  }, [])
+
+  const updateUser = useCallback((patch: Partial<AuthUser>) => {
+    setUser((prev) => (prev ? { ...prev, ...patch } : prev))
+  }, [])
+
+  return (
+    <AuthContext.Provider value={{ user, token, isLoading, login, logout, updateUser }}>
+      {children}
+    </AuthContext.Provider>
+  )
+}
+
+export function useAuth(): AuthContextValue {
+  const ctx = useContext(AuthContext)
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider")
+  return ctx
+}
