@@ -1,8 +1,11 @@
 name: clevis
 
-# Production: docker compose up --build
-# Local dev (selective): docker compose up db api   or   docker compose up db
-# All services have no profiles so Coolify (and plain docker compose up) starts them all.
+# No host port bindings — Traefik (Coolify proxy) routes traffic to containers
+# via the internal Docker network. Exposing ports to the host would conflict
+# with Traefik on 8080 and is a security risk.
+#
+# Local dev: docker compose up db            → DB only (run api/ui/worker locally)
+#            docker compose up --build       → full stack
 
 services:
   db:
@@ -33,8 +36,6 @@ services:
       - .env
     volumes:
       - ./packages/checks:/app/packages/checks
-    ports:
-      - "${API_PORT:-8080}:8080"
     depends_on:
       db:
         condition: service_healthy
@@ -73,8 +74,6 @@ services:
         NEXT_PUBLIC_DEFAULT_ROLE: ${NEXT_PUBLIC_DEFAULT_ROLE:-viewer}
     env_file:
       - .env
-    ports:
-      - "${UI_PORT:-3000}:3000"
     depends_on:
       api:
         condition: service_healthy
