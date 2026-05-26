@@ -1,10 +1,8 @@
 name: clevis
 
-# Profiles:
-#   docker compose --profile backend up           → db + api + worker
-#   docker compose --profile frontend up          → db + ui (point NEXT_PUBLIC_API_BASE at a running api)
-#   docker compose --profile backend --profile frontend up  → full stack
-#   docker compose up db                          → db only (for running services locally)
+# Production: docker compose up --build
+# Local dev (selective): docker compose up db api   or   docker compose up db
+# All services have no profiles so Coolify (and plain docker compose up) starts them all.
 
 services:
   db:
@@ -28,7 +26,6 @@ services:
 
   api:
     container_name: api
-    profiles: ["backend"]
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -53,7 +50,6 @@ services:
 
   worker:
     container_name: worker
-    profiles: ["backend"]
     build:
       context: apps/worker
     env_file:
@@ -69,7 +65,6 @@ services:
 
   ui:
     container_name: ui
-    profiles: ["frontend"]
     build:
       context: apps/ui
       args:
