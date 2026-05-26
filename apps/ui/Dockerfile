@@ -19,10 +19,11 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
-# server.js is always at the root of .next/standalone/ regardless of
-# outputFileTracingRoot. Copy the whole standalone dir so server.js lands at ./
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static     ./.next/static
+# outputFileTracingRoot resolves to "/" in Docker, so Next.js mirrors the full
+# path and nests standalone output under app/ (i.e. server.js is at
+# standalone/app/server.js, not standalone/server.js).
+COPY --from=builder /app/.next/standalone/app ./
+COPY --from=builder /app/.next/static         ./.next/static
 
 EXPOSE 3000
 CMD ["node", "server.js"]
