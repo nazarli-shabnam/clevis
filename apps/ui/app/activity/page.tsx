@@ -1,20 +1,30 @@
+"use client"
+
+import { useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
-import { EmptyState } from "@/components/empty-state"
-import { Radio } from "lucide-react"
+import { ActivityList } from "@/components/activity-list"
+import { api } from "@/lib/api/client"
 
 export default function ActivityPage() {
+  const { data: jobs = [], isLoading } = useQuery({
+    queryKey: ["jobs"],
+    queryFn: api.jobs.list,
+    refetchInterval: 15_000,
+  })
+
   return (
     <>
       <PageHeader
         title="Activity"
-        description="Recent events across your GitHub organization."
+        description="Background jobs and recent actions."
       />
+
       <div className="bg-card border border-border">
-        <EmptyState
-          icon={Radio}
-          title="Activity feed coming soon"
-          description="Connect a GitHub organization to stream real-time events — commits, PRs, releases, and more — into a unified feed."
-        />
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <span className="section-label">Jobs</span>
+          <span className="stat-chip">auto-refreshes every 15s</span>
+        </div>
+        <ActivityList jobs={jobs} isLoading={isLoading} />
       </div>
     </>
   )
