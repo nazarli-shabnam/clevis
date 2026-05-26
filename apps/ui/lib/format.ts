@@ -25,7 +25,7 @@ export function relativeTime(iso: string): string {
   return `${year} year${year === 1 ? "" : "s"} ago`
 }
 
-/** "May 24, 2026 at 14:33 UTC" */
+/** "May 24, 2026 at 14:33 UTC" (24-hour clock, UTC) */
 export function exactTime(iso: string): string {
   const d = new Date(iso)
   if (isNaN(d.getTime())) return iso
@@ -35,6 +35,7 @@ export function exactTime(iso: string): string {
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    hour12: false,
     timeZone: "UTC",
     timeZoneName: "short",
   })
@@ -58,7 +59,7 @@ export function jobTypeLabel(slug: string): string {
     "github.clear_actions_cache": "Clear Actions Cache",
   }
   if (map[slug]) return map[slug]
-  const last = slug.split(".").at(-1) ?? slug
+  const last = slug.split(".").slice(-1)[0] ?? slug
   return last
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase())
@@ -74,6 +75,7 @@ export type Staleness = "fresh" | "stale" | "old"
  */
 export function classifyStaleness(iso: string): Staleness {
   const diffMs = Date.now() - new Date(iso).getTime()
+  if (isNaN(diffMs)) return "old"
   const days = diffMs / (1000 * 60 * 60 * 24)
   if (days < 7)  return "fresh"
   if (days < 30) return "stale"
