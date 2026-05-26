@@ -59,19 +59,21 @@ pip install -e packages/checks
 cd apps/ui && npm install
 ```
 
-Every variable in `.env.example` is required — Settings classes have no defaults. Missing vars cause a `ValidationError` at startup.
+**Required env vars (6 total):** `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JOB_SECRET_KEY`, `AUTH_SECRET`, `NEXT_PUBLIC_API_BASE`. Everything else lives in the `app_config` DB table (configured via Settings page).
 
 Key variables:
 - `DB_USER`, `DB_PASSWORD`, `DB_NAME` — Postgres credentials. Docker Compose maps these to `POSTGRES_USER/PASSWORD/DB` for the db container; entrypoints construct `DATABASE_URL` from them (host = `db`).
 - `DATABASE_URL` — local dev only (outside Docker); format: `postgresql+psycopg://<user>:<pass>@localhost:5432/<db>`.
-- `JOB_SECRET_KEY` — generate with `openssl rand -hex 32`
-- `GITHUB_API_BASE` — `https://api.github.com` for public GitHub
-- `CORS_ORIGINS` — JSON list, e.g. `["http://localhost:3000"]`
-- `DEFAULT_RBAC_ROLE` — `viewer`
-- `WORKER_POLL_SECONDS` — `5`
-- `DEBUG` — `false`; enables `/docs` and `/redoc`
+- `JOB_SECRET_KEY` — Fernet key for token encryption; generate with `openssl rand -hex 32`
+- `AUTH_SECRET` — JWT signing secret; generate with `openssl rand -hex 32`
+- `NEXT_PUBLIC_API_BASE` — `http://localhost:8080` for local dev
 - `API_PORT` / `UI_PORT` — `8080` / `3000`
-- `NEXT_PUBLIC_API_BASE` — `http://localhost:8080`
+
+**DB-backed config (editable in Settings → Instance Configuration):**
+- `github_api_base` — default `https://api.github.com`; change for GitHub Enterprise
+- `cors_origins` — default `["*"]`; CORS change requires API restart
+- `worker_poll_seconds` — default `5`
+- `debug` — default `false`; enables `/docs` and `/redoc`; requires restart
 
 ## Running locally
 
