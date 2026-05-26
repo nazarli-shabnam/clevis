@@ -1,9 +1,9 @@
 "use client"
 
 import { usePathname } from "next/navigation"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import { Settings } from "lucide-react"
+import { Settings, Check, LogOut } from "lucide-react"
 import {
   Sidebar,
   SidebarContent,
@@ -16,7 +16,7 @@ import {
   SidebarSeparator,
 } from "@/components/ui/sidebar"
 
-// Each group is an array of nav items. Groups are separated by a thin line — no labels.
+// Settings is no longer in the sidebar nav — it lives inside the profile dropdown.
 const groups = [
   [
     { title: "Overview",         href: "/",             shortcut: "g o" },
@@ -33,7 +33,6 @@ const groups = [
     { title: "Automation",       href: "/automation",    shortcut: undefined },
     { title: "Audit Log",        href: "/audit",         shortcut: undefined },
     { title: "Job Queue",        href: "/jobs",          shortcut: undefined },
-    { title: "Settings",         href: "/settings",      shortcut: undefined },
   ],
   [
     { title: "My PRs",     href: "/my/prs",     shortcut: undefined },
@@ -42,15 +41,123 @@ const groups = [
   ],
 ]
 
+interface Profile {
+  name: string
+  org: string
+  email: string
+}
+
+function ProfileDropdown({
+  profile,
+  onClose,
+}: {
+  profile: Profile
+  onClose: () => void
+}) {
+  const initials = profile.name.charAt(0).toUpperCase()
+
+  function signOut() {
+    localStorage.removeItem("profile_name")
+    localStorage.removeItem("profile_email")
+    localStorage.removeItem("default_org")
+    window.location.reload()
+  }
+
+  return (
+    <div
+      className="absolute top-full left-0 right-0 z-50 border-b border-sidebar-border bg-sidebar shadow-2xl"
+      // prevent clicks inside from bubbling to the click-away handler
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* Email */}
+      <div className="px-3.5 py-2.5 border-b border-sidebar-border/60">
+        <p className="text-[0.75rem] text-sidebar-foreground/50 truncate">
+          {profile.email || "no email set"}
+        </p>
+      </div>
+
+      {/* Workspace row */}
+      <div className="p-1.5">
+        <div className="flex items-center gap-2.5 px-2 py-2 rounded-sm">
+          <div className="size-7 rounded-sm bg-primary/15 border border-primary/20 flex items-center justify-center shrink-0">
+            <span className="text-[0.6875rem] font-semibold text-primary leading-none">
+              {initials}
+            </span>
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-[0.8125rem] font-medium text-sidebar-foreground leading-none truncate">
+              {profile.name}
+            </p>
+            <p className="text-[0.6875rem] text-sidebar-foreground/40 mt-0.5 leading-none">
+              {profile.org || "Members"}
+            </p>
+          </div>
+          <Check className="size-3.5 text-primary shrink-0" />
+        </div>
+      </div>
+
+      {/* Settings button */}
+      <div className="px-1.5 pb-1.5 flex gap-1.5">
+        <Link
+          href="/settings"
+          onClick={onClose}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-[0.75rem] font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground bg-sidebar-accent/60 hover:bg-sidebar-accent border border-sidebar-border/60 transition-colors flex-1 justify-center"
+        >
+          <Settings className="size-3" />
+          Settings
+        </Link>
+      </div>
+
+      {/* Sign out */}
+      <div className="border-t border-sidebar-border/60 p-1.5">
+        <button
+          onClick={signOut}
+          className="flex w-full items-center gap-2 px-2.5 py-1.5 text-[0.8125rem] text-destructive/70 hover:text-destructive hover:bg-sidebar-accent/60 transition-colors"
+        >
+          <LogOut className="size-3.5" />
+          Sign out
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export function AppSidebar() {
   const pathname = usePathname()
-  const [profile, setProfile] = useState({ name: "Guest", org: "no org connected" })
+  const [profile, setProfile] = useState<Profile>({ name: "Guest", org: "no org connected", email: "" })
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const name = localStorage.getItem("profile_name") || "Guest"
-    const org  = localStorage.getItem("default_org")  || "no org connected"
-    setProfile({ name, org })
+    const name  = localStorage.getItem("profile_name")  || "Guest"
+    const org   = localStorage.getItem("default_org")   || "no org connected"
+    const email = localStorage.getItem("profile_email") || ""
+    setProfile({ name, org, email })
   }, [])
+
+  // Listen for profile updates from settings page
+  useEffect(() => {
+    function handleUpdate() {
+      const name  = localStorage.getItem("profile_name")  || "Guest"
+      const org   = localStorage.getItem("default_org")   || "no org connected"
+      const email = localStorage.getItem("profile_email") || ""
+      setProfile({ name, org, email })
+    }
+    window.addEventListener("profile-updated", handleUpdate)
+    return () => window.removeEventListener("profile-updated", handleUpdate)
+  }, [])
+
+  // Close on click outside
+  useEffect(() => {
+    if (!open) return
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [open])
 
   const initials = profile.name.charAt(0).toUpperCase()
 
@@ -61,11 +168,11 @@ export function AppSidebar() {
 
   return (
     <Sidebar>
-      {/* Profile widget — links to /settings */}
-      <SidebarHeader className="border-b border-sidebar-border p-0">
-        <Link
-          href="/settings"
-          className="flex items-center gap-2.5 px-3.5 py-3 hover:bg-sidebar-accent/60 transition-colors group"
+      {/* Profile widget — opens dropdown */}
+      <SidebarHeader className="border-b border-sidebar-border p-0 relative" ref={containerRef}>
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="flex w-full items-center gap-2.5 px-3.5 py-3 hover:bg-sidebar-accent/60 transition-colors group text-left"
         >
           <div className="size-7 rounded-full bg-primary/15 border border-primary/25 flex items-center justify-center shrink-0">
             <span className="text-[0.6875rem] font-semibold text-primary leading-none">{initials}</span>
@@ -79,7 +186,11 @@ export function AppSidebar() {
             </p>
           </div>
           <Settings className="size-3 text-sidebar-foreground/20 group-hover:text-sidebar-foreground/50 transition-colors shrink-0" />
-        </Link>
+        </button>
+
+        {open && (
+          <ProfileDropdown profile={profile} onClose={() => setOpen(false)} />
+        )}
       </SidebarHeader>
 
       <SidebarContent>
@@ -119,7 +230,6 @@ export function AppSidebar() {
           </div>
         ))}
       </SidebarContent>
-
     </Sidebar>
   )
 }

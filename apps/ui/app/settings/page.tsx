@@ -13,20 +13,22 @@ import type { SavedTokenMeta } from "@/lib/api/types"
 
 function ProfileSection() {
   const [name, setName] = useState("")
+  const [email, setEmail] = useState("")
   const [org, setOrg] = useState("")
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
     setName(localStorage.getItem("profile_name") || "")
+    setEmail(localStorage.getItem("profile_email") || "")
     setOrg(localStorage.getItem("default_org") || "")
   }, [])
 
   function save() {
     localStorage.setItem("profile_name", name.trim() || "Guest")
+    localStorage.setItem("profile_email", email.trim())
     localStorage.setItem("default_org", org.trim())
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
-    // Refresh sidebar without full page reload
     window.dispatchEvent(new Event("profile-updated"))
   }
 
@@ -42,6 +44,15 @@ function ProfileSection() {
             placeholder="Your name"
             value={name}
             onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1.5">Email</label>
+          <Input
+            placeholder="you@example.com"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
           />
         </div>
         <div>
