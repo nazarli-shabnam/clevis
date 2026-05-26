@@ -11,8 +11,8 @@ async function post<T>(path: string, body: unknown, headers?: Record<string, str
     headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body),
   })
-  const json = await res.json()
-  if (!res.ok) throw new Error((json as { detail?: string }).detail ?? `Request failed: ${res.status}`)
+  const json = await res.json().catch(() => null)
+  if (!res.ok) throw new Error((json as { detail?: string } | null)?.detail ?? `Request failed: ${res.status}`)
   return json as T
 }
 
@@ -20,8 +20,8 @@ async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { "Content-Type": "application/json" },
   })
-  const json = await res.json()
-  if (!res.ok) throw new Error((json as { detail?: string }).detail ?? `Request failed: ${res.status}`)
+  const json = await res.json().catch(() => null)
+  if (!res.ok) throw new Error((json as { detail?: string } | null)?.detail ?? `Request failed: ${res.status}`)
   return json as T
 }
 
@@ -31,8 +31,8 @@ async function put<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   })
-  const json = await res.json()
-  if (!res.ok) throw new Error((json as { detail?: string }).detail ?? `Request failed: ${res.status}`)
+  const json = await res.json().catch(() => null)
+  if (!res.ok) throw new Error((json as { detail?: string } | null)?.detail ?? `Request failed: ${res.status}`)
   return json as T
 }
 
