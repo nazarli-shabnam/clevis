@@ -1,10 +1,23 @@
+export interface MFACheckValue {
+  type: "boolean"
+  enabled: boolean
+}
+
+export interface RatioCheckValue {
+  type: "ratio"
+  numerator: number
+  denominator: number
+}
+
+export type CheckValue = MFACheckValue | RatioCheckValue | null
+
 export interface CheckResult {
   id: string
   title: string
   severity: "high" | "medium" | "low"
   remediation: string
   status: "pass" | "fail"
-  value: unknown
+  value: CheckValue
 }
 
 export interface AnalyticsOverviewResponse {
