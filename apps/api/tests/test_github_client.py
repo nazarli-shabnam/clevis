@@ -9,9 +9,8 @@ from src.services.github_client import GitHubClient
 
 @pytest.fixture()
 def client():
-    with patch("src.services.github_client.settings") as mock_settings:
-        mock_settings.github_api_base = "https://api.github.com"
-        yield GitHubClient(token="ghp_test")
+    # Pass base_url directly so the test doesn't need a DB connection
+    yield GitHubClient(token="ghp_test", base_url="https://api.github.com")
 
 
 def _make_response(status_code: int, json_body: dict | list | None = None, text: str = "{}"):

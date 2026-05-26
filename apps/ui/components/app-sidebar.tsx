@@ -15,6 +15,7 @@ import {
   SidebarMenuItem,
   SidebarSeparator,
 } from "@/components/ui/sidebar"
+import { useAuth } from "@/lib/auth-context"
 
 // Settings is no longer in the sidebar nav — it lives inside the profile dropdown.
 const groups = [
@@ -50,18 +51,13 @@ interface Profile {
 function ProfileDropdown({
   profile,
   onClose,
+  onSignOut,
 }: {
   profile: Profile
   onClose: () => void
+  onSignOut: () => void
 }) {
   const initials = profile.name.charAt(0).toUpperCase()
-
-  function signOut() {
-    localStorage.removeItem("profile_name")
-    localStorage.removeItem("profile_email")
-    localStorage.removeItem("default_org")
-    window.location.reload()
-  }
 
   return (
     <div
@@ -119,7 +115,7 @@ function ProfileDropdown({
       {/* Sign out */}
       <div className="border-t border-sidebar-border/60 p-1.5">
         <button
-          onClick={signOut}
+          onClick={onSignOut}
           className="flex w-full items-center gap-2 px-2.5 py-1.5 text-[0.8125rem] text-destructive/70 hover:text-destructive hover:bg-sidebar-accent/60 transition-colors"
         >
           <LogOut className="size-3.5" />
@@ -132,28 +128,17 @@ function ProfileDropdown({
 
 export function AppSidebar() {
   const pathname = usePathname()
-  const [profile, setProfile] = useState<Profile>({ name: "Guest", org: "no org connected", email: "" })
+  const { user, logout } = useAuth()
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    const name  = localStorage.getItem("profile_name")  || "Guest"
-    const org   = localStorage.getItem("default_org")   || "no org connected"
-    const email = localStorage.getItem("profile_email") || ""
-    setProfile({ name, org, email })
-  }, [])
-
-  // Listen for profile updates from settings page
-  useEffect(() => {
-    function handleUpdate() {
-      const name  = localStorage.getItem("profile_name")  || "Guest"
-      const org   = localStorage.getItem("default_org")   || "no org connected"
-      const email = localStorage.getItem("profile_email") || ""
-      setProfile({ name, org, email })
-    }
-    window.addEventListener("profile-updated", handleUpdate)
-    return () => window.removeEventListener("profile-updated", handleUpdate)
-  }, [])
+  // Profile derived from auth context; fall back to localStorage default_org for org display
+  const defaultOrg = typeof window !== "undefined" ? (localStorage.getItem("default_org") || "") : ""
+  const profile: Profile = {
+    name: user?.name || user?.email || "Guest",
+    org: defaultOrg || "no org connected",
+    email: user?.email || "",
+  }
 
   // Close on click outside
   useEffect(() => {
@@ -197,7 +182,11 @@ export function AppSidebar() {
         </button>
 
         {open && (
-          <ProfileDropdown profile={profile} onClose={() => setOpen(false)} />
+          <ProfileDropdown
+            profile={profile}
+            onClose={() => setOpen(false)}
+            onSignOut={() => { logout(); setOpen(false) }}
+          />
         )}
       </SidebarHeader>
 

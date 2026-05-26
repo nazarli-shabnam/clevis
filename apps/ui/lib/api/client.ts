@@ -1,48 +1,76 @@
-import type { AnalyticsOverviewResponse, AuditLogOut, CacheListResponse, CacheClearResponse, CheckValue, JobOut, SavedTokenMeta } from "./types"
+import type {
+  AnalyticsOverviewResponse,
+  AuditLogOut,
+  CacheClearResponse,
+  CacheListResponse,
+  CheckValue,
+  JobOut,
+  SavedTokenMeta,
+} from "./types"
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
-// Role sent in X-Role header for privileged operations (e.g. cache clear).
-// Configure via NEXT_PUBLIC_DEFAULT_ROLE; defaults to "viewer" so admins must opt-in explicitly.
-const ROLE = process.env.NEXT_PUBLIC_DEFAULT_ROLE ?? "viewer"
 
-async function post<T>(path: string, body: unknown, headers?: Record<string, string>): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...headers },
-    body: JSON.stringify(body),
-  })
+// ── Token accessor ────────────────────────────────────────────────────────────
+// The auth context writes the JWT to localStorage under this key.
+// The client reads it on each request so it's always fresh after login.
+const _TOKEN_KEY = "clevis:token"
+
+function getAuthHeaders(): Record<string, string> {
+  if (typeof window === "undefined") return {}
+  const token = localStorage.getItem(_TOKEN_KEY)
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+// ── HTTP helpers ──────────────────────────────────────────────────────────────
+
+async function handleResponse<T>(res: Response): Promise<T> {
   const json = await res.json().catch(() => null)
+  if (res.status === 401) {
+    // Clear stale token and let the auth guard redirect to /login
+    if (typeof window !== "undefined") localStorage.removeItem(_TOKEN_KEY)
+    window.dispatchEvent(new Event("clevis:unauthorized"))
+  }
   if (!res.ok) throw new Error((json as { detail?: string } | null)?.detail ?? `Request failed: ${res.status}`)
   return json as T
 }
 
+async function post<T>(path: string, body: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getAuthHeaders(), ...extraHeaders },
+    body: JSON.stringify(body),
+  })
+  return handleResponse<T>(res)
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
   })
-  const json = await res.json().catch(() => null)
-  if (!res.ok) throw new Error((json as { detail?: string } | null)?.detail ?? `Request failed: ${res.status}`)
-  return json as T
+  return handleResponse<T>(res)
 }
 
 async function put<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify(body),
   })
-  const json = await res.json().catch(() => null)
-  if (!res.ok) throw new Error((json as { detail?: string } | null)?.detail ?? `Request failed: ${res.status}`)
-  return json as T
+  return handleResponse<T>(res)
 }
 
 async function del(path: string): Promise<void> {
-  const res = await fetch(`${BASE}${path}`, { method: "DELETE" })
+  const res = await fetch(`${BASE}${path}`, {
+    method: "DELETE",
+    headers: { ...getAuthHeaders() },
+  })
   if (!res.ok) {
     const json = await res.json().catch(() => ({}))
     throw new Error((json as { detail?: string }).detail ?? `Request failed: ${res.status}`)
   }
 }
+
+// ── Check value normalization ─────────────────────────────────────────────────
 
 function normalizeCheckValue(id: string, raw: unknown): CheckValue {
   if (id === "organization_members_mfa_required") {
@@ -59,6 +87,8 @@ function normalizeCheckValue(id: string, raw: unknown): CheckValue {
   }
   return null
 }
+
+// ── API surface ───────────────────────────────────────────────────────────────
 
 export const api = {
   analytics: {
@@ -77,10 +107,7 @@ export const api = {
       owner: string,
       repo: string,
       body: { token: string; actor: string; dry_run: boolean; key?: string; ref?: string },
-    ) =>
-      post<CacheClearResponse>(`/repos/${owner}/${repo}/actions-caches/clear`, body, {
-        "X-Role": ROLE,
-      }),
+    ) => post<CacheClearResponse>(`/repos/${owner}/${repo}/actions-caches/clear`, body),
   },
   jobs: {
     list: () => get<JobOut[]>("/jobs"),
@@ -96,5 +123,20 @@ export const api = {
     resolve: (org: string) =>
       post<{ token: string }>("/tokens/resolve", { org }),
     delete: (org: string) => del(`/tokens/${encodeURIComponent(org)}`),
+  },
+  config: {
+    getAll: () => get<Record<string, string>>("/config"),
+    update: (key: string, value: string) =>
+      put<Record<string, string>>(`/config/${encodeURIComponent(key)}`, { value }),
+  },
+  auth: {
+    setupRequired: () => get<{ setup_required: boolean }>("/auth/setup-required"),
+    setup: (email: string, password: string, name?: string) =>
+      post<{ access_token: string; user: { id: number; email: string; name: string | null; is_owner: boolean } }>(
+        "/auth/setup",
+        { email, password, name },
+      ),
+    patchMe: (name: string) =>
+      put<{ id: number; email: string; name: string | null; is_owner: boolean }>("/auth/me", { name }),
   },
 }

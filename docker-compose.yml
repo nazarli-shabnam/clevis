@@ -69,7 +69,6 @@ services:
       args:
         # NEXT_PUBLIC_* vars must be available at build time
         NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE}
-        NEXT_PUBLIC_DEFAULT_ROLE: ${NEXT_PUBLIC_DEFAULT_ROLE:-viewer}
     env_file:
       - .env
     depends_on:

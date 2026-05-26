@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 
-if [ -z "$DB_USER" ] || [ -z "$DB_NAME" ] || [ -z "$DB_PASSWORD" ]; then
-  echo "ERROR: DB_USER, DB_NAME, and DB_PASSWORD must all be set in .env" >&2
+if [ -z "$DB_USER" ] || [ -z "$DB_NAME" ] || [ -z "$DB_PASSWORD" ] || [ -z "$JOB_SECRET_KEY" ]; then
+  echo "ERROR: DB_USER, DB_NAME, DB_PASSWORD, and JOB_SECRET_KEY must all be set" >&2
   exit 1
 fi
 
