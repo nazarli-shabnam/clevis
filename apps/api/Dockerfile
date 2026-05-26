@@ -7,6 +7,6 @@ COPY apps/api/alembic ./alembic
 COPY apps/api/alembic.ini .
 COPY apps/api/entrypoint.sh .
 COPY packages/checks /app/packages/checks
-ENV PYTHONPATH=/app:/app/packages/checks/src
+RUN pip install --no-cache-dir /app/packages/checks
 RUN chmod +x entrypoint.sh
 ENTRYPOINT ["./entrypoint.sh"]
