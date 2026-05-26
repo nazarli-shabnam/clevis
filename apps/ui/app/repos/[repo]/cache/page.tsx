@@ -29,7 +29,13 @@ export default function CachePage() {
   })
 
   useEffect(() => {
-    if (owner) resolveMutation.mutate(owner)
+    if (owner) {
+      // Clear immediately so a stale token from a previous owner never lingers
+      // while the resolve request is in-flight or when it 404s.
+      setToken("")
+      setTokenSaved(false)
+      resolveMutation.mutate(owner)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner])
 
