@@ -1,7 +1,7 @@
+export const metadata = { title: "Pull Requests · clevis" }
+
 import { PageHeader } from "@/components/page-header"
 import { EmptyStatePage } from "@/components/empty-state"
-
-export const metadata = { title: "Pull Requests · clevis" }
 
 export default function PullRequestsPage() {
   return (

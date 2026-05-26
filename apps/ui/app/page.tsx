@@ -1,13 +1,18 @@
+"use client"
+
 import Link from "next/link"
+import { useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { StatCard } from "@/components/stat-card"
+import { ActivityList } from "@/components/activity-list"
 import { ArrowRight } from "lucide-react"
+import { api } from "@/lib/api/client"
 
 const stats = [
-  { label: "Repositories", value: "—" },
-  { label: "Open PRs",     value: "—" },
+  { label: "Repositories",   value: "—" },
+  { label: "Open PRs",       value: "—" },
   { label: "Security Score", value: "—" },
-  { label: "Team Members", value: "—" },
+  { label: "Team Members",   value: "—" },
 ]
 
 const quickActions = [
@@ -17,6 +22,12 @@ const quickActions = [
 ]
 
 export default function OverviewPage() {
+  const { data: jobs = [], isLoading } = useQuery({
+    queryKey: ["jobs"],
+    queryFn: api.jobs.list,
+    refetchInterval: 15_000,
+  })
+
   return (
     <>
       <PageHeader title="Overview" description="Your GitHub organization at a glance." />
@@ -32,11 +43,7 @@ export default function OverviewPage() {
           <div className="px-4 py-3 border-b border-border">
             <span className="section-label">Recent Activity</span>
           </div>
-          <div className="px-4 py-8">
-            <p className="text-sm text-muted-foreground font-mono">
-              — no activity yet
-            </p>
-          </div>
+          <ActivityList jobs={jobs} isLoading={isLoading} limit={5} />
         </div>
 
         <div className="bg-card border border-border">

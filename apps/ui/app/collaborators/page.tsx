@@ -1,3 +1,5 @@
+export const metadata = { title: "Collaborators · clevis" }
+
 import { PageHeader } from "@/components/page-header"
 import { EmptyState } from "@/components/empty-state"
 import { Users } from "lucide-react"
