@@ -18,6 +18,10 @@ RUN npm run build
 FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+# Bind to all interfaces so Traefik can reach the server via the Docker network.
+# Without this Next.js standalone defaults to localhost (127.0.0.1), which is
+# unreachable from other containers.
+ENV HOSTNAME=0.0.0.0
 
 # outputFileTracingRoot resolves to "/" in Docker, so Next.js mirrors the full
 # path and nests standalone output under app/ (i.e. server.js is at
