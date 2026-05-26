@@ -14,10 +14,9 @@ while _root != _root.parent:
 
 
 class Settings(BaseSettings):
+    # Secrets only — github_api_base and worker_poll_seconds are read from app_config table.
     database_url: SecretStr
     job_secret_key: SecretStr
-    github_api_base: str
-    worker_poll_seconds: int
 
     model_config = SettingsConfigDict(env_file=_env_file, extra="ignore")
 

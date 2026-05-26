@@ -1,10 +1,11 @@
 from checks.runner import run_all_checks
 
-from src.core.config import settings
+from src.core.app_config import get_config
 
 
 def get_overview(owner: str, token: str) -> dict:
-    report = run_all_checks(owner=owner, token=token, base_url=settings.github_api_base)
+    base_url = get_config("github_api_base", "https://api.github.com")
+    report = run_all_checks(owner=owner, token=token, base_url=base_url)
     checks = report["checks"]
     failed = [c for c in checks if c["status"] == "fail"]
     score = 100 - int((len(failed) / max(1, len(checks))) * 100)

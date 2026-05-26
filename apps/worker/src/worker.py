@@ -14,13 +14,25 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-SLEEP = settings.worker_poll_seconds
-BASE = settings.github_api_base
 # psycopg.connect() expects plain postgresql://, not the SQLAlchemy +psycopg dialect prefix
 _DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg://", "postgresql://")
 
 
+def _read_app_config(key: str, default: str) -> str:
+    """Read a single value from app_config. Falls back to default on any error."""
+    try:
+        with psycopg.connect(_DB_URL) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT value FROM app_config WHERE key = %s", (key,))
+                row = cur.fetchone()
+        return row[0] if row else default
+    except Exception as exc:
+        log.warning("Could not read app_config[%r]: %s; using default %r", key, exc, default)
+        return default
+
+
 def process_job(conn: psycopg.Connection, job_id: int, payload_raw: str) -> None:
+    base = _read_app_config("github_api_base", "https://api.github.com")
     try:
         payload = json.loads(payload_raw)
         owner, repo = payload["owner"], payload["repo"]
@@ -33,7 +45,7 @@ def process_job(conn: psycopg.Connection, job_id: int, payload_raw: str) -> None
         }
         with httpx.Client(timeout=20) as client:
             resp = client.delete(
-                f"{BASE}/repos/{owner}/{repo}/actions/caches",
+                f"{base}/repos/{owner}/{repo}/actions/caches",
                 headers=headers,
                 params=params,
             )
@@ -57,8 +69,11 @@ def process_job(conn: psycopg.Connection, job_id: int, payload_raw: str) -> None
 
 
 def run() -> None:
-    log.info("worker started, polling every %ds", SLEEP)
+    poll_seconds = int(_read_app_config("worker_poll_seconds", "5"))
+    log.info("worker started, polling every %ds", poll_seconds)
     while True:
+        # Re-read poll interval each cycle so changes in settings take effect without restart
+        poll_seconds = int(_read_app_config("worker_poll_seconds", "5"))
         try:
             with psycopg.connect(_DB_URL) as conn:
                 with conn.cursor() as cur:
@@ -80,11 +95,11 @@ def run() -> None:
                     conn.commit()
                     process_job(conn, *row)
         except psycopg.OperationalError:
-            log.error("database connection failed, retrying in %ds", SLEEP)
+            log.error("database connection failed, retrying in %ds", poll_seconds)
         except Exception as error:
             log.error("worker poll error: %s", type(error).__name__)
 
-        time.sleep(SLEEP)
+        time.sleep(poll_seconds)
 
 
 if __name__ == "__main__":
