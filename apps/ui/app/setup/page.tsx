@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Loader2 } from "lucide-react"
 
 export default function SetupPage() {
-  const { user, login } = useAuth()
+  const { user, setSession } = useAuth()
   const router = useRouter()
 
   const [name, setName] = useState("")
@@ -45,11 +45,8 @@ export default function SetupPage() {
 
     setIsSubmitting(true)
     try {
-      const { access_token } = await api.auth.setup(email, password, name || undefined)
-      // Store token then trigger login state via context
-      localStorage.setItem("clevis:token", access_token)
-      // Re-use login to populate auth context properly
-      await login(email, password)
+      const { access_token, user: newUser } = await api.auth.setup(email, password, name || undefined)
+      setSession(access_token, newUser)
       router.replace("/")
     } catch (err) {
       setError(err instanceof Error ? err.message : "Setup failed")

@@ -16,6 +16,7 @@ interface AuthContextValue {
   login(email: string, password: string): Promise<void>
   logout(): void
   updateUser(u: Partial<AuthUser>): void
+  setSession(jwtToken: string, authUser: AuthUser): void
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -75,8 +76,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser((prev) => (prev ? { ...prev, ...patch } : prev))
   }, [])
 
+  const setSession = useCallback((jwtToken: string, authUser: AuthUser) => {
+    localStorage.setItem(_TOKEN_KEY, jwtToken)
+    setToken(jwtToken)
+    setUser(authUser)
+  }, [])
+
   return (
-    <AuthContext.Provider value={{ user, token, isLoading, login, logout, updateUser }}>
+    <AuthContext.Provider value={{ user, token, isLoading, login, logout, updateUser, setSession }}>
       {children}
     </AuthContext.Provider>
   )
