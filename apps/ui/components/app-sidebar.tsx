@@ -3,7 +3,7 @@
 import { usePathname } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import { Settings, Check, LogOut } from "lucide-react"
+import { Settings, Check, LogOut, UserPlus } from "lucide-react"
 import {
   Sidebar,
   SidebarContent,
@@ -96,7 +96,7 @@ function ProfileDropdown({
         </div>
       </div>
 
-      {/* Settings button */}
+      {/* Settings + Invite members buttons */}
       <div className="px-1.5 pb-1.5 flex gap-1.5">
         <Link
           href="/settings"
@@ -106,6 +106,14 @@ function ProfileDropdown({
           <Settings className="size-3" />
           Settings
         </Link>
+        <button
+          disabled
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-[0.75rem] font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground bg-sidebar-accent/60 hover:bg-sidebar-accent border border-sidebar-border/60 transition-colors flex-1 justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Coming soon"
+        >
+          <UserPlus className="size-3" />
+          Invite members
+        </button>
       </div>
 
       {/* Sign out */}
