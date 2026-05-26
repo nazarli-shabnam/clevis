@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 
-if [ -z "$DB_USER" ] || [ -z "$DB_NAME" ] || [ -z "$DB_PASSWORD" ] || [ -z "$AUTH_SECRET" ]; then
-  echo "ERROR: DB_USER, DB_NAME, DB_PASSWORD, and AUTH_SECRET must all be set" >&2
+if [ -z "$DB_USER" ] || [ -z "$DB_NAME" ] || [ -z "$DB_PASSWORD" ] || [ -z "$JOB_SECRET_KEY" ]; then
+  echo "ERROR: DB_USER, DB_NAME, DB_PASSWORD, and JOB_SECRET_KEY must all be set" >&2
   exit 1
 fi
 
