@@ -72,10 +72,12 @@ export default function SecurityPage() {
   })
 
   useEffect(() => {
+    // Clear immediately on every owner change so a stale token from a previous
+    // org never lingers while resolve is in-flight or when it 404s.
+    setToken("")
+    setTokenSaved(false)
     if (owner.trim().length > 2) {
       resolveMutation.mutate(owner.trim())
-    } else {
-      setTokenSaved(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner])
