@@ -7,6 +7,6 @@ sqlalchemy==2.0.41
 psycopg[binary]==3.2.9
 alembic==1.16.1
 cryptography==44.0.2
-passlib[bcrypt]==1.7.4
+bcrypt==4.2.1
 PyJWT==2.10.1
 email-validator==2.2.0
