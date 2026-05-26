@@ -59,7 +59,11 @@ def read_all() -> dict[str, str]:
 
 
 def set_config(key: str, value: str) -> None:
-    """Persist *key* → *value* and invalidate its cache entry."""
+    """Persist *key* → *value* and invalidate its cache entry.
+
+    Uses an upsert so a missing row (e.g. manually deleted) is re-created rather
+    than silently ignored by a plain UPDATE.
+    """
     if key not in _ACCEPTED_KEYS:
         raise ValueError(f"Unknown config key: {key!r}")
 
@@ -68,7 +72,8 @@ def set_config(key: str, value: str) -> None:
     with SessionLocal() as db:
         db.execute(
             text(
-                "UPDATE app_config SET value = :value, updated_at = NOW() WHERE key = :key"
+                "INSERT INTO app_config (key, value, updated_at) VALUES (:key, :value, NOW()) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()"
             ),
             {"key": key, "value": value},
         )
@@ -78,11 +83,20 @@ def set_config(key: str, value: str) -> None:
 
 
 def get_cors_origins_at_startup() -> list[str]:
-    """Read cors_origins from DB at startup; falls back to ['*'] on any error."""
+    """Read cors_origins from DB at startup; falls back to ['*'] on any error.
+
+    The ['*'] fallback is intentional: it matches the migration-seeded default,
+    so the app remains functional if the DB value is temporarily unreadable.
+    A parse failure (invalid JSON stored in DB) is logged as an error.
+    """
     try:
         raw = get_config("cors_origins", '["*"]')
         return json.loads(raw)
-    except Exception:
+    except json.JSONDecodeError as exc:
+        logger.error("cors_origins is not valid JSON (%s); falling back to [\"*\"]", exc)
+        return ["*"]
+    except Exception as exc:
+        logger.error("Could not read cors_origins at startup (%s); falling back to [\"*\"]", exc)
         return ["*"]
 
 

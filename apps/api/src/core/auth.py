@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from src.core.config import settings
@@ -18,7 +18,9 @@ from src.core.config import settings
 _ALGORITHM = "HS256"
 _TOKEN_EXPIRE_DAYS = 30
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
+# HTTPBearer correctly models "send Bearer token in Authorization header".
+# OAuth2PasswordBearer would misrepresent /auth/login as a form-encoded OAuth2 flow.
+_http_bearer = HTTPBearer(auto_error=False)
 
 
 class UserOut(BaseModel):
@@ -51,16 +53,26 @@ def decode_access_token(token: str) -> dict:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
 
-def require_auth(token: str | None = Depends(oauth2_scheme)) -> UserOut:
+def require_auth(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+) -> UserOut:
     """Dependency: validates JWT and returns the current user. Raises 401 if missing/invalid."""
-    if not token:
+    if not credentials:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    payload = decode_access_token(token)
+    payload = decode_access_token(credentials.credentials)
+    sub = payload.get("sub")
+    email = payload.get("email")
+    if not sub or not email:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token claims")
+    try:
+        user_id = int(sub)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token claims")
     return UserOut(
-        id=int(payload["sub"]),
-        email=payload["email"],
+        id=user_id,
+        email=email,
         name=payload.get("name"),
-        is_owner=payload.get("is_owner", False),
+        is_owner=bool(payload.get("is_owner", False)),
     )
 
 
