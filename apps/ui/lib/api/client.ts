@@ -130,8 +130,7 @@ export const api = {
       put<Record<string, string>>(`/config/${encodeURIComponent(key)}`, { value }),
   },
   auth: {
-    setupRequired: () =>
-      fetch(`${BASE}/auth/setup-required`).then((r) => r.json() as Promise<{ setup_required: boolean }>),
+    setupRequired: () => get<{ setup_required: boolean }>("/auth/setup-required"),
     setup: (email: string, password: string, name?: string) =>
       post<{ access_token: string; user: { id: number; email: string; name: string | null; is_owner: boolean } }>(
         "/auth/setup",
