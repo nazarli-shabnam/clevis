@@ -2,34 +2,41 @@
 
 import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Trash2, Plus, Loader2, Check } from "lucide-react"
+import { Trash2, Plus, Loader2, Check, Save } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api/client"
+import { useAuth } from "@/lib/auth-context"
 import type { SavedTokenMeta } from "@/lib/api/types"
 
 // ── Profile section ──────────────────────────────────────────────────────────
 
 function ProfileSection() {
-  const [name, setName] = useState("")
-  const [email, setEmail] = useState("")
+  const { user, updateUser } = useAuth()
+  const [name, setName] = useState(user?.name || "")
   const [org, setOrg] = useState("")
   const [saved, setSaved] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
 
   useEffect(() => {
-    setName(localStorage.getItem("profile_name") || "")
-    setEmail(localStorage.getItem("profile_email") || "")
+    setName(user?.name || "")
     setOrg(localStorage.getItem("default_org") || "")
-  }, [])
+  }, [user?.name])
 
-  function save() {
-    localStorage.setItem("profile_name", name.trim() || "Guest")
-    localStorage.setItem("profile_email", email.trim())
-    localStorage.setItem("default_org", org.trim())
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
-    window.dispatchEvent(new Event("profile-updated"))
+  async function save() {
+    setIsSaving(true)
+    try {
+      if (name.trim() !== (user?.name || "")) {
+        const updated = await api.auth.patchMe(name.trim())
+        updateUser({ name: updated.name })
+      }
+      localStorage.setItem("default_org", org.trim())
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   return (
@@ -48,12 +55,8 @@ function ProfileSection() {
         </div>
         <div>
           <label className="text-xs font-medium text-foreground block mb-1.5">Email</label>
-          <Input
-            placeholder="you@example.com"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
+          <Input value={user?.email || ""} disabled className="opacity-60 cursor-not-allowed" />
+          <p className="text-xs text-muted-foreground mt-1">Email cannot be changed.</p>
         </div>
         <div>
           <label className="text-xs font-medium text-foreground block mb-1.5">Default organization</label>
@@ -66,8 +69,8 @@ function ProfileSection() {
             Pre-fills the org field on Health &amp; Security and other pages.
           </p>
         </div>
-        <Button onClick={save} className="mt-1 w-fit">
-          {saved ? <><Check className="size-3.5" />Saved</> : "Save profile"}
+        <Button onClick={save} disabled={isSaving} className="mt-1 w-fit">
+          {saved ? <><Check className="size-3.5" />Saved</> : isSaving ? <><Loader2 className="size-3.5 animate-spin" />Saving…</> : "Save profile"}
         </Button>
       </div>
     </div>
@@ -113,7 +116,6 @@ function SavedTokensSection() {
         )}
       </div>
 
-      {/* Token list */}
       {isLoading ? (
         <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="size-3.5 animate-spin" /> Loading…
@@ -160,7 +162,6 @@ function SavedTokensSection() {
         </div>
       )}
 
-      {/* Add new token */}
       <div className="border-t border-border p-4">
         <p className="text-xs font-medium text-foreground mb-3">Add token</p>
         <div className="grid gap-2 sm:grid-cols-3">
@@ -201,15 +202,113 @@ function SavedTokensSection() {
   )
 }
 
+// ── Instance configuration section (owner only) ──────────────────────────────
+
+const CONFIG_FIELDS: { key: string; label: string; description: string; type?: string }[] = [
+  { key: "github_api_base",     label: "GitHub API Base",         description: "Use a different value for GitHub Enterprise." },
+  { key: "cors_origins",        label: "Allowed Origins (JSON array)", description: "Lock down to your UI domain in production. Restart required." },
+  { key: "worker_poll_seconds", label: "Worker Poll Interval",    description: "Seconds between job queue polls.", type: "number" },
+  { key: "debug",               label: "Debug Mode",              description: "Enables /docs and /redoc. Restart required.", type: "toggle" },
+]
+
+function InstanceConfigSection() {
+  const { data: config, isLoading } = useQuery<Record<string, string>>({
+    queryKey: ["config"],
+    queryFn: api.config.getAll,
+  })
+  const qc = useQueryClient()
+  const [saving, setSaving] = useState<string | null>(null)
+  const [values, setValues] = useState<Record<string, string>>({})
+  const [errors, setErrors] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    if (config) setValues(config)
+  }, [config])
+
+  async function saveKey(key: string) {
+    setSaving(key)
+    setErrors((prev) => ({ ...prev, [key]: "" }))
+    try {
+      await api.config.update(key, values[key] ?? "")
+      qc.invalidateQueries({ queryKey: ["config"] })
+    } catch (err) {
+      setErrors((prev) => ({ ...prev, [key]: err instanceof Error ? err.message : "Save failed" }))
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="bg-card border border-border px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="size-3.5 animate-spin" /> Loading config…
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-card border border-border">
+      <div className="px-4 py-3 border-b border-border">
+        <span className="section-label">Instance configuration</span>
+        <p className="text-xs text-muted-foreground mt-0.5">Visible to instance owner only.</p>
+      </div>
+      <div className="divide-y divide-border">
+        {CONFIG_FIELDS.map((field) => (
+          <div key={field.key} className="p-4 max-w-lg">
+            <label className="text-xs font-medium text-foreground block mb-1">{field.label}</label>
+            {field.type === "toggle" ? (
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setValues((v) => ({ ...v, [field.key]: v[field.key] === "true" ? "false" : "true" }))}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full border transition-colors ${
+                    values[field.key] === "true" ? "bg-primary border-primary" : "bg-muted border-border"
+                  }`}
+                >
+                  <span className={`inline-block size-3.5 rounded-full bg-white transition-transform ${
+                    values[field.key] === "true" ? "translate-x-4" : "translate-x-0.5"
+                  }`} />
+                </button>
+                <span className="text-xs text-muted-foreground">{values[field.key] === "true" ? "On" : "Off"}</span>
+                <Button size="sm" variant="outline" onClick={() => saveKey(field.key)} disabled={saving === field.key}>
+                  {saving === field.key ? <Loader2 className="size-3 animate-spin" /> : <Save className="size-3" />}
+                </Button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Input
+                  value={values[field.key] ?? ""}
+                  onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
+                  type={field.type === "number" ? "number" : "text"}
+                  className="font-mono text-xs"
+                />
+                <Button size="sm" variant="outline" onClick={() => saveKey(field.key)} disabled={saving === field.key}>
+                  {saving === field.key ? <Loader2 className="size-3 animate-spin" /> : "Save"}
+                </Button>
+              </div>
+            )}
+            {errors[field.key] && (
+              <p className="text-xs text-destructive mt-1">{errors[field.key]}</p>
+            )}
+            <p className="text-xs text-muted-foreground mt-1">{field.description}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
+  const { user } = useAuth()
+
   return (
     <>
       <PageHeader title="Settings" description="Configure your workspace." />
       <div className="flex flex-col gap-4">
         <ProfileSection />
         <SavedTokensSection />
+        {user?.is_owner && <InstanceConfigSection />}
       </div>
     </>
   )
