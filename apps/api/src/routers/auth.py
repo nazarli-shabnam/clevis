@@ -10,11 +10,10 @@ Endpoints:
 """
 
 from datetime import datetime
-
 import logging
 
+import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, status
-from passlib.context import CryptContext
 from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy.orm import Session
 
@@ -24,9 +23,15 @@ from src.core.db import User, get_db
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 _MIN_PASSWORD_LEN = 12
+
+
+def _hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+def _verify_password(password: str, password_hash: str) -> bool:
+    return bcrypt.checkpw(password.encode(), password_hash.encode())
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -88,7 +93,7 @@ def setup(body: SetupRequest, db: Session = Depends(get_db)):
     user = User(
         email=body.email,
         name=body.name,
-        password_hash=_pwd_ctx.hash(body.password),
+        password_hash=_hash_password(body.password),
         is_owner=True,
     )
     db.add(user)
@@ -102,7 +107,7 @@ def setup(body: SetupRequest, db: Session = Depends(get_db)):
 def login(body: LoginRequest, db: Session = Depends(get_db)):
     """Returns a JWT on valid credentials. Always returns 401 on failure (no field leaking)."""
     user = db.query(User).filter(User.email == body.email).first()
-    if not user or not _pwd_ctx.verify(body.password, user.password_hash):
+    if not user or not _verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = create_access_token(user.id, user.email, user.is_owner)
     return {"access_token": token, "user": UserOut(id=user.id, email=user.email, name=user.name, is_owner=user.is_owner)}
