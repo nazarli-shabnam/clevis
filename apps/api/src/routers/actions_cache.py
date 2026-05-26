@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
 from src.schemas.cache import CacheClearInput, CacheClearResponse, CacheListInput, CacheListResponse
 from src.services.cache_service import clear
 from src.services.github_client import GitHubClient
-from src.services.rbac import require_role
 
 router = APIRouter()
 
@@ -18,5 +18,11 @@ def list_caches(owner: str, repo: str, payload: CacheListInput):
 
 
 @router.post("/{owner}/{repo}/actions-caches/clear", response_model=CacheClearResponse)
-def clear_caches(owner: str, repo: str, payload: CacheClearInput, db: Session = Depends(get_db), _role: str = Depends(require_role("admin"))):
+def clear_caches(
+    owner: str,
+    repo: str,
+    payload: CacheClearInput,
+    db: Session = Depends(get_db),
+    _user: UserOut = Depends(require_auth),
+):
     return clear(db, owner, repo, payload)
