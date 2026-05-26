@@ -11,7 +11,7 @@ router = APIRouter()
 
 
 @router.post("/{owner}/{repo}/actions-caches", response_model=CacheListResponse)
-def list_caches(owner: str, repo: str, payload: CacheListInput):
+def list_caches(owner: str, repo: str, payload: CacheListInput, _user: UserOut = Depends(require_auth)):
     client = GitHubClient(payload.token.get_secret_value())
     data = client.request("GET", f"/repos/{owner}/{repo}/actions/caches")
     return {"repository": f"{owner}/{repo}", "total": data.get("total_count", 0), "actions_caches": data.get("actions_caches", [])}

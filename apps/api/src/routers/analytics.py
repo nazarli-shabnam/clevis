@@ -2,8 +2,9 @@ import logging
 
 import anyio
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from src.core.auth import UserOut, require_auth
 from src.schemas.analytics import AnalyticsInput, AnalyticsResponse
 from src.services.analytics_service import get_overview
 
@@ -13,7 +14,7 @@ router = APIRouter()
 
 
 @router.post("/overview", response_model=AnalyticsResponse)
-async def analytics_overview(payload: AnalyticsInput):
+async def analytics_overview(payload: AnalyticsInput, _user: UserOut = Depends(require_auth)):
     try:
         result = await anyio.to_thread.run_sync(
             lambda: get_overview(owner=payload.owner, token=payload.token.get_secret_value())
