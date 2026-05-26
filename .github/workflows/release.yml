@@ -51,6 +51,10 @@ jobs:
           context: apps/ui
           file: apps/ui/Dockerfile
           push: true
+          # NEXT_PUBLIC_API_BASE is baked at build time — set via repo secret
+          build-args: |
+            NEXT_PUBLIC_API_BASE=${{ secrets.NEXT_PUBLIC_API_BASE }}
+            NEXT_PUBLIC_DEFAULT_ROLE=${{ secrets.NEXT_PUBLIC_DEFAULT_ROLE || 'viewer' }}
           tags: |
             ghcr.io/${{ github.repository }}-ui:latest
             ghcr.io/${{ github.repository }}-ui:${{ github.ref_name }}

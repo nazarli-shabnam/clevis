@@ -1,4 +1,4 @@
-import type { AnalyticsOverviewResponse, AuditLogOut, CacheListResponse, CacheClearResponse, JobOut } from "./types"
+import type { AnalyticsOverviewResponse, AuditLogOut, CacheListResponse, CacheClearResponse, JobOut, SavedTokenMeta } from "./types"
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
 // Role sent in X-Role header for privileged operations (e.g. cache clear).
@@ -25,6 +25,25 @@ async function get<T>(path: string): Promise<T> {
   return json as T
 }
 
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  const json = await res.json()
+  if (!res.ok) throw new Error((json as { detail?: string }).detail ?? `Request failed: ${res.status}`)
+  return json as T
+}
+
+async function del(path: string): Promise<void> {
+  const res = await fetch(`${BASE}${path}`, { method: "DELETE" })
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}))
+    throw new Error((json as { detail?: string }).detail ?? `Request failed: ${res.status}`)
+  }
+}
+
 export const api = {
   analytics: {
     overview: (owner: string, token: string) =>
@@ -48,5 +67,13 @@ export const api = {
   audit: {
     list: (action?: string) =>
       get<AuditLogOut[]>(`/audit${action ? `?action=${encodeURIComponent(action)}` : ""}`),
+  },
+  tokens: {
+    list: () => get<SavedTokenMeta[]>("/tokens"),
+    upsert: (org: string, token: string, label?: string) =>
+      put<SavedTokenMeta>(`/tokens/${encodeURIComponent(org)}`, { token, label }),
+    resolve: (org: string) =>
+      post<{ token: string }>("/tokens/resolve", { org }),
+    delete: (org: string) => del(`/tokens/${encodeURIComponent(org)}`),
   },
 }
