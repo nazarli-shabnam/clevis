@@ -70,10 +70,10 @@
   --border:       #1c1c1c;
   --border-muted: #141414;
 
-  /* Brand accent — amber, not purple */
-  --primary:            #f59e0b;
-  --primary-foreground: #0a0a0a;
-  --ring:               #f59e0b;
+  /* Brand accent — clean blue */
+  --primary:            #60a5fa;
+  --primary-foreground: #030712;
+  --ring:               #60a5fa;
 
   /* Semantic */
   --accent:             #22c55e;
@@ -84,12 +84,12 @@
   /* Sidebar */
   --sidebar:                    #060606;
   --sidebar-foreground:         #f5f5f5;
-  --sidebar-primary:            #f59e0b;
-  --sidebar-primary-foreground: #0a0a0a;
+  --sidebar-primary:            #60a5fa;
+  --sidebar-primary-foreground: #030712;
   --sidebar-accent:             #141414;
   --sidebar-accent-foreground:  #f5f5f5;
   --sidebar-border:             #1a1a1a;
-  --sidebar-ring:               #f59e0b;
+  --sidebar-ring:               #60a5fa;
 
   /* Popover / card foreground */
   --card-foreground:      #f5f5f5;
@@ -101,7 +101,7 @@
   --input:                #111111;
 
   /* Charts */
-  --chart-1: #f59e0b;   /* amber  — primary data */
+  --chart-1: #60a5fa;   /* blue   — primary data */
   --chart-2: #22c55e;   /* green  — positive */
   --chart-3: #38bdf8;   /* sky    — secondary */
   --chart-4: #ef4444;   /* red    — negative */
