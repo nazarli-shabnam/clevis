@@ -14,7 +14,7 @@ const inter = Inter({
 })
 
 export const metadata = {
-  title: "clevis",
+  title: "Overview · clevis",
   description: "GitHub analytics and cache management",
 }
 

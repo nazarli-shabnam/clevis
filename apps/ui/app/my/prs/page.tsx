@@ -1,7 +1,7 @@
+export const metadata = { title: "My PRs · clevis" }
+
 import { PageHeader } from "@/components/page-header"
 import { EmptyStatePage } from "@/components/empty-state"
-
-export const metadata = { title: "My PRs · clevis" }
 
 export default function MyPRsPage() {
   return (
