@@ -6,11 +6,14 @@
 import { useParams } from "next/navigation"
 import { useEffect, useState } from "react"
 import { useMutation } from "@tanstack/react-query"
+import Link from "next/link"
 import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Eye, KeyRound, Loader2, Trash2 } from "lucide-react"
 import { api } from "@/lib/api/client"
+import { formatBytes, relativeTime, classifyStaleness, stalenessColor } from "@/lib/format"
 import type { CacheEntry } from "@/lib/api/types"
 
 export default function CachePage() {
@@ -30,8 +33,6 @@ export default function CachePage() {
 
   useEffect(() => {
     if (owner) {
-      // Clear immediately so a stale token from a previous owner never lingers
-      // while the resolve request is in-flight or when it 404s.
       setToken("")
       setTokenSaved(false)
       resolveMutation.mutate(owner)
@@ -44,20 +45,6 @@ export default function CachePage() {
     onSuccess: () => setTokenSaved(true),
   })
 
-  function formatBytes(bytes: number) {
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  }
-
-  function formatDate(iso: string) {
-    return new Date(iso).toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    })
-  }
-
   const listMutation = useMutation({
     mutationFn: () => api.cache.list(owner, repo, token),
   })
@@ -69,12 +56,14 @@ export default function CachePage() {
 
   const isLoading = listMutation.isPending || clearMutation.isPending
   const caches: CacheEntry[] = listMutation.data?.actions_caches ?? []
+  const totalBytes = caches.reduce((sum, c) => sum + c.size_in_bytes, 0)
 
   return (
     <>
       <PageHeader title="Actions Cache" description={`${owner}/${repo}`} />
 
       <div className="grid gap-4 lg:grid-cols-3">
+        {/* Config panel */}
         <div className="bg-card border border-border">
           <div className="px-4 py-3 border-b border-border">
             <span className="section-label">Configuration</span>
@@ -148,14 +137,47 @@ export default function CachePage() {
           </div>
         </div>
 
+        {/* Cache entries table */}
         <div className="bg-card border border-border lg:col-span-2">
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
             <span className="section-label">Cache entries</span>
-            {caches.length > 0 && (
-              <span className="stat-chip">{caches.length} total</span>
-            )}
+            <div className="flex items-center gap-2">
+              {caches.length > 0 && (
+                <>
+                  <span className="stat-chip">{formatBytes(totalBytes)}</span>
+                  <span className="stat-chip">{caches.length} total</span>
+                </>
+              )}
+            </div>
           </div>
-          {caches.length === 0 ? (
+
+          {listMutation.isPending ? (
+            /* Skeleton while loading */
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left text-muted-foreground font-medium px-4 py-2">Key</th>
+                    <th className="text-left text-muted-foreground font-medium px-4 py-2">Ref</th>
+                    <th className="text-right text-muted-foreground font-medium px-4 py-2">Size</th>
+                    <th className="text-right text-muted-foreground font-medium px-4 py-2">Created</th>
+                    <th className="text-right text-muted-foreground font-medium px-4 py-2">Last accessed</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <tr key={i}>
+                      <td className="px-4 py-3"><Skeleton className="h-3 w-36" /></td>
+                      <td className="px-4 py-3"><Skeleton className="h-3 w-20" /></td>
+                      <td className="px-4 py-3 text-right"><Skeleton className="h-3 w-12 ml-auto" /></td>
+                      <td className="px-4 py-3 text-right"><Skeleton className="h-3 w-16 ml-auto" /></td>
+                      <td className="px-4 py-3 text-right"><Skeleton className="h-3 w-20 ml-auto" /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : caches.length === 0 ? (
             <div className="px-4 py-8">
               <p className="text-sm text-muted-foreground font-mono">
                 — enter a token and click &ldquo;Load caches&rdquo; to list entries
@@ -170,24 +192,32 @@ export default function CachePage() {
                     <th className="text-left text-muted-foreground font-medium px-4 py-2">Ref</th>
                     <th className="text-right text-muted-foreground font-medium px-4 py-2">Size</th>
                     <th className="text-right text-muted-foreground font-medium px-4 py-2">Created</th>
+                    <th className="text-right text-muted-foreground font-medium px-4 py-2">Last accessed</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {caches.map((c) => (
-                    <tr
-                      key={c.id}
-                      className="hover:bg-muted/40 transition-colors"
-                    >
-                      <td className="px-4 py-2.5 font-mono text-foreground/80 max-w-[14rem] truncate">{c.key}</td>
-                      <td className="px-4 py-2.5 text-muted-foreground max-w-[8rem] truncate">{c.ref}</td>
-                      <td className="px-4 py-2.5 text-right font-mono text-muted-foreground tabular-nums">
-                        {formatBytes(c.size_in_bytes)}
-                      </td>
-                      <td className="px-4 py-2.5 text-right text-muted-foreground whitespace-nowrap">
-                        {formatDate(c.created_at)}
-                      </td>
-                    </tr>
-                  ))}
+                  {caches.map((c) => {
+                    const staleness = classifyStaleness(c.last_accessed_at)
+                    const { text: staleText, dot: staleDot } = stalenessColor[staleness]
+                    return (
+                      <tr key={c.id} className="hover:bg-muted/40 transition-colors">
+                        <td className="px-4 py-2.5 font-mono text-foreground/80 max-w-[14rem] truncate">{c.key}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground max-w-[8rem] truncate">{c.ref}</td>
+                        <td className="px-4 py-2.5 text-right font-mono text-muted-foreground tabular-nums">
+                          {formatBytes(c.size_in_bytes)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-muted-foreground whitespace-nowrap">
+                          {relativeTime(c.created_at)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                          <span className={`inline-flex items-center gap-1 font-mono text-[0.6875rem] ${staleText}`}>
+                            <span className={`inline-block size-1.5 rounded-full ${staleDot}`} />
+                            {relativeTime(c.last_accessed_at)}
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -195,6 +225,7 @@ export default function CachePage() {
         </div>
       </div>
 
+      {/* Clear result card */}
       {clearMutation.data && (
         <div className="bg-card border border-border mt-4">
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
@@ -204,9 +235,27 @@ export default function CachePage() {
             )}
           </div>
           <div className="p-4">
-            <pre className="font-mono text-xs text-muted-foreground leading-relaxed overflow-auto bg-muted/30 rounded-md p-3 border border-border/50">
-              {JSON.stringify(clearMutation.data, null, 2)}
-            </pre>
+            {clearMutation.data.dry_run ? (
+              <p className="text-sm text-yellow-400/80">
+                Dry run complete — no caches were deleted.
+              </p>
+            ) : clearMutation.data.job_id ? (
+              <div className="flex items-center gap-3">
+                <p className="text-sm text-green-400">
+                  Cache clear queued — Job #{clearMutation.data.job_id}
+                </p>
+                <Link
+                  href="/jobs"
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  View in Job Queue →
+                </Link>
+              </div>
+            ) : (
+              <pre className="font-mono text-xs text-muted-foreground leading-relaxed overflow-auto bg-muted/30 rounded-md p-3 border border-border/50">
+                {JSON.stringify(clearMutation.data, null, 2)}
+              </pre>
+            )}
           </div>
         </div>
       )}
