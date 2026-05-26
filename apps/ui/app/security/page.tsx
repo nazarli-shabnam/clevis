@@ -136,7 +136,7 @@ export default function SecurityPage() {
                 placeholder="e.g. octocat"
                 value={owner}
                 onChange={(e) => setOwner(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && owner && token && scan.mutate()}
+                onKeyDown={(e) => e.key === "Enter" && owner && token && !scan.isPending && scan.mutate()}
               />
             </div>
             <div>
@@ -154,7 +154,7 @@ export default function SecurityPage() {
                 value={token}
                 onChange={(e) => { setToken(e.target.value); setTokenSaved(false) }}
                 className="font-mono"
-                onKeyDown={(e) => e.key === "Enter" && owner && token && scan.mutate()}
+                onKeyDown={(e) => e.key === "Enter" && owner && token && !scan.isPending && scan.mutate()}
               />
             </div>
             <Button
