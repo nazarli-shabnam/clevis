@@ -1,3 +1,5 @@
+export const metadata = { title: "Automation · clevis" }
+
 import { PageHeader } from "@/components/page-header"
 import { EmptyState } from "@/components/empty-state"
 import { Zap } from "lucide-react"
