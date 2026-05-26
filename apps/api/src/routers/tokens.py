@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from src.core._crypto import decrypt_job_token, encrypt_job_token
 from src.core.config import settings
 from src.core.db import SavedToken, get_db
+from src.services.rbac import require_role
 
 router = APIRouter()
 
@@ -45,8 +46,11 @@ class VerifyTokenResponse(BaseModel):
 # ── routes ─────────────────────────────────────────────────────────────────
 
 @router.get("", response_model=list[TokenMeta])
-def list_tokens(db: Session = Depends(get_db)) -> list[TokenMeta]:
-    """Return metadata for all saved tokens (never the raw token)."""
+def list_tokens(
+    db: Session = Depends(get_db),
+    _role: str = Depends(require_role("analyst")),
+) -> list[TokenMeta]:
+    """Return metadata for all saved tokens (never the raw token). Requires analyst+."""
     rows = db.query(SavedToken).order_by(SavedToken.org).all()
     return [TokenMeta.model_validate(r) for r in rows]
 
@@ -56,8 +60,9 @@ def upsert_token(
     org: str,
     body: UpsertTokenRequest,
     db: Session = Depends(get_db),
+    _role: str = Depends(require_role("admin")),
 ) -> TokenMeta:
-    """Save or update the token for an org (encrypted at rest)."""
+    """Save or update the token for an org (encrypted at rest). Requires admin."""
     encrypted = encrypt_job_token(
         body.token.get_secret_value(),
         settings.job_secret_key.get_secret_value(),
@@ -78,8 +83,9 @@ def upsert_token(
 def resolve_token(
     body: VerifyTokenRequest,
     db: Session = Depends(get_db),
+    _role: str = Depends(require_role("admin")),
 ) -> VerifyTokenResponse:
-    """Decrypt and return the saved token for an org so the UI can pre-fill fields."""
+    """Decrypt and return the saved token for an org. Admin-only — returns raw secret."""
     row = db.query(SavedToken).filter_by(org=body.org).first()
     if not row:
         raise HTTPException(status_code=404, detail="No saved token for this org")
@@ -91,8 +97,12 @@ def resolve_token(
 
 
 @router.delete("/{org}", status_code=204)
-def delete_token(org: str, db: Session = Depends(get_db)) -> None:
-    """Remove a saved token."""
+def delete_token(
+    org: str,
+    db: Session = Depends(get_db),
+    _role: str = Depends(require_role("admin")),
+) -> None:
+    """Remove a saved token. Requires admin."""
     row = db.query(SavedToken).filter_by(org=org).first()
     if not row:
         raise HTTPException(status_code=404, detail="No saved token for this org")
