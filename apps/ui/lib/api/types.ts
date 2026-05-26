@@ -55,3 +55,10 @@ export interface AuditLogOut {
   payload: string
   created_at: string
 }
+
+export interface SavedTokenMeta {
+  org: string
+  label: string | null
+  created_at: string
+  updated_at: string
+}
