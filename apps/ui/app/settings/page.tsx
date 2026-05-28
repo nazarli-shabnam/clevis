@@ -22,7 +22,7 @@ function ProfileSection() {
   useEffect(() => {
     setName(user?.name || "")
     setOrg(localStorage.getItem("default_org") || "")
-  }, [user?.name])
+  }, [user])
 
   async function save() {
     setIsSaving(true)

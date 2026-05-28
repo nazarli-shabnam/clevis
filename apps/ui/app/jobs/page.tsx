@@ -1,5 +1,7 @@
 "use client"
 
+import { useEffect, useRef } from "react"
+import { useSearchParams } from "next/navigation"
 import { useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { EmptyStateInline } from "@/components/empty-state"
@@ -7,11 +9,23 @@ import { api } from "@/lib/api/client"
 import type { JobOut } from "@/lib/api/types"
 
 export default function JobsPage() {
+  const searchParams = useSearchParams()
+  const highlightId = Number(searchParams.get("id")) || null
+
   const { data: jobs = [], isLoading } = useQuery({
     queryKey: ["jobs"],
     queryFn: api.jobs.list,
     refetchInterval: 10_000,
   })
+
+  const highlightRef = useRef<HTMLTableRowElement>(null)
+
+  // Scroll the highlighted row into view once jobs load
+  useEffect(() => {
+    if (highlightRef.current) {
+      highlightRef.current.scrollIntoView({ block: "center", behavior: "smooth" })
+    }
+  }, [isLoading])
 
   const statusColor: Record<JobOut["status"], string> = {
     queued:     "text-muted-foreground",
@@ -51,21 +65,31 @@ export default function JobsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {jobs.map((job) => (
-                  <tr key={job.id} className="hover:bg-elevated transition-colors">
-                    <td className="px-4 py-2.5 font-mono text-muted-foreground">#{job.id}</td>
-                    <td className="px-4 py-2.5 text-foreground/80">{job.job_type}</td>
-                    <td className={`px-4 py-2.5 font-mono font-medium ${statusColor[job.status]}`}>
-                      {job.status}
-                    </td>
-                    <td className="px-4 py-2.5 text-muted-foreground max-w-[16rem] truncate">
-                      {job.result ?? "—"}
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-muted-foreground whitespace-nowrap">
-                      {new Date(job.created_at).toLocaleString()}
-                    </td>
-                  </tr>
-                ))}
+                {jobs.map((job) => {
+                  const isHighlighted = highlightId !== null && job.id === highlightId
+                  return (
+                    <tr
+                      key={job.id}
+                      ref={isHighlighted ? highlightRef : null}
+                      className={[
+                        "hover:bg-elevated transition-colors",
+                        isHighlighted ? "ring-1 ring-inset ring-primary/40 bg-primary/5" : "",
+                      ].join(" ")}
+                    >
+                      <td className="px-4 py-2.5 font-mono text-muted-foreground">#{job.id}</td>
+                      <td className="px-4 py-2.5 text-foreground/80">{job.job_type}</td>
+                      <td className={`px-4 py-2.5 font-mono font-medium ${statusColor[job.status]}`}>
+                        {job.status}
+                      </td>
+                      <td className="px-4 py-2.5 text-muted-foreground max-w-[16rem] truncate">
+                        {job.result ?? "—"}
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-mono text-muted-foreground whitespace-nowrap">
+                        {new Date(job.created_at).toLocaleString()}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
