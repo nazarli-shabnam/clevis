@@ -56,8 +56,12 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   // Public routes always render
   if (isPublic) return <>{children}</>
 
-  // Protected routes: only render when authenticated
-  if (!user) return null
+  // Protected routes: show spinner while redirect to /login is in flight
+  if (!user) return (
+    <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="w-4 h-4 border border-primary/40 border-t-primary rounded-full animate-spin" />
+    </div>
+  )
 
   return <>{children}</>
 }

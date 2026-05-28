@@ -25,9 +25,13 @@ export default function SetupPage() {
       router.replace("/")
       return
     }
-    api.auth.setupRequired().then(({ setup_required }) => {
-      if (!setup_required) router.replace("/login")
-    })
+    api.auth.setupRequired()
+      .then(({ setup_required }) => {
+        if (!setup_required) router.replace("/login")
+      })
+      .catch(() => {
+        // API unreachable — stay on setup page; submission will show the error
+      })
   }, [user, router])
 
   async function handleSubmit(e: React.FormEvent) {
