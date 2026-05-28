@@ -34,6 +34,8 @@ services:
       dockerfile: apps/api/Dockerfile
     env_file:
       - .env
+    expose:
+      - "8080"
     depends_on:
       db:
         condition: service_healthy
@@ -71,6 +73,8 @@ services:
         NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE}
     env_file:
       - .env
+    expose:
+      - "3000"
     depends_on:
       api:
         condition: service_healthy
