@@ -9,4 +9,5 @@ COPY apps/api/entrypoint.sh .
 COPY packages/checks /app/packages/checks
 RUN pip install --no-cache-dir /app/packages/checks
 RUN chmod +x entrypoint.sh
+EXPOSE 8080
 ENTRYPOINT ["./entrypoint.sh"]
