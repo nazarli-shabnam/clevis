@@ -245,7 +245,7 @@ export default function CachePage() {
                   Cache clear queued — Job #{clearMutation.data.job_id}
                 </p>
                 <Link
-                  href="/jobs"
+                  href={`/jobs?id=${clearMutation.data.job_id}`}
                   className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
                   View in Job Queue →

@@ -1,6 +1,6 @@
 "use client"
 
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { Settings, Check, LogOut, UserPlus } from "lucide-react"
@@ -128,6 +128,7 @@ function ProfileDropdown({
 
 export function AppSidebar() {
   const pathname = usePathname()
+  const router = useRouter()
   const { user, logout } = useAuth()
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -185,7 +186,7 @@ export function AppSidebar() {
           <ProfileDropdown
             profile={profile}
             onClose={() => setOpen(false)}
-            onSignOut={() => { logout(); setOpen(false) }}
+            onSignOut={() => { logout(); setOpen(false); router.replace("/login") }}
           />
         )}
       </SidebarHeader>
