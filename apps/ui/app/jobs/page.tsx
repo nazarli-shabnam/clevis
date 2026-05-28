@@ -20,12 +20,13 @@ export default function JobsPage() {
 
   const highlightRef = useRef<HTMLTableRowElement>(null)
 
-  // Scroll the highlighted row into view once jobs load
+  // Scroll the highlighted row into view when the target job is rendered
+  // Depends on highlightId (query param changes) and jobs.length (data arrives)
   useEffect(() => {
     if (highlightRef.current) {
       highlightRef.current.scrollIntoView({ block: "center", behavior: "smooth" })
     }
-  }, [isLoading])
+  }, [highlightId, jobs.length])
 
   const statusColor: Record<JobOut["status"], string> = {
     queued:     "text-muted-foreground",

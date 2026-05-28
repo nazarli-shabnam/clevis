@@ -24,7 +24,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     }
 
     if (!user) {
-      // Check if setup is needed before redirecting to /login
+      // Check if setup is needed before redirecting to /login or /setup
       api.auth.setupRequired()
         .then(({ setup_required }) => {
           router.replace(setup_required ? "/setup" : "/login")
@@ -56,7 +56,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   // Public routes always render
   if (isPublic) return <>{children}</>
 
-  // Protected routes: show spinner while redirect to /login is in flight
+  // Protected routes: show spinner while redirect to /login or /setup is in flight
   if (!user) return (
     <div className="min-h-screen bg-background flex items-center justify-center">
       <div className="w-4 h-4 border border-primary/40 border-t-primary rounded-full animate-spin" />
