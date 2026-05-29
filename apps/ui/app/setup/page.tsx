@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Loader2 } from "lucide-react"
 
 export default function SetupPage() {
-  const { user, setSession } = useAuth()
+  const { user, setSession, isLoading } = useAuth()
   const router = useRouter()
 
   const [name, setName] = useState("")
@@ -21,6 +21,7 @@ export default function SetupPage() {
 
   // Redirect away if already logged in or setup is complete
   useEffect(() => {
+    if (isLoading) return
     if (user) {
       router.replace("/")
       return
@@ -32,7 +33,7 @@ export default function SetupPage() {
       .catch(() => {
         // API unreachable — stay on setup page; submission will show the error
       })
-  }, [user, router])
+  }, [isLoading, user, router])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
