@@ -59,6 +59,15 @@ async function put<T>(path: string, body: unknown): Promise<T> {
   return handleResponse<T>(res)
 }
 
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    body: JSON.stringify(body),
+  })
+  return handleResponse<T>(res)
+}
+
 async function del(path: string): Promise<void> {
   const res = await fetch(`${BASE}${path}`, {
     method: "DELETE",
@@ -137,6 +146,6 @@ export const api = {
         { email, password, name },
       ),
     patchMe: (name: string) =>
-      put<{ id: number; email: string; name: string | null; is_owner: boolean }>("/auth/me", { name }),
+      patch<{ id: number; email: string; name: string | null; is_owner: boolean }>("/auth/me", { name }),
   },
 }
