@@ -45,9 +45,18 @@ def update_config(
     # Type validation
     if key in _INT_KEYS:
         try:
-            int(body.value)
+            parsed_int = int(body.value)
         except ValueError:
             raise HTTPException(status_code=422, detail=f"{key} must be an integer")
+        if parsed_int < 1:
+            raise HTTPException(status_code=422, detail=f"{key} must be at least 1")
+    elif key == "github_api_base":
+        candidate = body.value.strip()
+        if not candidate.startswith(("http://", "https://")):
+            raise HTTPException(
+                status_code=422,
+                detail=f"{key} must be an http(s) URL",
+            )
     elif key in _JSON_KEYS:
         try:
             parsed = json.loads(body.value)

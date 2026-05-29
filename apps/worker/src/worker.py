@@ -31,6 +31,17 @@ def _read_app_config(key: str, default: str) -> str:
         return default
 
 
+def _read_poll_seconds() -> int:
+    """Read worker_poll_seconds, clamped to a minimum of 1. Falls back to 5 on a
+    malformed value so a bad config row can never crash or busy-loop the worker."""
+    raw = _read_app_config("worker_poll_seconds", "5")
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        log.warning("worker_poll_seconds %r is not an integer; using 5", raw)
+        return 5
+
+
 def process_job(conn: psycopg.Connection, job_id: int, payload_raw: str) -> None:
     base = _read_app_config("github_api_base", "https://api.github.com")
     try:
@@ -69,11 +80,11 @@ def process_job(conn: psycopg.Connection, job_id: int, payload_raw: str) -> None
 
 
 def run() -> None:
-    poll_seconds = int(_read_app_config("worker_poll_seconds", "5"))
+    poll_seconds = _read_poll_seconds()
     log.info("worker started, polling every %ds", poll_seconds)
     while True:
         # Re-read poll interval each cycle so changes in settings take effect without restart
-        poll_seconds = int(_read_app_config("worker_poll_seconds", "5"))
+        poll_seconds = _read_poll_seconds()
         try:
             with psycopg.connect(_DB_URL) as conn:
                 with conn.cursor() as cur:
