@@ -50,11 +50,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           logout()
           return
         }
+        if (!res.ok) {
+          // Non-401 error (e.g. 500, network blip) — keep token, try again next load
+          return
+        }
         const data = await res.json()
         setToken(stored)
         setUser(data as AuthUser)
       })
-      .catch(() => logout())
+      .catch(() => {
+        // Network unreachable — keep token, don't log out; user can retry
+      })
       .finally(() => setIsLoading(false))
   }, [logout])
 

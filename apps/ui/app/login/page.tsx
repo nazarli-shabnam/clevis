@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Loader2 } from "lucide-react"
 
 export default function LoginPage() {
-  const { user, login } = useAuth()
+  const { user, login, isLoading } = useAuth()
   const router = useRouter()
 
   const [email, setEmail] = useState("")
@@ -19,6 +19,7 @@ export default function LoginPage() {
 
   // Redirect if already authenticated or setup is needed
   useEffect(() => {
+    if (isLoading) return
     if (user) {
       router.replace("/")
       return
@@ -30,7 +31,7 @@ export default function LoginPage() {
       .catch(() => {
         // API unreachable — stay on login page; user will see the form
       })
-  }, [user, router])
+  }, [isLoading, user, router])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()

@@ -11,7 +11,7 @@ import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Eye, KeyRound, Loader2, Trash2 } from "lucide-react"
+import { AlertTriangle, Eye, KeyRound, Loader2, Trash2 } from "lucide-react"
 import { api } from "@/lib/api/client"
 import { formatBytes, relativeTime, classifyStaleness, stalenessColor } from "@/lib/format"
 import type { CacheEntry } from "@/lib/api/types"
@@ -97,6 +97,12 @@ export default function CachePage() {
                 {saveTokenMutation.isPending ? "Saving…" : "Save token for this org"}
               </Button>
             )}
+            {saveTokenMutation.isError && (
+              <p className="text-xs text-destructive flex items-center gap-1.5">
+                <AlertTriangle className="size-3 shrink-0" />
+                {saveTokenMutation.error.message}
+              </p>
+            )}
             <div>
               <label className="text-xs font-medium text-foreground block mb-1.5">Actor</label>
               <Input
@@ -116,6 +122,12 @@ export default function CachePage() {
                 "Load caches"
               )}
             </Button>
+            {listMutation.isError && (
+              <p className="text-xs text-destructive flex items-center gap-1.5">
+                <AlertTriangle className="size-3 shrink-0" />
+                {listMutation.error.message}
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <Button
                 variant="outline"
@@ -134,6 +146,12 @@ export default function CachePage() {
                 Clear
               </Button>
             </div>
+            {clearMutation.isError && (
+              <p className="text-xs text-destructive flex items-center gap-1.5">
+                <AlertTriangle className="size-3 shrink-0" />
+                {clearMutation.error.message}
+              </p>
+            )}
           </div>
         </div>
 
