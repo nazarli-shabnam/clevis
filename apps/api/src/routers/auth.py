@@ -99,7 +99,7 @@ def setup(body: SetupRequest, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
-    token = create_access_token(user.id, user.email, user.is_owner)
+    token = create_access_token(user.id, user.email, user.is_owner, user.name)
     return {"access_token": token, "user": UserOut(id=user.id, email=user.email, name=user.name, is_owner=user.is_owner)}
 
 
@@ -109,7 +109,7 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == body.email).first()
     if not user or not _verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    token = create_access_token(user.id, user.email, user.is_owner)
+    token = create_access_token(user.id, user.email, user.is_owner, user.name)
     return {"access_token": token, "user": UserOut(id=user.id, email=user.email, name=user.name, is_owner=user.is_owner)}
 
 

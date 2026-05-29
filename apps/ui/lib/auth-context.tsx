@@ -24,6 +24,21 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 const _TOKEN_KEY = "clevis:token"
 const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
 
+function parseJwtPayload(token: string): AuthUser | null {
+  try {
+    // JWT uses base64url — normalize to standard base64 before atob()
+    const segment = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")
+    const padded = segment.padEnd(Math.ceil(segment.length / 4) * 4, "=")
+    const payload = JSON.parse(atob(padded))
+    const id = Number(payload.sub)
+    if (!id || !payload.email) return null
+    if (payload.exp && payload.exp * 1000 < Date.now()) return null
+    return { id, email: payload.email, name: payload.name ?? null, is_owner: Boolean(payload.is_owner) }
+  } catch {
+    return null
+  }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [token, setToken] = useState<string | null>(null)
@@ -35,13 +50,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null)
   }, [])
 
-  // On mount: restore token from localStorage and validate it
+  // On mount: restore session from JWT immediately, then validate silently in background
   useEffect(() => {
     const stored = localStorage.getItem(_TOKEN_KEY)
     if (!stored) {
       setIsLoading(false)
       return
     }
+
+    // Optimistic restore — unblock the UI without a network round-trip
+    const optimistic = parseJwtPayload(stored)
+    if (optimistic) {
+      setToken(stored)
+      setUser(optimistic)
+      setIsLoading(false)
+    }
+
+    // Background validation — evict stale tokens, refresh user fields
     fetch(`${BASE}/auth/me`, {
       headers: { Authorization: `Bearer ${stored}` },
     })
@@ -50,16 +75,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           logout()
           return
         }
-        if (!res.ok) {
-          // Non-401 error (e.g. 500, network blip) — keep token, try again next load
-          return
-        }
+        if (!res.ok) return
         const data = await res.json()
         setToken(stored)
         setUser(data as AuthUser)
       })
       .catch(() => {
-        // Network unreachable — keep token, don't log out; user can retry
+        // Network unreachable — keep optimistic session
       })
       .finally(() => setIsLoading(false))
   }, [logout])

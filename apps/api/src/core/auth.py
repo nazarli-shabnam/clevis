@@ -30,11 +30,12 @@ class UserOut(BaseModel):
     is_owner: bool
 
 
-def create_access_token(user_id: int, email: str, is_owner: bool) -> str:
+def create_access_token(user_id: int, email: str, is_owner: bool, name: str | None = None) -> str:
     payload = {
         "sub": str(user_id),
         "email": email,
         "is_owner": is_owner,
+        "name": name,
         "exp": datetime.now(timezone.utc) + timedelta(days=_TOKEN_EXPIRE_DAYS),
     }
     return jwt.encode(payload, settings.auth_secret.get_secret_value(), algorithm=_ALGORITHM)
