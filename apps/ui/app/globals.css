@@ -114,6 +114,166 @@
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Fira Code", Consolas, "Courier New", monospace;
 }
 
+/*
+ * Themes — neutral "shade/vibe" palettes selected via [data-theme] on <html>.
+ * :root above is the default (Midnight), so data-theme="midnight" needs no block.
+ * Each block overrides the surface / text / border / sidebar tokens; --radius,
+ * --font-mono and chart colors are inherited from :root.
+ */
+
+/* Carbon — neutral dark gray, a touch lighter and warmer than Midnight */
+[data-theme="carbon"] {
+  --background: #141414;
+  --card: #1c1c1c;
+  --elevated: #242424;
+  --overlay: #2c2c2c;
+  --foreground: #ededed;
+  --muted-foreground: #8a8a8a;
+  --subtle-foreground: #4d4d4d;
+  --border: #2a2a2a;
+  --border-muted: #202020;
+  --card-foreground: #ededed;
+  --popover: #1c1c1c;
+  --popover-foreground: #ededed;
+  --secondary: #242424;
+  --secondary-foreground: #ededed;
+  --muted: #242424;
+  --input: #1c1c1c;
+  --sidebar: #0f0f0f;
+  --sidebar-foreground: #ededed;
+  --sidebar-accent: #1f1f1f;
+  --sidebar-accent-foreground: #ededed;
+  --sidebar-border: #262626;
+}
+
+/* Slate — cool blue-gray dark */
+[data-theme="slate"] {
+  --background: #0b0f14;
+  --card: #111722;
+  --elevated: #18202c;
+  --overlay: #1f2937;
+  --foreground: #e8eef6;
+  --muted-foreground: #7d8da3;
+  --subtle-foreground: #3b4654;
+  --border: #1e2733;
+  --border-muted: #161d27;
+  --primary: #5b9dff;
+  --ring: #5b9dff;
+  --card-foreground: #e8eef6;
+  --popover: #111722;
+  --popover-foreground: #e8eef6;
+  --secondary: #18202c;
+  --secondary-foreground: #e8eef6;
+  --muted: #18202c;
+  --input: #111722;
+  --sidebar: #080c11;
+  --sidebar-foreground: #e8eef6;
+  --sidebar-primary: #5b9dff;
+  --sidebar-accent: #16202c;
+  --sidebar-accent-foreground: #e8eef6;
+  --sidebar-border: #1d2630;
+  --sidebar-ring: #5b9dff;
+}
+
+/* Dim — muted desaturated dark (GitHub-dim vibe) */
+[data-theme="dim"] {
+  --background: #1c2128;
+  --card: #22272e;
+  --elevated: #2d333b;
+  --overlay: #373e47;
+  --foreground: #cdd9e5;
+  --muted-foreground: #768390;
+  --subtle-foreground: #545d68;
+  --border: #373e47;
+  --border-muted: #2d333b;
+  --primary: #6cb6ff;
+  --ring: #6cb6ff;
+  --card-foreground: #cdd9e5;
+  --popover: #22272e;
+  --popover-foreground: #cdd9e5;
+  --secondary: #2d333b;
+  --secondary-foreground: #cdd9e5;
+  --muted: #2d333b;
+  --input: #22272e;
+  --sidebar: #161b22;
+  --sidebar-foreground: #cdd9e5;
+  --sidebar-primary: #6cb6ff;
+  --sidebar-accent: #2d333b;
+  --sidebar-accent-foreground: #cdd9e5;
+  --sidebar-border: #373e47;
+  --sidebar-ring: #6cb6ff;
+}
+
+/* Paper — off-white light */
+[data-theme="paper"] {
+  --background: #fafafa;
+  --card: #ffffff;
+  --elevated: #f4f4f5;
+  --overlay: #ffffff;
+  --foreground: #18181b;
+  --muted-foreground: #71717a;
+  --subtle-foreground: #a1a1aa;
+  --border: #e4e4e7;
+  --border-muted: #efeff1;
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --ring: #2563eb;
+  --accent: #16a34a;
+  --accent-foreground: #ffffff;
+  --destructive: #dc2626;
+  --warning: #d97706;
+  --card-foreground: #18181b;
+  --popover: #ffffff;
+  --popover-foreground: #18181b;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f5;
+  --input: #ffffff;
+  --sidebar: #f4f4f5;
+  --sidebar-foreground: #18181b;
+  --sidebar-primary: #2563eb;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e8e8eb;
+  --sidebar-accent-foreground: #18181b;
+  --sidebar-border: #e0e0e3;
+  --sidebar-ring: #2563eb;
+}
+
+/* Ash — cool light gray */
+[data-theme="ash"] {
+  --background: #eef1f4;
+  --card: #f8fafc;
+  --elevated: #e7ebf0;
+  --overlay: #ffffff;
+  --foreground: #1e2630;
+  --muted-foreground: #647082;
+  --subtle-foreground: #94a0b0;
+  --border: #d4dae1;
+  --border-muted: #e2e7ec;
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --ring: #2563eb;
+  --accent: #16a34a;
+  --accent-foreground: #ffffff;
+  --destructive: #dc2626;
+  --warning: #d97706;
+  --card-foreground: #1e2630;
+  --popover: #f8fafc;
+  --popover-foreground: #1e2630;
+  --secondary: #e7ebf0;
+  --secondary-foreground: #1e2630;
+  --muted: #e7ebf0;
+  --input: #f8fafc;
+  --sidebar: #e7ebf0;
+  --sidebar-foreground: #1e2630;
+  --sidebar-primary: #2563eb;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #dadfe6;
+  --sidebar-accent-foreground: #1e2630;
+  --sidebar-border: #cdd4dc;
+  --sidebar-ring: #2563eb;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

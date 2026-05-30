@@ -23,6 +23,26 @@ function getAuthHeaders(): Record<string, string> {
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
+// Hard ceiling on every request. Without this, a fetch to an unreachable/hanging
+// API never settles, leaving callers (e.g. React Query) stuck in a loading state
+// forever instead of surfacing an error.
+const REQUEST_TIMEOUT_MS = 15000
+
+async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s — is the API reachable?`)
+    }
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   const json = await res.json().catch(() => null)
   if (res.status === 401) {
@@ -35,7 +55,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
 }
 
 async function post<T>(path: string, body: unknown, extraHeaders?: Record<string, string>): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetchWithTimeout(`${BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...getAuthHeaders(), ...extraHeaders },
     body: JSON.stringify(body),
@@ -44,14 +64,14 @@ async function post<T>(path: string, body: unknown, extraHeaders?: Record<string
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetchWithTimeout(`${BASE}${path}`, {
     headers: { "Content-Type": "application/json", ...getAuthHeaders() },
   })
   return handleResponse<T>(res)
 }
 
 async function put<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetchWithTimeout(`${BASE}${path}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify(body),
@@ -60,7 +80,7 @@ async function put<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function patch<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetchWithTimeout(`${BASE}${path}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify(body),
@@ -69,7 +89,7 @@ async function patch<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function del(path: string): Promise<void> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetchWithTimeout(`${BASE}${path}`, {
     method: "DELETE",
     headers: { ...getAuthHeaders() },
   })

@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api/client"
 import { useAuth } from "@/lib/auth-context"
+import { THEMES, useTheme } from "@/lib/theme"
 import type { SavedTokenMeta } from "@/lib/api/types"
 
 // ── Profile section ──────────────────────────────────────────────────────────
@@ -77,6 +78,61 @@ function ProfileSection() {
   )
 }
 
+// ── Appearance section ───────────────────────────────────────────────────────
+
+function AppearanceSection() {
+  const { theme, setTheme } = useTheme()
+
+  return (
+    <div className="bg-card border border-border">
+      <div className="px-4 py-3 border-b border-border">
+        <span className="section-label">Appearance</span>
+        <p className="text-xs text-muted-foreground mt-0.5">Theme is saved to this browser.</p>
+      </div>
+      <div className="p-4 grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {THEMES.map((t) => {
+          const active = theme === t.name
+          return (
+            <button
+              key={t.name}
+              onClick={() => setTheme(t.name)}
+              aria-pressed={active}
+              className={[
+                "flex items-center gap-2.5 px-3 py-2.5 border text-left transition-colors",
+                active ? "border-primary bg-primary/10" : "border-border hover:bg-elevated",
+              ].join(" ")}
+            >
+              <span
+                data-theme={t.name}
+                className="flex shrink-0 overflow-hidden rounded-sm border border-border/60"
+              >
+                <span className="size-3.5 bg-background" />
+                <span className="size-3.5 bg-card" />
+                <span className="size-3.5 bg-primary" />
+              </span>
+              <span className="flex-1 text-xs font-medium text-foreground">{t.label}</span>
+              {active && <Check className="size-3.5 text-primary shrink-0" />}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── Shared inline error state ────────────────────────────────────────────────
+
+function SectionError({ message, onRetry, retrying }: { message: string; onRetry: () => void; retrying?: boolean }) {
+  return (
+    <div className="px-4 py-6 flex items-center justify-between gap-3">
+      <p className="text-sm text-destructive">{message}</p>
+      <Button size="sm" variant="outline" onClick={onRetry} disabled={retrying}>
+        {retrying ? <Loader2 className="size-3 animate-spin" /> : "Retry"}
+      </Button>
+    </div>
+  )
+}
+
 // ── Saved tokens section ─────────────────────────────────────────────────────
 
 function SavedTokensSection() {
@@ -85,7 +141,7 @@ function SavedTokensSection() {
   const [addToken, setAddToken] = useState("")
   const [addLabel, setAddLabel] = useState("")
 
-  const { data: tokens = [], isLoading } = useQuery<SavedTokenMeta[]>({
+  const { data: tokens = [], isLoading, isError, error, isFetching, refetch } = useQuery<SavedTokenMeta[]>({
     queryKey: ["tokens"],
     queryFn: () => api.tokens.list(),
   })
@@ -120,6 +176,12 @@ function SavedTokensSection() {
         <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="size-3.5 animate-spin" /> Loading…
         </div>
+      ) : isError ? (
+        <SectionError
+          message={error instanceof Error ? error.message : "Failed to load tokens."}
+          onRetry={() => refetch()}
+          retrying={isFetching}
+        />
       ) : tokens.length === 0 ? (
         <div className="px-4 py-6">
           <p className="text-sm text-muted-foreground">No saved tokens yet. Add one below.</p>
@@ -209,7 +271,7 @@ const CONFIG_FIELDS: { key: string; label: string; description: string; type?: s
 ]
 
 function InstanceConfigSection() {
-  const { data: config, isLoading } = useQuery<Record<string, string>>({
+  const { data: config, isLoading, isError, error, isFetching, refetch } = useQuery<Record<string, string>>({
     queryKey: ["config"],
     queryFn: api.config.getAll,
   })
@@ -249,6 +311,13 @@ function InstanceConfigSection() {
         <span className="section-label">Instance configuration</span>
         <p className="text-xs text-muted-foreground mt-0.5">Visible to instance owner only.</p>
       </div>
+      {isError && (
+        <SectionError
+          message={error instanceof Error ? error.message : "Failed to load config."}
+          onRetry={() => refetch()}
+          retrying={isFetching}
+        />
+      )}
       <div className="divide-y divide-border">
         {CONFIG_FIELDS.map((field) => (
           <div key={field.key} className="p-4 max-w-lg">
@@ -285,6 +354,7 @@ export default function SettingsPage() {
       <PageHeader title="Settings" description="Configure your workspace." />
       <div className="flex flex-col gap-4">
         <ProfileSection />
+        <AppearanceSection />
         <SavedTokensSection />
         {user?.is_owner && <InstanceConfigSection />}
       </div>
