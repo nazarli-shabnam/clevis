@@ -102,10 +102,13 @@ function AppearanceSection() {
                 active ? "border-primary bg-primary/10" : "border-border hover:bg-elevated",
               ].join(" ")}
             >
-              <span className="flex shrink-0 overflow-hidden rounded-sm border border-border/60">
-                {t.swatch.map((c, i) => (
-                  <span key={i} className="size-3.5" style={{ backgroundColor: c }} />
-                ))}
+              <span
+                data-theme={t.name}
+                className="flex shrink-0 overflow-hidden rounded-sm border border-border/60"
+              >
+                <span className="size-3.5 bg-background" />
+                <span className="size-3.5 bg-card" />
+                <span className="size-3.5 bg-primary" />
               </span>
               <span className="flex-1 text-xs font-medium text-foreground">{t.label}</span>
               {active && <Check className="size-3.5 text-primary shrink-0" />}
