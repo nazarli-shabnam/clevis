@@ -43,7 +43,7 @@ def _read_poll_seconds() -> int:
 
 
 def process_job(conn: psycopg.Connection, job_id: int, payload_raw: str) -> None:
-    base = _read_app_config("github_api_base", "https://api.github.com")
+    base = settings.github_api_base
     try:
         payload = json.loads(payload_raw)
         owner, repo = payload["owner"], payload["repo"]

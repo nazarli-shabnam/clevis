@@ -8,10 +8,9 @@ here — a brief race on TTL expiry means at most one extra DB read.
 Usage:
     from src.core.app_config import get_config
 
-    base_url = get_config("github_api_base", "https://api.github.com")
+    poll = get_config("worker_poll_seconds", "5")
 """
 
-import json
 import logging
 import time
 
@@ -19,7 +18,7 @@ from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
-_ACCEPTED_KEYS = {"github_api_base", "cors_origins", "worker_poll_seconds"}
+_ACCEPTED_KEYS = {"worker_poll_seconds"}
 _TTL = 60.0
 _cache: dict[str, tuple[str, float]] = {}
 
@@ -80,21 +79,3 @@ def set_config(key: str, value: str) -> None:
         db.commit()
 
     _cache.pop(key, None)
-
-
-def get_cors_origins_at_startup() -> list[str]:
-    """Read cors_origins from DB at startup; falls back to ['*'] on any error.
-
-    The ['*'] fallback is intentional: it matches the migration-seeded default,
-    so the app remains functional if the DB value is temporarily unreadable.
-    A parse failure (invalid JSON stored in DB) is logged as an error.
-    """
-    try:
-        raw = get_config("cors_origins", '["*"]')
-        return json.loads(raw)
-    except json.JSONDecodeError as exc:
-        logger.error("cors_origins is not valid JSON (%s); falling back to [\"*\"]", exc)
-        return ["*"]
-    except Exception as exc:
-        logger.error("Could not read cors_origins at startup (%s); falling back to [\"*\"]", exc)
-        return ["*"]
