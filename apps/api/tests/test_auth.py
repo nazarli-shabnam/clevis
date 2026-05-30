@@ -137,7 +137,6 @@ _MOCK_CONFIG = {
     "github_api_base": "https://api.github.com",
     "cors_origins": '["*"]',
     "worker_poll_seconds": "5",
-    "debug": "false",
 }
 
 
@@ -177,16 +176,16 @@ def test_get_config_authenticated(config_client_viewer):
     with patch("src.routers.config.read_all", return_value=_MOCK_CONFIG):
         resp = config_client_viewer.get("/config")
     assert resp.status_code == 200
-    assert resp.json()["debug"] == "false"
+    assert resp.json()["worker_poll_seconds"] == "5"
 
 
 def test_update_config_unauthenticated(config_client):
-    resp = config_client.put("/config/debug", json={"value": "true"})
+    resp = config_client.put("/config/worker_poll_seconds", json={"value": "10"})
     assert resp.status_code == 401
 
 
 def test_update_config_non_owner_forbidden(config_client_viewer):
-    resp = config_client_viewer.put("/config/debug", json={"value": "true"})
+    resp = config_client_viewer.put("/config/worker_poll_seconds", json={"value": "10"})
     assert resp.status_code == 403
 
 
@@ -229,17 +228,12 @@ def test_update_config_invalid_json_array(config_client_owner):
     assert resp.status_code == 422
 
 
-def test_update_config_invalid_bool(config_client_owner):
-    resp = config_client_owner.put("/config/debug", json={"value": "yes"})
-    assert resp.status_code == 422
-
-
 def test_update_config_success(config_client_owner):
     with (
         patch("src.routers.config.set_config") as mock_set,
-        patch("src.routers.config.read_all", return_value={**_MOCK_CONFIG, "debug": "true"}),
+        patch("src.routers.config.read_all", return_value={**_MOCK_CONFIG, "worker_poll_seconds": "10"}),
     ):
-        resp = config_client_owner.put("/config/debug", json={"value": "true"})
+        resp = config_client_owner.put("/config/worker_poll_seconds", json={"value": "10"})
     assert resp.status_code == 200
-    mock_set.assert_called_once_with("debug", "true")
-    assert resp.json()["debug"] == "true"
+    mock_set.assert_called_once_with("worker_poll_seconds", "10")
+    assert resp.json()["worker_poll_seconds"] == "10"
