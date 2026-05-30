@@ -77,6 +77,19 @@ function ProfileSection() {
   )
 }
 
+// ── Shared inline error state ────────────────────────────────────────────────
+
+function SectionError({ message, onRetry, retrying }: { message: string; onRetry: () => void; retrying?: boolean }) {
+  return (
+    <div className="px-4 py-6 flex items-center justify-between gap-3">
+      <p className="text-sm text-destructive">{message}</p>
+      <Button size="sm" variant="outline" onClick={onRetry} disabled={retrying}>
+        {retrying ? <Loader2 className="size-3 animate-spin" /> : "Retry"}
+      </Button>
+    </div>
+  )
+}
+
 // ── Saved tokens section ─────────────────────────────────────────────────────
 
 function SavedTokensSection() {
@@ -85,7 +98,7 @@ function SavedTokensSection() {
   const [addToken, setAddToken] = useState("")
   const [addLabel, setAddLabel] = useState("")
 
-  const { data: tokens = [], isLoading } = useQuery<SavedTokenMeta[]>({
+  const { data: tokens = [], isLoading, isError, error, isFetching, refetch } = useQuery<SavedTokenMeta[]>({
     queryKey: ["tokens"],
     queryFn: () => api.tokens.list(),
   })
@@ -120,6 +133,12 @@ function SavedTokensSection() {
         <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="size-3.5 animate-spin" /> Loading…
         </div>
+      ) : isError ? (
+        <SectionError
+          message={error instanceof Error ? error.message : "Failed to load tokens."}
+          onRetry={() => refetch()}
+          retrying={isFetching}
+        />
       ) : tokens.length === 0 ? (
         <div className="px-4 py-6">
           <p className="text-sm text-muted-foreground">No saved tokens yet. Add one below.</p>
@@ -209,7 +228,7 @@ const CONFIG_FIELDS: { key: string; label: string; description: string; type?: s
 ]
 
 function InstanceConfigSection() {
-  const { data: config, isLoading } = useQuery<Record<string, string>>({
+  const { data: config, isLoading, isError, error, isFetching, refetch } = useQuery<Record<string, string>>({
     queryKey: ["config"],
     queryFn: api.config.getAll,
   })
@@ -249,6 +268,13 @@ function InstanceConfigSection() {
         <span className="section-label">Instance configuration</span>
         <p className="text-xs text-muted-foreground mt-0.5">Visible to instance owner only.</p>
       </div>
+      {isError && (
+        <SectionError
+          message={error instanceof Error ? error.message : "Failed to load config."}
+          onRetry={() => refetch()}
+          retrying={isFetching}
+        />
+      )}
       <div className="divide-y divide-border">
         {CONFIG_FIELDS.map((field) => (
           <div key={field.key} className="p-4 max-w-lg">
