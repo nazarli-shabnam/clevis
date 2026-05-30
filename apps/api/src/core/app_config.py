@@ -19,7 +19,7 @@ from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
-_ACCEPTED_KEYS = {"github_api_base", "cors_origins", "worker_poll_seconds", "debug"}
+_ACCEPTED_KEYS = {"github_api_base", "cors_origins", "worker_poll_seconds"}
 _TTL = 60.0
 _cache: dict[str, tuple[str, float]] = {}
 
@@ -98,11 +98,3 @@ def get_cors_origins_at_startup() -> list[str]:
     except Exception as exc:
         logger.error("Could not read cors_origins at startup (%s); falling back to [\"*\"]", exc)
         return ["*"]
-
-
-def get_debug_at_startup() -> bool:
-    """Read debug flag from DB at startup; defaults to False on any error."""
-    try:
-        return get_config("debug", "false").lower() == "true"
-    except Exception:
-        return False

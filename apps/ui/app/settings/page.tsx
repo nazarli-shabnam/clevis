@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Trash2, Plus, Loader2, Check, Save } from "lucide-react"
+import { Trash2, Plus, Loader2, Check } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -208,7 +208,6 @@ const CONFIG_FIELDS: { key: string; label: string; description: string; type?: s
   { key: "github_api_base",     label: "GitHub API Base",         description: "Use a different value for GitHub Enterprise." },
   { key: "cors_origins",        label: "Allowed Origins (JSON array)", description: "Lock down to your UI domain in production. Restart required." },
   { key: "worker_poll_seconds", label: "Worker Poll Interval",    description: "Seconds between job queue polls.", type: "number" },
-  { key: "debug",               label: "Debug Mode",              description: "Enables /docs and /redoc. Restart required.", type: "toggle" },
 ]
 
 function InstanceConfigSection() {
@@ -256,36 +255,17 @@ function InstanceConfigSection() {
         {CONFIG_FIELDS.map((field) => (
           <div key={field.key} className="p-4 max-w-lg">
             <label className="text-xs font-medium text-foreground block mb-1">{field.label}</label>
-            {field.type === "toggle" ? (
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setValues((v) => ({ ...v, [field.key]: v[field.key] === "true" ? "false" : "true" }))}
-                  className={`relative inline-flex h-5 w-9 items-center rounded-full border transition-colors ${
-                    values[field.key] === "true" ? "bg-primary border-primary" : "bg-muted border-border"
-                  }`}
-                >
-                  <span className={`inline-block size-3.5 rounded-full bg-white transition-transform ${
-                    values[field.key] === "true" ? "translate-x-4" : "translate-x-0.5"
-                  }`} />
-                </button>
-                <span className="text-xs text-muted-foreground">{values[field.key] === "true" ? "On" : "Off"}</span>
-                <Button size="sm" variant="outline" onClick={() => saveKey(field.key)} disabled={saving === field.key}>
-                  {saving === field.key ? <Loader2 className="size-3 animate-spin" /> : <Save className="size-3" />}
-                </Button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                <Input
-                  value={values[field.key] ?? ""}
-                  onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
-                  type={field.type === "number" ? "number" : "text"}
-                  className="font-mono text-xs"
-                />
-                <Button size="sm" variant="outline" onClick={() => saveKey(field.key)} disabled={saving === field.key}>
-                  {saving === field.key ? <Loader2 className="size-3 animate-spin" /> : "Save"}
-                </Button>
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              <Input
+                value={values[field.key] ?? ""}
+                onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
+                type={field.type === "number" ? "number" : "text"}
+                className="font-mono text-xs"
+              />
+              <Button size="sm" variant="outline" onClick={() => saveKey(field.key)} disabled={saving === field.key}>
+                {saving === field.key ? <Loader2 className="size-3 animate-spin" /> : "Save"}
+              </Button>
+            </div>
             {errors[field.key] && (
               <p className="text-xs text-destructive mt-1">{errors[field.key]}</p>
             )}
