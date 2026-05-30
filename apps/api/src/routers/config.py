@@ -5,7 +5,6 @@ GET  /config          Returns all app_config key/value pairs (any authenticated 
 PUT  /config/{key}    Updates a config value (owner only)
 """
 
-import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -18,7 +17,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _INT_KEYS = {"worker_poll_seconds"}
-_JSON_KEYS = {"cors_origins"}
 
 
 class ConfigValue(BaseModel):
@@ -49,20 +47,6 @@ def update_config(
             raise HTTPException(status_code=422, detail=f"{key} must be an integer")
         if parsed_int < 1:
             raise HTTPException(status_code=422, detail=f"{key} must be at least 1")
-    elif key == "github_api_base":
-        candidate = body.value.strip()
-        if not candidate.startswith(("http://", "https://")):
-            raise HTTPException(
-                status_code=422,
-                detail=f"{key} must be an http(s) URL",
-            )
-    elif key in _JSON_KEYS:
-        try:
-            parsed = json.loads(body.value)
-            if not isinstance(parsed, list):
-                raise ValueError("must be a JSON array")
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=f"{key}: {exc}")
 
     try:
         set_config(key, body.value)

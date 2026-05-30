@@ -3,13 +3,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.core.app_config import get_cors_origins_at_startup
+from src.core.config import settings
 from src.core.logging import setup_logging
 from src.core.middleware import RequestIdMiddleware
 from src.routers import actions_cache, analytics, audit, auth, config, health, installations, jobs, tokens
 
-# Read startup config from DB (entrypoint.sh already ran alembic upgrade head)
-_cors_origins = get_cors_origins_at_startup()
+# CORS allowed origins are a deploy-time security boundary, set via the CORS_ORIGINS env var.
+_cors_origins = settings.cors_origins
 
 
 @asynccontextmanager

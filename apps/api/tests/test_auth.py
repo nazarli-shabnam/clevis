@@ -134,8 +134,6 @@ _OWNER = UserOut(id=1, email="owner@example.com", name=None, is_owner=True)
 _VIEWER = UserOut(id=2, email="viewer@example.com", name=None, is_owner=False)
 
 _MOCK_CONFIG = {
-    "github_api_base": "https://api.github.com",
-    "cors_origins": '["*"]',
     "worker_poll_seconds": "5",
 }
 
@@ -205,27 +203,21 @@ def test_update_config_int_below_minimum(config_client_owner, value):
     assert resp.status_code == 422
 
 
-@pytest.mark.parametrize("value", ["", "  ", "api.github.com", "ftp://x"])
-def test_update_config_invalid_github_api_base(config_client_owner, value):
-    resp = config_client_owner.put("/config/github_api_base", json={"value": value})
-    assert resp.status_code == 422
-
-
-def test_update_config_valid_github_api_base(config_client_owner):
+def test_update_config_valid_worker_poll_seconds(config_client_owner):
     with (
         patch("src.routers.config.set_config") as mock_set,
         patch("src.routers.config.read_all", return_value=_MOCK_CONFIG),
     ):
-        resp = config_client_owner.put(
-            "/config/github_api_base", json={"value": "https://ghe.example.com/api/v3"}
-        )
+        resp = config_client_owner.put("/config/worker_poll_seconds", json={"value": "10"})
     assert resp.status_code == 200
-    mock_set.assert_called_once_with("github_api_base", "https://ghe.example.com/api/v3")
+    mock_set.assert_called_once_with("worker_poll_seconds", "10")
 
 
-def test_update_config_invalid_json_array(config_client_owner):
-    resp = config_client_owner.put("/config/cors_origins", json={"value": "not-json"})
-    assert resp.status_code == 422
+# github_api_base and cors_origins moved to env vars — no longer runtime-editable.
+@pytest.mark.parametrize("key", ["github_api_base", "cors_origins"])
+def test_update_config_removed_keys_rejected(config_client_owner, key):
+    resp = config_client_owner.put(f"/config/{key}", json={"value": "https://x.com"})
+    assert resp.status_code == 400
 
 
 def test_update_config_success(config_client_owner):

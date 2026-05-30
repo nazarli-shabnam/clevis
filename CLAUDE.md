@@ -59,7 +59,7 @@ pip install -e packages/checks
 cd apps/ui && npm install
 ```
 
-**Required env vars (6 total):** `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JOB_SECRET_KEY`, `AUTH_SECRET`, `NEXT_PUBLIC_API_BASE`. Everything else lives in the `app_config` DB table (configured via Settings page).
+**Required env vars (6 total):** `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JOB_SECRET_KEY`, `AUTH_SECRET`, `NEXT_PUBLIC_API_BASE`. Two more deploy-time vars are optional (safe defaults in code): `CORS_ORIGINS`, `GITHUB_API_BASE`. Everything else lives in the `app_config` DB table (configured via Settings page).
 
 Key variables:
 - `DB_USER`, `DB_PASSWORD`, `DB_NAME` — Postgres credentials. Docker Compose maps these to `POSTGRES_USER/PASSWORD/DB` for the db container; entrypoints construct `DATABASE_URL` from them (host = `db`).
@@ -69,10 +69,12 @@ Key variables:
 - `NEXT_PUBLIC_API_BASE` — `http://localhost:8080` for local dev
 - `API_PORT` / `UI_PORT` — `8080` / `3000`
 
+**Deploy-time config (env vars, safe defaults in code):**
+- `CORS_ORIGINS` — JSON array of allowed origins; default `["http://localhost:3000"]`. Read once at API startup (a security boundary), so a change requires an API restart. Set your real UI domain in production.
+- `GITHUB_API_BASE` — default `https://api.github.com`; set for GitHub Enterprise (e.g. `https://github.yourco.com/api/v3`). Used by both the API and the worker. Not runtime-editable because it's where GitHub tokens are sent.
+
 **DB-backed config (editable in Settings → Instance Configuration):**
-- `github_api_base` — default `https://api.github.com`; change for GitHub Enterprise
-- `cors_origins` — default `["*"]`; CORS change requires API restart
-- `worker_poll_seconds` — default `5`
+- `worker_poll_seconds` — default `5`; the worker re-reads it each loop, so changes take effect live without a restart
 
 ## Running locally
 

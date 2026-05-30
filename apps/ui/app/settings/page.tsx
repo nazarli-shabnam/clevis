@@ -205,8 +205,6 @@ function SavedTokensSection() {
 // ── Instance configuration section (owner only) ──────────────────────────────
 
 const CONFIG_FIELDS: { key: string; label: string; description: string; type?: string }[] = [
-  { key: "github_api_base",     label: "GitHub API Base",         description: "Use a different value for GitHub Enterprise." },
-  { key: "cors_origins",        label: "Allowed Origins (JSON array)", description: "Lock down to your UI domain in production. Restart required." },
   { key: "worker_poll_seconds", label: "Worker Poll Interval",    description: "Seconds between job queue polls.", type: "number" },
 ]
 
