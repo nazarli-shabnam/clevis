@@ -73,7 +73,6 @@ Key variables:
 - `github_api_base` — default `https://api.github.com`; change for GitHub Enterprise
 - `cors_origins` — default `["*"]`; CORS change requires API restart
 - `worker_poll_seconds` — default `5`
-- `debug` — default `false`; enables `/docs` and `/redoc`; requires restart
 
 ## Running locally
 
