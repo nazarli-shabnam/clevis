@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { AlertTriangle, KeyRound } from "lucide-react"
 import { api } from "@/lib/api/client"
+import { DonutChart } from "@/components/charts/donut-chart"
 import type { CheckResult } from "@/lib/api/types"
 
 function ScoreGauge({ score, failed, total }: { score: number; failed: number; total: number }) {
@@ -38,9 +39,6 @@ function ScoreGauge({ score, failed, total }: { score: number; failed: number; t
       </div>
       <div>
         <p className="text-sm font-semibold text-foreground">Security Score</p>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          {failed} failed · {total} checks total
-        </p>
         <div className="flex items-center gap-2 mt-2">
           <span className="stat-chip">{total - failed} passed</span>
           {failed > 0 && <span className="stat-chip text-red-400 border-red-500/30">{failed} failed</span>}
@@ -115,6 +113,13 @@ export default function SecurityPage() {
         }),
       )
     : []
+
+  const allChecks = scan.data?.checks ?? []
+  const statusBreakdown = [
+    { name: "Passed", value: allChecks.filter((c) => c.status === "pass").length, color: "#34d399" },
+    { name: "Failed · high", value: allChecks.filter((c) => c.status === "fail" && c.severity === "high").length, color: "#f87171" },
+    { name: "Failed · med/low", value: allChecks.filter((c) => c.status === "fail" && c.severity !== "high").length, color: "#fbbf24" },
+  ].filter((d) => d.value > 0)
 
   return (
     <>
@@ -224,6 +229,13 @@ export default function SecurityPage() {
                 <span className="text-xs text-muted-foreground ml-auto">
                   {filteredChecks.length} of {scan.data.checks.length}
                 </span>
+              </div>
+            )}
+
+            {/* Pass/fail breakdown */}
+            {scan.data && statusBreakdown.length > 0 && (
+              <div className="px-4 py-4 border-b border-border">
+                <DonutChart data={statusBreakdown} label="checks" height={180} />
               </div>
             )}
 

@@ -19,7 +19,6 @@ router = APIRouter()
 
 _INT_KEYS = {"worker_poll_seconds"}
 _JSON_KEYS = {"cors_origins"}
-_BOOL_KEYS = {"debug"}
 
 
 class ConfigValue(BaseModel):
@@ -64,9 +63,6 @@ def update_config(
                 raise ValueError("must be a JSON array")
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=f"{key}: {exc}")
-    elif key in _BOOL_KEYS:
-        if body.value.lower() not in ("true", "false"):
-            raise HTTPException(status_code=422, detail=f"{key} must be 'true' or 'false'")
 
     try:
         set_config(key, body.value)

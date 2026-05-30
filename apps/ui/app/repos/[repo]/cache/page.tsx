@@ -13,6 +13,8 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertTriangle, Eye, KeyRound, Loader2, Trash2 } from "lucide-react"
 import { api } from "@/lib/api/client"
+import { BarGroupChart } from "@/components/charts/bar-group-chart"
+import { CHART_COLORS } from "@/lib/charts/theme"
 import { formatBytes, relativeTime, classifyStaleness, stalenessColor } from "@/lib/format"
 import type { CacheEntry } from "@/lib/api/types"
 
@@ -57,6 +59,16 @@ export default function CachePage() {
   const isLoading = listMutation.isPending || clearMutation.isPending
   const caches: CacheEntry[] = listMutation.data?.actions_caches ?? []
   const totalBytes = caches.reduce((sum, c) => sum + c.size_in_bytes, 0)
+
+  // Total cache size per ref, in MB, for the summary bar chart above the table.
+  const cacheByRef = caches.reduce<Record<string, number>>((acc, c) => {
+    acc[c.ref] = (acc[c.ref] ?? 0) + c.size_in_bytes
+    return acc
+  }, {})
+  const cacheChartData = Object.entries(cacheByRef).map(([ref, bytes]) => ({
+    name: ref,
+    mb: Math.round((bytes / 1_048_576) * 100) / 100,
+  }))
 
   return (
     <>
@@ -168,6 +180,17 @@ export default function CachePage() {
               )}
             </div>
           </div>
+
+          {caches.length > 0 && (
+            <div className="p-4 border-b border-border">
+              <p className="section-label mb-3">MB cached by ref</p>
+              <BarGroupChart
+                data={cacheChartData}
+                bars={[{ key: "mb", color: CHART_COLORS.primary }]}
+                height={180}
+              />
+            </div>
+          )}
 
           {listMutation.isPending ? (
             /* Skeleton while loading */
