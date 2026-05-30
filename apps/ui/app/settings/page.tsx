@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api/client"
 import { useAuth } from "@/lib/auth-context"
+import { THEMES, useTheme } from "@/lib/theme"
 import type { SavedTokenMeta } from "@/lib/api/types"
 
 // ── Profile section ──────────────────────────────────────────────────────────
@@ -72,6 +73,45 @@ function ProfileSection() {
         <Button onClick={save} disabled={isSaving} className="mt-1 w-fit">
           {saved ? <><Check className="size-3.5" />Saved</> : isSaving ? <><Loader2 className="size-3.5 animate-spin" />Saving…</> : "Save profile"}
         </Button>
+      </div>
+    </div>
+  )
+}
+
+// ── Appearance section ───────────────────────────────────────────────────────
+
+function AppearanceSection() {
+  const { theme, setTheme } = useTheme()
+
+  return (
+    <div className="bg-card border border-border">
+      <div className="px-4 py-3 border-b border-border">
+        <span className="section-label">Appearance</span>
+        <p className="text-xs text-muted-foreground mt-0.5">Theme is saved to this browser.</p>
+      </div>
+      <div className="p-4 grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {THEMES.map((t) => {
+          const active = theme === t.name
+          return (
+            <button
+              key={t.name}
+              onClick={() => setTheme(t.name)}
+              aria-pressed={active}
+              className={[
+                "flex items-center gap-2.5 px-3 py-2.5 border text-left transition-colors",
+                active ? "border-primary bg-primary/10" : "border-border hover:bg-elevated",
+              ].join(" ")}
+            >
+              <span className="flex shrink-0 overflow-hidden rounded-sm border border-border/60">
+                {t.swatch.map((c, i) => (
+                  <span key={i} className="size-3.5" style={{ backgroundColor: c }} />
+                ))}
+              </span>
+              <span className="flex-1 text-xs font-medium text-foreground">{t.label}</span>
+              {active && <Check className="size-3.5 text-primary shrink-0" />}
+            </button>
+          )
+        })}
       </div>
     </div>
   )
@@ -311,6 +351,7 @@ export default function SettingsPage() {
       <PageHeader title="Settings" description="Configure your workspace." />
       <div className="flex flex-col gap-4">
         <ProfileSection />
+        <AppearanceSection />
         <SavedTokensSection />
         {user?.is_owner && <InstanceConfigSection />}
       </div>
