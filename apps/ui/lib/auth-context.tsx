@@ -66,9 +66,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(false)
     }
 
-    // Background validation — evict stale tokens, refresh user fields
+    // Background validation — evict stale tokens, refresh user fields.
+    // Timed out so a stalled /auth/me can never leave the app stuck on the
+    // full-screen auth spinner (isLoading would otherwise never flip to false).
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 15000)
     fetch(`${BASE}/auth/me`, {
       headers: { Authorization: `Bearer ${stored}` },
+      signal: controller.signal,
     })
       .then(async (res) => {
         if (res.status === 401) {
@@ -81,9 +86,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(data as AuthUser)
       })
       .catch(() => {
-        // Network unreachable — keep optimistic session
+        // Network unreachable or timed out — keep optimistic session
       })
-      .finally(() => setIsLoading(false))
+      .finally(() => {
+        clearTimeout(timer)
+        setIsLoading(false)
+      })
   }, [logout])
 
   const login = useCallback(async (email: string, password: string) => {
