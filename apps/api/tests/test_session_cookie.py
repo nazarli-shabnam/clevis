@@ -51,3 +51,16 @@ def test_clear_session_cookie():
     assert SESSION_COOKIE_NAME in header
     # delete_cookie expires the cookie immediately
     assert ("Max-Age=0" in header) or ("expires=" in header.lower())
+
+
+def test_logout_endpoint_clears_cookie():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from src.routers.auth import router as auth_router
+
+    app = FastAPI()
+    app.include_router(auth_router, prefix="/auth")
+    resp = TestClient(app).post("/auth/logout")
+    assert resp.status_code == 200
+    assert SESSION_COOKIE_NAME in resp.headers.get("set-cookie", "")
