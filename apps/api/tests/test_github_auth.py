@@ -80,7 +80,10 @@ def test_login_redirects_to_github(gh_client, oauth_configured):
     assert resp.headers["location"].startswith("https://github.com/login/oauth/authorize")
 
 
-def test_login_unconfigured_returns_503(gh_client):
+def test_login_unconfigured_returns_503(gh_client, monkeypatch):
+    # Force unconfigured regardless of the ambient .env (a real App may be configured locally).
+    monkeypatch.setattr(settings, "github_app_client_id", None)
+    monkeypatch.setattr(settings, "github_app_client_secret", None)
     resp = gh_client.get("/auth/github/login", follow_redirects=False)
     assert resp.status_code == 503
 
