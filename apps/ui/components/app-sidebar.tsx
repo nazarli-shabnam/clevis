@@ -20,25 +20,25 @@ import { useAuth } from "@/lib/auth-context"
 // Settings is no longer in the sidebar nav — it lives inside the profile dropdown.
 const groups = [
   [
-    { title: "Overview",         href: "/",             shortcut: "g o" },
-    { title: "Activity",         href: "/activity",     shortcut: "g a" },
-    { title: "Pull Requests",    href: "/pulls",        shortcut: "g p" },
-    { title: "Releases",         href: "/releases",     shortcut: "g r" },
+    { title: "Overview",         href: "/" },
+    { title: "Activity",         href: "/activity" },
+    { title: "Pull Requests",    href: "/pulls" },
+    { title: "Releases",         href: "/releases" },
   ],
   [
-    { title: "Repositories",     href: "/repos",        shortcut: "g R" },
-    { title: "Health & Security",href: "/security",     shortcut: "g s" },
+    { title: "Repositories",     href: "/repos" },
+    { title: "Health & Security",href: "/security" },
   ],
   [
-    { title: "Collaborators",    href: "/collaborators", shortcut: undefined },
-    { title: "Automation",       href: "/automation",    shortcut: undefined },
-    { title: "Audit Log",        href: "/audit",         shortcut: undefined },
-    { title: "Job Queue",        href: "/jobs",          shortcut: undefined },
+    { title: "Collaborators",    href: "/collaborators" },
+    { title: "Automation",       href: "/automation" },
+    { title: "Audit Log",        href: "/audit" },
+    { title: "Job Queue",        href: "/jobs" },
   ],
   [
-    { title: "My PRs",     href: "/my/prs",     shortcut: undefined },
-    { title: "My Reviews", href: "/my/reviews", shortcut: undefined },
-    { title: "My Issues",  href: "/my/issues",  shortcut: undefined },
+    { title: "My PRs",     href: "/my/prs" },
+    { title: "My Reviews", href: "/my/reviews" },
+    { title: "My Issues",  href: "/my/issues" },
   ],
 ]
 
@@ -205,7 +205,7 @@ export function AppSidebar() {
                         <SidebarMenuButton
                           isActive={active}
                           className={[
-                            "group/item relative flex items-center justify-between rounded-none px-3 py-1.5 text-[0.8125rem]",
+                            "flex items-center rounded-none px-3 py-1.5 text-[0.8125rem]",
                             active
                               ? "bg-sidebar-accent text-sidebar-foreground font-medium"
                               : "text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent/60",
@@ -213,11 +213,6 @@ export function AppSidebar() {
                           render={<Link href={item.href} />}
                         >
                           <span>{item.title}</span>
-                          {item.shortcut && (
-                            <span className="font-mono text-[0.625rem] text-sidebar-foreground/20 opacity-0 group-hover/item:opacity-100 transition-opacity">
-                              {item.shortcut}
-                            </span>
-                          )}
                         </SidebarMenuButton>
                       </SidebarMenuItem>
                     )
