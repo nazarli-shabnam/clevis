@@ -2,14 +2,14 @@
 
 import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Trash2, Plus, Loader2, Check } from "lucide-react"
+import { Trash2, Plus, Loader2, Check, ExternalLink } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api/client"
 import { useAuth } from "@/lib/auth-context"
 import { THEMES, useTheme } from "@/lib/theme"
-import type { SavedTokenMeta } from "@/lib/api/types"
+import type { InstallationMeta, SavedTokenMeta } from "@/lib/api/types"
 
 // ── Profile section ──────────────────────────────────────────────────────────
 
@@ -133,7 +133,80 @@ function SectionError({ message, onRetry, retrying }: { message: string; onRetry
   )
 }
 
-// ── Saved tokens section ─────────────────────────────────────────────────────
+// ── Connected organizations section (GitHub App) ─────────────────────────────
+
+function ConnectedOrgsSection() {
+  const { data: installs = [], isLoading, isError, error, isFetching, refetch } = useQuery<InstallationMeta[]>({
+    queryKey: ["installations"],
+    queryFn: () => api.installations.list(),
+  })
+  const slug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG
+  const installUrl = slug ? `https://github.com/apps/${slug}/installations/new` : null
+
+  return (
+    <div className="bg-card border border-border">
+      <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+        <span className="section-label">Connected organizations</span>
+        {installs.length > 0 && <span className="stat-chip">{installs.length} connected</span>}
+      </div>
+
+      {isLoading ? (
+        <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="size-3.5 animate-spin" /> Loading…
+        </div>
+      ) : isError ? (
+        <SectionError
+          message={error instanceof Error ? error.message : "Failed to load organizations."}
+          onRetry={() => refetch()}
+          retrying={isFetching}
+        />
+      ) : installs.length === 0 ? (
+        <div className="px-4 py-6">
+          <p className="text-sm text-muted-foreground">
+            No organizations connected yet. Install the Clevis GitHub App on a GitHub organization to get started.
+          </p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="text-left text-muted-foreground font-medium px-4 py-2">Organization</th>
+                <th className="text-left text-muted-foreground font-medium px-4 py-2">Type</th>
+                <th className="text-left text-muted-foreground font-medium px-4 py-2">Connected</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {installs.map((i) => (
+                <tr key={i.id} className="hover:bg-elevated transition-colors">
+                  <td className="px-4 py-2.5 font-mono text-foreground/80">{i.account_login}</td>
+                  <td className="px-4 py-2.5 text-muted-foreground">{i.account_type}</td>
+                  <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
+                    {new Date(i.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="border-t border-border p-4">
+        {installUrl ? (
+          <Button onClick={() => { window.location.href = installUrl }}>
+            <ExternalLink className="size-3.5" />Install GitHub App
+          </Button>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            Set <code className="font-mono">NEXT_PUBLIC_GITHUB_APP_SLUG</code> to enable the install button.
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Saved tokens section (legacy — being replaced by the GitHub App) ──────────
 
 function SavedTokensSection() {
   const qc = useQueryClient()
@@ -165,11 +238,16 @@ function SavedTokensSection() {
 
   return (
     <div className="bg-card border border-border">
-      <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-        <span className="section-label">Saved tokens</span>
-        {tokens.length > 0 && (
-          <span className="stat-chip">{tokens.length} saved</span>
-        )}
+      <div className="px-4 py-3 border-b border-border">
+        <div className="flex items-center justify-between">
+          <span className="section-label">Personal access tokens (legacy)</span>
+          {tokens.length > 0 && (
+            <span className="stat-chip">{tokens.length} saved</span>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Being replaced by the GitHub App. Still used by Health &amp; Security and Cache pages until they move to the App.
+        </p>
       </div>
 
       {isLoading ? (
@@ -355,6 +433,7 @@ export default function SettingsPage() {
       <div className="flex flex-col gap-4">
         <ProfileSection />
         <AppearanceSection />
+        <ConnectedOrgsSection />
         <SavedTokensSection />
         {user?.is_owner && <InstanceConfigSection />}
       </div>
