@@ -32,6 +32,10 @@ app.add_middleware(RequestIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
+    # Required so the browser sends the httpOnly session cookie on cross-origin (UI->API)
+    # requests. Note: credentialed CORS is incompatible with a "*" origin — CORS_ORIGINS must
+    # list explicit UI origins in any deployment that relies on the cookie session.
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
