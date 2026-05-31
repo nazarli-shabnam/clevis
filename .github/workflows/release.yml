@@ -55,6 +55,7 @@ jobs:
           build-args: |
             NEXT_PUBLIC_API_BASE=${{ secrets.NEXT_PUBLIC_API_BASE }}
             NEXT_PUBLIC_DEFAULT_ROLE=${{ secrets.NEXT_PUBLIC_DEFAULT_ROLE || 'viewer' }}
+            NEXT_PUBLIC_GITHUB_APP_SLUG=${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
           tags: |
             ghcr.io/${{ github.repository }}-ui:latest
             ghcr.io/${{ github.repository }}-ui:${{ github.ref_name }}
