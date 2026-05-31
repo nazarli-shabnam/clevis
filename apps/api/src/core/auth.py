@@ -9,7 +9,7 @@ Two access levels:
 from datetime import datetime, timedelta, timezone
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
@@ -18,9 +18,35 @@ from src.core.config import settings
 _ALGORITHM = "HS256"
 _TOKEN_EXPIRE_DAYS = 30
 
+# httpOnly cookie that carries the session JWT (set on OAuth callback / login).
+SESSION_COOKIE_NAME = "clevis_session"
+_COOKIE_MAX_AGE_SECONDS = _TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+
 # HTTPBearer correctly models "send Bearer token in Authorization header".
 # OAuth2PasswordBearer would misrepresent /auth/login as a form-encoded OAuth2 flow.
 _http_bearer = HTTPBearer(auto_error=False)
+
+
+def set_session_cookie(response: Response, token: str) -> None:
+    """Attach the session JWT as an httpOnly cookie."""
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        max_age=_COOKIE_MAX_AGE_SECONDS,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite=settings.session_cookie_samesite,
+        domain=settings.session_cookie_domain,
+        path="/",
+    )
+
+
+def clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        domain=settings.session_cookie_domain,
+        path="/",
+    )
 
 
 class UserOut(BaseModel):
@@ -56,11 +82,17 @@ def decode_access_token(token: str) -> dict:
 
 def require_auth(
     credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+    session: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
 ) -> UserOut:
-    """Dependency: validates JWT and returns the current user. Raises 401 if missing/invalid."""
-    if not credentials:
+    """Dependency: validates the JWT (Authorization header or session cookie) and returns the user.
+
+    Prefers the Bearer header (API clients) and falls back to the httpOnly session cookie
+    (browser sessions established via GitHub OAuth). Raises 401 if neither is present/valid.
+    """
+    token = credentials.credentials if credentials else session
+    if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    payload = decode_access_token(credentials.credentials)
+    payload = decode_access_token(token)
     sub = payload.get("sub")
     email = payload.get("email")
     if not sub or not email:

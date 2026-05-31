@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     github_app_client_secret: SecretStr | None = None
     github_app_webhook_secret: SecretStr | None = None
 
+    # httpOnly session cookie (set on GitHub OAuth callback + login). Defaults are safe for
+    # production (HTTPS); set session_cookie_secure=false for local http dev, and
+    # session_cookie_samesite="none" when the UI and API are on different sites.
+    session_cookie_secure: bool = True
+    session_cookie_samesite: str = "lax"
+    session_cookie_domain: str | None = None
+
     model_config = SettingsConfigDict(env_file=_env_file, extra="ignore")
 
 
