@@ -1,0 +1,102 @@
+"""Unit tests for the GitHub App installation-token service (no DB, httpx mocked)."""
+
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
+
+import jwt
+import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from pydantic import SecretStr
+
+from src.core.config import settings
+from src.services import github_app
+
+_APP_ID = "123456"
+
+
+def _make_keypair() -> tuple[str, str]:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    public_pem = (
+        key.public_key()
+        .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        .decode()
+    )
+    return private_pem, public_pem
+
+
+@pytest.fixture
+def app_configured(monkeypatch):
+    """Configure the GitHub App settings with a throwaway keypair; clear the token cache."""
+    private_pem, public_pem = _make_keypair()
+    monkeypatch.setattr(settings, "github_app_id", _APP_ID)
+    monkeypatch.setattr(settings, "github_app_private_key", SecretStr(private_pem))
+    github_app.clear_cache()
+    yield public_pem
+    github_app.clear_cache()
+
+
+def test_generate_app_jwt_claims_and_signature(app_configured):
+    public_pem = app_configured
+    token = github_app.generate_app_jwt(now=1_000_000)
+
+    decoded = jwt.decode(token, public_pem, algorithms=["RS256"], options={"verify_exp": False})
+    assert decoded["iss"] == _APP_ID
+    assert decoded["iat"] == 1_000_000 - github_app._APP_JWT_BACKDATE_SECONDS
+    assert decoded["exp"] == 1_000_000 + github_app._APP_JWT_TTL_SECONDS
+
+
+def test_get_installation_token_caches(app_configured):
+    future = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    with patch("src.services.github_app.httpx.Client") as mock_cls:
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_resp = MagicMock()
+        mock_resp.json = MagicMock(return_value={"token": "ghs_abc", "expires_at": future})
+        mock_client.post = MagicMock(return_value=mock_resp)
+        mock_cls.return_value = mock_client
+
+        first = github_app.get_installation_token(99)
+        second = github_app.get_installation_token(99)
+
+    assert first == second == "ghs_abc"
+    # Second call must be served from cache — only one HTTP request total.
+    mock_client.post.assert_called_once()
+    # Token request hits the installation access-tokens endpoint.
+    url = mock_client.post.call_args.args[0]
+    assert url.endswith("/app/installations/99/access_tokens")
+
+
+def test_expired_cache_refetches(app_configured):
+    past = (datetime.now(timezone.utc) - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    future = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    with patch("src.services.github_app.httpx.Client") as mock_cls:
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        resp_expired = MagicMock(json=MagicMock(return_value={"token": "ghs_old", "expires_at": past}))
+        resp_fresh = MagicMock(json=MagicMock(return_value={"token": "ghs_new", "expires_at": future}))
+        mock_client.post = MagicMock(side_effect=[resp_expired, resp_fresh])
+        mock_cls.return_value = mock_client
+
+        first = github_app.get_installation_token(7)   # already-expired token, not cached
+        second = github_app.get_installation_token(7)   # must refetch
+
+    assert first == "ghs_old"
+    assert second == "ghs_new"
+    assert mock_client.post.call_count == 2
+
+
+def test_not_configured_raises(monkeypatch):
+    monkeypatch.setattr(settings, "github_app_id", None)
+    monkeypatch.setattr(settings, "github_app_private_key", None)
+    with pytest.raises(github_app.GitHubAppNotConfigured):
+        github_app.generate_app_jwt()
