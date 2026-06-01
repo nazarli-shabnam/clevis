@@ -13,11 +13,11 @@ from datetime import datetime
 import logging
 
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy.orm import Session
 
-from src.core.auth import UserOut, create_access_token, require_auth
+from src.core.auth import UserOut, clear_session_cookie, create_access_token, require_auth
 from src.core.db import User, get_db
 
 logger = logging.getLogger(__name__)
@@ -101,6 +101,13 @@ def setup(body: SetupRequest, db: Session = Depends(get_db)):
     db.refresh(user)
     token = create_access_token(user.id, user.email, user.is_owner, user.name)
     return {"access_token": token, "user": UserOut(id=user.id, email=user.email, name=user.name, is_owner=user.is_owner)}
+
+
+@router.post("/logout")
+def logout(response: Response):
+    """Clear the httpOnly session cookie. Bearer-token clients also drop their local token."""
+    clear_session_cookie(response)
+    return {"ok": True}
 
 
 @router.post("/login", response_model=TokenResponse)

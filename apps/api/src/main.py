@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.core.config import settings
 from src.core.logging import setup_logging
 from src.core.middleware import RequestIdMiddleware
-from src.routers import actions_cache, analytics, audit, auth, config, health, installations, jobs, tokens
+from src.routers import actions_cache, analytics, audit, auth, config, github_auth, health, installations, jobs, tokens
 
 # CORS allowed origins are a deploy-time security boundary, set via the CORS_ORIGINS env var.
 _cors_origins = settings.cors_origins
@@ -32,12 +32,17 @@ app.add_middleware(RequestIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
+    # Required so the browser sends the httpOnly session cookie on cross-origin (UI->API)
+    # requests. Note: credentialed CORS is incompatible with a "*" origin — CORS_ORIGINS must
+    # list explicit UI origins in any deployment that relies on the cookie session.
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(health.router)
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(github_auth.router, prefix="/auth/github", tags=["github-auth"])
 app.include_router(installations.router, tags=["installations"])
 app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 app.include_router(actions_cache.router, prefix="/repos", tags=["actions-cache"])

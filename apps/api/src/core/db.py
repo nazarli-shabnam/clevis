@@ -66,8 +66,13 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     email: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     name: Mapped[str | None] = mapped_column(Text, nullable=True)
-    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # Null for users who only sign in with GitHub (no email/password credential).
+    password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_owner: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # GitHub identity (set when the user links / signs in via GitHub OAuth).
+    github_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, unique=True)
+    github_login: Mapped[str | None] = mapped_column(Text, nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

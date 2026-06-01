@@ -32,7 +32,9 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Re
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
-    return await fetch(url, { ...init, signal: controller.signal })
+    // credentials:"include" sends the httpOnly session cookie (GitHub OAuth sessions) alongside
+    // the Bearer header (email/password sessions); require_auth accepts either.
+    return await fetch(url, { credentials: "include", ...init, signal: controller.signal })
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
       throw new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s — is the API reachable?`)

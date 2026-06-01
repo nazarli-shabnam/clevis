@@ -45,48 +45,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
 
   const logout = useCallback(() => {
+    // Clear the httpOnly cookie server-side (GitHub OAuth sessions); harmless for Bearer sessions.
+    fetch(`${BASE}/auth/logout`, { method: "POST", credentials: "include" }).catch(() => {})
     localStorage.removeItem(_TOKEN_KEY)
     setToken(null)
     setUser(null)
   }, [])
 
-  // On mount: restore session from JWT immediately, then validate silently in background
+  // On mount: restore a Bearer session optimistically, then validate against the server.
+  // Validation works for BOTH auth modes — the Bearer header (email/password) and the httpOnly
+  // session cookie (GitHub OAuth, where there is no localStorage token).
   useEffect(() => {
     const stored = localStorage.getItem(_TOKEN_KEY)
-    if (!stored) {
-      setIsLoading(false)
-      return
+
+    // Optimistic restore from a stored token — unblock the UI without a network round-trip
+    if (stored) {
+      const optimistic = parseJwtPayload(stored)
+      if (optimistic) {
+        setToken(stored)
+        setUser(optimistic)
+        setIsLoading(false)
+      }
     }
 
-    // Optimistic restore — unblock the UI without a network round-trip
-    const optimistic = parseJwtPayload(stored)
-    if (optimistic) {
-      setToken(stored)
-      setUser(optimistic)
-      setIsLoading(false)
-    }
-
-    // Background validation — evict stale tokens, refresh user fields.
-    // Timed out so a stalled /auth/me can never leave the app stuck on the
-    // full-screen auth spinner (isLoading would otherwise never flip to false).
+    // Timed out so a stalled /auth/me can never leave the app stuck on the full-screen spinner.
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 15000)
     fetch(`${BASE}/auth/me`, {
-      headers: { Authorization: `Bearer ${stored}` },
+      headers: stored ? { Authorization: `Bearer ${stored}` } : {},
+      credentials: "include", // sends the httpOnly cookie for GitHub OAuth sessions
       signal: controller.signal,
     })
       .then(async (res) => {
         if (res.status === 401) {
-          logout()
+          if (stored) logout()
           return
         }
         if (!res.ok) return
-        const data = await res.json()
-        setToken(stored)
-        setUser(data as AuthUser)
+        const data = (await res.json()) as AuthUser
+        if (stored) setToken(stored)
+        setUser(data)
       })
       .catch(() => {
-        // Network unreachable or timed out — keep optimistic session
+        // Network unreachable or timed out — keep any optimistic session
       })
       .finally(() => {
         clearTimeout(timer)
