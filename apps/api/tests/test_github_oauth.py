@@ -116,7 +116,9 @@ def test_fetch_identity_falls_back_to_emails_endpoint():
     assert client.get.call_count == 2
 
 
-def test_not_configured_raises():
-    # client id/secret unset on the real settings object
+def test_not_configured_raises(monkeypatch):
+    # Force unconfigured regardless of the ambient .env (a real App may be configured locally).
+    monkeypatch.setattr(settings, "github_app_client_id", None)
+    monkeypatch.setattr(settings, "github_app_client_secret", None)
     with pytest.raises(github_oauth.GitHubOAuthNotConfigured):
         github_oauth.build_authorize_url(state="s", redirect_uri=_REDIRECT)

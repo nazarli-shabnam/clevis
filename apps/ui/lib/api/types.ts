@@ -75,3 +75,11 @@ export interface SavedTokenMeta {
   created_at: string
   updated_at: string
 }
+
+export interface InstallationMeta {
+  id: number
+  account_login: string
+  account_type: string
+  installation_id: number | null
+  created_at: string
+}

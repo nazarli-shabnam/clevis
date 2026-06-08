@@ -4,6 +4,7 @@ import type {
   CacheClearResponse,
   CacheListResponse,
   CheckValue,
+  InstallationMeta,
   JobOut,
   SavedTokenMeta,
 } from "./types"
@@ -146,6 +147,9 @@ export const api = {
   audit: {
     list: (action?: string) =>
       get<AuditLogOut[]>(`/audit${action ? `?action=${encodeURIComponent(action)}` : ""}`),
+  },
+  installations: {
+    list: () => get<InstallationMeta[]>("/github/app/installations"),
   },
   tokens: {
     list: () => get<SavedTokenMeta[]>("/tokens"),

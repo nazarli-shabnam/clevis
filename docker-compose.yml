@@ -71,6 +71,7 @@ services:
       args:
         # NEXT_PUBLIC_* vars must be available at build time
         NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE}
+        NEXT_PUBLIC_GITHUB_APP_SLUG: ${NEXT_PUBLIC_GITHUB_APP_SLUG:-}
     env_file:
       - .env
     expose:

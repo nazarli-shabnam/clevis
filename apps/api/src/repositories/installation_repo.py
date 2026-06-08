@@ -22,3 +22,7 @@ def create(
     db.commit()
     db.refresh(row)
     return row
+
+
+def list_all(db: Session) -> list[GitHubInstallation]:
+    return db.query(GitHubInstallation).order_by(GitHubInstallation.created_at.desc()).all()
