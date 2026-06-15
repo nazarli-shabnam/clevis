@@ -74,8 +74,8 @@ function ProfileDropdown({
 
       {/* Workspace row */}
       <div className="p-1.5">
-        <div className="flex items-center gap-2.5 px-2 py-2 rounded-sm">
-          <div className="size-7 rounded-sm bg-primary/15 border border-primary/20 flex items-center justify-center shrink-0">
+        <div className="flex items-center gap-2.5 px-2 py-2">
+          <div className="size-7 rounded-none bg-primary/15 border border-primary/20 flex items-center justify-center shrink-0">
             <span className="text-[0.6875rem] font-semibold text-primary leading-none">
               {initials}
             </span>
@@ -168,7 +168,7 @@ export function AppSidebar() {
           onClick={() => setOpen((v) => !v)}
           className="flex w-full items-center gap-2.5 px-3.5 py-3 hover:bg-sidebar-accent/60 transition-colors group text-left"
         >
-          <div className="size-7 rounded-full bg-primary/15 border border-primary/25 flex items-center justify-center shrink-0">
+          <div className="size-7 rounded-none bg-primary/15 border border-primary/25 flex items-center justify-center shrink-0">
             <span className="text-[0.6875rem] font-semibold text-primary leading-none">{initials}</span>
           </div>
           <div className="min-w-0 flex-1">

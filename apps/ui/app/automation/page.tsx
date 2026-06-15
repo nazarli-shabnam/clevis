@@ -2,7 +2,6 @@ export const metadata = { title: "Automation · clevis" }
 
 import { PageHeader } from "@/components/page-header"
 import { EmptyState } from "@/components/empty-state"
-import { Lightning } from "@phosphor-icons/react"
 
 export default function AutomationPage() {
   return (
@@ -13,7 +12,6 @@ export default function AutomationPage() {
       />
       <div className="bg-card border border-border">
         <EmptyState
-          icon={Lightning}
           title="Automation coming soon"
           description="Trigger GitHub Actions workflows, dispatch events, and automate repo hygiene tasks — all from one place."
         />
