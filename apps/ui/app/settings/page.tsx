@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Trash2, Plus, Loader2, Check, ExternalLink } from "lucide-react"
+import { Trash, Plus, CircleNotch, Check, ArrowSquareOut } from "@phosphor-icons/react"
 import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -71,7 +71,7 @@ function ProfileSection() {
           </p>
         </div>
         <Button onClick={save} disabled={isSaving} className="mt-1 w-fit">
-          {saved ? <><Check className="size-3.5" />Saved</> : isSaving ? <><Loader2 className="size-3.5 animate-spin" />Saving…</> : "Save profile"}
+          {saved ? <><Check className="size-3.5" />Saved</> : isSaving ? <><CircleNotch className="size-3.5 animate-spin" />Saving…</> : "Save profile"}
         </Button>
       </div>
     </div>
@@ -104,7 +104,7 @@ function AppearanceSection() {
             >
               <span
                 data-theme={t.name}
-                className="flex shrink-0 overflow-hidden rounded-sm border border-border/60"
+                className="flex shrink-0 overflow-hidden rounded-none border border-border/60"
               >
                 <span className="size-3.5 bg-background" />
                 <span className="size-3.5 bg-card" />
@@ -127,7 +127,7 @@ function SectionError({ message, onRetry, retrying }: { message: string; onRetry
     <div className="px-4 py-6 flex items-center justify-between gap-3">
       <p className="text-sm text-destructive">{message}</p>
       <Button size="sm" variant="outline" onClick={onRetry} disabled={retrying}>
-        {retrying ? <Loader2 className="size-3 animate-spin" /> : "Retry"}
+        {retrying ? <CircleNotch className="size-3 animate-spin" /> : "Retry"}
       </Button>
     </div>
   )
@@ -152,7 +152,7 @@ function ConnectedOrgsSection() {
 
       {isLoading ? (
         <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="size-3.5 animate-spin" /> Loading…
+          <CircleNotch className="size-3.5 animate-spin" /> Loading…
         </div>
       ) : isError ? (
         <SectionError
@@ -194,7 +194,7 @@ function ConnectedOrgsSection() {
       <div className="border-t border-border p-4">
         {installUrl ? (
           <Button onClick={() => { window.location.href = installUrl }}>
-            <ExternalLink className="size-3.5" />Install GitHub App
+            <ArrowSquareOut className="size-3.5" />Install GitHub App
           </Button>
         ) : (
           <p className="text-xs text-muted-foreground">
@@ -252,7 +252,7 @@ function SavedTokensSection() {
 
       {isLoading ? (
         <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="size-3.5 animate-spin" /> Loading…
+          <CircleNotch className="size-3.5 animate-spin" /> Loading…
         </div>
       ) : isError ? (
         <SectionError
@@ -292,7 +292,7 @@ function SavedTokensSection() {
                       className="text-muted-foreground hover:text-destructive transition-colors"
                       aria-label={`Delete token for ${t.org}`}
                     >
-                      <Trash2 className="size-3.5" />
+                      <Trash className="size-3.5" />
                     </button>
                   </td>
                 </tr>
@@ -329,7 +329,7 @@ function SavedTokensSection() {
           className="mt-2"
         >
           {upsert.isPending ? (
-            <><Loader2 className="size-3.5 animate-spin" />Saving…</>
+            <><CircleNotch className="size-3.5 animate-spin" />Saving…</>
           ) : (
             <><Plus className="size-3.5" />Save token</>
           )}
@@ -378,7 +378,7 @@ function InstanceConfigSection() {
   if (isLoading) {
     return (
       <div className="bg-card border border-border px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="size-3.5 animate-spin" /> Loading config…
+        <CircleNotch className="size-3.5 animate-spin" /> Loading config…
       </div>
     )
   }
@@ -408,7 +408,7 @@ function InstanceConfigSection() {
                 className="font-mono text-xs"
               />
               <Button size="sm" variant="outline" onClick={() => saveKey(field.key)} disabled={saving === field.key}>
-                {saving === field.key ? <Loader2 className="size-3 animate-spin" /> : "Save"}
+                {saving === field.key ? <CircleNotch className="size-3 animate-spin" /> : "Save"}
               </Button>
             </div>
             {errors[field.key] && (

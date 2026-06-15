@@ -1,4 +1,4 @@
-import { CheckCircle2, XCircle } from "lucide-react"
+import { CheckCircle, XCircle } from "@phosphor-icons/react"
 import type { CheckResult, CheckValue } from "@/lib/api/types"
 
 interface CheckCardProps {
@@ -58,14 +58,14 @@ export function CheckCard({ check }: CheckCardProps) {
   const pass = check.status === "pass"
   return (
     <div
-      className={`bg-card border p-3.5 flex items-start gap-3 transition-colors ${
-        pass ? "border-green-500/20 hover:border-green-500/35" : "border-red-500/20 hover:border-red-500/35"
+      className={`bg-card border p-3.5 flex items-start gap-3 transition-colors duration-200 ease-(--ease-out) ${
+        pass ? "border-green-500/20 hover:border-green-500/35" : "border-destructive/25 hover:border-destructive/45"
       }`}
     >
       {pass ? (
-        <CheckCircle2 className="size-4 shrink-0 mt-0.5 text-green-400" />
+        <CheckCircle className="size-4 shrink-0 mt-0.5 text-green-400" />
       ) : (
-        <XCircle className="size-4 shrink-0 mt-0.5 text-red-400" />
+        <XCircle className="size-4 shrink-0 mt-0.5 text-destructive" />
       )}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 mb-0.5 flex-wrap">

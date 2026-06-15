@@ -11,7 +11,7 @@ import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { AlertTriangle, Eye, KeyRound, Loader2, Trash2 } from "lucide-react"
+import { Warning, Eye, Key, CircleNotch, Trash } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
 import { CHART_COLORS } from "@/lib/charts/theme"
@@ -86,7 +86,7 @@ export default function CachePage() {
                 GitHub Token
                 {tokenSaved && (
                   <span className="inline-flex items-center gap-1 text-[0.6875rem] text-primary">
-                    <KeyRound className="size-3" />saved
+                    <Key className="size-3" />saved
                   </span>
                 )}
               </label>
@@ -105,13 +105,13 @@ export default function CachePage() {
                 disabled={saveTokenMutation.isPending}
                 className="w-full"
               >
-                <KeyRound className="size-3.5" />
+                <Key className="size-3.5" />
                 {saveTokenMutation.isPending ? "Saving…" : "Save token for this org"}
               </Button>
             )}
             {saveTokenMutation.isError && (
               <p className="text-xs text-destructive flex items-center gap-1.5">
-                <AlertTriangle className="size-3 shrink-0" />
+                <Warning className="size-3 shrink-0" />
                 {saveTokenMutation.error.message}
               </p>
             )}
@@ -129,14 +129,14 @@ export default function CachePage() {
               className="mt-1"
             >
               {listMutation.isPending ? (
-                <><Loader2 className="size-3.5 animate-spin" />Loading…</>
+                <><CircleNotch className="size-3.5 animate-spin" />Loading…</>
               ) : (
                 "Load caches"
               )}
             </Button>
             {listMutation.isError && (
               <p className="text-xs text-destructive flex items-center gap-1.5">
-                <AlertTriangle className="size-3 shrink-0" />
+                <Warning className="size-3 shrink-0" />
                 {listMutation.error.message}
               </p>
             )}
@@ -154,13 +154,13 @@ export default function CachePage() {
                 onClick={() => clearMutation.mutate(false)}
                 disabled={isLoading || !token || !actor}
               >
-                <Trash2 className="size-3.5" />
+                <Trash className="size-3.5" />
                 Clear
               </Button>
             </div>
             {clearMutation.isError && (
               <p className="text-xs text-destructive flex items-center gap-1.5">
-                <AlertTriangle className="size-3 shrink-0" />
+                <Warning className="size-3 shrink-0" />
                 {clearMutation.error.message}
               </p>
             )}
@@ -293,7 +293,7 @@ export default function CachePage() {
                 </Link>
               </div>
             ) : (
-              <pre className="font-mono text-xs text-muted-foreground leading-relaxed overflow-auto bg-muted/30 rounded-md p-3 border border-border/50">
+              <pre className="font-mono text-xs text-muted-foreground leading-relaxed overflow-auto bg-muted/30 rounded-none p-3 border border-border/50">
                 {JSON.stringify(clearMutation.data, null, 2)}
               </pre>
             )}

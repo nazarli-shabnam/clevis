@@ -6,11 +6,11 @@ import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Loader2 } from "lucide-react"
+import { CircleNotch } from "@phosphor-icons/react"
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
 
-// lucide-react v1 dropped brand marks; inline the GitHub logo.
+// Inline GitHub logo — keeps the mark on-brand and avoids depending on an icon set's brand glyphs.
 function GithubMark() {
   return (
     <svg viewBox="0 0 16 16" className="size-3.5" fill="currentColor" aria-hidden="true">
@@ -98,7 +98,7 @@ export default function LoginPage() {
 
           <Button type="submit" disabled={isSubmitting} className="mt-2">
             {isSubmitting ? (
-              <><Loader2 className="size-3.5 animate-spin" />Signing in…</>
+              <><CircleNotch className="size-3.5 animate-spin" />Signing in…</>
             ) : (
               "Sign in"
             )}

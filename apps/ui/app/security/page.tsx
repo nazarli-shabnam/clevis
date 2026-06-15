@@ -8,7 +8,7 @@ import { CheckCard } from "@/components/check-card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { AlertTriangle, KeyRound } from "lucide-react"
+import { Warning, Key } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { DonutChart } from "@/components/charts/donut-chart"
 import type { CheckResult } from "@/lib/api/types"
@@ -149,7 +149,7 @@ export default function SecurityPage() {
                 GitHub Token
                 {tokenSaved && (
                   <span className="inline-flex items-center gap-1 text-[0.6875rem] text-primary">
-                    <KeyRound className="size-3" />saved
+                    <Key className="size-3" />saved
                   </span>
                 )}
               </label>
@@ -175,13 +175,13 @@ export default function SecurityPage() {
                 onClick={() => saveTokenMutation.mutate()}
                 disabled={saveTokenMutation.isPending}
               >
-                <KeyRound className="size-3.5" />
+                <Key className="size-3.5" />
                 {saveTokenMutation.isPending ? "Saving…" : "Save token for this org"}
               </Button>
             )}
             {scan.isError && (
               <div className="flex items-start gap-2 text-xs text-destructive">
-                <AlertTriangle className="size-3.5 mt-0.5 shrink-0" />
+                <Warning className="size-3.5 mt-0.5 shrink-0" />
                 {scan.error.message}
               </div>
             )}
