@@ -24,10 +24,10 @@ export function ActivityList({ jobs, isLoading, limit }: ActivityListProps) {
         {Array.from({ length: 3 }).map((_, i) => (
           <div key={i} className="px-4 py-3 flex items-center justify-between gap-4 animate-pulse">
             <div className="flex flex-col gap-1.5">
-              <div className="h-3 w-40 bg-muted rounded-sm" />
-              <div className="h-2.5 w-24 bg-muted/60 rounded-sm" />
+              <div className="h-3 w-40 bg-muted rounded-none" />
+              <div className="h-2.5 w-24 bg-muted/60 rounded-none" />
             </div>
-            <div className="h-2.5 w-14 bg-muted/60 rounded-sm" />
+            <div className="h-2.5 w-14 bg-muted/60 rounded-none" />
           </div>
         ))}
       </div>
@@ -46,8 +46,12 @@ export function ActivityList({ jobs, isLoading, limit }: ActivityListProps) {
 
   return (
     <div className="divide-y divide-border">
-      {visible.map((job) => (
-        <div key={job.id} className="px-4 py-3 flex items-start justify-between gap-4 hover:bg-elevated transition-colors">
+      {visible.map((job, i) => (
+        <div
+          key={job.id}
+          className="stagger-item px-4 py-3 flex items-start justify-between gap-4 hover:bg-elevated transition-colors duration-150 ease-(--ease-out)"
+          style={{ animationDelay: `${Math.min(i, 6) * 45}ms` }}
+        >
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-mono text-muted-foreground shrink-0">#{job.id}</span>
