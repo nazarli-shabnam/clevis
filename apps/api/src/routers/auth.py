@@ -3,6 +3,7 @@ Auth router — /auth/*
 
 Endpoints:
   POST /auth/setup          First-run only; creates the owner account (409 if users exist)
+  POST /auth/register       Creates a non-owner account; 403 if registration_enabled=false
   POST /auth/login          Returns a JWT on valid credentials
   GET  /auth/me             Returns the current authenticated user
   PATCH /auth/me            Updates the current user's display name
@@ -17,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy.orm import Session
 
+from src.core.app_config import get_config
 from src.core.auth import UserOut, clear_session_cookie, create_access_token, require_auth
 from src.core.db import User, get_db
 
@@ -37,6 +39,12 @@ def _verify_password(password: str, password_hash: str) -> bool:
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class SetupRequest(BaseModel):
+    email: EmailStr
+    name: str | None = None
+    password: str
+
+
+class RegisterRequest(BaseModel):
     email: EmailStr
     name: str | None = None
     password: str
@@ -95,6 +103,31 @@ def setup(body: SetupRequest, db: Session = Depends(get_db)):
         name=body.name,
         password_hash=_hash_password(body.password),
         is_owner=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    token = create_access_token(user.id, user.email, user.is_owner, user.name)
+    return {"access_token": token, "user": UserOut(id=user.id, email=user.email, name=user.name, is_owner=user.is_owner)}
+
+
+@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+def register(body: RegisterRequest, db: Session = Depends(get_db)):
+    """Creates a non-owner account. 403 if registration has been disabled by the owner."""
+    if get_config("registration_enabled", "true") != "true":
+        raise HTTPException(status_code=403, detail="Registration is disabled")
+    if len(body.password) < _MIN_PASSWORD_LEN:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Password must be at least {_MIN_PASSWORD_LEN} characters",
+        )
+    if db.query(User).filter(User.email == body.email).first():
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+    user = User(
+        email=body.email,
+        name=body.name,
+        password_hash=_hash_password(body.password),
+        is_owner=False,
     )
     db.add(user)
     db.commit()

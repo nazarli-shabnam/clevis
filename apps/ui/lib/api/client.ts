@@ -171,6 +171,11 @@ export const api = {
         "/auth/setup",
         { email, password, name },
       ),
+    register: (email: string, password: string, name?: string) =>
+      post<{ access_token: string; user: { id: number; email: string; name: string | null; is_owner: boolean } }>(
+        "/auth/register",
+        { email, password, name },
+      ),
     patchMe: (name: string) =>
       patch<{ id: number; email: string; name: string | null; is_owner: boolean }>("/auth/me", { name }),
   },

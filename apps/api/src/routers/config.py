@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _INT_KEYS = {"worker_poll_seconds"}
+_BOOL_KEYS = {"registration_enabled"}
 
 
 class ConfigValue(BaseModel):
@@ -47,6 +48,9 @@ def update_config(
             raise HTTPException(status_code=422, detail=f"{key} must be an integer")
         if parsed_int < 1:
             raise HTTPException(status_code=422, detail=f"{key} must be at least 1")
+
+    if key in _BOOL_KEYS and body.value not in ("true", "false"):
+        raise HTTPException(status_code=422, detail=f"{key} must be 'true' or 'false'")
 
     try:
         set_config(key, body.value)
