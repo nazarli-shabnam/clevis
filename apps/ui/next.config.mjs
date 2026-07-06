@@ -4,6 +4,9 @@ const nextConfig = {
   // Avoid Next.js workspace-root inference issues when multiple lockfiles exist.
   // This keeps file tracing scoped to the monorepo root.
   outputFileTracingRoot: new URL("..", import.meta.url).pathname,
+  experimental: {
+    optimizePackageImports: ["@phosphor-icons/react"],
+  },
 };
 
 export default nextConfig;

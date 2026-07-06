@@ -339,16 +339,8 @@
    * Replaces the old .section-title. Used across Linear, Vercel, Raycast.
    * Reads "engineering dashboard", not "generic page".
    */
-  .section-label {
-    font-size: 0.6875rem;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: var(--muted-foreground);
-    font-family: var(--font-mono);
-  }
-
-  /* Keep old name as alias during the transition */
+  /* .section-title kept as an alias during the transition */
+  .section-label,
   .section-title {
     font-size: 0.6875rem;
     font-weight: 500;
@@ -482,7 +474,7 @@
     position: fixed;
     inset: 0;
     pointer-events: none;
-    z-index: 100;
+    z-index: 40;
     opacity: 0.025;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }

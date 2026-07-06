@@ -59,11 +59,11 @@ export function CheckCard({ check }: CheckCardProps) {
   return (
     <div
       className={`bg-card border p-3.5 flex items-start gap-3 transition-colors duration-200 ease-(--ease-out) ${
-        pass ? "border-green-500/20 hover:border-green-500/35" : "border-destructive/25 hover:border-destructive/45"
+        pass ? "border-accent/20 hover:border-accent/35" : "border-destructive/25 hover:border-destructive/45"
       }`}
     >
       {pass ? (
-        <CheckCircle className="size-4 shrink-0 mt-0.5 text-green-400" />
+        <CheckCircle className="size-4 shrink-0 mt-0.5 text-accent" />
       ) : (
         <XCircle className="size-4 shrink-0 mt-0.5 text-destructive" />
       )}
