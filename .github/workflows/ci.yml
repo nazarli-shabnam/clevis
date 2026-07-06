@@ -39,32 +39,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: apps/ui/package-lock.json
+          bun-version: latest
 
       - name: Install UI deps
         working-directory: apps/ui
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Typecheck
         working-directory: apps/ui
-        run: npm run typecheck
+        run: bun run typecheck
 
       - name: Lint UI
         working-directory: apps/ui
-        run: npm run lint
+        run: bun run lint
 
       - name: Test UI
         working-directory: apps/ui
-        run: npm run test
+        run: bun run test
 
       - name: Build UI
         working-directory: apps/ui
-        run: npm run build
+        run: bun run build
 
   python:
     name: Python Tests + Compile
