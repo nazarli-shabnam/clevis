@@ -6,7 +6,7 @@ Thanks for helping improve clevis. This document describes how to work in the re
 
 | Path | Role |
 |------|------|
-| `apps/ui` | Next.js UI (Node 22, npm) |
+| `apps/ui` | Next.js UI (Node 22, Bun) |
 | `apps/api` | Python API |
 | `apps/worker` | Python worker |
 | `packages/checks` | `clevis-checks` shared Python library |
@@ -15,6 +15,7 @@ Thanks for helping improve clevis. This document describes how to work in the re
 ## Prerequisites
 
 - **Node.js 22** (same as CI)
+- **Bun** (same as CI; used for `apps/ui` installs/scripts)
 - **Python 3.12** (for API/worker checks)
 - **Docker** (for image build verification)
 
@@ -33,7 +34,7 @@ Thanks for helping improve clevis. This document describes how to work in the re
 
    ```bash
    cd apps/ui
-   npm ci
+   bun install --frozen-lockfile
    ```
 
 ## Line endings
@@ -44,12 +45,14 @@ The repo uses `.gitattributes` so text files are stored with **LF**. On Windows,
 
 After `npm ci` at the **repository root**, Git uses Husky (`core.hooksPath` → `.husky/_`). Then:
 
-- **`pre-commit`** runs before the commit is recorded. It runs `npm --prefix apps/ui run typecheck`. Install UI deps (`apps/ui/npm ci`) so this can succeed.
+- **`pre-commit`** runs before the commit is recorded. It runs `bun run typecheck` in `apps/ui`. Install UI deps (`cd apps/ui && bun install --frozen-lockfile`) so this can succeed.
 - **`commit-msg`** runs **immediately after** you supply a message—whether from `git commit -m "your subject"` or from the editor. It runs the same [Commitlint](https://commitlint.js.org/) rules as CI ([Conventional Commits](https://www.conventionalcommits.org/) via `@commitlint/config-conventional`), with **`--verbose`** output like the workflow.
 
 If Commitlint fails, **Git does not create the commit**. You will see the errors in your terminal; fix the message and run `git commit` again (no need to wait for CI to discover the problem).
 
 **Hooks not running?** Run `npm ci` (or `npm install`) once at the repo root. If you only install dependencies under `apps/ui`, root Husky never runs and commits will not be checked locally.
+
+(This root install is npm, not Bun — it's only for the tiny commitlint/Husky devDependency set at the repository root and is unrelated to the `apps/ui` Bun migration.)
 
 To bypass hooks in exceptional cases (not recommended for routine work): `git commit --no-verify`.
 
@@ -77,12 +80,12 @@ These mirror [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ```bash
 cd apps/ui
-npm ci
-npm run typecheck
-npm run build
+bun install --frozen-lockfile
+bun run typecheck
+bun run build
 ```
 
-(`npm run check` runs typecheck and build together.)
+(`bun run check` runs typecheck and build together.)
 
 ### Python (API + worker)
 

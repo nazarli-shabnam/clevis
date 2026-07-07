@@ -10,6 +10,7 @@ from src.repositories import installation_repo
 from src.routers.installations import router as inst_router
 
 _USER = UserOut(id=1, email="u@e.com", name=None, is_owner=True)
+_NON_OWNER = UserOut(id=2, email="member@e.com", name=None, is_owner=False)
 
 
 @pytest.fixture()
@@ -18,6 +19,15 @@ def inst_client(db):
     app.include_router(inst_router)
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[require_auth] = lambda: _USER
+    return TestClient(app)
+
+
+@pytest.fixture()
+def inst_client_non_owner(db):
+    app = FastAPI()
+    app.include_router(inst_router)
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[require_auth] = lambda: _NON_OWNER
     return TestClient(app)
 
 
@@ -45,3 +55,8 @@ def test_list_installations_requires_auth(db):
     app.dependency_overrides[get_db] = lambda: db
     resp = TestClient(app).get("/github/app/installations")
     assert resp.status_code == 401
+
+
+def test_list_installations_non_owner_forbidden(inst_client_non_owner):
+    resp = inst_client_non_owner.get("/github/app/installations")
+    assert resp.status_code == 403

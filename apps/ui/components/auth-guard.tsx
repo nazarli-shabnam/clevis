@@ -6,7 +6,7 @@ import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
 
 // Routes that don't require authentication
-const PUBLIC_ROUTES = ["/login", "/setup"]
+const PUBLIC_ROUTES = ["/login", "/setup", "/register"]
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth()

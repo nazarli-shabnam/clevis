@@ -8,7 +8,8 @@ from fastapi.testclient import TestClient
 from src.core.auth import UserOut, require_auth
 from src.routers.analytics import router
 
-_MOCK_USER = UserOut(id=1, email="test@example.com", name=None, is_owner=False)
+_MOCK_USER = UserOut(id=1, email="test@example.com", name=None, is_owner=True)
+_MOCK_NON_OWNER = UserOut(id=2, email="member@example.com", name=None, is_owner=False)
 
 MOCK_OVERVIEW = {
     "owner": "acme",
@@ -39,6 +40,22 @@ def app():
 @pytest.fixture()
 def http(app):
     return TestClient(app)
+
+
+@pytest.fixture()
+def non_owner_http():
+    a = FastAPI()
+    a.dependency_overrides[require_auth] = lambda: _MOCK_NON_OWNER
+    a.include_router(router, prefix="/analytics")
+    return TestClient(a)
+
+
+def test_overview_non_owner_forbidden(non_owner_http):
+    resp = non_owner_http.post(
+        "/analytics/overview",
+        json={"owner": "acme", "token": "ghp_test"},
+    )
+    assert resp.status_code == 403
 
 
 def test_overview_returns_expected_shape(http):
