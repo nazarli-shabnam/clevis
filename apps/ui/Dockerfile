@@ -28,8 +28,9 @@ ENV HOSTNAME=0.0.0.0
 # outputFileTracingRoot resolves to "/" in Docker, so Next.js mirrors the full
 # path and nests standalone output under app/ (i.e. server.js is at
 # standalone/app/server.js, not standalone/server.js).
-COPY --from=builder /app/.next/standalone/app ./
-COPY --from=builder /app/.next/static         ./.next/static
+COPY --from=builder --chown=node:node /app/.next/standalone/app ./
+COPY --from=builder --chown=node:node /app/.next/static         ./.next/static
 
+USER node
 EXPOSE 3000
 CMD ["node", "server.js"]
