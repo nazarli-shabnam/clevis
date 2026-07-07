@@ -85,7 +85,7 @@ def resolve_token(
     db: Session = Depends(get_db),
     _user: UserOut = Depends(require_owner),
 ) -> VerifyTokenResponse:
-    """Decrypt and return the saved token for an org. Returns raw secret — requires authentication."""
+    """Decrypt and return the saved token for an org. Returns raw secret — owner only."""
     row = db.query(SavedToken).filter_by(org=body.org).first()
     if not row:
         raise HTTPException(status_code=404, detail="No saved token for this org")
