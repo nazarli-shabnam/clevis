@@ -215,9 +215,14 @@ def test_get_config_unauthenticated(config_client):
     assert resp.status_code == 401
 
 
-def test_get_config_authenticated(config_client_viewer):
+def test_get_config_non_owner_forbidden(config_client_viewer):
+    resp = config_client_viewer.get("/config")
+    assert resp.status_code == 403
+
+
+def test_get_config_owner(config_client_owner):
     with patch("src.routers.config.read_all", return_value=_MOCK_CONFIG):
-        resp = config_client_viewer.get("/config")
+        resp = config_client_owner.get("/config")
     assert resp.status_code == 200
     assert resp.json()["worker_poll_seconds"] == "5"
 
