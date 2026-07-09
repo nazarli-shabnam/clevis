@@ -56,7 +56,7 @@ cp .env.example .env           # fill in ALL variables — none have defaults
 pip install -r apps/api/requirements.txt
 pip install -r requirements-test.txt
 pip install -e packages/checks
-cd apps/ui && npm install
+cd apps/ui && bun install
 ```
 
 **Required env vars (6 total):** `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JOB_SECRET_KEY`, `AUTH_SECRET`, `NEXT_PUBLIC_API_BASE`. Two more deploy-time vars are optional (safe defaults in code): `CORS_ORIGINS`, `GITHUB_API_BASE`. Everything else lives in the `app_config` DB table (configured via Settings page).
@@ -90,7 +90,7 @@ alembic upgrade head
 uvicorn src.main:app --reload  # http://localhost:8080
 
 # Terminal 3: UI
-cd apps/ui && npm run dev      # http://localhost:3000
+cd apps/ui && bun run dev      # http://localhost:3000
 
 # Terminal 4 (optional): worker
 cd apps/worker && python src/worker.py
@@ -116,11 +116,11 @@ Tests hit a real Postgres database — no mocks. `pytest.ini` adds `apps/api` an
 ### UI
 ```bash
 cd apps/ui
-npm run dev          # dev server
-npm run typecheck    # tsc --noEmit
-npm run lint         # eslint
-npm run test         # vitest run
-npm run check        # typecheck + lint + build
+bun run dev          # dev server
+bun run typecheck    # tsc --noEmit
+bun run lint         # eslint
+bun run test         # vitest run
+bun run check        # typecheck + lint + build
 ```
 
 ### Database migrations

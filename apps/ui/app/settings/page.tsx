@@ -346,6 +346,7 @@ function SavedTokensSection() {
 
 const CONFIG_FIELDS: { key: string; label: string; description: string; type?: string }[] = [
   { key: "worker_poll_seconds", label: "Worker Poll Interval",    description: "Seconds between job queue polls.", type: "number" },
+  { key: "registration_enabled", label: "Self-Registration",     description: "Allow anyone to create an account via /register.", type: "boolean" },
 ]
 
 function InstanceConfigSection() {
@@ -401,12 +402,23 @@ function InstanceConfigSection() {
           <div key={field.key} className="p-4 max-w-lg">
             <label className="text-xs font-medium text-foreground block mb-1">{field.label}</label>
             <div className="flex items-center gap-2">
-              <Input
-                value={values[field.key] ?? ""}
-                onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
-                type={field.type === "number" ? "number" : "text"}
-                className="font-mono text-xs"
-              />
+              {field.type === "boolean" ? (
+                <select
+                  value={values[field.key] ?? "true"}
+                  onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
+                  className="h-8 border border-border bg-transparent px-2 font-mono text-xs"
+                >
+                  <option value="true">Enabled</option>
+                  <option value="false">Disabled</option>
+                </select>
+              ) : (
+                <Input
+                  value={values[field.key] ?? ""}
+                  onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
+                  type={field.type === "number" ? "number" : "text"}
+                  className="font-mono text-xs"
+                />
+              )}
               <Button size="sm" variant="outline" onClick={() => saveKey(field.key)} disabled={saving === field.key}>
                 {saving === field.key ? <CircleNotch className="size-3 animate-spin" /> : "Save"}
               </Button>

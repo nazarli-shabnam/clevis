@@ -7,12 +7,6 @@
       "skillPath": ".agents/skills/backend-code-review/SKILL.md",
       "computedHash": "77087ca3d4c8fba12833dd954da166a9bb1fdb0ddbddf4e0a73a549712aa1b39"
     },
-    "backend-dev-guidelines": {
-      "source": "langfuse/langfuse",
-      "sourceType": "github",
-      "skillPath": ".agents/skills/backend-dev-guidelines/SKILL.md",
-      "computedHash": "4e97d335c0cd6ac1f05d8e14f5c993ae9101749bfd09e2de2e54b0a09039c233"
-    },
     "caveman-review": {
       "source": "juliusbrussee/caveman",
       "sourceType": "github",
@@ -22,8 +16,44 @@
     "emil-design-eng": {
       "source": "emilkowalski/skill",
       "sourceType": "github",
-      "skillPath": "skills/emil-design-eng/SKILL.md",
+      "skillPath": ".claude/skills/emil-design-eng/SKILL.md",
       "computedHash": "8bdf9e4e6de7a4969147bf4828a4ad2c5aacd9fba4b690b250a85e0467ca387d"
+    },
+    "design-taste-frontend": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/design-taste-frontend/SKILL.md",
+      "computedHash": "6d838b246d0e35d0b53f4f23f98ba7a1dd561937e64f7d0c7553b0928e376c3e"
+    },
+    "full-output-enforcement": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/full-output-enforcement/SKILL.md",
+      "computedHash": "26bd29ce4c5e02c7666b2d503609bf466bd32290822e91f0e984147048dbb924"
+    },
+    "high-end-visual-design": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/high-end-visual-design/SKILL.md",
+      "computedHash": "7db385e4c5370e5a7fca9704a1361b056e4504ea6a03924bb86f33a4f00b5c73"
+    },
+    "imagegen-frontend-web": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/imagegen-frontend-web/SKILL.md",
+      "computedHash": "65f5ae59fa317567809438310b1c54f78cd133426deb43e4d3d4ca4c8f541628"
+    },
+    "impeccable": {
+      "source": "pbakaus/impeccable",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/impeccable/SKILL.md",
+      "computedHash": "4b0449fffd5f803df999bae30de7f75c8a9b0fac432968ba19378e85ab283835"
+    },
+    "industrial-brutalist-ui": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/industrial-brutalist-ui/SKILL.md",
+      "computedHash": "8fc355c4aadb7d29c53ca28bc41be3cd6eea765d121e3737c4dc2d0f90a8effa"
     },
     "karpathy-guidelines": {
       "source": "forrestchang/andrej-karpathy-skills",
@@ -31,17 +61,11 @@
       "skillPath": "skills/karpathy-guidelines/SKILL.md",
       "computedHash": "41e8ca055bbde13d240776a14a076a59614057200340c243130a76ba4e64cac8"
     },
-    "ui-ux-pro-max": {
-      "source": "nextlevelbuilder/ui-ux-pro-max-skill",
+    "redesign-existing-projects": {
+      "source": "Leonxlnx/taste-skill",
       "sourceType": "github",
-      "skillPath": ".claude/skills/ui-ux-pro-max/SKILL.md",
-      "computedHash": "8cd1b83a60e8d0a95c332d2baeffad9053617b286beb96bbe13e818507343f47"
-    },
-    "uncodixfy": {
-      "source": "cyxzdev/uncodixfy",
-      "sourceType": "github",
-      "skillPath": "SKILL.md",
-      "computedHash": "deac2e88f3fc4a66aa95c77b509b5d22c189dfdb87caa24d3db85516f4600776"
+      "skillPath": ".claude/skills/redesign-existing-projects/SKILL.md",
+      "computedHash": "b405eee0e0e80fc243f731d9aa368bca307e356db7e6157d27101d369dac6726"
     }
   }
 }

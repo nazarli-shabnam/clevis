@@ -120,6 +120,13 @@ export default function LoginPage() {
           <GithubMark />
           Sign in with GitHub
         </Button>
+
+        <p className="text-xs text-muted-foreground mt-4 text-center">
+          Don&apos;t have an account?{" "}
+          <a href="/register" className="text-foreground underline underline-offset-2">
+            Sign up
+          </a>
+        </p>
       </div>
     </div>
   )

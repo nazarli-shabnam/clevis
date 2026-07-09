@@ -6,7 +6,7 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { Breadcrumb } from "@/components/breadcrumb"
 
 // Routes rendered without the sidebar shell
-const SHELL_EXCLUDED = ["/login", "/setup"]
+const SHELL_EXCLUDED = ["/login", "/setup", "/register"]
 
 export function ShellRouter({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()

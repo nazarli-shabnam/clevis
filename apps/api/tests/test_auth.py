@@ -70,6 +70,51 @@ def test_setup_rejects_duplicate(auth_client):
     assert resp.status_code == 409
 
 
+# register
+
+def test_register_creates_non_owner(auth_client):
+    _setup_owner(auth_client)
+    resp = auth_client.post(
+        "/auth/register", json={"email": "member@example.com", "password": "supersecret1234"}
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert "access_token" in body
+    assert body["user"]["is_owner"] is False
+    assert body["user"]["email"] == "member@example.com"
+
+
+def test_register_before_setup_still_creates_non_owner(auth_client):
+    """Registration doesn't require setup to have run first; the first-ever user via /setup
+    becomes owner, but a /register call before that just makes a regular account."""
+    resp = auth_client.post(
+        "/auth/register", json={"email": "first@example.com", "password": "supersecret1234"}
+    )
+    assert resp.status_code == 201
+    assert resp.json()["user"]["is_owner"] is False
+
+
+def test_register_rejects_short_password(auth_client):
+    resp = auth_client.post("/auth/register", json={"email": "a@b.com", "password": "tooshort"})
+    assert resp.status_code == 422
+
+
+def test_register_rejects_duplicate_email(auth_client):
+    _setup_owner(auth_client, email="dupe@example.com")
+    resp = auth_client.post(
+        "/auth/register", json={"email": "dupe@example.com", "password": "supersecret1234"}
+    )
+    assert resp.status_code == 409
+
+
+def test_register_disabled_returns_403(auth_client):
+    with patch("src.routers.auth.get_config", return_value="false"):
+        resp = auth_client.post(
+            "/auth/register", json={"email": "blocked@example.com", "password": "supersecret1234"}
+        )
+    assert resp.status_code == 403
+
+
 # login
 
 def test_login_valid(auth_client):
@@ -170,9 +215,14 @@ def test_get_config_unauthenticated(config_client):
     assert resp.status_code == 401
 
 
-def test_get_config_authenticated(config_client_viewer):
+def test_get_config_non_owner_forbidden(config_client_viewer):
+    resp = config_client_viewer.get("/config")
+    assert resp.status_code == 403
+
+
+def test_get_config_owner(config_client_owner):
     with patch("src.routers.config.read_all", return_value=_MOCK_CONFIG):
-        resp = config_client_viewer.get("/config")
+        resp = config_client_owner.get("/config")
     assert resp.status_code == 200
     assert resp.json()["worker_poll_seconds"] == "5"
 
@@ -218,6 +268,22 @@ def test_update_config_valid_worker_poll_seconds(config_client_owner):
 def test_update_config_removed_keys_rejected(config_client_owner, key):
     resp = config_client_owner.put(f"/config/{key}", json={"value": "https://x.com"})
     assert resp.status_code == 400
+
+
+@pytest.mark.parametrize("value", ["yes", "1", ""])
+def test_update_config_invalid_bool(config_client_owner, value):
+    resp = config_client_owner.put("/config/registration_enabled", json={"value": value})
+    assert resp.status_code == 422
+
+
+def test_update_config_valid_bool(config_client_owner):
+    with (
+        patch("src.routers.config.set_config") as mock_set,
+        patch("src.routers.config.read_all", return_value={**_MOCK_CONFIG, "registration_enabled": "false"}),
+    ):
+        resp = config_client_owner.put("/config/registration_enabled", json={"value": "false"})
+    assert resp.status_code == 200
+    mock_set.assert_called_once_with("registration_enabled", "false")
 
 
 def test_update_config_success(config_client_owner):

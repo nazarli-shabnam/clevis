@@ -94,7 +94,7 @@ cp .env.example .env
 pip install -r apps/api/requirements.txt
 pip install -r requirements-test.txt
 pip install -e packages/checks
-cd apps/ui && npm install
+cd apps/ui && bun install
 ```
 
 Run each service in its own terminal:
@@ -102,7 +102,7 @@ Run each service in its own terminal:
 ```bash
 docker compose up db                              # Postgres
 cd apps/api && alembic upgrade head && uvicorn src.main:app --reload   # API  → :8080
-cd apps/ui && npm run dev                          # UI   → :3000
+cd apps/ui && bun run dev                          # UI   → :3000
 cd apps/worker && python src/worker.py             # worker (optional)
 ```
 
@@ -110,7 +110,7 @@ Run the tests:
 
 ```bash
 pytest -q                 # Python (hits a real Postgres; transaction-isolated)
-cd apps/ui && npm run check   # UI: typecheck + lint + build
+cd apps/ui && bun run check   # UI: typecheck + lint + build
 ```
 
 See [`CLAUDE.md`](CLAUDE.md) for full architecture and configuration notes.

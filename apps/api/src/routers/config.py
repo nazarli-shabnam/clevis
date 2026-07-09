@@ -1,7 +1,7 @@
 """
 Instance configuration router — /config
 
-GET  /config          Returns all app_config key/value pairs (any authenticated user)
+GET  /config          Returns all app_config key/value pairs (owner only)
 PUT  /config/{key}    Updates a config value (owner only)
 """
 
@@ -11,12 +11,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from src.core.app_config import _ACCEPTED_KEYS, read_all, set_config
-from src.core.auth import UserOut, require_auth, require_owner
+from src.core.auth import UserOut, require_owner
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _INT_KEYS = {"worker_poll_seconds"}
+_BOOL_KEYS = {"registration_enabled"}
 
 
 class ConfigValue(BaseModel):
@@ -24,8 +25,8 @@ class ConfigValue(BaseModel):
 
 
 @router.get("", response_model=dict[str, str])
-def get_all_config(_user: UserOut = Depends(require_auth)) -> dict[str, str]:
-    """Return all instance config values. Requires authentication."""
+def get_all_config(_user: UserOut = Depends(require_owner)) -> dict[str, str]:
+    """Return all instance config values. Owner only."""
     return read_all()
 
 
@@ -47,6 +48,9 @@ def update_config(
             raise HTTPException(status_code=422, detail=f"{key} must be an integer")
         if parsed_int < 1:
             raise HTTPException(status_code=422, detail=f"{key} must be at least 1")
+
+    if key in _BOOL_KEYS and body.value not in ("true", "false"):
+        raise HTTPException(status_code=422, detail=f"{key} must be 'true' or 'false'")
 
     try:
         set_config(key, body.value)

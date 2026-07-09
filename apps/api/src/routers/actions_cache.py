@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from src.core.auth import UserOut, require_auth
+from src.core.auth import UserOut, require_owner
 from src.core.db import get_db
 from src.schemas.cache import CacheClearInput, CacheClearResponse, CacheListInput, CacheListResponse
 from src.services.cache_service import clear
@@ -11,7 +11,7 @@ router = APIRouter()
 
 
 @router.post("/{owner}/{repo}/actions-caches", response_model=CacheListResponse)
-def list_caches(owner: str, repo: str, payload: CacheListInput, _user: UserOut = Depends(require_auth)):
+def list_caches(owner: str, repo: str, payload: CacheListInput, _user: UserOut = Depends(require_owner)):
     client = GitHubClient(payload.token.get_secret_value())
     data = client.request("GET", f"/repos/{owner}/{repo}/actions/caches")
     return {"repository": f"{owner}/{repo}", "total": data.get("total_count", 0), "actions_caches": data.get("actions_caches", [])}
@@ -23,6 +23,6 @@ def clear_caches(
     repo: str,
     payload: CacheClearInput,
     db: Session = Depends(get_db),
-    _user: UserOut = Depends(require_auth),
+    _user: UserOut = Depends(require_owner),
 ):
     return clear(db, owner, repo, payload)
