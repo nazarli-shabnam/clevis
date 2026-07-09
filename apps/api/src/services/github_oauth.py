@@ -22,7 +22,7 @@ import jwt
 
 from src.core.config import settings
 
-_OAUTH_SCOPE = "read:user user:email"
+_OAUTH_SCOPE = "read:user user:email read:org"
 _STATE_TTL_SECONDS = 600  # 10 minutes between /login and /callback
 _STATE_ALG = "HS256"
 _STATE_PURPOSE = "github_oauth"
@@ -140,6 +140,47 @@ def fetch_identity(user_token: str) -> GitHubIdentity:
         email=email,
         avatar_url=user.get("avatar_url"),
     )
+
+
+@dataclass
+class GitHubOrgMembership:
+    github_org_id: int
+    login: str
+    role: str  # "admin" | "member"
+
+
+def list_user_orgs(user_token: str) -> list[GitHubOrgMembership]:
+    """List the organizations the authenticated user belongs to (needs read:org scope).
+
+    Does not include per-org role — GitHub's /user/orgs response omits it. Callers should
+    follow up with get_org_membership_role for orgs they actually care about.
+    """
+    api = settings.github_api_base.rstrip("/")
+    headers = {
+        "Authorization": f"Bearer {user_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    with httpx.Client(timeout=20) as client:
+        resp = client.get(f"{api}/user/orgs", headers=headers)
+        resp.raise_for_status()
+    return [GitHubOrgMembership(github_org_id=o["id"], login=o["login"], role="") for o in resp.json()]
+
+
+def get_org_membership_role(user_token: str, org_login: str, username: str) -> str | None:
+    """Returns the caller's role ("admin" | "member") in org_login, or None if not a member."""
+    api = settings.github_api_base.rstrip("/")
+    headers = {
+        "Authorization": f"Bearer {user_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    with httpx.Client(timeout=20) as client:
+        resp = client.get(f"{api}/orgs/{org_login}/memberships/{username}", headers=headers)
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return resp.json().get("role")
 
 
 def _primary_verified_email(emails: list[dict]) -> str | None:
