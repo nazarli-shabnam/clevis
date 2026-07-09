@@ -19,12 +19,13 @@ function GithubMark() {
   )
 }
 
-// Only accept same-site relative paths, rejecting anything that could be interpreted as a
-// protocol-relative or absolute URL by the browser — including backslash variants like
-// "/\evil.com", which some browsers normalize to "//evil.com" — to avoid an open redirect.
+// Only accept unambiguous same-site relative paths: reject protocol-relative ("//..."),
+// backslash variants (some browsers normalize "/\..." to "//..."), and control characters
+// that could let URL parsing reinterpret this as an external navigation target.
 function safeNextPath(next: string | null): string {
-  if (next && next.startsWith("/") && !next.startsWith("//") && !next.includes("\\")) return next
-  return "/"
+  if (!next || !next.startsWith("/") || next.startsWith("//")) return "/"
+  if (next.includes("\\") || /[\x00-\x1f\x7f]/.test(next)) return "/"
+  return next
 }
 
 export default function LoginPage() {
