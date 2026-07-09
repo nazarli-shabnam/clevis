@@ -7,13 +7,16 @@ import { api } from "@/lib/api/client"
 
 // Routes that don't require authentication
 const PUBLIC_ROUTES = ["/login", "/setup", "/register"]
+// Prefixes for routes that don't require authentication (dynamic segments)
+const PUBLIC_ROUTE_PREFIXES = ["/invite/"]
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth()
   const router = useRouter()
   const pathname = usePathname()
 
-  const isPublic = PUBLIC_ROUTES.includes(pathname)
+  const isPublic =
+    PUBLIC_ROUTES.includes(pathname) || PUBLIC_ROUTE_PREFIXES.some((prefix) => pathname.startsWith(prefix))
 
   useEffect(() => {
     if (isLoading) return

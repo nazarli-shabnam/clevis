@@ -41,7 +41,7 @@ def test_build_authorize_url(oauth_configured):
     qs = parse_qs(parsed.query)
     assert qs["client_id"] == [_CLIENT_ID]
     assert qs["redirect_uri"] == [_REDIRECT]
-    assert qs["scope"] == ["read:user user:email"]
+    assert qs["scope"] == ["read:user user:email read:org"]
     assert qs["state"] == ["st"]
 
 

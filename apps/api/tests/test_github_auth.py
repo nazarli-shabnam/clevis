@@ -93,6 +93,7 @@ def test_callback_creates_user_and_sets_cookie(gh_client, db):
         patch("src.routers.github_auth.github_oauth.verify_state", return_value=True),
         patch("src.routers.github_auth.github_oauth.exchange_code_for_token", return_value="gho_x"),
         patch("src.routers.github_auth.github_oauth.fetch_identity", return_value=_identity()),
+        patch("src.routers.github_auth.org_provisioning.sync_org_admin_memberships", return_value=None),
     ):
         resp = gh_client.get("/auth/github/callback?code=c&state=s", follow_redirects=False)
     assert resp.status_code == 303

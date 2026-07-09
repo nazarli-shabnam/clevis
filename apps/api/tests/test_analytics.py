@@ -6,10 +6,17 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.core.auth import UserOut, require_auth
+from src.core.db import User, get_db
+from src.repositories import org_membership_repo, org_repo
 from src.routers.analytics import router
 
-_MOCK_USER = UserOut(id=1, email="test@example.com", name=None, is_workspace_admin=True)
-_MOCK_NON_OWNER = UserOut(id=2, email="member@example.com", name=None, is_workspace_admin=False)
+
+def _make_user(db, email: str) -> UserOut:
+    user = User(email=email, name=None, password_hash=None, is_workspace_admin=False)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=False)
 
 MOCK_OVERVIEW = {
     "owner": "acme",
@@ -30,10 +37,16 @@ MOCK_OVERVIEW = {
 
 
 @pytest.fixture()
-def app():
+def mock_user(db):
+    return _make_user(db, "test@example.com")
+
+
+@pytest.fixture()
+def app(db, mock_user):
     a = FastAPI()
-    a.dependency_overrides[require_auth] = lambda: _MOCK_USER
-    a.include_router(router, prefix="/analytics")
+    a.dependency_overrides[require_auth] = lambda: mock_user
+    a.dependency_overrides[get_db] = lambda: db
+    a.include_router(router)
     return a
 
 
@@ -42,27 +55,19 @@ def http(app):
     return TestClient(app)
 
 
-@pytest.fixture()
-def non_owner_http():
+def test_personal_overview_requires_auth(db):
     a = FastAPI()
-    a.dependency_overrides[require_auth] = lambda: _MOCK_NON_OWNER
-    a.include_router(router, prefix="/analytics")
-    return TestClient(a)
-
-
-def test_overview_non_owner_forbidden(non_owner_http):
-    resp = non_owner_http.post(
-        "/analytics/overview",
-        json={"owner": "acme", "token": "ghp_test"},
-    )
-    assert resp.status_code == 403
+    a.dependency_overrides[get_db] = lambda: db
+    a.include_router(router)
+    resp = TestClient(a).post("/me/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
+    assert resp.status_code == 401
 
 
 def test_overview_returns_expected_shape(http):
     # Mock get_overview directly; anyio.to_thread.run_sync runs the lambda for real
     with patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW):
         resp = http.post(
-            "/analytics/overview",
+            "/me/analytics/overview",
             json={"owner": "acme", "token": "ghp_test"},
         )
     assert resp.status_code == 200
@@ -83,7 +88,7 @@ def test_overview_github_http_error_returns_400(http):
         ),
     ):
         resp = http.post(
-            "/analytics/overview",
+            "/me/analytics/overview",
             json={"owner": "acme", "token": "ghp_test"},
         )
     assert resp.status_code == 400
@@ -98,7 +103,7 @@ def test_overview_request_error_returns_503(http):
         side_effect=httpx.RequestError("timeout"),
     ):
         resp = http.post(
-            "/analytics/overview",
+            "/me/analytics/overview",
             json={"owner": "acme", "token": "ghp_test"},
         )
     assert resp.status_code == 503
@@ -113,9 +118,32 @@ def test_overview_unexpected_exception_logs_and_returns_500(http):
         patch("src.routers.analytics.logger") as mock_logger,
     ):
         resp = http.post(
-            "/analytics/overview",
+            "/me/analytics/overview",
             json={"owner": "acme", "token": "ghp_test"},
         )
     assert resp.status_code == 500
     # B-10: exception must be logged, not silently swallowed
     mock_logger.exception.assert_called_once_with("analytics_overview failed")
+
+
+# ── org-scoped ────────────────────────────────────────────────────────────────
+
+def test_org_overview_outsider_forbidden(http, db):
+    org_repo.get_or_create(db, github_login="acme")
+    resp = http.post("/orgs/acme/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
+    assert resp.status_code == 403
+
+
+def test_org_overview_member_ok(http, db, mock_user):
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
+    with patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW):
+        resp = http.post("/orgs/acme/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
+    assert resp.status_code == 200
+
+
+def test_org_overview_owner_mismatch_forbidden(http, db, mock_user):
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
+    resp = http.post("/orgs/acme/analytics/overview", json={"owner": "someone-else", "token": "ghp_test"})
+    assert resp.status_code == 403
