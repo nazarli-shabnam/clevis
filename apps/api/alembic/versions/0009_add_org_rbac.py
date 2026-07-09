@@ -97,6 +97,23 @@ def upgrade() -> None:
             "ON CONFLICT (org_id, user_id) DO NOTHING"
         )
     )
+
+    # Fail loudly rather than silently deploying orgs nobody can administer: this only
+    # happens if no user has is_workspace_admin = true at migration time (e.g. the owner
+    # account was deleted, or /auth/setup never ran despite installations existing).
+    orphaned = op.get_bind().execute(
+        sa.text(
+            "SELECT COUNT(*) FROM orgs o "
+            "WHERE NOT EXISTS (SELECT 1 FROM org_memberships m WHERE m.org_id = o.id)"
+        )
+    ).scalar()
+    if orphaned:
+        raise RuntimeError(
+            f"{orphaned} org(s) were backfilled with no admin membership because no user has "
+            "is_workspace_admin = true. Ensure a workspace admin exists before running this "
+            "migration, then re-run it, or manually insert org_memberships rows afterward."
+        )
+
     op.execute(
         sa.text(
             "UPDATE github_installations gi SET org_id = o.id "
