@@ -149,11 +149,11 @@ class GitHubOrgMembership:
     role: str  # "admin" | "member"
 
 
-def list_user_orgs(user_token: str) -> list[GitHubOrgMembership]:
-    """List the organizations the authenticated user belongs to (needs read:org scope).
-
-    Does not include per-org role — GitHub's /user/orgs response omits it. Callers should
-    follow up with get_org_membership_role for orgs they actually care about.
+def list_user_org_memberships(user_token: str) -> list[GitHubOrgMembership]:
+    """List the authenticated user's active org memberships, role included (needs read:org
+    scope). One endpoint replaces the old list-orgs-then-check-each-role N+1 pattern —
+    GET /user/memberships/orgs returns the caller's role per org in a single (paginated)
+    call. Follows the Link header so callers in >100 orgs still get the full list.
     """
     api = settings.github_api_base.rstrip("/")
     headers = {
@@ -161,26 +161,17 @@ def list_user_orgs(user_token: str) -> list[GitHubOrgMembership]:
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
+    memberships: list[GitHubOrgMembership] = []
+    url = f"{api}/user/memberships/orgs?state=active&per_page=100"
     with httpx.Client(timeout=20) as client:
-        resp = client.get(f"{api}/user/orgs", headers=headers)
-        resp.raise_for_status()
-    return [GitHubOrgMembership(github_org_id=o["id"], login=o["login"], role="") for o in resp.json()]
-
-
-def get_org_membership_role(user_token: str, org_login: str, username: str) -> str | None:
-    """Returns the caller's role ("admin" | "member") in org_login, or None if not a member."""
-    api = settings.github_api_base.rstrip("/")
-    headers = {
-        "Authorization": f"Bearer {user_token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-    with httpx.Client(timeout=20) as client:
-        resp = client.get(f"{api}/orgs/{org_login}/memberships/{username}", headers=headers)
-    if resp.status_code == 404:
-        return None
-    resp.raise_for_status()
-    return resp.json().get("role")
+        while url:
+            resp = client.get(url, headers=headers)
+            resp.raise_for_status()
+            for m in resp.json():
+                org = m["organization"]
+                memberships.append(GitHubOrgMembership(github_org_id=org["id"], login=org["login"], role=m["role"]))
+            url = resp.links.get("next", {}).get("url")
+    return memberships
 
 
 def _primary_verified_email(emails: list[dict]) -> str | None:

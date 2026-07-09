@@ -116,6 +116,34 @@ def test_fetch_identity_falls_back_to_emails_endpoint():
     assert client.get.call_count == 2
 
 
+def test_list_user_org_memberships_follows_pagination():
+    page1 = MagicMock(
+        links={"next": {"url": "https://api.github.com/user/memberships/orgs?page=2"}},
+        json=MagicMock(
+            return_value=[
+                {"role": "admin", "organization": {"id": 1, "login": "acme"}},
+            ]
+        ),
+    )
+    page2 = MagicMock(
+        links={},
+        json=MagicMock(
+            return_value=[
+                {"role": "member", "organization": {"id": 2, "login": "other-org"}},
+            ]
+        ),
+    )
+    with patch("src.services.github_oauth.httpx.Client") as mock_cls:
+        client = MagicMock()
+        client.__enter__ = MagicMock(return_value=client)
+        client.__exit__ = MagicMock(return_value=False)
+        client.get = MagicMock(side_effect=[page1, page2])
+        mock_cls.return_value = client
+        memberships = github_oauth.list_user_org_memberships("gho_x")
+    assert client.get.call_count == 2
+    assert [(m.login, m.role) for m in memberships] == [("acme", "admin"), ("other-org", "member")]
+
+
 def test_not_configured_raises(monkeypatch):
     # Force unconfigured regardless of the ambient .env (a real App may be configured locally).
     monkeypatch.setattr(settings, "github_app_client_id", None)

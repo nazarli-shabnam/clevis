@@ -92,7 +92,7 @@ def github_callback(
         logger.warning("GitHub OAuth callback failed: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc))
     user = find_or_create_user(db, identity)
-    org_provisioning.sync_org_admin_memberships(db, user, user_token, identity.login)
+    org_provisioning.sync_org_admin_memberships(db, user, user_token)
     token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name)
     response = RedirectResponse(_ui_redirect_target(), status_code=303)
     set_session_cookie(response, token)
