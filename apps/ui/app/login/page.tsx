@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
 import { Input } from "@/components/ui/input"
@@ -19,9 +19,18 @@ function GithubMark() {
   )
 }
 
+// Only accept same-site relative paths (a single leading "/", not "//..." which
+// browsers treat as protocol-relative) to avoid this becoming an open redirect.
+function safeNextPath(next: string | null): string {
+  if (next && next.startsWith("/") && !next.startsWith("//")) return next
+  return "/"
+}
+
 export default function LoginPage() {
   const { user, login, isLoading } = useAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const next = safeNextPath(searchParams.get("next"))
 
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -32,7 +41,7 @@ export default function LoginPage() {
   useEffect(() => {
     if (isLoading) return
     if (user) {
-      router.replace("/")
+      router.replace(next)
       return
     }
     api.auth.setupRequired()
@@ -42,7 +51,7 @@ export default function LoginPage() {
       .catch(() => {
         // API unreachable — stay on login page; user will see the form
       })
-  }, [isLoading, user, router])
+  }, [isLoading, user, router, next])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -50,7 +59,7 @@ export default function LoginPage() {
     setIsSubmitting(true)
     try {
       await login(email, password)
-      router.replace("/")
+      router.replace(next)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed")
     } finally {

@@ -49,10 +49,15 @@ export default function InviteAcceptPage() {
               </p>
               {!user ? (
                 <p className="text-xs text-muted-foreground">
-                  Sign in with the account this invite was sent to, then come back to this link to accept.{" "}
-                  <a href="/login" className="text-primary hover:underline">
+                  Sign in with the account this invite was sent to, and you&rsquo;ll be brought back here to accept.
+                  {" "}
+                  <a
+                    href={`/login?next=${encodeURIComponent(`/invite/${token}`)}`}
+                    className="text-primary hover:underline"
+                  >
                     Sign in
                   </a>
+                  {" "}(GitHub sign-in returns you to the dashboard instead — just revisit this link afterward).
                 </p>
               ) : accept.isSuccess ? (
                 <p className="text-sm text-primary flex items-center gap-1.5">
