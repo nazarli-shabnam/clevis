@@ -6,7 +6,7 @@ export interface AuthUser {
   id: number
   email: string
   name: string | null
-  is_owner: boolean
+  is_workspace_admin: boolean
 }
 
 interface AuthContextValue {
@@ -33,7 +33,12 @@ function parseJwtPayload(token: string): AuthUser | null {
     const id = Number(payload.sub)
     if (!id || !payload.email) return null
     if (payload.exp && payload.exp * 1000 < Date.now()) return null
-    return { id, email: payload.email, name: payload.name ?? null, is_owner: Boolean(payload.is_owner) }
+    return {
+      id,
+      email: payload.email,
+      name: payload.name ?? null,
+      is_workspace_admin: Boolean(payload.is_workspace_admin),
+    }
   } catch {
     return null
   }

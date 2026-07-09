@@ -5,7 +5,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.core.auth import UserOut, require_auth, require_owner
+from src.core.auth import UserOut, require_auth, require_workspace_admin
 from src.core.db import get_db
 from src.routers.auth import router as auth_router
 from src.routers.config import router as config_router
@@ -53,7 +53,7 @@ def test_setup_required_with_user(auth_client):
 def test_setup_returns_token_and_owner(auth_client):
     body = _setup_owner(auth_client)
     assert "access_token" in body
-    assert body["user"]["is_owner"] is True
+    assert body["user"]["is_workspace_admin"] is True
     assert body["user"]["email"] == "owner@example.com"
 
 
@@ -80,7 +80,7 @@ def test_register_creates_non_owner(auth_client):
     assert resp.status_code == 201
     body = resp.json()
     assert "access_token" in body
-    assert body["user"]["is_owner"] is False
+    assert body["user"]["is_workspace_admin"] is False
     assert body["user"]["email"] == "member@example.com"
 
 
@@ -91,7 +91,7 @@ def test_register_before_setup_still_creates_non_owner(auth_client):
         "/auth/register", json={"email": "first@example.com", "password": "supersecret1234"}
     )
     assert resp.status_code == 201
-    assert resp.json()["user"]["is_owner"] is False
+    assert resp.json()["user"]["is_workspace_admin"] is False
 
 
 def test_register_rejects_short_password(auth_client):
@@ -154,7 +154,7 @@ def test_me_returns_profile(auth_client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["email"] == "owner@example.com"
-    assert data["is_owner"] is True
+    assert data["is_workspace_admin"] is True
 
 
 def test_patch_me_unauthenticated(auth_client):
@@ -175,8 +175,8 @@ def test_patch_me_updates_name(auth_client):
 
 # ── Config router ─────────────────────────────────────────────────────────────
 
-_OWNER = UserOut(id=1, email="owner@example.com", name=None, is_owner=True)
-_VIEWER = UserOut(id=2, email="viewer@example.com", name=None, is_owner=False)
+_OWNER = UserOut(id=1, email="owner@example.com", name=None, is_workspace_admin=True)
+_VIEWER = UserOut(id=2, email="viewer@example.com", name=None, is_workspace_admin=False)
 
 _MOCK_CONFIG = {
     "worker_poll_seconds": "5",
@@ -205,7 +205,7 @@ def config_client_owner():
     """Authenticated as the owner."""
     a = FastAPI()
     a.dependency_overrides[require_auth] = lambda: _OWNER
-    a.dependency_overrides[require_owner] = lambda: _OWNER
+    a.dependency_overrides[require_workspace_admin] = lambda: _OWNER
     a.include_router(config_router, prefix="/config")
     return TestClient(a)
 

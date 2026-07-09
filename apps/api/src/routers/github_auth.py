@@ -46,12 +46,12 @@ def find_or_create_user(db: Session, identity: github_oauth.GitHubIdentity) -> U
         db.commit()
         db.refresh(user)
         return user
-    is_owner = db.query(User).count() == 0
+    is_workspace_admin = db.query(User).count() == 0
     user = User(
         email=identity.email,
         name=identity.name,
         password_hash=None,
-        is_owner=is_owner,
+        is_workspace_admin=is_workspace_admin,
         github_user_id=identity.github_user_id,
         github_login=identity.login,
         avatar_url=identity.avatar_url,
@@ -90,7 +90,7 @@ def github_callback(
         logger.warning("GitHub OAuth callback failed: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc))
     user = find_or_create_user(db, identity)
-    token = create_access_token(user.id, user.email, user.is_owner, user.name)
+    token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name)
     response = RedirectResponse(_ui_redirect_target(), status_code=303)
     set_session_cookie(response, token)
     return response

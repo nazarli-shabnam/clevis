@@ -447,7 +447,7 @@ export default function SettingsPage() {
         <AppearanceSection />
         <ConnectedOrgsSection />
         <SavedTokensSection />
-        {user?.is_owner && <InstanceConfigSection />}
+        {user?.is_workspace_admin && <InstanceConfigSection />}
       </div>
     </>
   )

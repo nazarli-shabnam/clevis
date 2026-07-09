@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from src.core.auth import UserOut, require_owner
+from src.core.auth import UserOut, require_workspace_admin
 from src.core.db import get_db
 from src.repositories import installation_repo
 from src.schemas.installation import (
@@ -16,7 +16,7 @@ router = APIRouter()
 @router.get("/github/app/installations", response_model=list[InstallationOut])
 def list_installations(
     db: Session = Depends(get_db),
-    _user: UserOut = Depends(require_owner),
+    _user: UserOut = Depends(require_workspace_admin),
 ):
     """Organizations that have installed the Clevis GitHub App (the 'Connected Orgs' list)."""
     return installation_repo.list_all(db)
@@ -26,7 +26,7 @@ def list_installations(
 def sync_installation(
     payload: SyncInstallationsInput,
     db: Session = Depends(get_db),
-    _user: UserOut = Depends(require_owner),
+    _user: UserOut = Depends(require_workspace_admin),
 ):
     row = installation_repo.create(
         db,

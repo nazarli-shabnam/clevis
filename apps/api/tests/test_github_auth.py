@@ -43,7 +43,7 @@ def _identity(**kw) -> GitHubIdentity:
 
 def test_first_user_becomes_owner(db):
     user = find_or_create_user(db, _identity())
-    assert user.is_owner is True
+    assert user.is_workspace_admin is True
     assert user.github_user_id == 1001
     assert user.password_hash is None
 
@@ -51,18 +51,18 @@ def test_first_user_becomes_owner(db):
 def test_second_user_is_member(db):
     find_or_create_user(db, _identity())
     second = find_or_create_user(db, _identity(github_user_id=2002, login="hubot", email="hubot@example.com"))
-    assert second.is_owner is False
+    assert second.is_workspace_admin is False
 
 
 def test_links_existing_email_user_and_keeps_role(db):
-    existing = User(email="owner@example.com", name="Owner", password_hash="x", is_owner=True)
+    existing = User(email="owner@example.com", name="Owner", password_hash="x", is_workspace_admin=True)
     db.add(existing)
     db.commit()
     db.refresh(existing)
     linked = find_or_create_user(db, _identity(github_user_id=555, email="owner@example.com"))
     assert linked.id == existing.id
     assert linked.github_user_id == 555
-    assert linked.is_owner is True
+    assert linked.is_workspace_admin is True
 
 
 def test_idempotent_by_github_id(db):

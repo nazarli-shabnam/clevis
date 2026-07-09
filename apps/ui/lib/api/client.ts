@@ -167,16 +167,16 @@ export const api = {
   auth: {
     setupRequired: () => get<{ setup_required: boolean }>("/auth/setup-required"),
     setup: (email: string, password: string, name?: string) =>
-      post<{ access_token: string; user: { id: number; email: string; name: string | null; is_owner: boolean } }>(
+      post<{ access_token: string; user: { id: number; email: string; name: string | null; is_workspace_admin: boolean } }>(
         "/auth/setup",
         { email, password, name },
       ),
     register: (email: string, password: string, name?: string) =>
-      post<{ access_token: string; user: { id: number; email: string; name: string | null; is_owner: boolean } }>(
+      post<{ access_token: string; user: { id: number; email: string; name: string | null; is_workspace_admin: boolean } }>(
         "/auth/register",
         { email, password, name },
       ),
     patchMe: (name: string) =>
-      patch<{ id: number; email: string; name: string | null; is_owner: boolean }>("/auth/me", { name }),
+      patch<{ id: number; email: string; name: string | null; is_workspace_admin: boolean }>("/auth/me", { name }),
   },
 }

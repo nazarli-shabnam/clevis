@@ -9,8 +9,8 @@ from src.core.db import get_db
 from src.repositories import installation_repo
 from src.routers.installations import router as inst_router
 
-_USER = UserOut(id=1, email="u@e.com", name=None, is_owner=True)
-_NON_OWNER = UserOut(id=2, email="member@e.com", name=None, is_owner=False)
+_USER = UserOut(id=1, email="u@e.com", name=None, is_workspace_admin=True)
+_NON_OWNER = UserOut(id=2, email="member@e.com", name=None, is_workspace_admin=False)
 
 
 @pytest.fixture()

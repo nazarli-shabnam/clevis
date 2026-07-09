@@ -16,8 +16,8 @@ from src.routers.audit import router as audit_router
 from src.routers.jobs import router as jobs_router
 from src.routers.tokens import router as tokens_router
 
-_OWNER = UserOut(id=1, email="owner@example.com", name=None, is_owner=True)
-_NON_OWNER = UserOut(id=2, email="member@example.com", name=None, is_owner=False)
+_OWNER = UserOut(id=1, email="owner@example.com", name=None, is_workspace_admin=True)
+_NON_OWNER = UserOut(id=2, email="member@example.com", name=None, is_workspace_admin=False)
 
 
 def _client(router, db, user, prefix=""):

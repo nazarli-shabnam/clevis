@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, SecretStr
 from sqlalchemy.orm import Session
 
 from src.core._crypto import decrypt_job_token, encrypt_job_token
-from src.core.auth import UserOut, require_owner
+from src.core.auth import UserOut, require_workspace_admin
 from src.core.config import settings
 from src.core.db import SavedToken, get_db
 
@@ -48,7 +48,7 @@ class VerifyTokenResponse(BaseModel):
 @router.get("", response_model=list[TokenMeta])
 def list_tokens(
     db: Session = Depends(get_db),
-    _user: UserOut = Depends(require_owner),
+    _user: UserOut = Depends(require_workspace_admin),
 ) -> list[TokenMeta]:
     """Return metadata for all saved tokens (never the raw token). Owner only."""
     rows = db.query(SavedToken).order_by(SavedToken.org).all()
@@ -60,7 +60,7 @@ def upsert_token(
     org: str,
     body: UpsertTokenRequest,
     db: Session = Depends(get_db),
-    _user: UserOut = Depends(require_owner),
+    _user: UserOut = Depends(require_workspace_admin),
 ) -> TokenMeta:
     """Save or update the token for an org (encrypted at rest). Owner only."""
     encrypted = encrypt_job_token(
@@ -83,7 +83,7 @@ def upsert_token(
 def resolve_token(
     body: VerifyTokenRequest,
     db: Session = Depends(get_db),
-    _user: UserOut = Depends(require_owner),
+    _user: UserOut = Depends(require_workspace_admin),
 ) -> VerifyTokenResponse:
     """Decrypt and return the saved token for an org. Returns raw secret — owner only."""
     row = db.query(SavedToken).filter_by(org=body.org).first()
@@ -100,7 +100,7 @@ def resolve_token(
 def delete_token(
     org: str,
     db: Session = Depends(get_db),
-    _user: UserOut = Depends(require_owner),
+    _user: UserOut = Depends(require_workspace_admin),
 ) -> None:
     """Remove a saved token. Owner only."""
     row = db.query(SavedToken).filter_by(org=org).first()

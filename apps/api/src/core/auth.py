@@ -2,8 +2,11 @@
 JWT helpers and FastAPI auth dependencies.
 
 Two access levels:
-  - require_auth  — any authenticated user (valid JWT)
-  - require_owner — authenticated user with is_owner=True (instance config only)
+  - require_auth           — any authenticated user (valid JWT)
+  - require_workspace_admin — authenticated user with is_workspace_admin=True (instance config only)
+
+Org-scoped access levels (member/admin per org) live in src/core/rbac.py, since they
+require a DB lookup rather than just the JWT claims.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -53,14 +56,14 @@ class UserOut(BaseModel):
     id: int
     email: str
     name: str | None
-    is_owner: bool
+    is_workspace_admin: bool
 
 
-def create_access_token(user_id: int, email: str, is_owner: bool, name: str | None = None) -> str:
+def create_access_token(user_id: int, email: str, is_workspace_admin: bool, name: str | None = None) -> str:
     payload = {
         "sub": str(user_id),
         "email": email,
-        "is_owner": is_owner,
+        "is_workspace_admin": is_workspace_admin,
         "name": name,
         "exp": datetime.now(timezone.utc) + timedelta(days=_TOKEN_EXPIRE_DAYS),
     }
@@ -105,12 +108,12 @@ def require_auth(
         id=user_id,
         email=email,
         name=payload.get("name"),
-        is_owner=bool(payload.get("is_owner", False)),
+        is_workspace_admin=bool(payload.get("is_workspace_admin", False)),
     )
 
 
-def require_owner(user: UserOut = Depends(require_auth)) -> UserOut:
-    """Dependency: raises 403 if the authenticated user is not the instance owner."""
-    if not user.is_owner:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Owner access required")
+def require_workspace_admin(user: UserOut = Depends(require_auth)) -> UserOut:
+    """Dependency: raises 403 if the authenticated user is not the workspace admin."""
+    if not user.is_workspace_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Workspace admin access required")
     return user
