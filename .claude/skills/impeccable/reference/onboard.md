@@ -95,7 +95,7 @@ Instead of blank space, show:
 - Example or template option
 
 Example:
-```
+```text
 No projects yet
 Projects help you organize your work and collaborate with your team.
 [Create your first project] or [Start from template]

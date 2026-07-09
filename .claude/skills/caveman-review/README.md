@@ -12,7 +12,7 @@ Output only — does not approve, request changes, or run linters.
 
 ## How to invoke
 
-```
+```bash
 /caveman-review
 ```
 
@@ -20,7 +20,7 @@ Also triggers on "review this PR", "code review", "review the diff".
 
 ## Example output
 
-```
+```text
 L42: 🔴 bug: user can be null after .find(). Add guard before .email.
 L88-140: 🔵 nit: 50-line fn does 4 things. Extract validate/normalize/persist.
 L23: 🟡 risk: no retry on 429. Wrap in withBackoff(3).
@@ -30,4 +30,4 @@ L107: ❓ q: why drop the cache here? Reads on next request will miss.
 ## See also
 
 - [`SKILL.md`](./SKILL.md) — full LLM-facing instructions
-- [Caveman README](../../README.md) — repo overview
+- [Caveman README](../../../README.md) — repo overview

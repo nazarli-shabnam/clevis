@@ -567,8 +567,7 @@ Schema:
   "files": ["<path-or-glob>", "<path-or-glob>", ...],
   "exclude": ["<optional-glob>", ...],
   "insertBefore": "</body>",
-  "commentSyntax": "html",
-  "cspChecked": true
+  "commentSyntax": "html"
 }
 ```
 
@@ -589,7 +588,7 @@ Schema:
 | Next.js (Pages) | `["pages/_document.tsx"]` | `</body>` | `jsx` |
 | Nuxt | `["app.vue"]` | `</body>` | `html` |
 | Svelte / SvelteKit | `["src/app.html"]` | `</body>` | `html` |
-| Astro | `[" <root layout .astro>"]` | `</body>` | `html` |
+| Astro | `["src/layouts/Layout.astro"]` | `</body>` | `html` |
 | Multi-page (separate HTML per route) | `["public/**/*.html"]`: a glob covering the served directory | `</body>` | `html` |
 
 Pick an anchor that exists in every file (`</body>` almost always works). Use `insertAfter` if the anchor should match **after** a specific line.

@@ -129,7 +129,14 @@ async function detectCli() {
   } else {
     const paths = targets.length > 0 ? targets : [process.cwd()];
     const urlTargetCount = paths.filter(target => /^https?:\/\//i.test(target)).length;
-    const browserDetector = urlTargetCount > 1 ? await createBrowserDetector() : null;
+    let browserDetector = null;
+    if (urlTargetCount > 1) {
+      try {
+        browserDetector = await createBrowserDetector();
+      } catch (e) {
+        process.stderr.write(`Warning: failed to launch browser detector: ${e.message}\n`);
+      }
+    }
 
     try {
       for (const target of paths) {
@@ -203,10 +210,13 @@ async function detectCli() {
           for (const file of files) {
             const ext = path.extname(file).toLowerCase();
             let fileFindings;
-            if (HTML_EXTENSIONS.has(ext)) {
-              fileFindings = await detectHtml(file, scanOptions);
-            } else {
-              fileFindings = detectText(fs.readFileSync(file, 'utf-8'), file, scanOptions);
+            try {
+              fileFindings = HTML_EXTENSIONS.has(ext)
+                ? await detectHtml(file, scanOptions)
+                : detectText(fs.readFileSync(file, 'utf-8'), file, scanOptions);
+            } catch (e) {
+              process.stderr.write(`Warning: failed to scan ${file}: ${e.message}\n`);
+              continue;
             }
             // Annotate findings with import context
             const importers = importedByMap.get(file);
@@ -220,10 +230,14 @@ async function detectCli() {
           }
         } else if (stat.isFile()) {
           const ext = path.extname(resolved).toLowerCase();
-          if (HTML_EXTENSIONS.has(ext)) {
-            allFindings.push(...await detectHtml(resolved, scanOptions));
-          } else {
-            allFindings.push(...detectText(fs.readFileSync(resolved, 'utf-8'), resolved, scanOptions));
+          try {
+            allFindings.push(
+              ...(HTML_EXTENSIONS.has(ext)
+                ? await detectHtml(resolved, scanOptions)
+                : detectText(fs.readFileSync(resolved, 'utf-8'), resolved, scanOptions)),
+            );
+          } catch (e) {
+            process.stderr.write(`Warning: failed to scan ${resolved}: ${e.message}\n`);
           }
         }
       }

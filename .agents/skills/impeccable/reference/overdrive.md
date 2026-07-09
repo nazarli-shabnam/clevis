@@ -1,6 +1,6 @@
 Start your response with:
 
-```
+```text
 ──────────── ⚡ OVERDRIVE ─────────────
 》》》 Entering overdrive mode...
 ```

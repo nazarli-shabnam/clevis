@@ -341,7 +341,7 @@ function cursorBlockMessage(findings, filePath, config, cwd) {
 
 function findingSignature(findings) {
   return findings
-    .map((finding) => `${finding.antipattern || 'unknown'}:${finding.line || 0}`)
+    .map((finding) => finding.antipattern || 'unknown')
     .sort()
     .join('|');
 }
