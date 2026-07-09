@@ -13,8 +13,8 @@ from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
-from src.core.db import GitHubInstallation, Org, OrgMembership, get_db
-from src.repositories import org_repo
+from src.core.db import Org, OrgMembership, get_db
+from src.repositories import org_membership_repo, org_repo
 
 _ROLE_RANK = {"member": 0, "admin": 1}
 
@@ -37,11 +37,7 @@ def require_org_role(min_role: Literal["member", "admin"]):
         org = org_repo.get_by_login(db, org_login)
         if org is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
-        membership = (
-            db.query(OrgMembership)
-            .filter(OrgMembership.org_id == org.id, OrgMembership.user_id == user.id)
-            .first()
-        )
+        membership = org_membership_repo.get(db, org.id, user.id)
         if membership is None or _ROLE_RANK.get(membership.role, -1) < _ROLE_RANK[min_role]:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Org access required")
         return OrgContext(org=org, membership=membership)
@@ -49,21 +45,9 @@ def require_org_role(min_role: Literal["member", "admin"]):
     return dependency
 
 
-def require_personal_installation(
-    installation_login: str,
-    db: Session = Depends(get_db),
-    user: UserOut = Depends(require_auth),
-) -> GitHubInstallation:
-    """Dependency: 404 if no personal installation matching installation_login exists
-    for the current user."""
-    installation = (
-        db.query(GitHubInstallation)
-        .filter(
-            GitHubInstallation.owner_user_id == user.id,
-            GitHubInstallation.account_login == installation_login,
-        )
-        .first()
-    )
-    if installation is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Installation not found")
-    return installation
+def assert_owner_matches_org(owner: str, ctx: OrgContext) -> None:
+    """Raises 403 if a repo-level `owner` path/body value doesn't match the org context
+    require_org_role already resolved — keeps an org-scoped route from acting on a
+    GitHub owner outside the org the caller was authorized for."""
+    if owner != ctx.org.github_login:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="owner must match the org in the URL")

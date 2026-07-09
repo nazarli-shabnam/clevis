@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
-from src.core.rbac import OrgContext, require_org_role
+from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role
 from src.schemas.cache import CacheClearInput, CacheClearResponse, CacheListInput, CacheListResponse
 from src.services.cache_service import clear
 from src.services.github_client import GitHubClient
@@ -25,8 +25,7 @@ def org_list_caches(
     payload: CacheListInput,
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
 ):
-    if owner != ctx.org.github_login:
-        raise HTTPException(status_code=403, detail="owner must match the org in the URL")
+    assert_owner_matches_org(owner, ctx)
     return _list_caches(owner, repo, payload)
 
 
@@ -39,8 +38,7 @@ def org_clear_caches(
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     db: Session = Depends(get_db),
 ):
-    if owner != ctx.org.github_login:
-        raise HTTPException(status_code=403, detail="owner must match the org in the URL")
+    assert_owner_matches_org(owner, ctx)
     return clear(db, owner, repo, payload)
 
 

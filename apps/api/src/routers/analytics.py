@@ -5,7 +5,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
 from src.core.auth import UserOut, require_auth
-from src.core.rbac import OrgContext, require_org_role
+from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role
 from src.schemas.analytics import AnalyticsInput, AnalyticsResponse
 from src.services.analytics_service import get_overview
 
@@ -33,8 +33,7 @@ async def org_analytics_overview(
     payload: AnalyticsInput,
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
 ):
-    if payload.owner != ctx.org.github_login:
-        raise HTTPException(status_code=403, detail="owner must match the org in the URL")
+    assert_owner_matches_org(payload.owner, ctx)
     return await _run_overview(payload)
 
 

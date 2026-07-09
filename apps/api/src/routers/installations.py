@@ -12,12 +12,12 @@
   POST /me/installations/sync                connect a personal (User-type) GitHub installation
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
-from src.core.db import get_db
-from src.core.rbac import OrgContext, require_org_role
+from src.core.db import User, get_db
+from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role
 from src.repositories import installation_repo
 from src.schemas.installation import (
     InstallationOut,
@@ -42,6 +42,7 @@ def sync_org_installation(
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     db: Session = Depends(get_db),
 ):
+    assert_owner_matches_org(payload.account_login, ctx)
     row = installation_repo.create(
         db,
         account_login=payload.account_login,
@@ -67,6 +68,13 @@ def sync_personal_installation(
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
+    if payload.account_type == "User":
+        db_user = db.query(User).filter(User.id == user.id).first()
+        if db_user and db_user.github_login and payload.account_login != db_user.github_login:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="account_login must match your own GitHub account",
+            )
     row = installation_repo.create(
         db,
         account_login=payload.account_login,
