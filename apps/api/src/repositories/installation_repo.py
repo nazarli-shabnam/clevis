@@ -12,6 +12,8 @@ def create(
     org_id: int | None = None,
     owner_user_id: int | None = None,
 ) -> GitHubInstallation:
+    if (org_id is None) == (owner_user_id is None):
+        raise ValueError("Exactly one of org_id or owner_user_id must be set")
     token_ref = f"tok_{account_login}"
     row = GitHubInstallation(
         account_login=account_login,

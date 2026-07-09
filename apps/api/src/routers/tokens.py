@@ -50,7 +50,7 @@ def list_tokens(
     db: Session = Depends(get_db),
     _user: UserOut = Depends(require_workspace_admin),
 ) -> list[TokenMeta]:
-    """Return metadata for all saved tokens (never the raw token). Owner only."""
+    """Return metadata for all saved tokens (never the raw token). Workspace admin only."""
     rows = db.query(SavedToken).order_by(SavedToken.org).all()
     return [TokenMeta.model_validate(r) for r in rows]
 
@@ -62,7 +62,7 @@ def upsert_token(
     db: Session = Depends(get_db),
     _user: UserOut = Depends(require_workspace_admin),
 ) -> TokenMeta:
-    """Save or update the token for an org (encrypted at rest). Owner only."""
+    """Save or update the token for an org (encrypted at rest). Workspace admin only."""
     encrypted = encrypt_job_token(
         body.token.get_secret_value(),
         settings.job_secret_key.get_secret_value(),
@@ -85,7 +85,7 @@ def resolve_token(
     db: Session = Depends(get_db),
     _user: UserOut = Depends(require_workspace_admin),
 ) -> VerifyTokenResponse:
-    """Decrypt and return the saved token for an org. Returns raw secret — owner only."""
+    """Decrypt and return the saved token for an org. Returns raw secret — workspace admin only."""
     row = db.query(SavedToken).filter_by(org=body.org).first()
     if not row:
         raise HTTPException(status_code=404, detail="No saved token for this org")
@@ -102,7 +102,7 @@ def delete_token(
     db: Session = Depends(get_db),
     _user: UserOut = Depends(require_workspace_admin),
 ) -> None:
-    """Remove a saved token. Owner only."""
+    """Remove a saved token. Workspace admin only."""
     row = db.query(SavedToken).filter_by(org=org).first()
     if not row:
         raise HTTPException(status_code=404, detail="No saved token for this org")

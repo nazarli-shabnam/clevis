@@ -17,6 +17,7 @@ def test_require_auth_accepts_session_cookie():
     user = require_auth(credentials=None, session=token)
     assert user.id == 1
     assert user.email == "a@b.com"
+    assert user.is_workspace_admin is False
 
 
 def test_require_auth_header_takes_precedence_over_cookie():
@@ -27,6 +28,7 @@ def test_require_auth_header_takes_precedence_over_cookie():
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=header_token)
     user = require_auth(credentials=creds, session=cookie_token)
     assert user.id == 2
+    assert user.is_workspace_admin is True
 
 
 def test_require_auth_rejects_when_missing():

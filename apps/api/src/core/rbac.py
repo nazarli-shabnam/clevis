@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import GitHubInstallation, Org, OrgMembership, get_db
+from src.repositories import org_repo
 
 _ROLE_RANK = {"member": 0, "admin": 1}
 
@@ -33,7 +34,7 @@ def require_org_role(min_role: Literal["member", "admin"]):
         db: Session = Depends(get_db),
         user: UserOut = Depends(require_auth),
     ) -> OrgContext:
-        org = db.query(Org).filter(Org.github_login == org_login).first()
+        org = org_repo.get_by_login(db, org_login)
         if org is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
         membership = (
@@ -41,7 +42,7 @@ def require_org_role(min_role: Literal["member", "admin"]):
             .filter(OrgMembership.org_id == org.id, OrgMembership.user_id == user.id)
             .first()
         )
-        if membership is None or _ROLE_RANK[membership.role] < _ROLE_RANK[min_role]:
+        if membership is None or _ROLE_RANK.get(membership.role, -1) < _ROLE_RANK[min_role]:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Org access required")
         return OrgContext(org=org, membership=membership)
 
