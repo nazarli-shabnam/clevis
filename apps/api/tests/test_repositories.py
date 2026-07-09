@@ -1,13 +1,15 @@
-from src.repositories import audit_repo, installation_repo, job_repo
+from src.repositories import audit_repo, installation_repo, job_repo, org_repo
 
 
 def test_installation_create(db):
+    org = org_repo.get_or_create(db, github_login="acme")
     row = installation_repo.create(
         db,
         account_login="acme",
         account_type="Organization",
         auth_mode="app",
         installation_id=42,
+        org_id=org.id,
     )
     assert row.id is not None
     assert row.token_ref == "tok_acme"

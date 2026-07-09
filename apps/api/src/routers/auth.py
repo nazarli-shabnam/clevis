@@ -67,7 +67,7 @@ class MeResponse(BaseModel):
     id: int
     email: str
     name: str | None
-    is_owner: bool
+    is_workspace_admin: bool
     created_at: datetime
 
 
@@ -102,18 +102,20 @@ def setup(body: SetupRequest, db: Session = Depends(get_db)):
         email=body.email,
         name=body.name,
         password_hash=_hash_password(body.password),
-        is_owner=True,
+        is_workspace_admin=True,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
-    token = create_access_token(user.id, user.email, user.is_owner, user.name)
-    return {"access_token": token, "user": UserOut(id=user.id, email=user.email, name=user.name, is_owner=user.is_owner)}
+    token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name)
+    return {"access_token": token, "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin)}
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 def register(body: RegisterRequest, db: Session = Depends(get_db)):
-    """Creates a non-owner account. 403 if registration has been disabled by the owner."""
+    """Creates a non-admin account. 409 if setup hasn't run yet; 403 if registration is disabled."""
+    if db.query(User).count() == 0:
+        raise HTTPException(status_code=409, detail="Setup must be completed before registration")
     if get_config("registration_enabled", "true") != "true":
         raise HTTPException(status_code=403, detail="Registration is disabled")
     if len(body.password) < _MIN_PASSWORD_LEN:
@@ -127,13 +129,13 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
         email=body.email,
         name=body.name,
         password_hash=_hash_password(body.password),
-        is_owner=False,
+        is_workspace_admin=False,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
-    token = create_access_token(user.id, user.email, user.is_owner, user.name)
-    return {"access_token": token, "user": UserOut(id=user.id, email=user.email, name=user.name, is_owner=user.is_owner)}
+    token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name)
+    return {"access_token": token, "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin)}
 
 
 @router.post("/logout")
@@ -149,8 +151,8 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == body.email).first()
     if not user or not _verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    token = create_access_token(user.id, user.email, user.is_owner, user.name)
-    return {"access_token": token, "user": UserOut(id=user.id, email=user.email, name=user.name, is_owner=user.is_owner)}
+    token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name)
+    return {"access_token": token, "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin)}
 
 
 @router.get("/me", response_model=MeResponse)

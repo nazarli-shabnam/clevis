@@ -6,7 +6,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.core.config import settings
 from src.core.logging import setup_logging
 from src.core.middleware import RequestIdMiddleware
-from src.routers import actions_cache, analytics, audit, auth, config, github_auth, health, installations, jobs, tokens
+from src.routers import (
+    actions_cache,
+    analytics,
+    audit,
+    auth,
+    config,
+    github_auth,
+    health,
+    installations,
+    invitations,
+    jobs,
+    orgs,
+    tokens,
+)
 
 # CORS allowed origins are a deploy-time security boundary, set via the CORS_ORIGINS env var.
 _cors_origins = settings.cors_origins
@@ -44,8 +57,10 @@ app.include_router(health.router)
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(github_auth.router, prefix="/auth/github", tags=["github-auth"])
 app.include_router(installations.router, tags=["installations"])
-app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
-app.include_router(actions_cache.router, prefix="/repos", tags=["actions-cache"])
+app.include_router(orgs.router, tags=["orgs"])
+app.include_router(invitations.router, tags=["invitations"])
+app.include_router(analytics.router, tags=["analytics"])
+app.include_router(actions_cache.router, tags=["actions-cache"])
 app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 app.include_router(audit.router, prefix="/audit", tags=["audit"])
 app.include_router(tokens.router, prefix="/tokens", tags=["tokens"])

@@ -83,3 +83,27 @@ export interface InstallationMeta {
   installation_id: number | null
   created_at: string
 }
+
+export interface MyOrgMembership {
+  org_login: string
+  role: "admin" | "member"
+}
+
+export interface InvitationOut {
+  id: number
+  org_id: number
+  email: string
+  status: "pending" | "accepted" | "revoked"
+  created_at: string
+  accepted_at: string | null
+}
+
+export interface InvitationCreateResponse {
+  invitation: InvitationOut
+  invite_link: string
+}
+
+export interface InvitationPreview {
+  org_login: string
+  status: "pending" | "accepted" | "revoked"
+}

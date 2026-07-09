@@ -2,11 +2,13 @@
 
   GET /auth/github/login     -> 307 redirect to GitHub's authorize page (with a signed CSRF state)
   GET /auth/github/callback  -> verify state, exchange code, fetch identity, find-or-create the
-                                local user, set the httpOnly session cookie, redirect to the UI
+                                local user, sync verified GitHub org-admin memberships, set the
+                                httpOnly session cookie, redirect to the UI
 
-Find-or-create policy (S1, pre-multi-tenancy): link to an existing user by GitHub id, else by
-verified email (preserving that user's role); otherwise create a new user — the first-ever user
-becomes the owner, mirroring the email/password setup flow.
+Find-or-create policy: link to an existing user by GitHub id, else by verified email (preserving
+that user's role); otherwise create a new user — the first-ever user becomes the workspace admin,
+mirroring the email/password setup flow. See src.services.org_provisioning for how org-admin
+membership is auto-granted based on verified GitHub org-admin status.
 """
 
 import logging
@@ -18,7 +20,7 @@ from sqlalchemy.orm import Session
 from src.core.auth import create_access_token, set_session_cookie
 from src.core.config import settings
 from src.core.db import User, get_db
-from src.services import github_oauth
+from src.services import github_oauth, org_provisioning
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -46,12 +48,12 @@ def find_or_create_user(db: Session, identity: github_oauth.GitHubIdentity) -> U
         db.commit()
         db.refresh(user)
         return user
-    is_owner = db.query(User).count() == 0
+    is_workspace_admin = db.query(User).count() == 0
     user = User(
         email=identity.email,
         name=identity.name,
         password_hash=None,
-        is_owner=is_owner,
+        is_workspace_admin=is_workspace_admin,
         github_user_id=identity.github_user_id,
         github_login=identity.login,
         avatar_url=identity.avatar_url,
@@ -90,7 +92,8 @@ def github_callback(
         logger.warning("GitHub OAuth callback failed: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc))
     user = find_or_create_user(db, identity)
-    token = create_access_token(user.id, user.email, user.is_owner, user.name)
+    org_provisioning.sync_org_admin_memberships(db, user, user_token)
+    token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name)
     response = RedirectResponse(_ui_redirect_target(), status_code=303)
     set_session_cookie(response, token)
     return response

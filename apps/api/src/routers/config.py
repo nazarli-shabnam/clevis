@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from src.core.app_config import _ACCEPTED_KEYS, read_all, set_config
-from src.core.auth import UserOut, require_owner
+from src.core.auth import UserOut, require_workspace_admin
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -25,7 +25,7 @@ class ConfigValue(BaseModel):
 
 
 @router.get("", response_model=dict[str, str])
-def get_all_config(_user: UserOut = Depends(require_owner)) -> dict[str, str]:
+def get_all_config(_user: UserOut = Depends(require_workspace_admin)) -> dict[str, str]:
     """Return all instance config values. Owner only."""
     return read_all()
 
@@ -34,7 +34,7 @@ def get_all_config(_user: UserOut = Depends(require_owner)) -> dict[str, str]:
 def update_config(
     key: str,
     body: ConfigValue,
-    _user: UserOut = Depends(require_owner),
+    _user: UserOut = Depends(require_workspace_admin),
 ) -> dict[str, str]:
     """Update a single config value. Owner only."""
     if key not in _ACCEPTED_KEYS:
