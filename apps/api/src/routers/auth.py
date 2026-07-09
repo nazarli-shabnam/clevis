@@ -113,7 +113,9 @@ def setup(body: SetupRequest, db: Session = Depends(get_db)):
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 def register(body: RegisterRequest, db: Session = Depends(get_db)):
-    """Creates a non-owner account. 403 if registration has been disabled by the owner."""
+    """Creates a non-admin account. 409 if setup hasn't run yet; 403 if registration is disabled."""
+    if db.query(User).count() == 0:
+        raise HTTPException(status_code=409, detail="Setup must be completed before registration")
     if get_config("registration_enabled", "true") != "true":
         raise HTTPException(status_code=403, detail="Registration is disabled")
     if len(body.password) < _MIN_PASSWORD_LEN:

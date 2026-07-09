@@ -84,17 +84,17 @@ def test_register_creates_non_owner(auth_client):
     assert body["user"]["email"] == "member@example.com"
 
 
-def test_register_before_setup_still_creates_non_owner(auth_client):
-    """Registration doesn't require setup to have run first; the first-ever user via /setup
-    becomes owner, but a /register call before that just makes a regular account."""
+def test_register_before_setup_rejected(auth_client):
+    """/auth/setup must run first to create the workspace admin — registering before that
+    would leave the instance with no admin, since /setup 409s once any user exists."""
     resp = auth_client.post(
         "/auth/register", json={"email": "first@example.com", "password": "supersecret1234"}
     )
-    assert resp.status_code == 201
-    assert resp.json()["user"]["is_workspace_admin"] is False
+    assert resp.status_code == 409
 
 
 def test_register_rejects_short_password(auth_client):
+    _setup_owner(auth_client)
     resp = auth_client.post("/auth/register", json={"email": "a@b.com", "password": "tooshort"})
     assert resp.status_code == 422
 
@@ -108,6 +108,7 @@ def test_register_rejects_duplicate_email(auth_client):
 
 
 def test_register_disabled_returns_403(auth_client):
+    _setup_owner(auth_client)
     with patch("src.routers.auth.get_config", return_value="false"):
         resp = auth_client.post(
             "/auth/register", json={"email": "blocked@example.com", "password": "supersecret1234"}
