@@ -1,3 +1,4 @@
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.db import Org
@@ -17,6 +18,14 @@ def get_or_create(db: Session, github_login: str, github_org_id: int | None = No
         return org
     org = Org(github_login=github_login, github_org_id=github_org_id)
     db.add(org)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Lost a race with a concurrent insert of the same github_login (unique constraint).
+        db.rollback()
+        org = get_by_login(db, github_login)
+        if org is None:
+            raise
+        return org
     db.refresh(org)
     return org

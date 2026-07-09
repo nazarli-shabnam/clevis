@@ -1,3 +1,4 @@
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.db import OrgMembership
@@ -17,7 +18,15 @@ def get_or_create(db: Session, org_id: int, user_id: int, role: str) -> OrgMembe
         return membership
     membership = OrgMembership(org_id=org_id, user_id=user_id, role=role)
     db.add(membership)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Lost a race with a concurrent insert of the same (org_id, user_id) pair.
+        db.rollback()
+        membership = get(db, org_id, user_id)
+        if membership is None:
+            raise
+        return membership
     db.refresh(membership)
     return membership
 
