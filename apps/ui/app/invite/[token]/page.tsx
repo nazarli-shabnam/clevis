@@ -45,15 +45,14 @@ export default function InviteAcceptPage() {
             <>
               <p className="text-sm text-foreground">
                 You&rsquo;ve been invited to join <span className="font-semibold">{preview.org_login}</span> as a
-                member, using <span className="font-mono">{preview.email}</span>.
+                member.
               </p>
               {!user ? (
                 <p className="text-xs text-muted-foreground">
-                  Sign in with an account matching this email, then come back to this link to accept.
-                </p>
-              ) : user.email.toLowerCase() !== preview.email.toLowerCase() ? (
-                <p className="text-xs text-destructive">
-                  You&rsquo;re signed in as {user.email}, which doesn&rsquo;t match this invitation.
+                  Sign in with the account this invite was sent to, then come back to this link to accept.{" "}
+                  <a href="/login" className="text-primary hover:underline">
+                    Sign in
+                  </a>
                 </p>
               ) : accept.isSuccess ? (
                 <p className="text-sm text-primary flex items-center gap-1.5">

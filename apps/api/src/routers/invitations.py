@@ -79,7 +79,7 @@ def preview_invitation(token: str, db: Session = Depends(get_db)):
     if invitation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
     org = db.query(Org).filter(Org.id == invitation.org_id).first()
-    return {"org_login": org.github_login, "email": invitation.email, "status": invitation.status}
+    return {"org_login": org.github_login, "status": invitation.status}
 
 
 @router.post("/invitations/{token}/accept", response_model=InvitationAcceptResponse)

@@ -1,6 +1,9 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr
+
+InvitationStatus = Literal["pending", "accepted", "revoked"]
 
 
 class InvitationCreate(BaseModel):
@@ -13,7 +16,7 @@ class InvitationOut(BaseModel):
     id: int
     org_id: int
     email: str
-    status: str
+    status: InvitationStatus
     created_at: datetime
     accepted_at: datetime | None
 
@@ -24,9 +27,10 @@ class InvitationCreateResponse(BaseModel):
 
 
 class InvitationPreview(BaseModel):
+    # Deliberately excludes the invitee's email — this endpoint is unauthenticated
+    # and invite links are shareable, so the email shouldn't be disclosed pre-auth.
     org_login: str
-    email: str
-    status: str
+    status: InvitationStatus
 
 
 class InvitationAcceptResponse(BaseModel):

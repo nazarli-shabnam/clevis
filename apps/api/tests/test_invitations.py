@@ -71,7 +71,8 @@ def test_preview_invitation_unauthenticated(db, acme_org):
     app.dependency_overrides[get_db] = lambda: db
     resp = TestClient(app).get(f"/invitations/{token}")
     assert resp.status_code == 200
-    assert resp.json() == {"org_login": "acme", "email": "bob@acme.com", "status": "pending"}
+    # The invitee's email is intentionally not disclosed on this unauthenticated endpoint.
+    assert resp.json() == {"org_login": "acme", "status": "pending"}
 
 
 def test_accept_invitation_wrong_email_forbidden(db, acme_org):
@@ -93,6 +94,16 @@ def test_accept_invitation_ok(db, acme_org):
     # Accepting again fails — invitation is no longer pending.
     resp = _client(db, acme_org["invitee"]).post(f"/invitations/{token}/accept")
     assert resp.status_code == 409
+
+
+def test_accept_invitation_case_insensitive_email_match(db, acme_org):
+    created = _client(db, acme_org["admin"]).post("/orgs/acme/invitations", json={"email": "Bob@Acme.com"}).json()
+    token = created["invite_link"].rsplit("/", 1)[-1]
+
+    # Invitee's account email differs only in case from the invited address.
+    resp = _client(db, acme_org["invitee"]).post(f"/invitations/{token}/accept")
+    assert resp.status_code == 200
+    assert resp.json() == {"org_login": "acme", "role": "member"}
 
 
 def test_revoke_invitation(db, acme_org):

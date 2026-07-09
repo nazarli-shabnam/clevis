@@ -105,6 +105,5 @@ export interface InvitationCreateResponse {
 
 export interface InvitationPreview {
   org_login: string
-  email: string
-  status: string
+  status: "pending" | "accepted" | "revoked"
 }
