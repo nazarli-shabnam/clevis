@@ -17,6 +17,7 @@ from src.routers import (
     installations,
     invitations,
     jobs,
+    orgs,
     tokens,
 )
 
@@ -56,9 +57,10 @@ app.include_router(health.router)
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(github_auth.router, prefix="/auth/github", tags=["github-auth"])
 app.include_router(installations.router, tags=["installations"])
+app.include_router(orgs.router, tags=["orgs"])
 app.include_router(invitations.router, tags=["invitations"])
-app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
-app.include_router(actions_cache.router, prefix="/repos", tags=["actions-cache"])
+app.include_router(analytics.router, tags=["analytics"])
+app.include_router(actions_cache.router, tags=["actions-cache"])
 app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 app.include_router(audit.router, prefix="/audit", tags=["audit"])
 app.include_router(tokens.router, prefix="/tokens", tags=["tokens"])

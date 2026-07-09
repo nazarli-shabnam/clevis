@@ -9,6 +9,8 @@ def create(
     account_type: str,
     auth_mode: str,
     installation_id: int | None = None,
+    org_id: int | None = None,
+    owner_user_id: int | None = None,
 ) -> GitHubInstallation:
     token_ref = f"tok_{account_login}"
     row = GitHubInstallation(
@@ -17,6 +19,8 @@ def create(
         installation_id=installation_id,
         auth_mode=auth_mode,
         token_ref=token_ref,
+        org_id=org_id,
+        owner_user_id=owner_user_id,
     )
     db.add(row)
     db.commit()
@@ -24,5 +28,19 @@ def create(
     return row
 
 
-def list_all(db: Session) -> list[GitHubInstallation]:
-    return db.query(GitHubInstallation).order_by(GitHubInstallation.created_at.desc()).all()
+def list_for_org(db: Session, org_id: int) -> list[GitHubInstallation]:
+    return (
+        db.query(GitHubInstallation)
+        .filter(GitHubInstallation.org_id == org_id)
+        .order_by(GitHubInstallation.created_at.desc())
+        .all()
+    )
+
+
+def list_for_user(db: Session, owner_user_id: int) -> list[GitHubInstallation]:
+    return (
+        db.query(GitHubInstallation)
+        .filter(GitHubInstallation.owner_user_id == owner_user_id)
+        .order_by(GitHubInstallation.created_at.desc())
+        .all()
+    )

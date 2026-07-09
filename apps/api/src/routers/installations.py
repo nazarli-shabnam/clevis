@@ -1,8 +1,23 @@
+"""GitHub App installation router.
+
+  GET  /orgs/{org_login}/installations       member: list installations connected to this org
+  POST /orgs/{org_login}/installations/sync  admin: re-sync installation metadata for an
+                                              *existing* org. A brand-new org's first
+                                              installation is only created via the
+                                              auto-provisioning flow (src.services.org_provisioning,
+                                              run at OAuth login) — this endpoint can't bootstrap a
+                                              brand-new Org row since it has no way to verify the
+                                              caller is a real GitHub org admin.
+  GET  /me/installations                     list the current user's personal installations
+  POST /me/installations/sync                connect a personal (User-type) GitHub installation
+"""
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from src.core.auth import UserOut, require_workspace_admin
+from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
+from src.core.rbac import OrgContext, require_org_role
 from src.repositories import installation_repo
 from src.schemas.installation import (
     InstallationOut,
@@ -13,20 +28,19 @@ from src.schemas.installation import (
 router = APIRouter()
 
 
-@router.get("/github/app/installations", response_model=list[InstallationOut])
-def list_installations(
+@router.get("/orgs/{org_login}/installations", response_model=list[InstallationOut])
+def list_org_installations(
+    ctx: OrgContext = Depends(require_org_role(min_role="member")),
     db: Session = Depends(get_db),
-    _user: UserOut = Depends(require_workspace_admin),
 ):
-    """Organizations that have installed the Clevis GitHub App (the 'Connected Orgs' list)."""
-    return installation_repo.list_all(db)
+    return installation_repo.list_for_org(db, org_id=ctx.org.id)
 
 
-@router.post("/github/app/installations/sync", response_model=SyncInstallationsResponse)
-def sync_installation(
+@router.post("/orgs/{org_login}/installations/sync", response_model=SyncInstallationsResponse)
+def sync_org_installation(
     payload: SyncInstallationsInput,
+    ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     db: Session = Depends(get_db),
-    _user: UserOut = Depends(require_workspace_admin),
 ):
     row = installation_repo.create(
         db,
@@ -34,5 +48,31 @@ def sync_installation(
         account_type=payload.account_type,
         auth_mode=payload.auth_mode,
         installation_id=payload.installation_id,
+        org_id=ctx.org.id,
+    )
+    return {"synced": True, "token_ref": row.token_ref}
+
+
+@router.get("/me/installations", response_model=list[InstallationOut])
+def list_personal_installations(
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    return installation_repo.list_for_user(db, owner_user_id=user.id)
+
+
+@router.post("/me/installations/sync", response_model=SyncInstallationsResponse)
+def sync_personal_installation(
+    payload: SyncInstallationsInput,
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    row = installation_repo.create(
+        db,
+        account_login=payload.account_login,
+        account_type=payload.account_type,
+        auth_mode=payload.auth_mode,
+        installation_id=payload.installation_id,
+        owner_user_id=user.id,
     )
     return {"synced": True, "token_ref": row.token_ref}
