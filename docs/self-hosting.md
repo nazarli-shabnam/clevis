@@ -13,7 +13,9 @@
 ## Security notes
 - Use GitHub App auth in production, not PAT.
 - Restrict API ingress behind your reverse proxy and SSO.
-- Set `X-Role: admin` only for trusted automation/users.
+- Set `CORS_ORIGINS` to your real UI origin(s) before going live — it's a security boundary (credentialed CORS + the session cookie), read once at API startup, so changing it requires a restart.
+- The first account created via `/auth/setup` becomes the workspace admin. Access beyond that is granted per-org (invite links from an org admin), or instance-wide for workspace-admin-only routes (`/tokens`, `/jobs`, `/audit`, `/config`).
+- Generate `AUTH_SECRET` and `JOB_SECRET_KEY` with `openssl rand -hex 32` each — don't reuse one for the other, and don't commit real values.
 
 ## Observability
 - API has request-id logs and health endpoint at `/healthz`.

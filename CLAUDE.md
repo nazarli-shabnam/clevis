@@ -13,24 +13,33 @@ Clevis is a GitHub analytics dashboard with three independently deployable servi
 
 ### Database models (`apps/api/src/core/db.py`)
 
-Three tables managed by Alembic — no runtime DDL:
-- **`github_installations`** — account login, installation ID, auth mode, and `token_ref` (a symbolic reference like `tok_acme`, not the actual token).
+Managed by Alembic — no runtime DDL. Core tables:
+- **`users`** — email/password (bcrypt) or GitHub-OAuth-linked accounts. `is_workspace_admin` marks the instance-level admin (the first user ever created); everyone else is a regular user whose access is scoped per-org via `org_memberships`.
+- **`orgs`** / **`org_memberships`** — the multi-tenant model (added in migration `0009_add_org_rbac.py`). `org_memberships.role` is `member` or `admin`, scoped per org.
+- **`invitations`** — pending/accepted/revoked org invites; a shareable link (`/invite/{token}`) that grants membership to whoever accepts it with a matching email. Currently has no expiry — see open issues.
+- **`github_installations`** — account login, installation ID, auth mode, and `token_ref` (a symbolic reference like `tok_acme`, not the actual token); scoped to exactly one of `org_id` or `owner_user_id` (enforced by a DB check constraint).
+- **`saved_tokens`** — Fernet-encrypted GitHub PATs saved per org for reuse, so a workspace admin doesn't have to paste a token on every request. See "Token encryption" below.
 - **`audit_logs`** — immutable audit trail; every significant action (cache clear, dry-run, etc.) writes here with actor, action, target, and payload JSON.
 - **`jobs`** — job queue; composite index on `(status, job_type)` for efficient worker polling. Status lifecycle: `queued → processing → done/failed`. The `result` column stores JSON on success or a raw exception string on failure.
 
 ### Job queue flow
 
-**Enqueueing (API):** `POST /repos/{owner}/{repo}/actions-caches/clear` — if `dry_run=true`, only an audit log is written; if `dry_run=false`, the token is Fernet-encrypted and a `jobs` row with `status='queued'` is inserted.
+**Enqueueing (API):** `POST /orgs/{org_login}/repos/{owner}/{repo}/actions-caches/clear` (org-scoped) or `POST /me/repos/{owner}/{repo}/actions-caches/clear` (personal-scope, caller supplies their own token) — if `dry_run=true`, only an audit log is written; if `dry_run=false`, the token is Fernet-encrypted and a `jobs` row with `status='queued'` is inserted.
 
 **Processing (worker):** atomic `SELECT FOR UPDATE SKIP LOCKED` claims one job, updates status to `processing`, decrypts the token, calls the GitHub API, then updates to `done` or `failed`. Multiple worker replicas can poll safely.
 
-### RBAC
+### Auth & RBAC
 
-Role passed via `X-Role` HTTP header (`viewer` / `analyst` / `admin`). Defaults to `settings.default_rbac_role`. Enforced via `require_role()` FastAPI dependency (`src/services/rbac.py`). Only the cache-clear endpoint requires `admin`; all other routes are unrestricted. There is no session or JWT — the header is trusted to come from an auth proxy.
+Sessions are JWTs (`AUTH_SECRET`, HS256, 30-day expiry), issued on email/password login (`POST /auth/login`) or GitHub OAuth (`GET /auth/github/callback`), and carried either as a `Bearer` header (API clients) or an httpOnly `clevis_session` cookie (browser). There are two independent access layers, defined in `apps/api/src/core`:
+
+- **`core/auth.py`** — `require_auth` (any valid JWT) and `require_workspace_admin` (JWT claims only, no DB hit — `is_workspace_admin` is baked into the token at issuance, so revoking/demoting a user does not take effect until their token expires).
+- **`core/rbac.py`** — `require_org_role(min_role)` (`member` / `admin`), which resolves the caller's `OrgMembership` fresh from the DB on every request, since org access can change while a JWT is still valid. `assert_owner_matches_org` additionally guards that a repo-level `owner` path/body value matches the org context the caller was authorized for.
+
+Most routes are org-scoped (`/orgs/{org_login}/...`, `require_org_role`) or personal-scope (`/me/...`, `require_auth` only — the caller brings their own GitHub token, so there's no installation to authorize against). Workspace-admin-only routes (`/tokens`, `/jobs`, `/audit`, `/config`) manage instance-wide state, not per-org data.
 
 ### Token encryption
 
-Tokens are never stored persistently. When a job is enqueued the API encrypts the token with Fernet (key derived via SHA-256 of `JOB_SECRET_KEY`, base64-encoded). The worker decrypts it at processing time. Both sides duplicate the same `_crypto.py` logic.
+GitHub PATs are Fernet-encrypted at rest in two places: transiently in `jobs.payload` while a cache-clear job is queued, and persistently in `saved_tokens.encrypted_token` when a workspace admin saves an org's token for reuse (`POST /tokens/{org}`). The Fernet key is derived from `JOB_SECRET_KEY` via SHA-256 (base64-encoded) — both `apps/api` and `apps/worker` duplicate the same `_crypto.py` logic. `GET /tokens` never returns raw tokens; `POST /tokens/resolve` does (workspace-admin only), for cases where the raw PAT needs to be reused client-side.
 
 ### Database URL dialect
 
@@ -46,7 +55,7 @@ The API uses `postgresql+psycopg://` (SQLAlchemy dialect). The worker strips the
 
 ### UI routing
 
-Owner and repo are joined with `~` in URL dynamic segments (e.g., `/repos/octocat~hello-world/cache`). The API client lives in `apps/ui/lib/api/client.ts`; it centralises JSON serialisation, error parsing, and `X-Role` header injection.
+Owner and repo are joined with `~` in URL dynamic segments (e.g., `/repos/octocat~hello-world/cache`). The API client lives in `apps/ui/lib/api/client.ts`; it centralises JSON serialisation, error parsing, and attaches the session (via the httpOnly cookie sent automatically on same-site credentialed requests, or a `Bearer` header where applicable).
 
 ## Development setup
 
