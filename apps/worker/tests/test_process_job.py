@@ -122,6 +122,14 @@ def test_process_job_truncates_long_error():
     assert params[0].endswith("...(truncated)")
 
 
+def test_process_job_marks_failed_on_invalid_payload():
+    conn = _FakeConn()
+    process_job(conn, 6, json.dumps({"owner": "acme"}))
+    sql, params = conn._cursor.calls[0]
+    assert "status='failed'" in sql
+    assert "Missing required payload field" in params[0]
+
+
 def test_process_job_redacts_token_shaped_text_in_error():
     conn = _FakeConn()
 

@@ -100,6 +100,10 @@ async function del(path: string): Promise<void> {
     method: "DELETE",
     headers: { ...getAuthHeaders() },
   })
+  if (res.status === 401) {
+    if (typeof window !== "undefined") localStorage.removeItem(_TOKEN_KEY)
+    window.dispatchEvent(new Event("clevis:unauthorized"))
+  }
   if (!res.ok) {
     const json = await res.json().catch(() => ({}))
     throw new Error((json as { detail?: string }).detail ?? `Request failed: ${res.status}`)
@@ -139,12 +143,19 @@ export const api = {
   },
   cache: {
     list: (owner: string, repo: string, token: string) =>
-      post<CacheListResponse>(`/me/repos/${owner}/${repo}/actions-caches`, { token }),
+      post<CacheListResponse>(
+        `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions-caches`,
+        { token },
+      ),
     clear: (
       owner: string,
       repo: string,
       body: { token: string; actor: string; dry_run: boolean; key?: string; ref?: string },
-    ) => post<CacheClearResponse>(`/me/repos/${owner}/${repo}/actions-caches/clear`, body),
+    ) =>
+      post<CacheClearResponse>(
+        `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions-caches/clear`,
+        body,
+      ),
   },
   jobs: {
     list: () => get<JobOut[]>("/jobs"),

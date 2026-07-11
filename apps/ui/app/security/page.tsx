@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { AlertTriangle, KeyRound } from "lucide-react"
 import { api } from "@/lib/api/client"
+import { shouldApplyResolvedToken } from "@/lib/token-resolve"
 import { DonutChart } from "@/components/charts/donut-chart"
 import type { CheckResult } from "@/lib/api/types"
 
@@ -84,8 +85,13 @@ export default function SecurityPage() {
 
   const resolveMutation = useMutation({
     mutationFn: (org: string) => api.tokens.resolve(org),
-    onSuccess: (data) => { setToken(data.token); setTokenSaved(true) },
-    onError:   () => setTokenSaved(false),
+    onSuccess: (data, org) => {
+      if (shouldApplyResolvedToken(org, owner)) {
+        setToken(data.token)
+        setTokenSaved(true)
+      }
+    },
+    onError: () => setTokenSaved(false),
   })
 
   useEffect(() => {

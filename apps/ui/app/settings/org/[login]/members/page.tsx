@@ -22,6 +22,8 @@ export default function OrgMembersPage() {
     queryFn: () => api.invitations.list(orgLogin),
   })
 
+  const [revokingId, setRevokingId] = useState<number | null>(null)
+
   const invite = useMutation({
     mutationFn: () => api.invitations.create(orgLogin, email.trim()),
     onSuccess: (data) => {
@@ -33,6 +35,8 @@ export default function OrgMembersPage() {
 
   const revoke = useMutation({
     mutationFn: (id: number) => api.invitations.revoke(orgLogin, id),
+    onMutate: (id) => setRevokingId(id),
+    onSettled: () => setRevokingId(null),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["invitations", orgLogin] }),
   })
 
@@ -103,7 +107,7 @@ export default function OrgMembersPage() {
                             size="sm"
                             variant="outline"
                             onClick={() => revoke.mutate(inv.id)}
-                            disabled={revoke.isPending}
+                            disabled={revokingId === inv.id}
                           >
                             <X className="size-3" />
                             Revoke
