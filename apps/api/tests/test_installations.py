@@ -12,8 +12,8 @@ from src.routers.installations import router as inst_router
 _OUTSIDER = UserOut(id=99999, email="outsider@e.com", name=None, is_workspace_admin=False)
 
 
-def _make_user(db, email: str) -> UserOut:
-    user = User(email=email, name=None, password_hash=None, is_workspace_admin=False)
+def _make_user(db, email: str, github_login: str | None = None) -> UserOut:
+    user = User(email=email, name=None, password_hash=None, is_workspace_admin=False, github_login=github_login)
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -112,10 +112,28 @@ def test_personal_installations_scoped_to_self(db):
 
 
 def test_sync_personal_installation(db):
-    me = _make_user(db, "shabnam@e.com")
+    me = _make_user(db, "shabnam@e.com", github_login="shabnam")
     resp = _client(db, me).post(
         "/me/installations/sync",
         json={"account_login": "shabnam", "account_type": "User", "installation_id": 3},
     )
     assert resp.status_code == 200
     assert resp.json()["synced"] is True
+
+
+def test_sync_personal_installation_requires_linked_github_account(db):
+    me = _make_user(db, "unlinked@e.com")
+    resp = _client(db, me).post(
+        "/me/installations/sync",
+        json={"account_login": "someone-else", "account_type": "User", "installation_id": 3},
+    )
+    assert resp.status_code == 403
+
+
+def test_sync_personal_installation_login_mismatch_forbidden(db):
+    me = _make_user(db, "shabnam@e.com", github_login="shabnam")
+    resp = _client(db, me).post(
+        "/me/installations/sync",
+        json={"account_login": "someone-else", "account_type": "User", "installation_id": 3},
+    )
+    assert resp.status_code == 403

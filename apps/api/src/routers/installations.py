@@ -70,7 +70,12 @@ def sync_personal_installation(
 ):
     if payload.account_type == "User":
         db_user = db.query(User).filter(User.id == user.id).first()
-        if db_user and db_user.github_login and payload.account_login != db_user.github_login:
+        if not db_user or not db_user.github_login:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Link your GitHub account before syncing a personal installation",
+            )
+        if payload.account_login != db_user.github_login:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="account_login must match your own GitHub account",

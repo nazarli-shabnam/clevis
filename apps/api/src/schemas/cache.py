@@ -7,7 +7,6 @@ class CacheListInput(BaseModel):
 
 class CacheClearInput(BaseModel):
     token: SecretStr
-    actor: str
     key: str | None = None
     ref: str | None = None
     dry_run: bool = True
