@@ -28,6 +28,17 @@ function safeNextPath(next: string | null): string {
   return next
 }
 
+const GITHUB_ERROR_MESSAGES: Record<string, string> = {
+  github_not_configured: "GitHub sign-in isn't set up on this server yet. Use email and password, or ask an admin to configure it.",
+  github_invalid_state: "Your GitHub sign-in attempt expired or was invalid. Please try again.",
+  github_oauth_failed: "GitHub sign-in failed. Please try again.",
+}
+
+function githubErrorMessage(code: string | null): string {
+  if (!code) return ""
+  return GITHUB_ERROR_MESSAGES[code] || "GitHub sign-in failed. Please try again."
+}
+
 export default function LoginPage() {
   const { user, login, isLoading } = useAuth()
   const router = useRouter()
@@ -36,8 +47,18 @@ export default function LoginPage() {
 
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [error, setError] = useState("")
+  const [error, setError] = useState(() => githubErrorMessage(searchParams.get("error")))
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // Strip ?error= from the URL once read, so a refresh doesn't re-show a stale message.
+  useEffect(() => {
+    if (!searchParams.get("error")) return
+    const params = new URLSearchParams(searchParams)
+    params.delete("error")
+    const qs = params.toString()
+    router.replace(qs ? `/login?${qs}` : "/login")
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Redirect if already authenticated or setup is needed
   useEffect(() => {

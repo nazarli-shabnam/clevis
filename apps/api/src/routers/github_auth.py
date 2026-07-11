@@ -13,7 +13,7 @@ membership is auto-granted based on verified GitHub org-admin status.
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -33,6 +33,11 @@ def _callback_url(request: Request) -> str:
 
 def _ui_redirect_target() -> str:
     return settings.cors_origins[0] if settings.cors_origins else "/"
+
+
+def _ui_login_error_redirect(error_code: str) -> RedirectResponse:
+    base = settings.cors_origins[0] if settings.cors_origins else ""
+    return RedirectResponse(f"{base}/login?error={error_code}", status_code=303)
 
 
 def find_or_create_user(db: Session, identity: github_oauth.GitHubIdentity) -> User:
@@ -70,8 +75,8 @@ def github_login(request: Request):
     try:
         state = github_oauth.sign_state()
         url = github_oauth.build_authorize_url(state=state, redirect_uri=_callback_url(request))
-    except github_oauth.GitHubOAuthNotConfigured as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+    except github_oauth.GitHubOAuthNotConfigured:
+        return _ui_login_error_redirect("github_not_configured")
     return RedirectResponse(url, status_code=307)
 
 
@@ -83,15 +88,15 @@ def github_callback(
     db: Session = Depends(get_db),
 ):
     if not code or not state or not github_oauth.verify_state(state):
-        raise HTTPException(status_code=400, detail="Invalid OAuth state or code")
+        return _ui_login_error_redirect("github_invalid_state")
     try:
         user_token = github_oauth.exchange_code_for_token(code, redirect_uri=_callback_url(request))
         identity = github_oauth.fetch_identity(user_token)
-    except github_oauth.GitHubOAuthNotConfigured as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+    except github_oauth.GitHubOAuthNotConfigured:
+        return _ui_login_error_redirect("github_not_configured")
     except github_oauth.GitHubOAuthError as exc:
         logger.warning("GitHub OAuth callback failed: %s", exc)
-        raise HTTPException(status_code=400, detail=str(exc))
+        return _ui_login_error_redirect("github_oauth_failed")
     user = find_or_create_user(db, identity)
     org_provisioning.sync_org_admin_memberships(db, user, user_token)
     token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name, user.token_version)

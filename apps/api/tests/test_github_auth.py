@@ -80,12 +80,13 @@ def test_login_redirects_to_github(gh_client, oauth_configured):
     assert resp.headers["location"].startswith("https://github.com/login/oauth/authorize")
 
 
-def test_login_unconfigured_returns_503(gh_client, monkeypatch):
+def test_login_unconfigured_redirects_to_ui_with_error(gh_client, monkeypatch):
     # Force unconfigured regardless of the ambient .env (a real App may be configured locally).
     monkeypatch.setattr(settings, "github_app_client_id", None)
     monkeypatch.setattr(settings, "github_app_client_secret", None)
     resp = gh_client.get("/auth/github/login", follow_redirects=False)
-    assert resp.status_code == 503
+    assert resp.status_code == 303
+    assert resp.headers["location"].endswith("/login?error=github_not_configured")
 
 
 def test_callback_creates_user_and_sets_cookie(gh_client, db):
@@ -104,4 +105,17 @@ def test_callback_creates_user_and_sets_cookie(gh_client, db):
 def test_callback_rejects_bad_state(gh_client):
     with patch("src.routers.github_auth.github_oauth.verify_state", return_value=False):
         resp = gh_client.get("/auth/github/callback?code=c&state=bad", follow_redirects=False)
-    assert resp.status_code == 400
+    assert resp.status_code == 303
+    assert resp.headers["location"].endswith("/login?error=github_invalid_state")
+
+
+def test_callback_redirects_to_ui_on_oauth_error(gh_client):
+    from src.services.github_oauth import GitHubOAuthError
+
+    with (
+        patch("src.routers.github_auth.github_oauth.verify_state", return_value=True),
+        patch("src.routers.github_auth.github_oauth.exchange_code_for_token", side_effect=GitHubOAuthError("bad_verification_code")),
+    ):
+        resp = gh_client.get("/auth/github/callback?code=c&state=s", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"].endswith("/login?error=github_oauth_failed")
