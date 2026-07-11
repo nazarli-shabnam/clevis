@@ -34,3 +34,17 @@ def test_branch_protection_rate_limit_counts_as_unknown():
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "error"
     assert result["value"]["unknown"] == 1
+
+
+def test_branch_protection_network_error_counts_as_unknown():
+    check = BranchProtectionEnabled()
+    repos = [{"name": "demo", "default_branch": "main"}]
+
+    def fake_get(url, token):
+        raise httpx.ConnectError("network down", request=httpx.Request("GET", url))
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        result = check.run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "error"
+    assert result["value"]["unknown"] == 1

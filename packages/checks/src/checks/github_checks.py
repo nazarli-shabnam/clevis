@@ -100,6 +100,8 @@ class BranchProtectionEnabled(Check):
             except httpx.HTTPStatusError as exc:
                 if _branch_protection_status(exc) == "unknown":
                     unknown += 1
+            except httpx.HTTPError:
+                unknown += 1
         evaluable = checked - unknown
         if evaluable == 0:
             return {"status": "error", "value": {"checked": checked, "protected": protected, "unknown": unknown}}
