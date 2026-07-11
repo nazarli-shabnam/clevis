@@ -13,8 +13,10 @@ interface AuthContextValue {
   user: AuthUser | null
   token: string | null
   isLoading: boolean
+  logoutWarning: string | null
   login(email: string, password: string): Promise<void>
   logout(): void
+  clearLogoutWarning(): void
   updateUser(u: Partial<AuthUser>): void
   setSession(jwtToken: string, authUser: AuthUser): void
 }
@@ -23,10 +25,11 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 
 const _TOKEN_KEY = "clevis:token"
 const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
+const _LOGOUT_WARNING =
+  "Logged out locally, but the server session may still be active. Avoid shared devices until you can retry."
 
 function parseJwtPayload(token: string): AuthUser | null {
   try {
-    // JWT uses base64url — normalize to standard base64 before atob()
     const segment = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")
     const padded = segment.padEnd(Math.ceil(segment.length / 4) * 4, "=")
     const payload = JSON.parse(atob(padded))
@@ -48,29 +51,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [logoutWarning, setLogoutWarning] = useState<string | null>(null)
   const sessionEpochRef = useRef(0)
 
   const bumpSessionEpoch = useCallback(() => {
     sessionEpochRef.current += 1
   }, [])
 
+  const clearLogoutWarning = useCallback(() => {
+    setLogoutWarning(null)
+  }, [])
+
   const logout = useCallback(() => {
     bumpSessionEpoch()
-    // Clear the httpOnly cookie server-side (GitHub OAuth sessions); harmless for Bearer sessions.
-    fetch(`${BASE}/auth/logout`, { method: "POST", credentials: "include" }).catch(() => {})
+    fetch(`${BASE}/auth/logout`, { method: "POST", credentials: "include" })
+      .then((res) => {
+        if (!res.ok) setLogoutWarning(_LOGOUT_WARNING)
+      })
+      .catch(() => setLogoutWarning(_LOGOUT_WARNING))
     localStorage.removeItem(_TOKEN_KEY)
     setToken(null)
     setUser(null)
   }, [bumpSessionEpoch])
 
-  // On mount: restore a Bearer session optimistically, then validate against the server.
-  // Validation works for BOTH auth modes — the Bearer header (email/password) and the httpOnly
-  // session cookie (GitHub OAuth, where there is no localStorage token).
   useEffect(() => {
     const epochAtStart = sessionEpochRef.current
     const stored = localStorage.getItem(_TOKEN_KEY)
 
-    // Optimistic restore from a stored token — unblock the UI without a network round-trip
     if (stored) {
       const optimistic = parseJwtPayload(stored)
       if (optimistic) {
@@ -80,12 +87,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    // Timed out so a stalled /auth/me can never leave the app stuck on the full-screen spinner.
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 15000)
     fetch(`${BASE}/auth/me`, {
       headers: stored ? { Authorization: `Bearer ${stored}` } : {},
-      credentials: "include", // sends the httpOnly cookie for GitHub OAuth sessions
+      credentials: "include",
       signal: controller.signal,
     })
       .then(async (res) => {
@@ -99,9 +105,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (stored) setToken(stored)
         setUser(data)
       })
-      .catch(() => {
-        // Network unreachable or timed out — keep any optimistic session
-      })
+      .catch(() => {})
       .finally(() => {
         clearTimeout(timer)
         setIsLoading(false)
@@ -118,10 +122,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!res.ok) throw new Error(data.detail ?? "Login failed")
     const { access_token, user: u } = data as { access_token: string; user: AuthUser }
     bumpSessionEpoch()
+    clearLogoutWarning()
     localStorage.setItem(_TOKEN_KEY, access_token)
     setToken(access_token)
     setUser(u)
-  }, [bumpSessionEpoch])
+  }, [bumpSessionEpoch, clearLogoutWarning])
 
   const updateUser = useCallback((patch: Partial<AuthUser>) => {
     setUser((prev) => (prev ? { ...prev, ...patch } : prev))
@@ -129,13 +134,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const setSession = useCallback((jwtToken: string, authUser: AuthUser) => {
     bumpSessionEpoch()
+    clearLogoutWarning()
     localStorage.setItem(_TOKEN_KEY, jwtToken)
     setToken(jwtToken)
     setUser(authUser)
-  }, [bumpSessionEpoch])
+  }, [bumpSessionEpoch, clearLogoutWarning])
 
   return (
-    <AuthContext.Provider value={{ user, token, isLoading, login, logout, updateUser, setSession }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        token,
+        isLoading,
+        logoutWarning,
+        login,
+        logout,
+        clearLogoutWarning,
+        updateUser,
+        setSession,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   )
