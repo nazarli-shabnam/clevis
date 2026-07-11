@@ -116,7 +116,7 @@ def test_org_actions_cache_clear_member_forbidden(cache_app, acme_membership):
     cache_app.dependency_overrides[require_auth] = lambda: acme_membership["member"]
     resp = TestClient(cache_app).post(
         "/orgs/acme/repos/acme/widget/actions-caches/clear",
-        json={"token": "ghp_test", "actor": "member@example.com"},
+        json={"token": "ghp_test"},
     )
     assert resp.status_code == 403
 

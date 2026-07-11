@@ -36,10 +36,11 @@ def org_clear_caches(
     repo: str,
     payload: CacheClearInput,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
+    user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
     assert_owner_matches_org(owner, ctx)
-    return clear(db, owner, repo, payload)
+    return clear(db, owner, repo, payload, actor=user.email)
 
 
 @router.post("/me/repos/{owner}/{repo}/actions-caches", response_model=CacheListResponse)
@@ -58,6 +59,6 @@ def personal_clear_caches(
     repo: str,
     payload: CacheClearInput,
     db: Session = Depends(get_db),
-    _user: UserOut = Depends(require_auth),
+    user: UserOut = Depends(require_auth),
 ):
-    return clear(db, owner, repo, payload)
+    return clear(db, owner, repo, payload, actor=user.email)
