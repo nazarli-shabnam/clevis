@@ -91,6 +91,8 @@ class User(Base):
     # Null for users who only sign in with GitHub (no email/password credential).
     password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_workspace_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Bumped by POST /auth/me/revoke-sessions to invalidate all previously issued JWTs.
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # GitHub identity (set when the user links / signs in via GitHub OAuth).
     github_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, unique=True)
     github_login: Mapped[str | None] = mapped_column(Text, nullable=True)

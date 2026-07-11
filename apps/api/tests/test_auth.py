@@ -174,6 +174,42 @@ def test_patch_me_updates_name(auth_client):
     assert resp.json()["name"] == "Alice"
 
 
+# revoke-sessions
+
+def test_revoke_sessions_unauthenticated(auth_client):
+    resp = auth_client.post("/auth/me/revoke-sessions")
+    assert resp.status_code == 401
+
+
+def test_revoke_sessions_invalidates_existing_token(auth_client):
+    token = _setup_owner(auth_client)["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    resp = auth_client.post("/auth/me/revoke-sessions", headers=headers)
+    assert resp.status_code == 200
+
+    resp = auth_client.get("/auth/me", headers=headers)
+    assert resp.status_code == 401
+
+
+def test_revoke_sessions_new_login_still_works(auth_client):
+    _setup_owner(auth_client)
+    auth_client.post(
+        "/auth/login", json={"email": "owner@example.com", "password": "supersecret1234"}
+    )
+    first_token = auth_client.post(
+        "/auth/login", json={"email": "owner@example.com", "password": "supersecret1234"}
+    ).json()["access_token"]
+    auth_client.post(
+        "/auth/me/revoke-sessions", headers={"Authorization": f"Bearer {first_token}"}
+    )
+    new_token = auth_client.post(
+        "/auth/login", json={"email": "owner@example.com", "password": "supersecret1234"}
+    ).json()["access_token"]
+    resp = auth_client.get("/auth/me", headers={"Authorization": f"Bearer {new_token}"})
+    assert resp.status_code == 200
+
+
 # ── Config router ─────────────────────────────────────────────────────────────
 
 _OWNER = UserOut(id=1, email="owner@example.com", name=None, is_workspace_admin=True)

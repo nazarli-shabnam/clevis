@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from src.core.auth import create_access_token, set_session_cookie
 from src.core.config import settings
 from src.core.db import User, get_db
+from src.core.rate_limit import rate_limit
 from src.services import github_oauth, org_provisioning
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ def github_login(request: Request):
     return RedirectResponse(url, status_code=307)
 
 
-@router.get("/callback", name="github_callback")
+@router.get("/callback", name="github_callback", dependencies=[Depends(rate_limit())])
 def github_callback(
     request: Request,
     code: str | None = None,
@@ -93,7 +94,7 @@ def github_callback(
         raise HTTPException(status_code=400, detail=str(exc))
     user = find_or_create_user(db, identity)
     org_provisioning.sync_org_admin_memberships(db, user, user_token)
-    token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name)
+    token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name, user.token_version)
     response = RedirectResponse(_ui_redirect_target(), status_code=303)
     set_session_cookie(response, token)
     return response
