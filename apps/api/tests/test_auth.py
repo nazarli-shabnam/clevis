@@ -142,6 +142,18 @@ def test_login_unknown_email(auth_client):
     assert resp.status_code == 401
 
 
+def test_login_github_only_user_returns_401(auth_client, db):
+    from src.core.db import User
+
+    db.add(User(email="github-only@example.com", password_hash=None, is_workspace_admin=False))
+    db.commit()
+    resp = auth_client.post(
+        "/auth/login", json={"email": "github-only@example.com", "password": "anypassword12"}
+    )
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "Invalid credentials"
+
+
 # me
 
 def test_me_unauthenticated(auth_client):
