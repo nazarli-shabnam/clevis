@@ -31,6 +31,20 @@ class GitHubInstallation(Base):
             "OR (org_id IS NULL AND owner_user_id IS NOT NULL)",
             name="ck_github_installations_org_xor_owner",
         ),
+        Index(
+            "uq_github_installations_org_account",
+            "org_id",
+            "account_login",
+            unique=True,
+            postgresql_where="org_id IS NOT NULL",
+        ),
+        Index(
+            "uq_github_installations_user_account",
+            "owner_user_id",
+            "account_login",
+            unique=True,
+            postgresql_where="owner_user_id IS NOT NULL",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
