@@ -37,3 +37,20 @@ def list_for_user(db: Session, user_id: int) -> list[OrgMembership]:
 
 def list_for_org(db: Session, org_id: int) -> list[OrgMembership]:
     return db.query(OrgMembership).filter(OrgMembership.org_id == org_id).all()
+
+
+def update_role(db: Session, org_id: int, user_id: int, role: str) -> OrgMembership | None:
+    membership = get(db, org_id, user_id)
+    if membership is None:
+        return None
+    membership.role = role
+    db.commit()
+    db.refresh(membership)
+    return membership
+
+
+def delete(db: Session, org_id: int, user_id: int) -> None:
+    db.query(OrgMembership).filter(
+        OrgMembership.org_id == org_id, OrgMembership.user_id == user_id
+    ).delete()
+    db.commit()
