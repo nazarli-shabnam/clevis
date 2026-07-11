@@ -15,12 +15,12 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# psycopg.connect() expects plain postgresql://, not the SQLAlchemy +psycopg dialect prefix
 _DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg://", "postgresql://")
+_PROCESSING_STALE_MINUTES = 30
+_REQUIRED_PAYLOAD_KEYS = ("owner", "repo", "token")
 
 
 def _read_app_config(key: str, default: str) -> str:
-    """Read a single value from app_config. Falls back to default on any error."""
     try:
         with psycopg.connect(_DB_URL) as conn:
             with conn.cursor() as cur:
@@ -33,8 +33,6 @@ def _read_app_config(key: str, default: str) -> str:
 
 
 def _read_poll_seconds() -> int:
-    """Read worker_poll_seconds, clamped to a minimum of 1. Falls back to 5 on a
-    malformed value so a bad config row can never crash or busy-loop the worker."""
     raw = _read_app_config("worker_poll_seconds", "5")
     try:
         return max(1, int(raw))
@@ -43,10 +41,33 @@ def _read_poll_seconds() -> int:
         return 5
 
 
+def _reclaim_stale_jobs(conn: psycopg.Connection) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE jobs SET status = 'queued', updated_at = NOW()
+            WHERE status = 'processing'
+              AND updated_at < NOW() - make_interval(mins => %s)
+            """,
+            (_PROCESSING_STALE_MINUTES,),
+        )
+    conn.commit()
+
+
+def _validate_payload(payload: dict) -> None:
+    for key in _REQUIRED_PAYLOAD_KEYS:
+        value = payload.get(key)
+        if value is None or value == "":
+            raise ValueError(f"Missing required payload field: {key}")
+
+
 def process_job(conn: psycopg.Connection, job_id: int, payload_raw: str) -> None:
     base = settings.github_api_base
     try:
         payload = json.loads(payload_raw)
+        if not isinstance(payload, dict):
+            raise ValueError("Job payload must be a JSON object")
+        _validate_payload(payload)
         owner, repo = payload["owner"], payload["repo"]
         token = decrypt_job_token(payload["token"], settings.job_secret_key.get_secret_value())
         params = {k: payload[k] for k in ("key", "ref") if payload.get(k)}
@@ -84,10 +105,10 @@ def run() -> None:
     poll_seconds = _read_poll_seconds()
     log.info("worker started, polling every %ds", poll_seconds)
     while True:
-        # Re-read poll interval each cycle so changes in settings take effect without restart
         poll_seconds = _read_poll_seconds()
         try:
             with psycopg.connect(_DB_URL) as conn:
+                _reclaim_stale_jobs(conn)
                 with conn.cursor() as cur:
                     cur.execute("""
                         UPDATE jobs SET status = 'processing', updated_at = NOW()
