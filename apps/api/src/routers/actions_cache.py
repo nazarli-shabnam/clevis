@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends
+import httpx
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
@@ -11,9 +12,20 @@ from src.services.github_client import GitHubClient
 router = APIRouter()
 
 
+def _github_cache_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return HTTPException(status_code=400, detail=f"GitHub API error: {exc.response.status_code}")
+    if isinstance(exc, httpx.RequestError):
+        return HTTPException(status_code=503, detail="GitHub API unreachable")
+    raise exc
+
+
 def _list_caches(owner: str, repo: str, payload: CacheListInput) -> CacheListResponse:
-    client = GitHubClient(payload.token.get_secret_value())
-    data = client.request("GET", f"/repos/{owner}/{repo}/actions/caches")
+    try:
+        client = GitHubClient(payload.token.get_secret_value())
+        data = client.request("GET", f"/repos/{owner}/{repo}/actions/caches")
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        raise _github_cache_error(exc) from exc
     return {"repository": f"{owner}/{repo}", "total": data.get("total_count", 0), "actions_caches": data.get("actions_caches", [])}
 
 
