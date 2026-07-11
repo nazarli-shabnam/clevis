@@ -21,6 +21,12 @@ def test_secret_scanning_null_security_and_analysis_does_not_crash():
     assert result["status"] in {"pass", "fail"}
 
 
+def test_secret_scanning_empty_org_is_not_applicable():
+    check = SecretScanningEnabled()
+    result = check.run(owner="acme", token="tok", repos=[])
+    assert result["status"] == "not_applicable"
+
+
 def test_branch_protection_rate_limit_counts_as_unknown():
     check = BranchProtectionEnabled()
     repos = [{"name": "demo", "default_branch": "main"}]
