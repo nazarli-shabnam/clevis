@@ -1,8 +1,11 @@
 import secrets
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
 from src.core.db import Invitation
+
+INVITATION_LIFETIME = timedelta(days=7)
 
 
 def create(db: Session, org_id: int, email: str, invited_by_user_id: int) -> Invitation:
@@ -12,6 +15,7 @@ def create(db: Session, org_id: int, email: str, invited_by_user_id: int) -> Inv
         token=secrets.token_urlsafe(32),
         status="pending",
         invited_by_user_id=invited_by_user_id,
+        expires_at=datetime.now(timezone.utc) + INVITATION_LIFETIME,
     )
     db.add(invitation)
     db.commit()

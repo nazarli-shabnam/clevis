@@ -34,6 +34,20 @@ def _ui_base() -> str:
     return settings.cors_origins[0] if settings.cors_origins else ""
 
 
+def _is_expired(invitation) -> bool:
+    return invitation.status == "pending" and invitation.expires_at <= datetime.now(timezone.utc)
+
+
+def _effective_status(invitation) -> str:
+    return "expired" if _is_expired(invitation) else invitation.status
+
+
+def _expire(db: Session, invitation) -> None:
+    invitation.status = "expired"
+    db.commit()
+    db.refresh(invitation)
+
+
 @router.post("/orgs/{org_login}/invitations", response_model=InvitationCreateResponse)
 def create_invitation(
     body: InvitationCreate,
@@ -53,7 +67,19 @@ def list_invitations(
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     db: Session = Depends(get_db),
 ):
-    return invitation_repo.list_for_org(db, org_id=ctx.org.id)
+    invitations = invitation_repo.list_for_org(db, org_id=ctx.org.id)
+    return [
+        InvitationOut(
+            id=inv.id,
+            org_id=inv.org_id,
+            email=inv.email,
+            status=_effective_status(inv),
+            created_at=inv.created_at,
+            accepted_at=inv.accepted_at,
+            expires_at=inv.expires_at,
+        )
+        for inv in invitations
+    ]
 
 
 @router.post("/orgs/{org_login}/invitations/{invitation_id}/revoke", response_model=InvitationOut)
@@ -78,6 +104,8 @@ def preview_invitation(token: str, db: Session = Depends(get_db)):
     invitation = invitation_repo.get_by_token(db, token)
     if invitation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
+    if _is_expired(invitation):
+        _expire(db, invitation)
     org = db.query(Org).filter(Org.id == invitation.org_id).first()
     return {"org_login": org.github_login, "status": invitation.status}
 
@@ -91,6 +119,10 @@ def accept_invitation(
     invitation = invitation_repo.get_by_token(db, token)
     if invitation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
+    if _is_expired(invitation):
+        _expire(db, invitation)
+    if invitation.status == "expired":
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Invitation has expired")
     if invitation.status != "pending":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Invitation is no longer pending")
     if invitation.email.lower() != user.email.lower():
