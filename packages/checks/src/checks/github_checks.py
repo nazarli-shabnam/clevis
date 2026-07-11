@@ -52,7 +52,12 @@ class OrgMFARequired(Check):
         repos: list | None = None,  # unused — MFA check operates at org level
     ) -> dict:
         org = _get(f"{base_url}/orgs/{owner}", token)
-        enabled = bool(org.get("two_factor_requirement_enabled", False))
+        if "two_factor_requirement_enabled" not in org:
+            return {
+                "status": "error",
+                "value": "Token lacks org-owner scope to read MFA requirement status",
+            }
+        enabled = bool(org["two_factor_requirement_enabled"])
         return {"status": "pass" if enabled else "fail", "value": enabled}
 
 
