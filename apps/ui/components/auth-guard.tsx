@@ -11,7 +11,7 @@ const PUBLIC_ROUTES = ["/login", "/setup", "/register"]
 const PUBLIC_ROUTE_PREFIXES = ["/invite/"]
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { user, isLoading } = useAuth()
+  const { user, isLoading, logout } = useAuth()
   const router = useRouter()
   const pathname = usePathname()
 
@@ -41,11 +41,12 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   // Listen for 401 events from the API client
   useEffect(() => {
     function handle401() {
+      logout()
       router.replace("/login")
     }
     window.addEventListener("clevis:unauthorized", handle401)
     return () => window.removeEventListener("clevis:unauthorized", handle401)
-  }, [router])
+  }, [logout, router])
 
   // Show nothing while checking auth or redirecting
   if (isLoading) {
