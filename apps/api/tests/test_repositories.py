@@ -47,3 +47,21 @@ def test_job_mark_failed(db):
     match = next(j for j in jobs if j["id"] == job_id)
     assert match["status"] == "failed"
     assert match["result"] == "timeout"
+
+
+def test_job_mark_failed_truncates_long_error(db):
+    job_id = job_repo.enqueue(db, "github.clear_actions_cache", {"owner": "acme", "repo": "api"})
+    job_repo.mark_failed(db, job_id, "x" * 1000)
+    jobs = job_repo.list_jobs(db)
+    match = next(j for j in jobs if j["id"] == job_id)
+    assert len(match["result"]) <= 500
+    assert match["result"].endswith("...(truncated)")
+
+
+def test_job_mark_failed_redacts_token_shaped_text(db):
+    job_id = job_repo.enqueue(db, "github.clear_actions_cache", {"owner": "acme", "repo": "api"})
+    job_repo.mark_failed(db, job_id, "failed with ghp_abcdefghijklmnopqrstuvwxyz0123456789")
+    jobs = job_repo.list_jobs(db)
+    match = next(j for j in jobs if j["id"] == job_id)
+    assert "ghp_" not in match["result"]
+    assert "[redacted]" in match["result"]

@@ -8,6 +8,10 @@ def get_by_login(db: Session, github_login: str) -> Org | None:
     return db.query(Org).filter(Org.github_login == github_login).first()
 
 
+def get_by_id(db: Session, org_id: int) -> Org | None:
+    return db.query(Org).filter(Org.id == org_id).first()
+
+
 def get_or_create(db: Session, github_login: str, github_org_id: int | None = None) -> Org:
     org = get_by_login(db, github_login)
     if org is not None:

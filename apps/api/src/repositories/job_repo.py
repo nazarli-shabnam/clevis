@@ -3,6 +3,7 @@ import json
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from src.core._sanitize import sanitize_error
 from src.core.db import Job
 
 
@@ -38,6 +39,6 @@ def mark_done(db: Session, job_id: int, result: str) -> None:
 
 def mark_failed(db: Session, job_id: int, error: str) -> None:
     db.query(Job).filter(Job.id == job_id).update(
-        {"status": "failed", "result": error, "updated_at": func.now()}
+        {"status": "failed", "result": sanitize_error(error), "updated_at": func.now()}
     )
     db.commit()
