@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react"
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react"
 
 export interface AuthUser {
   id: number
@@ -48,19 +48,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const sessionEpochRef = useRef(0)
+
+  const bumpSessionEpoch = useCallback(() => {
+    sessionEpochRef.current += 1
+  }, [])
 
   const logout = useCallback(() => {
+    bumpSessionEpoch()
     // Clear the httpOnly cookie server-side (GitHub OAuth sessions); harmless for Bearer sessions.
     fetch(`${BASE}/auth/logout`, { method: "POST", credentials: "include" }).catch(() => {})
     localStorage.removeItem(_TOKEN_KEY)
     setToken(null)
     setUser(null)
-  }, [])
+  }, [bumpSessionEpoch])
 
   // On mount: restore a Bearer session optimistically, then validate against the server.
   // Validation works for BOTH auth modes — the Bearer header (email/password) and the httpOnly
   // session cookie (GitHub OAuth, where there is no localStorage token).
   useEffect(() => {
+    const epochAtStart = sessionEpochRef.current
     const stored = localStorage.getItem(_TOKEN_KEY)
 
     // Optimistic restore from a stored token — unblock the UI without a network round-trip
@@ -82,6 +89,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       signal: controller.signal,
     })
       .then(async (res) => {
+        if (sessionEpochRef.current !== epochAtStart) return
         if (res.status === 401) {
           if (stored) logout()
           return
@@ -109,20 +117,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail ?? "Login failed")
     const { access_token, user: u } = data as { access_token: string; user: AuthUser }
+    bumpSessionEpoch()
     localStorage.setItem(_TOKEN_KEY, access_token)
     setToken(access_token)
     setUser(u)
-  }, [])
+  }, [bumpSessionEpoch])
 
   const updateUser = useCallback((patch: Partial<AuthUser>) => {
     setUser((prev) => (prev ? { ...prev, ...patch } : prev))
   }, [])
 
   const setSession = useCallback((jwtToken: string, authUser: AuthUser) => {
+    bumpSessionEpoch()
     localStorage.setItem(_TOKEN_KEY, jwtToken)
     setToken(jwtToken)
     setUser(authUser)
-  }, [])
+  }, [bumpSessionEpoch])
 
   return (
     <AuthContext.Provider value={{ user, token, isLoading, login, logout, updateUser, setSession }}>
