@@ -6,7 +6,7 @@ import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Loader2 } from "lucide-react"
+import { CircleNotch } from "@phosphor-icons/react"
 
 export default function RegisterPage() {
   const { user, setSession, isLoading } = useAuth()
@@ -109,7 +109,7 @@ export default function RegisterPage() {
 
           <Button type="submit" disabled={isSubmitting} className="mt-2">
             {isSubmitting ? (
-              <><Loader2 className="size-3.5 animate-spin" />Creating account…</>
+              <><CircleNotch className="size-3.5 animate-spin" />Creating account…</>
             ) : (
               "Create account →"
             )}
