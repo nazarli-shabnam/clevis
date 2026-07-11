@@ -16,6 +16,7 @@ from src.core._crypto import decrypt_job_token, encrypt_job_token
 from src.core.auth import UserOut, require_workspace_admin
 from src.core.config import settings
 from src.core.db import SavedToken, get_db
+from src.repositories import audit_repo
 
 router = APIRouter()
 
@@ -83,7 +84,7 @@ def upsert_token(
 def resolve_token(
     body: VerifyTokenRequest,
     db: Session = Depends(get_db),
-    _user: UserOut = Depends(require_workspace_admin),
+    user: UserOut = Depends(require_workspace_admin),
 ) -> VerifyTokenResponse:
     """Decrypt and return the saved token for an org. Returns raw secret — workspace admin only."""
     row = db.query(SavedToken).filter_by(org=body.org).first()
@@ -93,6 +94,7 @@ def resolve_token(
         row.encrypted_token,
         settings.job_secret_key.get_secret_value(),
     )
+    audit_repo.write(db, user.email, "token.resolve", body.org, {})
     return VerifyTokenResponse(token=raw)
 
 

@@ -80,6 +80,22 @@ def test_tokens_resolve_non_owner_forbidden(db):
     assert resp.status_code == 403
 
 
+def test_tokens_resolve_writes_audit_log(db):
+    from src.core.db import AuditLog
+
+    client = _client(tokens_router, db, _OWNER, prefix="/tokens")
+    client.put("/tokens/acme", json={"token": "ghp_test", "label": "acme"})
+
+    resp = client.post("/tokens/resolve", json={"org": "acme"})
+    assert resp.status_code == 200
+    assert resp.json()["token"] == "ghp_test"
+
+    logs = db.query(AuditLog).filter(AuditLog.action == "token.resolve").all()
+    assert len(logs) == 1
+    assert logs[0].actor == _OWNER.email
+    assert logs[0].target == "acme"
+
+
 # ── actions cache ─────────────────────────────────────────────────────────────
 # Org-role dependencies are resolved before the handler body runs, so a non-member/
 # non-admin never reaches the real GitHub API call — no need to mock GitHubClient here.
