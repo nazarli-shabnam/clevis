@@ -1,5 +1,7 @@
 """Tests for the org invitation create/list/revoke/accept flow."""
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -117,3 +119,53 @@ def test_revoke_invitation(db, acme_org):
     token = created["invite_link"].rsplit("/", 1)[-1]
     resp = _client(db, acme_org["invitee"]).post(f"/invitations/{token}/accept")
     assert resp.status_code == 409
+
+
+def _expire_invitation(db, invitation_id: int) -> None:
+    from src.core.db import Invitation
+
+    invitation = db.query(Invitation).filter(Invitation.id == invitation_id).first()
+    invitation.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    db.commit()
+
+
+def test_create_invitation_sets_expiry(db, acme_org):
+    before = datetime.now(timezone.utc)
+    resp = _client(db, acme_org["admin"]).post("/orgs/acme/invitations", json={"email": "bob@acme.com"})
+    after = datetime.now(timezone.utc)
+    expires_at = datetime.fromisoformat(resp.json()["invitation"]["expires_at"])
+    assert before + timedelta(days=7) <= expires_at <= after + timedelta(days=7)
+
+
+def test_accept_expired_invitation_returns_410(db, acme_org):
+    created = _client(db, acme_org["admin"]).post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+    token = created["invite_link"].rsplit("/", 1)[-1]
+    _expire_invitation(db, created["invitation"]["id"])
+
+    resp = _client(db, acme_org["invitee"]).post(f"/invitations/{token}/accept")
+    assert resp.status_code == 410
+
+
+def test_preview_expired_invitation_shows_expired_status(db, acme_org):
+    created = _client(db, acme_org["admin"]).post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+    token = created["invite_link"].rsplit("/", 1)[-1]
+    _expire_invitation(db, created["invitation"]["id"])
+
+    app = FastAPI()
+    app.include_router(invitations_router)
+    app.dependency_overrides[get_db] = lambda: db
+    resp = TestClient(app).get(f"/invitations/{token}")
+    assert resp.status_code == 200
+    assert resp.json() == {"org_login": "acme", "status": "expired"}
+
+
+def test_list_invitations_reflects_expired_status(db, acme_org):
+    created = _client(db, acme_org["admin"]).post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+    _expire_invitation(db, created["invitation"]["id"])
+
+    resp = _client(db, acme_org["admin"]).get("/orgs/acme/invitations")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["status"] == "expired"
+    assert "expires_at" in body[0]

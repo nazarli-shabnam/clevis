@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr
 
-InvitationStatus = Literal["pending", "accepted", "revoked"]
+InvitationStatus = Literal["pending", "accepted", "revoked", "expired"]
 
 
 class InvitationCreate(BaseModel):
@@ -19,6 +19,7 @@ class InvitationOut(BaseModel):
     status: InvitationStatus
     created_at: datetime
     accepted_at: datetime | None
+    expires_at: datetime
 
 
 class InvitationCreateResponse(BaseModel):
