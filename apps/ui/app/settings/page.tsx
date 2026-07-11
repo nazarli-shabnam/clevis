@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { api } from "@/lib/api/client"
+import { initialConfigValues, mergeSavedConfigValue } from "@/lib/config-values"
 import { useAuth } from "@/lib/auth-context"
 import { THEMES, useTheme } from "@/lib/theme"
 import type { InstallationMeta, MyOrgMembership, SavedTokenMeta } from "@/lib/api/types"
@@ -428,7 +429,7 @@ function InstanceConfigSection() {
   const [errors, setErrors] = useState<Record<string, string>>({})
 
   useEffect(() => {
-    if (config) setValues(config)
+    if (config) setValues((prev) => initialConfigValues(prev, config))
   }, [config])
 
   async function saveKey(key: string) {
@@ -436,7 +437,11 @@ function InstanceConfigSection() {
     setErrors((prev) => ({ ...prev, [key]: "" }))
     try {
       await api.config.update(key, values[key] ?? "")
-      qc.invalidateQueries({ queryKey: ["config"] })
+      const updated = await qc.fetchQuery<Record<string, string>>({
+        queryKey: ["config"],
+        queryFn: api.config.getAll,
+      })
+      setValues((prev) => mergeSavedConfigValue(prev, updated, key))
     } catch (err) {
       setErrors((prev) => ({ ...prev, [key]: err instanceof Error ? err.message : "Save failed" }))
     } finally {
