@@ -109,6 +109,10 @@ jobs:
         working-directory: apps/api
         run: python -m alembic upgrade head
 
+      - name: Check for model / migration drift
+        working-directory: apps/api
+        run: python -m alembic check
+
       - name: Run Python tests
         run: python -m pytest -q
 
