@@ -139,12 +139,19 @@ export const api = {
   },
   cache: {
     list: (owner: string, repo: string, token: string) =>
-      post<CacheListResponse>(`/me/repos/${owner}/${repo}/actions-caches`, { token }),
+      post<CacheListResponse>(
+        `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions-caches`,
+        { token },
+      ),
     clear: (
       owner: string,
       repo: string,
       body: { token: string; actor: string; dry_run: boolean; key?: string; ref?: string },
-    ) => post<CacheClearResponse>(`/me/repos/${owner}/${repo}/actions-caches/clear`, body),
+    ) =>
+      post<CacheClearResponse>(
+        `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions-caches/clear`,
+        body,
+      ),
   },
   jobs: {
     list: () => get<JobOut[]>("/jobs"),
