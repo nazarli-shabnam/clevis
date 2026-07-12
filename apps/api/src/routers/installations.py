@@ -24,6 +24,7 @@ from src.schemas.installation import (
     SyncInstallationsInput,
     SyncInstallationsResponse,
 )
+from src.services.installation_verify import verify_sync_payload
 
 router = APIRouter()
 
@@ -43,6 +44,7 @@ def sync_org_installation(
     db: Session = Depends(get_db),
 ):
     assert_owner_matches_org(payload.account_login, ctx)
+    verify_sync_payload(payload)
     row = installation_repo.create(
         db,
         account_login=payload.account_login,
@@ -84,6 +86,7 @@ def sync_personal_installation(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="account_login must match your own GitHub account",
         )
+    verify_sync_payload(payload)
     row = installation_repo.create(
         db,
         account_login=payload.account_login,
