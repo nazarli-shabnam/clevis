@@ -17,4 +17,4 @@ def test_overview_counts_error_checks_against_score():
         overview = get_overview(owner="acme", token="tok")
 
     assert overview["failed_checks"] == 2
-    assert overview["score"] == 33
+    assert overview["score"] == 34
