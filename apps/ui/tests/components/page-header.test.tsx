@@ -14,4 +14,12 @@ describe("PageHeader", () => {
     );
     expect(screen.getByText("Manage GitHub repos.")).toBeInTheDocument();
   });
+
+  it("renders actions when provided", () => {
+    render(
+      <PageHeader title="Repositories" actions={<button>Run Scan</button>} />,
+    );
+
+    expect(screen.getByRole("button", { name: "Run Scan" })).toBeInTheDocument();
+  });
 });

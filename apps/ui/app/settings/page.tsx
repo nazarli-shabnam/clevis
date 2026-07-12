@@ -42,6 +42,13 @@ function ProfileSection() {
     }
   }
 
+  let buttonContent: React.ReactNode = "Save profile"
+  if (saved) {
+    buttonContent = <><Check className="size-3.5" />Saved</>
+  } else if (isSaving) {
+    buttonContent = <><CircleNotch className="size-3.5 animate-spin" />Saving…</>
+  }
+
   return (
     <div className="bg-card border border-border">
       <div className="px-4 py-3 border-b border-border">
@@ -73,7 +80,7 @@ function ProfileSection() {
           </p>
         </div>
         <Button onClick={save} disabled={isSaving} className="mt-1 w-fit">
-          {saved ? <><Check className="size-3.5" />Saved</> : isSaving ? <><CircleNotch className="size-3.5 animate-spin" />Saving…</> : "Save profile"}
+          {buttonContent}
         </Button>
       </div>
     </div>
@@ -125,11 +132,13 @@ function AppearanceSection() {
 // ── Shared inline error state ────────────────────────────────────────────────
 
 function SectionError({ message, onRetry, retrying }: { message: string; onRetry: () => void; retrying?: boolean }) {
+  const retryContent: React.ReactNode = retrying ? <CircleNotch className="size-3 animate-spin" /> : "Retry"
+
   return (
     <div className="px-4 py-6 flex items-center justify-between gap-3">
       <p className="text-sm text-destructive">{message}</p>
       <Button size="sm" variant="outline" onClick={onRetry} disabled={retrying}>
-        {retrying ? <CircleNotch className="size-3 animate-spin" /> : "Retry"}
+        {retryContent}
       </Button>
     </div>
   )
@@ -471,7 +480,11 @@ function InstanceConfigSection() {
         />
       )}
       <div className="divide-y divide-border">
-        {CONFIG_FIELDS.map((field) => (
+        {CONFIG_FIELDS.map((field) => {
+          const isSavingField = saving === field.key
+          const saveContent: React.ReactNode = isSavingField ? <CircleNotch className="size-3 animate-spin" /> : "Save"
+
+          return (
           <div key={field.key} className="p-4 max-w-lg">
             <label className="text-xs font-medium text-foreground block mb-1">{field.label}</label>
             <div className="flex items-center gap-2">
@@ -492,8 +505,8 @@ function InstanceConfigSection() {
                   className="font-mono text-xs"
                 />
               )}
-              <Button size="sm" variant="outline" onClick={() => saveKey(field.key)} disabled={saving === field.key}>
-                {saving === field.key ? <CircleNotch className="size-3 animate-spin" /> : "Save"}
+              <Button size="sm" variant="outline" onClick={() => saveKey(field.key)} disabled={isSavingField}>
+                {saveContent}
               </Button>
             </div>
             {errors[field.key] && (
@@ -501,7 +514,8 @@ function InstanceConfigSection() {
             )}
             <p className="text-xs text-muted-foreground mt-1">{field.description}</p>
           </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
