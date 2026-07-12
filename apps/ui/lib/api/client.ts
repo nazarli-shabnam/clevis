@@ -100,6 +100,10 @@ async function del(path: string): Promise<void> {
     method: "DELETE",
     headers: { ...getAuthHeaders() },
   })
+  if (res.status === 401) {
+    if (typeof window !== "undefined") localStorage.removeItem(_TOKEN_KEY)
+    window.dispatchEvent(new Event("clevis:unauthorized"))
+  }
   if (!res.ok) {
     const json = await res.json().catch(() => ({}))
     throw new Error((json as { detail?: string }).detail ?? `Request failed: ${res.status}`)
