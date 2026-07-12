@@ -2,6 +2,7 @@
 
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
 import Link from "next/link"
 import { Settings, Check, LogOut, UserPlus } from "lucide-react"
 import {
@@ -16,6 +17,7 @@ import {
   SidebarSeparator,
 } from "@/components/ui/sidebar"
 import { useAuth } from "@/lib/auth-context"
+import { api } from "@/lib/api/client"
 
 // Settings is no longer in the sidebar nav — it lives inside the profile dropdown.
 const groups = [
@@ -50,10 +52,12 @@ interface Profile {
 
 function ProfileDropdown({
   profile,
+  inviteHref,
   onClose,
   onSignOut,
 }: {
   profile: Profile
+  inviteHref?: string
   onClose: () => void
   onSignOut: () => void
 }) {
@@ -102,14 +106,25 @@ function ProfileDropdown({
           <Settings className="size-3" />
           Settings
         </Link>
-        <button
-          disabled
-          className="flex items-center gap-1.5 px-2.5 py-1.5 text-[0.75rem] font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground bg-sidebar-accent/60 hover:bg-sidebar-accent border border-sidebar-border/60 transition-colors flex-1 justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Coming soon"
-        >
-          <UserPlus className="size-3" />
-          Invite members
-        </button>
+        {inviteHref ? (
+          <Link
+            href={inviteHref}
+            onClick={onClose}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-[0.75rem] font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground bg-sidebar-accent/60 hover:bg-sidebar-accent border border-sidebar-border/60 transition-colors flex-1 justify-center"
+          >
+            <UserPlus className="size-3" />
+            Invite members
+          </Link>
+        ) : (
+          <button
+            disabled
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-[0.75rem] font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground bg-sidebar-accent/60 hover:bg-sidebar-accent border border-sidebar-border/60 transition-colors flex-1 justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Org admin only"
+          >
+            <UserPlus className="size-3" />
+            Invite members
+          </button>
+        )}
       </div>
 
       {/* Sign out */}
@@ -130,6 +145,13 @@ export function AppSidebar() {
   const pathname = usePathname()
   const router = useRouter()
   const { user, logout } = useAuth()
+  const { data: orgs } = useQuery({
+    queryKey: ["orgs", "mine"],
+    queryFn: () => api.orgs.mine(),
+    enabled: Boolean(user),
+  })
+  const adminOrg = orgs?.find((o) => o.role === "admin")
+  const inviteHref = adminOrg ? `/settings/org/${adminOrg.github_login}/members` : undefined
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -185,6 +207,7 @@ export function AppSidebar() {
         {open && (
           <ProfileDropdown
             profile={profile}
+            inviteHref={inviteHref}
             onClose={() => setOpen(false)}
             onSignOut={() => { logout(); setOpen(false); router.replace("/login") }}
           />
