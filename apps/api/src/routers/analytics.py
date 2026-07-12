@@ -9,7 +9,7 @@ from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
 from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role
 from src.schemas.analytics import AnalyticsInput, AnalyticsResponse
-from src.services.analytics_service import get_overview
+from src.services.analytics_service import get_account_type, get_overview
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token, resolve_personal_token
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,15 @@ async def _run_overview(owner: str, token: str) -> AnalyticsResponse:
     except Exception:
         logger.exception("analytics_overview failed")
         raise HTTPException(status_code=500, detail="Internal error")
+
+
+async def _get_account_type(owner: str, token: str) -> str:
+    try:
+        return await anyio.to_thread.run_sync(lambda: get_account_type(owner=owner, token=token))
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=400, detail=f"GitHub API error: {exc.response.status_code}")
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail="GitHub API unreachable")
 
 
 @router.post("/orgs/{org_login}/analytics/overview", response_model=AnalyticsResponse)
@@ -61,4 +70,10 @@ async def personal_analytics_overview(
         )
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    account_type = await _get_account_type(payload.owner, token)
+    if account_type == "User":
+        raise HTTPException(
+            status_code=422,
+            detail="Personal GitHub accounts aren't supported for security scanning yet. Connect a GitHub organization instead.",
+        )
     return await _run_overview(payload.owner, token)
