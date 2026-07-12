@@ -1,8 +1,9 @@
 """Tests for individual GitHub security checks."""
 
+import httpx
 import pytest
 
-from checks.github_checks import OrgMFARequired, SecretScanningEnabled
+from checks.github_checks import BranchProtectionEnabled, OrgMFARequired, SecretScanningEnabled
 
 
 def test_org_mfa_missing_field_returns_error():
@@ -18,3 +19,18 @@ def test_secret_scanning_null_security_and_analysis_does_not_crash():
     repos = [{"name": "demo", "security_and_analysis": None}]
     result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] in {"pass", "fail"}
+
+
+def test_branch_protection_rate_limit_counts_as_unknown():
+    check = BranchProtectionEnabled()
+    repos = [{"name": "demo", "default_branch": "main"}]
+
+    def fake_get(url, token):
+        response = httpx.Response(403, request=httpx.Request("GET", url))
+        raise httpx.HTTPStatusError("forbidden", request=response.request, response=response)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        result = check.run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "error"
+    assert result["value"]["unknown"] == 1

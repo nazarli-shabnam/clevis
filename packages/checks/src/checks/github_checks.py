@@ -36,6 +36,15 @@ def _get_all_pages(base_url: str, path: str, token: str) -> list:
     return results
 
 
+def _branch_protection_status(exc: httpx.HTTPStatusError) -> str:
+    code = exc.response.status_code
+    if code == 404:
+        return "unprotected"
+    if code in (403, 429):
+        return "unknown"
+    return "unprotected"
+
+
 class OrgMFARequired(Check):
     metadata = CheckMetadata(
         check_id="organization_members_mfa_required",
@@ -80,6 +89,7 @@ class BranchProtectionEnabled(Check):
             repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
         checked = 0
         protected = 0
+        unknown = 0
         for repo in repos:
             checked += 1
             branch = repo.get("default_branch")
@@ -87,10 +97,17 @@ class BranchProtectionEnabled(Check):
                 details = _get(f"{base_url}/repos/{owner}/{repo['name']}/branches/{branch}", token)
                 if details.get("protected"):
                     protected += 1
-            except httpx.HTTPStatusError:
-                pass  # treat inaccessible branches as unprotected
-        compliant = checked > 0 and checked == protected
-        return {"status": "pass" if compliant else "fail", "value": {"checked": checked, "protected": protected}}
+            except httpx.HTTPStatusError as exc:
+                if _branch_protection_status(exc) == "unknown":
+                    unknown += 1
+        evaluable = checked - unknown
+        if evaluable == 0:
+            return {"status": "error", "value": {"checked": checked, "protected": protected, "unknown": unknown}}
+        compliant = protected == evaluable
+        return {
+            "status": "pass" if compliant else "fail",
+            "value": {"checked": checked, "protected": protected, "unknown": unknown},
+        }
 
 
 class SecretScanningEnabled(Check):
