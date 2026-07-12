@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from _crypto import encrypt_job_token
 from config import settings
-from worker import process_job
+from worker import _reclaim_stale_jobs, process_job
 
 
 class _FakeCursor:
@@ -128,6 +128,15 @@ def test_process_job_marks_failed_on_invalid_payload():
     sql, params = conn._cursor.calls[0]
     assert "status='failed'" in sql
     assert "Missing required payload field" in params[0]
+
+
+def test_reclaim_stale_jobs_caps_retries_before_requeue():
+    conn = _FakeConn()
+    _reclaim_stale_jobs(conn)
+    sqls = [call[0] for call in conn._cursor.calls]
+    assert any("retry_count >= %s" in sql and "status = 'failed'" in sql for sql in sqls)
+    assert any("retry_count = retry_count + 1" in sql for sql in sqls)
+    assert conn.committed is True
 
 
 def test_process_job_redacts_token_shaped_text_in_error():

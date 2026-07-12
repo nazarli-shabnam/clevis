@@ -17,6 +17,8 @@ log = logging.getLogger(__name__)
 
 _DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg://", "postgresql://")
 _PROCESSING_STALE_MINUTES = 30
+_MAX_RECLAIM_RETRIES = 3
+_RECLAIM_FAILED_REASON = "Job exceeded reclaim retry limit after worker timeout"
 _REQUIRED_PAYLOAD_KEYS = ("owner", "repo", "token")
 
 
@@ -45,11 +47,21 @@ def _reclaim_stale_jobs(conn: psycopg.Connection) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """
-            UPDATE jobs SET status = 'queued', updated_at = NOW()
+            UPDATE jobs SET status = 'failed', result = %s, updated_at = NOW()
             WHERE status = 'processing'
               AND updated_at < NOW() - make_interval(mins => %s)
+              AND retry_count >= %s
             """,
-            (_PROCESSING_STALE_MINUTES,),
+            (_RECLAIM_FAILED_REASON, _PROCESSING_STALE_MINUTES, _MAX_RECLAIM_RETRIES),
+        )
+        cur.execute(
+            """
+            UPDATE jobs SET status = 'queued', retry_count = retry_count + 1, updated_at = NOW()
+            WHERE status = 'processing'
+              AND updated_at < NOW() - make_interval(mins => %s)
+              AND retry_count < %s
+            """,
+            (_PROCESSING_STALE_MINUTES, _MAX_RECLAIM_RETRIES),
         )
     conn.commit()
 
