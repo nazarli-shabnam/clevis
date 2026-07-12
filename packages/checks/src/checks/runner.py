@@ -27,4 +27,4 @@ def run_all_checks(owner: str, token: str, base_url: str = "https://api.github.c
             "status": output["status"],
             "value": output["value"],
         })
-    return {"checks": results}
+    return {"checks": results, "repo_count": len(repos)}

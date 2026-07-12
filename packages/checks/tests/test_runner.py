@@ -40,6 +40,10 @@ def test_run_all_checks_fetches_repos_once():
     assert "repository_default_branch_protection_enabled" in check_ids
     assert "repository_secret_scanning_enabled" in check_ids
 
+    # repo_count is surfaced so callers (e.g. the analytics overview) don't have
+    # to re-fetch the org's repo list just to get a count.
+    assert result["repo_count"] == len(FAKE_REPOS)
+
 
 def test_run_all_checks_passes_repos_to_checks():
     """Repos fetched by runner are forwarded — checks must not re-fetch."""
