@@ -6,7 +6,7 @@ import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Loader2 } from "lucide-react"
+import { Loader2, AlertTriangle } from "lucide-react"
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
 
@@ -40,7 +40,7 @@ function githubErrorMessage(code: string | null): string {
 }
 
 export default function LoginPage() {
-  const { user, login, isLoading } = useAuth()
+  const { user, login, isLoading, logoutWarning, clearLogoutWarning } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
   const next = safeNextPath(searchParams.get("next"))
@@ -79,6 +79,7 @@ export default function LoginPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError("")
+    clearLogoutWarning()
     setIsSubmitting(true)
     try {
       await login(email, password)
@@ -99,6 +100,16 @@ export default function LoginPage() {
           </p>
           <h1 className="text-2xl font-semibold text-foreground">Sign in</h1>
         </div>
+
+        {logoutWarning && (
+          <div
+            role="alert"
+            className="mb-4 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+          >
+            <AlertTriangle className="size-3.5 mt-0.5 shrink-0" />
+            <p>{logoutWarning}</p>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <div>
