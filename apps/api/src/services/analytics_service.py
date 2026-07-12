@@ -14,5 +14,6 @@ def get_overview(owner: str, token: str) -> dict:
         "score": score,
         "total_checks": len(checks),
         "failed_checks": len(failed),
+        "repo_count": report["repo_count"],
         "checks": checks,
     }

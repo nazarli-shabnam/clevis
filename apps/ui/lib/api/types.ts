@@ -25,6 +25,7 @@ export interface AnalyticsOverviewResponse {
   score: number
   total_checks: number
   failed_checks: number
+  repo_count: number
   checks: CheckResult[]
 }
 

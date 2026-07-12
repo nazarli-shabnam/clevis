@@ -23,6 +23,7 @@ MOCK_OVERVIEW = {
     "score": 80,
     "total_checks": 1,
     "failed_checks": 0,
+    "repo_count": 4,
     "checks": [
         {
             "id": "organization_members_mfa_required",
@@ -73,6 +74,7 @@ def test_overview_returns_expected_shape(http):
     assert resp.status_code == 200
     body = resp.json()
     assert body["score"] == 80
+    assert body["repo_count"] == 4
     assert len(body["checks"]) == 1
 
 

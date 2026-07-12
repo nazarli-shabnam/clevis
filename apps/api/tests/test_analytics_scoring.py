@@ -11,10 +11,12 @@ def test_overview_counts_error_checks_against_score():
             {"status": "pass"},
             {"status": "error"},
             {"status": "fail"},
-        ]
+        ],
+        "repo_count": 3,
     }
     with patch("src.services.analytics_service.run_all_checks", return_value=errored):
         overview = get_overview(owner="acme", token="tok")
 
     assert overview["failed_checks"] == 2
     assert overview["score"] == 34
+    assert overview["repo_count"] == 3

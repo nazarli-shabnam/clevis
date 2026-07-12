@@ -11,4 +11,5 @@ class AnalyticsResponse(BaseModel):
     score: int
     total_checks: int
     failed_checks: int
+    repo_count: int
     checks: list[dict]

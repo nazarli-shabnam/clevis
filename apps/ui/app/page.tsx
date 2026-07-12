@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
@@ -8,18 +9,33 @@ import { ActivityList } from "@/components/activity-list"
 import { ArrowRight } from "lucide-react"
 import { api } from "@/lib/api/client"
 
-const stats = [
-  { label: "Repositories",   value: "—" },
-  { label: "Open PRs",       value: "—" },
-  { label: "Security Score", value: "—" },
-  { label: "Team Members",   value: "—" },
-]
-
 const quickActions = [
   { label: "Run Security Scan",  href: "/security" },
   { label: "Manage Caches",      href: "/repos" },
   { label: "View Collaborators", href: "/collaborators" },
 ]
+
+function LiveStatCard({ label, loading, configured, value }: {
+  label: string
+  loading: boolean
+  configured: boolean
+  value: number | undefined
+}) {
+  if (!configured) {
+    return (
+      <Link href="/security" className="bg-card border border-border px-4 py-4 block hover:bg-elevated transition-colors">
+        <p className="text-[0.6875rem] font-medium font-mono text-muted-foreground uppercase tracking-[0.1em] mb-3">
+          {label}
+        </p>
+        <p className="text-lg font-semibold font-mono text-foreground leading-none">
+          Configure →
+        </p>
+      </Link>
+    )
+  }
+
+  return <StatCard label={label} value={loading ? "…" : (value ?? "—")} />
+}
 
 export default function OverviewPage() {
   const { data: jobs = [], isLoading } = useQuery({
@@ -28,14 +44,46 @@ export default function OverviewPage() {
     refetchInterval: 15_000,
   })
 
+  const [org, setOrg] = useState("")
+  useEffect(() => {
+    setOrg(localStorage.getItem("default_org") || "")
+  }, [])
+
+  const resolveQuery = useQuery({
+    queryKey: ["tokens.resolve", org],
+    queryFn: () => api.tokens.resolve(org),
+    enabled: org.trim().length > 2,
+    retry: false,
+  })
+
+  const configured = !!resolveQuery.data?.token
+
+  const overviewQuery = useQuery({
+    queryKey: ["analytics.overview", org],
+    queryFn: () => api.analytics.overview(org, resolveQuery.data!.token),
+    enabled: configured,
+    retry: false,
+  })
+
   return (
     <>
       <PageHeader title="Overview" description="Your GitHub organization at a glance." />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-px mb-6 border border-border bg-border">
-        {stats.map((s) => (
-          <StatCard key={s.label} label={s.label} value={s.value} />
-        ))}
+        <LiveStatCard
+          label="Repositories"
+          loading={overviewQuery.isLoading}
+          configured={configured}
+          value={overviewQuery.data?.repo_count}
+        />
+        <StatCard label="Open PRs" value="N/A" />
+        <LiveStatCard
+          label="Security Score"
+          loading={overviewQuery.isLoading}
+          configured={configured}
+          value={overviewQuery.data?.score}
+        />
+        <StatCard label="Team Members" value="N/A" />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
