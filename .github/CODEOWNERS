@@ -1,0 +1,3 @@
+# Default code owner for the entire repo — required PR review must come from here
+# unless/until this list is split out by directory as more maintainers join.
+* @nazarli-shabnam
