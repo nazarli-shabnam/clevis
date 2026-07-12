@@ -7,7 +7,7 @@ export default function MyPRsPage() {
   return (
     <>
       <PageHeader title="My PRs" description="Pull requests you've authored." />
-      <EmptyStatePage message="— no organization connected" />
+      <EmptyStatePage message="My pull requests — coming soon" />
     </>
   )
 }

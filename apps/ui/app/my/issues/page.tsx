@@ -7,7 +7,7 @@ export default function MyIssuesPage() {
   return (
     <>
       <PageHeader title="My Issues" description="Issues assigned to you." />
-      <EmptyStatePage message="— no organization connected" />
+      <EmptyStatePage message="My issues — coming soon" />
     </>
   )
 }
