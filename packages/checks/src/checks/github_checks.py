@@ -113,7 +113,7 @@ class SecretScanningEnabled(Check):
         enabled = 0
         total = len(repos)
         for repo in repos:
-            sec = repo.get("security_and_analysis", {})
+            sec = repo.get("security_and_analysis") or {}
             if sec.get("secret_scanning", {}).get("status") == "enabled":
                 enabled += 1
         compliant = total > 0 and enabled == total
