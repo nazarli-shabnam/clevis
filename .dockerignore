@@ -32,7 +32,7 @@ pnpm-debug.log*
 .agents/
 .github/
 
-# Image that COPYs only apps/api + packages/checks
+# Images that COPY only apps/api (worker Dockerfile also uses repo root context)
 apps/ui/
 deploy/
 
