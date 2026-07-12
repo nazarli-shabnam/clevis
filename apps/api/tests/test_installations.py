@@ -139,10 +139,12 @@ def test_sync_personal_installation_login_mismatch_forbidden(db):
     assert resp.status_code == 403
 
 
-def test_sync_personal_installation_rejects_organization_account_type(db):
-    me = _make_user(db, "shabnam@e.com", github_login="shabnam")
-    resp = _client(db, me).post(
-        "/me/installations/sync",
-        json={"account_login": "acme", "account_type": "Organization", "installation_id": 3},
-    )
-    assert resp.status_code == 403
+def test_sync_org_installation_upserts_existing_row(db, acme_org):
+    client = _client(db, acme_org["admin"])
+    payload = {"account_login": "acme", "account_type": "Organization", "installation_id": 7}
+    assert client.post("/orgs/acme/installations/sync", json=payload).status_code == 200
+    payload["installation_id"] = 8
+    assert client.post("/orgs/acme/installations/sync", json=payload).status_code == 200
+    rows = client.get("/orgs/acme/installations").json()
+    assert len(rows) == 1
+    assert rows[0]["installation_id"] == 8
