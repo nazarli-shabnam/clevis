@@ -2,11 +2,13 @@ from pydantic import BaseModel, SecretStr
 
 
 class CacheListInput(BaseModel):
-    token: SecretStr
+    # Optional: falls back to a GitHub App installation token when one is connected
+    # for this owner (see src.services.token_resolution).
+    token: SecretStr | None = None
 
 
 class CacheClearInput(BaseModel):
-    token: SecretStr
+    token: SecretStr | None = None
     key: str | None = None
     ref: str | None = None
     dry_run: bool = True

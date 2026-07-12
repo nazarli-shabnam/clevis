@@ -132,9 +132,10 @@ function normalizeCheckValue(id: string, raw: unknown): CheckValue {
 
 export const api = {
   analytics: {
-    // Self-service: the caller brings their own token, scoped to their personal context.
+    // token is optional — the API falls back to a connected GitHub App installation
+    // token when one exists for this owner, so an empty field is fine to send.
     overview: async (owner: string, token: string): Promise<AnalyticsOverviewResponse> => {
-      const data = await post<AnalyticsOverviewResponse>("/me/analytics/overview", { owner, token })
+      const data = await post<AnalyticsOverviewResponse>("/me/analytics/overview", { owner, token: token || undefined })
       return {
         ...data,
         checks: data.checks.map((c) => ({ ...c, value: normalizeCheckValue(c.id, c.value) })),
@@ -145,7 +146,7 @@ export const api = {
     list: (owner: string, repo: string, token: string) =>
       post<CacheListResponse>(
         `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions-caches`,
-        { token },
+        { token: token || undefined },
       ),
     clear: (
       owner: string,
@@ -154,7 +155,7 @@ export const api = {
     ) =>
       post<CacheClearResponse>(
         `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions-caches/clear`,
-        body,
+        { ...body, token: body.token || undefined },
       ),
   },
   jobs: {

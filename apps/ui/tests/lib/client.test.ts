@@ -43,3 +43,38 @@ describe("del() 401 handling", () => {
     expect(dispatchSpy).not.toHaveBeenCalledWith(expect.objectContaining({ type: "clevis:unauthorized" }));
   });
 });
+
+describe("optional token coercion (GitHub App installation fallback)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function stubOkJson(body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))),
+    );
+  }
+
+  it("sends token: undefined for analytics.overview when the token field is empty", async () => {
+    stubOkJson({ owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [] });
+    await api.analytics.overview("acme", "");
+    const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({ owner: "acme", token: undefined });
+  });
+
+  it("sends token: undefined for cache.list when the token field is empty", async () => {
+    stubOkJson({ repository: "acme/demo", total: 0, actions_caches: [] });
+    await api.cache.list("acme", "demo", "");
+    const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({ token: undefined });
+  });
+
+  it("sends token: undefined for cache.clear when the token field is empty", async () => {
+    stubOkJson({ queued: false, dry_run: true });
+    await api.cache.clear("acme", "demo", { token: "", actor: "me", dry_run: true });
+    const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({ token: undefined, actor: "me", dry_run: true });
+  });
+});

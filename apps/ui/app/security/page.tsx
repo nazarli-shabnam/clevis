@@ -147,12 +147,15 @@ export default function SecurityPage() {
                 placeholder="e.g. octocat"
                 value={owner}
                 onChange={(e) => setOwner(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && owner && token && !scan.isPending && scan.mutate()}
+                onKeyDown={(e) => e.key === "Enter" && owner && !scan.isPending && scan.mutate()}
               />
             </div>
             <div>
               <label className="text-xs font-medium text-foreground mb-1.5 flex items-center gap-1.5">
                 GitHub Token
+                <span className="text-[0.6875rem] text-muted-foreground font-normal">
+                  optional if the GitHub App is connected for this org
+                </span>
                 {tokenSaved && (
                   <span className="inline-flex items-center gap-1 text-[0.6875rem] text-primary">
                     <Key className="size-3" />saved
@@ -160,17 +163,17 @@ export default function SecurityPage() {
                 )}
               </label>
               <Input
-                placeholder="ghp_..."
+                placeholder="ghp_... (leave blank to use the connected GitHub App)"
                 type="password"
                 value={token}
                 onChange={(e) => { setToken(e.target.value); setTokenSaved(false) }}
                 className="font-mono"
-                onKeyDown={(e) => e.key === "Enter" && owner && token && !scan.isPending && scan.mutate()}
+                onKeyDown={(e) => e.key === "Enter" && owner && !scan.isPending && scan.mutate()}
               />
             </div>
             <Button
               onClick={() => scan.mutate()}
-              disabled={scan.isPending || !owner || !token}
+              disabled={scan.isPending || !owner}
               className="mt-1"
             >
               {scan.isPending ? "Scanning…" : "Run scan"}

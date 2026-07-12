@@ -6,14 +6,14 @@ from src.repositories import audit_repo, job_repo
 from src.schemas.cache import CacheClearInput
 
 
-def clear(db: Session, owner: str, repo: str, payload: CacheClearInput, actor: str) -> dict:
+def clear(db: Session, owner: str, repo: str, payload: CacheClearInput, actor: str, token: str) -> dict:
     target = f"{owner}/{repo}"
     if payload.dry_run:
         audit_repo.write(db, actor, "cache.clear.dry_run", target, payload.model_dump(exclude={"token"}))
         return {"queued": False, "dry_run": True, "message": "Dry run completed."}
 
     encrypted_token = encrypt_job_token(
-        payload.token.get_secret_value(),
+        token,
         settings.job_secret_key.get_secret_value(),
     )
     job_id = job_repo.enqueue(db, "github.clear_actions_cache", {
