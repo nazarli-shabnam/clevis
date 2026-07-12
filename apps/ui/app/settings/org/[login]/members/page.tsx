@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Loader2, Mail, X } from "lucide-react"
 import { api } from "@/lib/api/client"
+import { addRevokingId, isRevoking, removeRevokingId } from "@/lib/revoke-pending"
 import type { InvitationOut } from "@/lib/api/types"
 
 export default function OrgMembersPage() {
@@ -22,7 +23,7 @@ export default function OrgMembersPage() {
     queryFn: () => api.invitations.list(orgLogin),
   })
 
-  const [revokingId, setRevokingId] = useState<number | null>(null)
+  const [revokingIds, setRevokingIds] = useState<Set<number>>(() => new Set())
 
   const invite = useMutation({
     mutationFn: () => api.invitations.create(orgLogin, email.trim()),
@@ -35,8 +36,8 @@ export default function OrgMembersPage() {
 
   const revoke = useMutation({
     mutationFn: (id: number) => api.invitations.revoke(orgLogin, id),
-    onMutate: (id) => setRevokingId(id),
-    onSettled: () => setRevokingId(null),
+    onMutate: (id) => setRevokingIds((prev) => addRevokingId(prev, id)),
+    onSettled: (_data, _error, id) => setRevokingIds((prev) => removeRevokingId(prev, id)),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["invitations", orgLogin] }),
   })
 
@@ -107,7 +108,7 @@ export default function OrgMembersPage() {
                             size="sm"
                             variant="outline"
                             onClick={() => revoke.mutate(inv.id)}
-                            disabled={revokingId === inv.id}
+                            disabled={isRevoking(revokingIds, inv.id)}
                           >
                             <X className="size-3" />
                             Revoke
