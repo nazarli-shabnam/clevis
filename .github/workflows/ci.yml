@@ -130,7 +130,26 @@ jobs:
         run: docker build -t clevis-api -f apps/api/Dockerfile .
 
       - name: Build Worker image
-        run: docker build -t clevis-worker -f apps/worker/Dockerfile apps/worker
+        run: docker build -t clevis-worker -f apps/worker/Dockerfile .
 
       - name: Build UI image
         run: docker build -t clevis-ui -f apps/ui/Dockerfile apps/ui
+
+      # Building an image only proves the Dockerfile's instructions succeed — it does not
+      # prove the app can actually import/start (e.g. a missing runtime dependency like
+      # packages/checks not being installed in an image). Smoke-test by importing the
+      # entrypoint module directly, bypassing entrypoint.sh so no live DB is needed.
+      - name: Smoke-test API image
+        run: |
+          docker run --rm --entrypoint python \
+            -e DATABASE_URL=postgresql+psycopg://smoke:smoke@localhost:5432/smoke \
+            -e JOB_SECRET_KEY=ci-smoke-test-key-not-for-production-use-000 \
+            -e AUTH_SECRET=ci-smoke-test-secret-not-for-production-use-00 \
+            clevis-api -c "import src.main"
+
+      - name: Smoke-test Worker image
+        run: |
+          docker run --rm --entrypoint python \
+            -e DATABASE_URL=postgresql://smoke:smoke@localhost:5432/smoke \
+            -e JOB_SECRET_KEY=ci-smoke-test-key-not-for-production-use-000 \
+            clevis-worker -c "import worker"

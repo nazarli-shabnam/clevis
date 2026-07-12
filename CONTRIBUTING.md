@@ -72,6 +72,25 @@ Use **Conventional Commits**, for example:
 
 CI runs Commitlint on the commits in each push or pull request, so messages that do not follow the convention will fail the **Commit Messages** check.
 
+## Testing
+
+**Bug-fix PRs must include a regression test** that exercises the failure scenario described in the linked issue — not just a description or manual test-plan checklist. A fix without a test that would have caught the original bug is not considered complete.
+
+Two established patterns to follow, depending on what you're testing:
+
+- **Pure-function unit test** — for logic extracted into a small helper (e.g. `apps/ui/lib/repo-segment.ts`, `apps/ui/lib/token-resolve.ts`, or a Python function). Plain `describe`/`it` (UI) or a `test_*` function (Python), no rendering or mocking needed. See `apps/ui/tests/lib/repo-segment.test.ts` or `apps/ui/tests/lib/token-resolve.test.ts`.
+- **Hook/component test with mocked I/O** — for behavior that lives in a React hook or component (e.g. `useAuth`, `AuthGuard`) or a Python function that hits the network/DB. On the UI side, use `renderHook`/`render` from `@testing-library/react` with `vi.stubGlobal("fetch", ...)` or `vi.mock(...)` to control responses — see `apps/ui/tests/lib/auth-context.test.tsx` or `apps/ui/tests/components/auth-guard.test.tsx`. On the Python side, tests run against a real Postgres database inside a transaction/savepoint (see `apps/api/tests/conftest.py`) rather than mocking the DB.
+
+Run the full test suites before opening a PR:
+
+```bash
+# UI, from apps/ui
+bun run test
+
+# Python (API + worker + packages/checks), from repo root
+pytest -q
+```
+
 ## Checks to run before opening a PR
 
 These mirror [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
@@ -82,10 +101,12 @@ These mirror [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 cd apps/ui
 bun install --frozen-lockfile
 bun run typecheck
+bun run lint
+bun run test
 bun run build
 ```
 
-(`bun run check` runs typecheck and build together.)
+(`bun run check` runs typecheck, lint, and build together — but not `test`; run that separately.)
 
 ### Python (API + worker)
 
@@ -93,24 +114,42 @@ bun run build
 python -m pip install --upgrade pip
 python -m pip install -r apps/api/requirements.txt
 python -m pip install -r apps/worker/requirements.txt
+python -m pip install -e packages/checks
+python -m pip install -r requirements-test.txt
+python -m pytest -q
 python -m compileall apps/api/src apps/worker/src
 ```
 
 ### Docker images
 
-From the **repository root**:
+From the **repository root** (both `apps/api` and `apps/worker` build from the repo root so their images can install the shared `packages/checks` dependency; `apps/ui` has no such dependency and builds from its own directory):
 
 ```bash
 docker build -t clevis-api -f apps/api/Dockerfile .
-docker build -t clevis-worker -f apps/worker/Dockerfile apps/worker
+docker build -t clevis-worker -f apps/worker/Dockerfile .
 docker build -t clevis-ui -f apps/ui/Dockerfile apps/ui
+```
+
+CI also smoke-tests the API and worker images after building — it runs each image's entrypoint module directly (`import src.main` / `import worker`) with dummy env vars, bypassing `entrypoint.sh` so no live DB is required. This catches a class of bug that a plain `docker build` can't: an image that builds fine but is missing a runtime dependency (e.g. `packages/checks` not being installed), which only surfaces once the container actually runs. If you change either Dockerfile, run the equivalent locally before opening a PR:
+
+```bash
+docker run --rm --entrypoint python \
+  -e DATABASE_URL=postgresql+psycopg://smoke:smoke@localhost:5432/smoke \
+  -e JOB_SECRET_KEY=local-smoke-test-key -e AUTH_SECRET=local-smoke-test-secret \
+  clevis-api -c "import src.main"
+
+docker run --rm --entrypoint python \
+  -e DATABASE_URL=postgresql://smoke:smoke@localhost:5432/smoke \
+  -e JOB_SECRET_KEY=local-smoke-test-key \
+  clevis-worker -c "import worker"
 ```
 
 ## Pull requests
 
 - Open a PR against the branch your maintainers use as the integration target (often `main`).
 - Keep changes focused; unrelated drive-by refactors make review harder.
-- Ensure all CI jobs pass (commits, UI, Python, Docker builds).
+- Ensure all CI jobs pass (commits, UI, Python, Docker build + smoke-test).
+- Bug-fix PRs should include a regression test — see [Testing](#testing) above.
 
 ## Security and configuration
 
