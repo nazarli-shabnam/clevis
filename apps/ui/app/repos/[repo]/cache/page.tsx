@@ -104,6 +104,9 @@ export default function CachePage() {
             <div>
               <label className="text-xs font-medium text-foreground mb-1.5 flex items-center gap-1.5">
                 GitHub Token
+                <span className="text-[0.6875rem] text-muted-foreground font-normal">
+                  optional if the GitHub App is connected for this org
+                </span>
                 {tokenSaved && (
                   <span className="inline-flex items-center gap-1 text-[0.6875rem] text-primary">
                     <Key className="size-3" />saved
@@ -111,7 +114,7 @@ export default function CachePage() {
                 )}
               </label>
               <Input
-                placeholder="ghp_..."
+                placeholder="ghp_... (leave blank to use the connected GitHub App)"
                 type="password"
                 value={token}
                 onChange={(e) => { setToken(e.target.value); setTokenSaved(false) }}
@@ -145,7 +148,7 @@ export default function CachePage() {
             </div>
             <Button
               onClick={() => listMutation.mutate()}
-              disabled={isLoading || !token}
+              disabled={isLoading}
               className="mt-1"
             >
               {listMutation.isPending ? (
@@ -164,7 +167,7 @@ export default function CachePage() {
               <Button
                 variant="outline"
                 onClick={() => clearMutation.mutate(true)}
-                disabled={isLoading || !token || !actor}
+                disabled={isLoading || !actor}
               >
                 <Eye className="size-3.5" />
                 Dry run
@@ -172,7 +175,7 @@ export default function CachePage() {
               <Button
                 variant="destructive"
                 onClick={() => clearMutation.mutate(false)}
-                disabled={isLoading || !token || !actor}
+                disabled={isLoading || !actor}
               >
                 <Trash className="size-3.5" />
                 Clear
@@ -241,7 +244,7 @@ export default function CachePage() {
           ) : caches.length === 0 ? (
             <div className="px-4 py-8">
               <p className="text-sm text-muted-foreground font-mono">
-                — enter a token and click &ldquo;Load caches&rdquo; to list entries
+                — click &ldquo;Load caches&rdquo; to list entries
               </p>
             </div>
           ) : (

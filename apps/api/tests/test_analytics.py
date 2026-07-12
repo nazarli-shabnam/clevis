@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import User, get_db
-from src.repositories import org_membership_repo, org_repo
+from src.repositories import installation_repo, org_membership_repo, org_repo
 from src.routers.analytics import router
 
 
@@ -149,3 +149,33 @@ def test_org_overview_owner_mismatch_forbidden(http, db, mock_user):
     org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
     resp = http.post("/orgs/acme/analytics/overview", json={"owner": "someone-else", "token": "ghp_test"})
     assert resp.status_code == 403
+
+
+# ── GitHub App installation-token fallback ─────────────────────────────────────
+
+def test_org_overview_uses_installation_token_when_no_client_token(http, db, mock_user, monkeypatch):
+    from pydantic import SecretStr
+
+    from src.core.config import settings
+
+    monkeypatch.setattr(settings, "github_app_id", "123")
+    monkeypatch.setattr(settings, "github_app_private_key", SecretStr("dummy-pem"))
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id
+    )
+    with (
+        patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW) as mock_overview,
+        patch("src.services.token_resolution.github_app.get_installation_token", return_value="minted-token"),
+    ):
+        resp = http.post("/orgs/acme/analytics/overview", json={"owner": "acme"})
+    assert resp.status_code == 200
+    assert mock_overview.call_args.kwargs["token"] == "minted-token"
+
+
+def test_org_overview_no_installation_and_no_token_returns_400(http, db, mock_user):
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
+    resp = http.post("/orgs/acme/analytics/overview", json={"owner": "acme"})
+    assert resp.status_code == 400

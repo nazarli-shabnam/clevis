@@ -67,6 +67,25 @@ def create(
     )
 
 
+def get_for_org(db: Session, org_id: int, account_login: str) -> GitHubInstallation | None:
+    return (
+        db.query(GitHubInstallation)
+        .filter(GitHubInstallation.org_id == org_id, GitHubInstallation.account_login == account_login)
+        .first()
+    )
+
+
+def get_for_user(db: Session, owner_user_id: int, account_login: str) -> GitHubInstallation | None:
+    return (
+        db.query(GitHubInstallation)
+        .filter(
+            GitHubInstallation.owner_user_id == owner_user_id,
+            GitHubInstallation.account_login == account_login,
+        )
+        .first()
+    )
+
+
 def list_for_org(db: Session, org_id: int) -> list[GitHubInstallation]:
     return (
         db.query(GitHubInstallation)

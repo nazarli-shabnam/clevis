@@ -8,6 +8,7 @@ from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role
 from src.schemas.cache import CacheClearInput, CacheClearResponse, CacheListInput, CacheListResponse
 from src.services.cache_service import clear
 from src.services.github_client import GitHubClient
+from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token, resolve_personal_token
 
 router = APIRouter()
 
@@ -20,13 +21,17 @@ def _github_cache_error(exc: Exception) -> HTTPException:
     raise exc
 
 
-def _list_caches(owner: str, repo: str, payload: CacheListInput) -> CacheListResponse:
+def _list_caches(owner: str, repo: str, token: str) -> CacheListResponse:
     try:
-        client = GitHubClient(payload.token.get_secret_value())
+        client = GitHubClient(token)
         data = client.request("GET", f"/repos/{owner}/{repo}/actions/caches")
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise _github_cache_error(exc) from exc
     return {"repository": f"{owner}/{repo}", "total": data.get("total_count", 0), "actions_caches": data.get("actions_caches", [])}
+
+
+def _client_token(payload: CacheListInput | CacheClearInput) -> str | None:
+    return payload.token.get_secret_value() if payload.token else None
 
 
 @router.post("/orgs/{org_login}/repos/{owner}/{repo}/actions-caches", response_model=CacheListResponse)
@@ -36,9 +41,14 @@ def org_list_caches(
     repo: str,
     payload: CacheListInput,
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
+    db: Session = Depends(get_db),
 ):
     assert_owner_matches_org(owner, ctx)
-    return _list_caches(owner, repo, payload)
+    try:
+        token = resolve_org_token(db, org_id=ctx.org.id, account_login=owner, client_token=_client_token(payload))
+    except NoGitHubTokenAvailable as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _list_caches(owner, repo, token)
 
 
 @router.post("/orgs/{org_login}/repos/{owner}/{repo}/actions-caches/clear", response_model=CacheClearResponse)
@@ -52,7 +62,13 @@ def org_clear_caches(
     db: Session = Depends(get_db),
 ):
     assert_owner_matches_org(owner, ctx)
-    return clear(db, owner, repo, payload, actor=user.email)
+    token = ""
+    if not payload.dry_run:
+        try:
+            token = resolve_org_token(db, org_id=ctx.org.id, account_login=owner, client_token=_client_token(payload))
+        except NoGitHubTokenAvailable as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    return clear(db, owner, repo, payload, actor=user.email, token=token)
 
 
 @router.post("/me/repos/{owner}/{repo}/actions-caches", response_model=CacheListResponse)
@@ -60,9 +76,16 @@ def personal_list_caches(
     owner: str,
     repo: str,
     payload: CacheListInput,
-    _user: UserOut = Depends(require_auth),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
 ):
-    return _list_caches(owner, repo, payload)
+    try:
+        token = resolve_personal_token(
+            db, owner_user_id=user.id, account_login=owner, client_token=_client_token(payload)
+        )
+    except NoGitHubTokenAvailable as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _list_caches(owner, repo, token)
 
 
 @router.post("/me/repos/{owner}/{repo}/actions-caches/clear", response_model=CacheClearResponse)
@@ -73,4 +96,12 @@ def personal_clear_caches(
     db: Session = Depends(get_db),
     user: UserOut = Depends(require_auth),
 ):
-    return clear(db, owner, repo, payload, actor=user.email)
+    token = ""
+    if not payload.dry_run:
+        try:
+            token = resolve_personal_token(
+                db, owner_user_id=user.id, account_login=owner, client_token=_client_token(payload)
+            )
+        except NoGitHubTokenAvailable as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    return clear(db, owner, repo, payload, actor=user.email, token=token)
