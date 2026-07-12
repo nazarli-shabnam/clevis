@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Loader2, Mail, X } from "lucide-react"
+import { CircleNotch, EnvelopeSimple, X } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import type { InvitationOut } from "@/lib/api/types"
 
@@ -61,7 +61,7 @@ export default function OrgMembersPage() {
               />
             </div>
             <Button onClick={() => invite.mutate()} disabled={invite.isPending || !email}>
-              <Mail className="size-3.5" />
+              <EnvelopeSimple className="size-3.5" />
               {invite.isPending ? "Inviting…" : "Send invite"}
             </Button>
             {invite.isError && <p className="text-xs text-destructive">{invite.error.message}</p>}
@@ -80,7 +80,7 @@ export default function OrgMembersPage() {
           </div>
           {isLoading ? (
             <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="size-3.5 animate-spin" /> Loading…
+              <CircleNotch className="size-3.5 animate-spin" /> Loading…
             </div>
           ) : invitations.length === 0 ? (
             <div className="px-4 py-8">

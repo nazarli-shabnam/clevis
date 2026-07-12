@@ -12,7 +12,7 @@ interface StatCardProps {
 export function StatCard({ label, value, delta }: StatCardProps) {
   return (
     <div className="bg-card border border-border px-4 py-4">
-      <p className="text-[0.6875rem] font-medium font-mono text-muted-foreground uppercase tracking-[0.1em] mb-3">
+      <p className="telemetry-label bracket mb-3 block">
         {label}
       </p>
       <p className="text-3xl font-semibold font-mono tabular-nums text-foreground leading-none data-value">

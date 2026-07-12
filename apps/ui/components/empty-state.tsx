@@ -28,7 +28,7 @@ interface EmptyStatePageProps {
 export function EmptyStatePage({ message, action }: EmptyStatePageProps) {
   return (
     <div className="border border-dashed border-border px-6 py-12">
-      <p className="text-sm text-muted-foreground">
+      <p className="text-sm text-muted-foreground font-mono">
         {message}
         {action && (
           <>

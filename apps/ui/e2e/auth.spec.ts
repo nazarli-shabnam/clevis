@@ -15,7 +15,7 @@ test.describe("Login", () => {
     await login(page)
 
     await expect(page).toHaveURL((url) => !url.pathname.startsWith("/login"))
-    await expect(page.getByRole("heading", { level: 1, name: "Your GitHub organization at a glance." })).toBeVisible()
+    await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible()
   })
 
   test("invalid password shows an error and stays on /login", async ({ page }) => {
@@ -42,7 +42,7 @@ test.describe("GitHub OAuth error redirect", () => {
 test.describe("Logout", () => {
   test("manual sign-out clears the session and returns to /login", async ({ page }) => {
     await login(page)
-    await expect(page.getByRole("heading", { level: 1, name: "Your GitHub organization at a glance." })).toBeVisible()
+    await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible()
 
     // Sidebar header button shows the user's name (see components/app-sidebar.tsx);
     // clicking it opens ProfileDropdown, whose "Sign out" button calls logout().
@@ -61,7 +61,7 @@ test.describe("Logout", () => {
 test.describe("Mid-session 401", () => {
   test("a 401 from the API redirects to /login without a loop", async ({ page }) => {
     await login(page)
-    await expect(page.getByRole("heading", { level: 1, name: "Your GitHub organization at a glance." })).toBeVisible()
+    await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible()
 
     // Force the next API call to look like an expired/revoked session. /jobs auto-fetches
     // GET /jobs on mount (see app/jobs/page.tsx), so navigating there reliably triggers it.

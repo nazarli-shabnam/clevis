@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { StatCard } from "@/components/stat-card"
 import { ActivityList } from "@/components/activity-list"
-import { ArrowRight } from "lucide-react"
+import { ArrowRight } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 
 const quickActions = [

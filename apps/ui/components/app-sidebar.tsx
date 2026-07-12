@@ -3,7 +3,7 @@
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import { Settings, Check, LogOut, UserPlus } from "lucide-react"
+import { GearSix, Check, SignOut, UserPlus } from "@phosphor-icons/react"
 import {
   Sidebar,
   SidebarContent,
@@ -74,8 +74,8 @@ function ProfileDropdown({
 
       {/* Workspace row */}
       <div className="p-1.5">
-        <div className="flex items-center gap-2.5 px-2 py-2 rounded-sm">
-          <div className="size-7 rounded-sm bg-primary/15 border border-primary/20 flex items-center justify-center shrink-0">
+        <div className="flex items-center gap-2.5 px-2 py-2">
+          <div className="size-7 rounded-none bg-primary/15 border border-primary/20 flex items-center justify-center shrink-0">
             <span className="text-[0.6875rem] font-semibold text-primary leading-none">
               {initials}
             </span>
@@ -99,7 +99,7 @@ function ProfileDropdown({
           onClick={onClose}
           className="flex items-center gap-1.5 px-2.5 py-1.5 text-[0.75rem] font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground bg-sidebar-accent/60 hover:bg-sidebar-accent border border-sidebar-border/60 transition-colors flex-1 justify-center"
         >
-          <Settings className="size-3" />
+          <GearSix className="size-3" />
           Settings
         </Link>
         <button
@@ -118,7 +118,7 @@ function ProfileDropdown({
           onClick={onSignOut}
           className="flex w-full items-center gap-2 px-2.5 py-1.5 text-[0.8125rem] text-destructive/70 hover:text-destructive hover:bg-sidebar-accent/60 transition-colors"
         >
-          <LogOut className="size-3.5" />
+          <SignOut className="size-3.5" />
           Sign out
         </button>
       </div>
@@ -168,7 +168,7 @@ export function AppSidebar() {
           onClick={() => setOpen((v) => !v)}
           className="flex w-full items-center gap-2.5 px-3.5 py-3 hover:bg-sidebar-accent/60 transition-colors group text-left"
         >
-          <div className="size-7 rounded-full bg-primary/15 border border-primary/25 flex items-center justify-center shrink-0">
+          <div className="size-7 rounded-none bg-primary/15 border border-primary/25 flex items-center justify-center shrink-0">
             <span className="text-[0.6875rem] font-semibold text-primary leading-none">{initials}</span>
           </div>
           <div className="min-w-0 flex-1">
@@ -179,7 +179,7 @@ export function AppSidebar() {
               {profile.org}
             </p>
           </div>
-          <Settings className="size-3 text-sidebar-foreground/20 group-hover:text-sidebar-foreground/50 transition-colors shrink-0" />
+          <GearSix className="size-3 text-sidebar-foreground/20 group-hover:text-sidebar-foreground/50 transition-colors shrink-0" />
         </button>
 
         {open && (

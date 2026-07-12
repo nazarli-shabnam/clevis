@@ -67,6 +67,7 @@ coverage.xml
 *.cover
 *.py.cover
 .hypothesis/
+apps/ui/coverage/
 .pytest_cache/
 cover/
 

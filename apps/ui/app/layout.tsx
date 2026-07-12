@@ -1,16 +1,30 @@
 import "@/app/globals.css"
-import { Inter } from "next/font/google"
+import { Geist, Archivo, JetBrains_Mono } from "next/font/google"
 import { cn } from "@/lib/utils"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { QueryProvider } from "@/components/query-provider"
 import { AuthProvider } from "@/lib/auth-context"
 import { AuthGuard } from "@/components/auth-guard"
 import { ShellRouter } from "@/components/shell-router"
+import { IconProvider } from "@/components/icon-provider"
 
-const inter = Inter({
+// Body / UI — Geist replaces Inter (an AI default per the design skills).
+const geist = Geist({
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
   variable: "--font-sans",
+})
+
+// Macro-typography — heavy neo-grotesque for telemetry headers (Archivo Black-ish).
+const archivo = Archivo({
+  subsets: ["latin"],
+  weight: ["500", "600", "700", "800", "900"],
+  variable: "--font-heading",
+})
+
+// Data / telemetry — JetBrains Mono for stat values, IDs, timestamps, code.
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-jetbrains-mono",
 })
 
 export const metadata = {
@@ -24,18 +38,32 @@ const themeScript = `(function(){try{var t=localStorage.getItem('clevis:theme')|
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={cn("dark font-sans", inter.variable)} data-theme="midnight" suppressHydrationWarning>
+    <html
+      lang="en"
+      className={cn(
+        "dark font-sans",
+        geist.variable,
+        archivo.variable,
+        jetbrainsMono.variable
+      )}
+      data-theme="midnight"
+      suppressHydrationWarning
+    >
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body className="min-h-screen bg-background">
+        {/* Mechanical grain — single fixed overlay; suppressed under reduced motion */}
+        <div className="noise-overlay" aria-hidden="true" />
         <QueryProvider>
           <TooltipProvider>
-            <AuthProvider>
-              <AuthGuard>
-                <ShellRouter>{children}</ShellRouter>
-              </AuthGuard>
-            </AuthProvider>
+            <IconProvider>
+              <AuthProvider>
+                <AuthGuard>
+                  <ShellRouter>{children}</ShellRouter>
+                </AuthGuard>
+              </AuthProvider>
+            </IconProvider>
           </TooltipProvider>
         </QueryProvider>
       </body>

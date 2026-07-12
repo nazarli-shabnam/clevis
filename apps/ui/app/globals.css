@@ -7,7 +7,7 @@
 @theme inline {
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
-  --font-heading: var(--font-sans);
+  --font-heading: var(--font-heading);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -45,6 +45,11 @@
   --color-subtle-foreground: var(--subtle-foreground);
   --color-border-muted:      var(--border-muted);
   --color-warning:           var(--warning);
+  --color-alert:             var(--alert);
+  /* Motion — strong custom easings (built-in CSS easings are too weak) */
+  --ease-out:    var(--ease-out);
+  --ease-in-out: var(--ease-in-out);
+  --ease-drawer: var(--ease-drawer);
   --radius-sm: calc(var(--radius) * 0.5);
   --radius-md: var(--radius);
   --radius-lg: calc(var(--radius) * 2);
@@ -78,8 +83,9 @@
   /* Semantic */
   --accent:             #22c55e;
   --accent-foreground:  #0a0a0a;
-  --destructive:        #ef4444;
+  --destructive:        #e61919;   /* aviation / hazard red — critical + alert accent */
   --warning:            #f59e0b;
+  --alert:              var(--destructive);   /* structural critical accent (dividers, failed status) */
 
   /* Sidebar */
   --sidebar:                    #060606;
@@ -107,11 +113,16 @@
   --chart-4: #ef4444;   /* red    — negative */
   --chart-5: #a78bfa;   /* violet — tertiary (charts only, not UI) */
 
-  /* Sharp corners — terminal tools don't have soft corners */
-  --radius: 0.1875rem;   /* 3px */
+  /* Square corners — tactical-telemetry surfaces reject border-radius */
+  --radius: 0;
 
-  /* Mono stack — system fonts, no custom load */
-  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Fira Code", Consolas, "Courier New", monospace;
+  /* Motion — strong custom easing curves (emil-design-eng / impeccable: exponential ease-out) */
+  --ease-out:    cubic-bezier(0.23, 1, 0.32, 1);     /* enter/exit, press release */
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);    /* on-screen morph (sidebar collapse) */
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);     /* drawer / sheet slide */
+
+  /* Mono stack — JetBrains Mono (loaded in layout) with system fallbacks */
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, "SF Mono", "Cascadia Code", "Fira Code", Consolas, "Courier New", monospace;
 }
 
 /*
@@ -220,7 +231,7 @@
   --ring: #2563eb;
   --accent: #16a34a;
   --accent-foreground: #ffffff;
-  --destructive: #dc2626;
+  --destructive: #e61919;
   --warning: #d97706;
   --card-foreground: #18181b;
   --popover: #ffffff;
@@ -255,7 +266,7 @@
   --ring: #2563eb;
   --accent: #16a34a;
   --accent-foreground: #ffffff;
-  --destructive: #dc2626;
+  --destructive: #e61919;
   --warning: #d97706;
   --card-foreground: #1e2630;
   --popover: #f8fafc;
@@ -288,6 +299,25 @@
   html {
     @apply font-sans;
   }
+
+  /*
+   * Reduced motion is not optional (emil-design-eng / impeccable / redesign skills).
+   * Suppress movement + analog texture; keep opacity/content legible.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+    .scanlines::after,
+    .noise-overlay {
+      display: none !important;
+    }
+  }
 }
 
 @layer utilities {
@@ -309,23 +339,15 @@
    * Replaces the old .section-title. Used across Linear, Vercel, Raycast.
    * Reads "engineering dashboard", not "generic page".
    */
-  .section-label {
-    font-size: 0.6875rem;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--muted-foreground);
-    font-family: var(--font-sans);
-  }
-
-  /* Keep old name as alias during the transition */
+  /* .section-title kept as an alias during the transition */
+  .section-label,
   .section-title {
     font-size: 0.6875rem;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.1em;
     color: var(--muted-foreground);
-    font-family: var(--font-sans);
+    font-family: var(--font-mono);
   }
 
   .card {
@@ -334,5 +356,126 @@
 
   .stat-chip {
     @apply inline-flex items-center gap-1 text-xs border border-border px-1.5 py-0.5 text-muted-foreground font-mono;
+  }
+
+  /*
+   * Telemetry label — monospace uppercase metadata (unit IDs, coordinates, field
+   * labels). The brutalist micro-typography register.
+   */
+  .telemetry-label {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted-foreground);
+  }
+
+  /*
+   * Macro heading — heavy neo-grotesque (Archivo) at structural scale, tight
+   * tracking, compressed leading. The "telemetry header" moment on page headers.
+   */
+  .macro-heading {
+    font-family: var(--font-heading);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 0.95;
+    text-wrap: balance;
+  }
+
+  /* ASCII data framing — [ LABEL ]. Decorative; purely cosmetic brackets. */
+  .bracket::before {
+    content: "[ ";
+    color: var(--subtle-foreground);
+  }
+  .bracket::after {
+    content: " ]";
+    color: var(--subtle-foreground);
+  }
+
+  /*
+   * Blueprint grid — razor-thin 1px dividers via grid gap + contrasting bg.
+   * Children sit on --card; the gap reveals --border. (brutalist grid determinism)
+   */
+  .grid-hairline {
+    display: grid;
+    gap: 1px;
+    background-color: var(--border);
+  }
+  .grid-hairline > * {
+    background-color: var(--card);
+  }
+
+  /* Press feedback — subtle scale, instant-feeling release (emil-design-eng). */
+  .press {
+    transition: transform 160ms var(--ease-out);
+  }
+  .press:active {
+    transform: scale(0.97);
+  }
+
+  /*
+   * Card hover elevation — gated to real pointers so touch taps don't false-trigger.
+   * Apply only to clickable/navigational cards (impeccable: cards = hierarchy).
+   */
+  @media (hover: hover) and (pointer: fine) {
+    .card-interactive {
+      transition: border-color 200ms var(--ease-out), background-color 200ms var(--ease-out);
+    }
+    .card-interactive:hover {
+      border-color: var(--border);
+      background-color: var(--elevated);
+    }
+  }
+
+  /* Staggered list entrance — opacity + small rise, short per-item delay. */
+  .stagger-item {
+    opacity: 0;
+    animation: stagger-in 320ms var(--ease-out) forwards;
+  }
+  @keyframes stagger-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /*
+   * CRT scanlines — applied to specific terminal panels only (Job Queue / Activity),
+   * never global scroll containers. Suppressed under reduced motion (see base layer).
+   */
+  .scanlines {
+    position: relative;
+  }
+  .scanlines::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      color-mix(in srgb, var(--foreground) 3%, transparent) 2px,
+      color-mix(in srgb, var(--foreground) 3%, transparent) 4px
+    );
+    z-index: 1;
+  }
+
+  /*
+   * Global mechanical noise — single fixed, pointer-events-none grain overlay
+   * rendered once in layout.tsx. Low opacity to break digital flatness.
+   */
+  .noise-overlay {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 40;
+    opacity: 0.025;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
 }
