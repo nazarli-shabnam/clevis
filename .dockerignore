@@ -1,4 +1,4 @@
-# API build context is repo root — keep the daemon upload small and safe.
+# API and worker build contexts are repo root — keep the daemon upload small and safe.
 
 .git
 .gitignore
@@ -32,9 +32,8 @@ pnpm-debug.log*
 .agents/
 .github/
 
-# Images that COPY only apps/api + packages/checks
+# Image that COPYs only apps/api + packages/checks
 apps/ui/
-apps/worker/
 deploy/
 
 # Local reference tree if present

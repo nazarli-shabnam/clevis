@@ -142,3 +142,148 @@ describe("AuthProvider mount /auth/me race", () => {
     expect(result.current.user).toBeNull();
   });
 });
+
+describe("AuthProvider logoutWarning", () => {
+  function stubFetch(logoutResponse: () => Promise<Response>) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/auth/me")) {
+          return Promise.resolve(new Response(null, { status: 401 }));
+        }
+        if (url.endsWith("/auth/logout")) {
+          return logoutResponse();
+        }
+        if (url.endsWith("/auth/login")) {
+          return Promise.resolve(
+            jsonResponse({
+              access_token: makeJwt(passwordUser.id, passwordUser.email),
+              user: passwordUser,
+            }),
+          );
+        }
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("sets logoutWarning when the /auth/logout network call rejects", async () => {
+    stubFetch(() => Promise.reject(new Error("network down")));
+
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <AuthProvider>{children}</AuthProvider>
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    await act(async () => {
+      result.current.logout();
+    });
+
+    await waitFor(() => {
+      expect(result.current.logoutWarning).toBeTruthy();
+    });
+  });
+
+  it("sets logoutWarning when /auth/logout responds non-ok", async () => {
+    stubFetch(() => Promise.resolve(new Response(null, { status: 500 })));
+
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <AuthProvider>{children}</AuthProvider>
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    await act(async () => {
+      result.current.logout();
+    });
+
+    await waitFor(() => {
+      expect(result.current.logoutWarning).toBeTruthy();
+    });
+  });
+
+  it("does not set logoutWarning when /auth/logout succeeds", async () => {
+    stubFetch(() => Promise.resolve(new Response(null, { status: 204 })));
+
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <AuthProvider>{children}</AuthProvider>
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    await act(async () => {
+      result.current.logout();
+    });
+
+    // Give the logout() fetch promise a tick to settle before asserting the negative.
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.logoutWarning).toBeNull();
+  });
+
+  it("clears logoutWarning via clearLogoutWarning", async () => {
+    stubFetch(() => Promise.reject(new Error("network down")));
+
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <AuthProvider>{children}</AuthProvider>
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    await act(async () => {
+      result.current.logout();
+    });
+
+    await waitFor(() => {
+      expect(result.current.logoutWarning).toBeTruthy();
+    });
+
+    act(() => {
+      result.current.clearLogoutWarning();
+    });
+
+    expect(result.current.logoutWarning).toBeNull();
+  });
+
+  it("clears logoutWarning on the next successful login", async () => {
+    stubFetch(() => Promise.reject(new Error("network down")));
+
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <AuthProvider>{children}</AuthProvider>
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    await act(async () => {
+      result.current.logout();
+    });
+
+    await waitFor(() => {
+      expect(result.current.logoutWarning).toBeTruthy();
+    });
+
+    await act(async () => {
+      await result.current.login("password@example.com", "supersecret1234");
+    });
+
+    expect(result.current.logoutWarning).toBeNull();
+  });
+});
