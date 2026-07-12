@@ -66,7 +66,10 @@ def test_personal_overview_requires_auth(db):
 
 def test_overview_returns_expected_shape(http):
     # Mock get_overview directly; anyio.to_thread.run_sync runs the lambda for real
-    with patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW):
+    with (
+        patch("src.routers.analytics.get_account_type", return_value="Organization"),
+        patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW),
+    ):
         resp = http.post(
             "/me/analytics/overview",
             json={"owner": "acme", "token": "ghp_test"},
@@ -81,12 +84,15 @@ def test_overview_returns_expected_shape(http):
 def test_overview_github_http_error_returns_400(http):
     import httpx
 
-    with patch(
-        "src.routers.analytics.get_overview",
-        side_effect=httpx.HTTPStatusError(
-            "not found",
-            request=MagicMock(),
-            response=MagicMock(status_code=404),
+    with (
+        patch("src.routers.analytics.get_account_type", return_value="Organization"),
+        patch(
+            "src.routers.analytics.get_overview",
+            side_effect=httpx.HTTPStatusError(
+                "not found",
+                request=MagicMock(),
+                response=MagicMock(status_code=404),
+            ),
         ),
     ):
         resp = http.post(
@@ -100,9 +106,12 @@ def test_overview_github_http_error_returns_400(http):
 def test_overview_request_error_returns_503(http):
     import httpx
 
-    with patch(
-        "src.routers.analytics.get_overview",
-        side_effect=httpx.RequestError("timeout"),
+    with (
+        patch("src.routers.analytics.get_account_type", return_value="Organization"),
+        patch(
+            "src.routers.analytics.get_overview",
+            side_effect=httpx.RequestError("timeout"),
+        ),
     ):
         resp = http.post(
             "/me/analytics/overview",
@@ -113,6 +122,7 @@ def test_overview_request_error_returns_503(http):
 
 def test_overview_unexpected_exception_logs_and_returns_500(http):
     with (
+        patch("src.routers.analytics.get_account_type", return_value="Organization"),
         patch(
             "src.routers.analytics.get_overview",
             side_effect=RuntimeError("unexpected"),
@@ -126,6 +136,56 @@ def test_overview_unexpected_exception_logs_and_returns_500(http):
     assert resp.status_code == 500
     # B-10: exception must be logged, not silently swallowed
     mock_logger.exception.assert_called_once_with("analytics_overview failed")
+
+
+# ── personal-account guard (issue #144) ────────────────────────────────────────
+
+def test_personal_overview_rejects_user_account_with_422(http):
+    with (
+        patch("src.routers.analytics.get_account_type", return_value="User") as mock_account_type,
+        patch("src.routers.analytics.get_overview") as mock_overview,
+    ):
+        resp = http.post(
+            "/me/analytics/overview",
+            json={"owner": "octocat", "token": "ghp_test"},
+        )
+    assert resp.status_code == 422
+    assert "Personal GitHub accounts aren't supported" in resp.json()["detail"]
+    mock_account_type.assert_called_once()
+    mock_overview.assert_not_called()
+
+
+def test_personal_overview_account_type_http_error_returns_400(http):
+    import httpx
+
+    with patch(
+        "src.routers.analytics.get_account_type",
+        side_effect=httpx.HTTPStatusError(
+            "not found",
+            request=MagicMock(),
+            response=MagicMock(status_code=404),
+        ),
+    ):
+        resp = http.post(
+            "/me/analytics/overview",
+            json={"owner": "octocat", "token": "ghp_test"},
+        )
+    assert resp.status_code == 400
+    assert "GitHub API error" in resp.json()["detail"]
+
+
+def test_personal_overview_account_type_request_error_returns_503(http):
+    import httpx
+
+    with patch(
+        "src.routers.analytics.get_account_type",
+        side_effect=httpx.RequestError("timeout"),
+    ):
+        resp = http.post(
+            "/me/analytics/overview",
+            json={"owner": "octocat", "token": "ghp_test"},
+        )
+    assert resp.status_code == 503
 
 
 # ── org-scoped ────────────────────────────────────────────────────────────────
