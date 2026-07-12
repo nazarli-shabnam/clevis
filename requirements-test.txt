@@ -1,2 +1,4 @@
 # Test runner only (not used by API/worker images). Install after runtime requirements.
 pytest==8.3.5
+pytest-cov==6.0.0
+diff-cover==9.4.1

@@ -1,0 +1,16 @@
+[run]
+source =
+    apps/api/src
+    apps/worker/src
+    packages/checks/src
+omit =
+    */tests/*
+    */__init__.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+
+[xml]
+output = coverage.xml
