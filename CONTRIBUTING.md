@@ -168,11 +168,40 @@ docker run --rm --entrypoint python \
   clevis-worker -c "import worker"
 ```
 
+### E2E tests
+
+Auth-flow critical paths (login, GitHub OAuth error redirect, logout, mid-session 401 handling) are covered by Playwright tests in `apps/ui/e2e/`, run against the **full docker-compose stack** — the real Docker images, not app code in isolation, so this catches deployment-shaped bugs unit tests can't (it's the same infra that would have caught the worker `packages/checks` gap). CI runs this as a required check (`E2E Tests`).
+
+Run locally, from the **repository root**:
+
+```bash
+# ⚠️ Uses whatever DB_USER/DB_PASSWORD is in your .env. If you use dummy/different
+# credentials than your normal local dev .env, the Postgres volume gets initialized with
+# those on first run — Postgres only sets the password at first init, so switching .env
+# credentials afterward will fail with "password authentication failed". If that happens,
+# `docker volume rm clevis_pgdata` to force a clean re-init (you'll lose local dev DB data).
+docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile backend --profile frontend up --build -d
+
+# Wait for both to respond (compose healthchecks cover db/api; poll ui yourself):
+curl http://localhost:8080/healthz
+curl http://localhost:3000/login
+
+cd apps/ui
+bunx playwright install --with-deps chromium   # one-time, or after a Playwright version bump
+E2E_BASE_URL=http://localhost:3000 E2E_API_BASE=http://localhost:8080 bun run test:e2e
+```
+
+**CORS note:** the API's `CORS_ORIGINS` defaults to `["http://localhost:3000"]`. If you publish the UI on a different local port (e.g. to avoid clashing with another process already on 3000), add a matching `CORS_ORIGINS=["http://localhost:<port>"]` to `.env` and restart the `api` container — otherwise the browser's `fetch` calls fail with a generic "Failed to fetch" (a CORS rejection, not a real app or network error, but that's all the browser reports).
+
+Tear down afterward with `docker compose -f docker-compose.yml -f docker-compose.ci.yml down` (add `-v` only if you want to wipe the DB volume too).
+
+`docker-compose.ci.yml` is a CI-only override — the base `docker-compose.yml` deliberately has no host port bindings (Traefik-only, production security posture), so this override publishes `api:8080` and `ui:3000` to the runner for Playwright to reach.
+
 ## Pull requests
 
 - Open a PR against the branch your maintainers use as the integration target (often `main`).
 - Keep changes focused; unrelated drive-by refactors make review harder.
-- Ensure all CI jobs pass (commits, UI, Python, Docker build + smoke-test).
+- Ensure all CI jobs pass (commits, UI, Python, Docker build + smoke-test, E2E).
 - Bug-fix PRs should include a regression test — see [Testing](#testing) above.
 
 ## Security and configuration

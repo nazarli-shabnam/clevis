@@ -155,6 +155,84 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall apps/api/src apps/worker/src
 
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Dummy secrets, same pattern as the "python" job — this stack is thrown away at the
+      # end of the job, nothing here is a real credential.
+      - name: Write CI env file
+        run: |
+          cat > .env <<'EOF'
+          DB_USER=clevis
+          DB_PASSWORD=clevis
+          DB_NAME=clevis
+          JOB_SECRET_KEY=ci-e2e-secret-key-not-for-production-use-0000
+          AUTH_SECRET=ci-e2e-auth-secret-not-for-production-use-00000
+          NEXT_PUBLIC_API_BASE=http://localhost:8080
+          NEXT_PUBLIC_GITHUB_APP_SLUG=
+          EOF
+
+      # Full docker-compose stack (not direct processes) so this exercises the real images —
+      # the same ones verified in Docker Build Verification — not just app code in isolation.
+      - name: Start stack
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile backend --profile frontend up --build -d
+
+      - name: Wait for API and UI to be reachable
+        run: |
+          for i in $(seq 1 60); do
+            api_ok=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/healthz || echo "000")
+            ui_ok=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/login || echo "000")
+            if [ "$api_ok" = "200" ] && [ "$ui_ok" = "200" ]; then
+              echo "API and UI are up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Timed out waiting for API/UI"
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml logs
+          exit 1
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install UI deps
+        working-directory: apps/ui
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright browser (Chromium only)
+        working-directory: apps/ui
+        run: bunx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        working-directory: apps/ui
+        env:
+          E2E_BASE_URL: http://localhost:3000
+          E2E_API_BASE: http://localhost:8080
+          CI: "true"
+        run: bun run test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/ui/playwright-report/
+          retention-days: 7
+
+      - name: Stack logs (on failure)
+        if: failure()
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml logs
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml down -v
+
   docker:
     name: Docker Build Verification
     runs-on: ubuntu-latest

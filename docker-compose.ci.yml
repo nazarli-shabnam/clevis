@@ -1,0 +1,12 @@
+# CI-only override for E2E tests. The base docker-compose.yml deliberately has no host port
+# bindings (Traefik-only, production security posture — see the comment at the top of that
+# file) — this override publishes api/ui to the runner so Playwright can reach them directly.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.ci.yml ...
+services:
+  api:
+    ports:
+      - "8080:8080"
+
+  ui:
+    ports:
+      - "3000:3000"
