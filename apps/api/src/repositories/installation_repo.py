@@ -83,3 +83,8 @@ def list_for_user(db: Session, owner_user_id: int) -> list[GitHubInstallation]:
         .order_by(GitHubInstallation.created_at.desc())
         .all()
     )
+
+
+def delete_by_installation_id(db: Session, installation_id: int) -> None:
+    db.query(GitHubInstallation).filter(GitHubInstallation.installation_id == installation_id).delete()
+    db.commit()
