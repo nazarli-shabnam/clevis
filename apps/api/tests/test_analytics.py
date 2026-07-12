@@ -179,3 +179,8 @@ def test_org_overview_no_installation_and_no_token_returns_400(http, db, mock_us
     org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
     resp = http.post("/orgs/acme/analytics/overview", json={"owner": "acme"})
     assert resp.status_code == 400
+
+
+def test_personal_overview_no_installation_and_no_token_returns_400(http):
+    resp = http.post("/me/analytics/overview", json={"owner": "acme"})
+    assert resp.status_code == 400

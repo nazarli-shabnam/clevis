@@ -58,6 +58,19 @@ def test_resolve_org_token_falls_back_when_app_not_configured(db):
     assert token == "ghp_client"
 
 
+def test_resolve_org_token_falls_back_when_get_installation_token_raises_not_configured(db, app_configured):
+    org = org_repo.get_or_create(db, github_login="acme")
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id
+    )
+    with patch(
+        "src.services.token_resolution.github_app.get_installation_token",
+        side_effect=github_app.GitHubAppNotConfigured("nope"),
+    ):
+        token = resolve_org_token(db, org_id=org.id, account_login="acme", client_token="ghp_client")
+    assert token == "ghp_client"
+
+
 def test_resolve_org_token_falls_back_when_installation_token_mint_fails(db, app_configured):
     org = org_repo.get_or_create(db, github_login="acme")
     installation_repo.create(

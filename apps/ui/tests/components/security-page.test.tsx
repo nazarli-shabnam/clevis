@@ -71,4 +71,44 @@ describe("SecurityPage", () => {
 
     await waitFor(() => expect(analyticsOverviewMock).toHaveBeenCalledWith("acme", ""));
   });
+
+  it("runs a scan on Enter in the organization field with no token entered", async () => {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme",
+      score: 100,
+      total_checks: 0,
+      failed_checks: 0,
+      repo_count: 0,
+      checks: [],
+    });
+
+    renderPage();
+
+    const orgInput = screen.getByPlaceholderText("e.g. octocat");
+    fireEvent.change(orgInput, { target: { value: "acme" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: /run scan/i })).not.toBeDisabled());
+
+    fireEvent.keyDown(orgInput, { key: "Enter" });
+    await waitFor(() => expect(analyticsOverviewMock).toHaveBeenCalledWith("acme", ""));
+  });
+
+  it("runs a scan on Enter in the token field", async () => {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme",
+      score: 100,
+      total_checks: 0,
+      failed_checks: 0,
+      repo_count: 0,
+      checks: [],
+    });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    const tokenInput = screen.getByPlaceholderText(/leave blank to use the connected GitHub App/i);
+    fireEvent.change(tokenInput, { target: { value: "ghp_test" } });
+
+    fireEvent.keyDown(tokenInput, { key: "Enter" });
+    await waitFor(() => expect(analyticsOverviewMock).toHaveBeenCalledWith("acme", "ghp_test"));
+  });
 });
