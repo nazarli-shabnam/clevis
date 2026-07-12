@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { AlertTriangle, Eye, KeyRound, Loader2, Trash2 } from "lucide-react"
 import { api } from "@/lib/api/client"
 import { parseOwnerRepo } from "@/lib/repo-segment"
+import { shouldApplyResolvedToken } from "@/lib/token-resolve"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
 import { CHART_COLORS } from "@/lib/charts/theme"
 import { formatBytes, relativeTime, classifyStaleness, stalenessColor } from "@/lib/format"
@@ -32,7 +33,12 @@ export default function CachePage() {
   // Auto-resolve saved token for this owner
   const resolveMutation = useMutation({
     mutationFn: (org: string) => api.tokens.resolve(org),
-    onSuccess: (data) => { setToken(data.token); setTokenSaved(true) },
+    onSuccess: (data, org) => {
+      if (shouldApplyResolvedToken(org, owner)) {
+        setToken(data.token)
+        setTokenSaved(true)
+      }
+    },
     onError: () => setTokenSaved(false),
   })
 
