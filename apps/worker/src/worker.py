@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+from collections.abc import Callable
 
 import httpx
 import psycopg
@@ -17,6 +18,8 @@ log = logging.getLogger(__name__)
 
 # psycopg.connect() expects plain postgresql://, not the SQLAlchemy +psycopg dialect prefix
 _DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg://", "postgresql://")
+
+JOB_TYPE_CLEAR_ACTIONS_CACHE = "github.clear_actions_cache"
 
 
 def _read_app_config(key: str, default: str) -> str:
@@ -43,41 +46,60 @@ def _read_poll_seconds() -> int:
         return 5
 
 
-def process_job(conn: psycopg.Connection, job_id: int, payload_raw: str) -> None:
+def _mark_failed(conn: psycopg.Connection, job_id: int, reason: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE jobs SET status='failed', result=%s, updated_at=NOW() WHERE id=%s",
+            (sanitize_error(reason), job_id),
+        )
+    conn.commit()
+
+
+def _process_clear_actions_cache(conn: psycopg.Connection, job_id: int, payload_raw: str) -> None:
     base = settings.github_api_base
+    payload = json.loads(payload_raw)
+    owner, repo = payload["owner"], payload["repo"]
+    token = decrypt_job_token(payload["token"], settings.job_secret_key.get_secret_value())
+    params = {k: payload[k] for k in ("key", "ref") if payload.get(k)}
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    with httpx.Client(timeout=20) as client:
+        resp = client.delete(
+            f"{base}/repos/{owner}/{repo}/actions/caches",
+            headers=headers,
+            params=params,
+        )
+    if resp.status_code >= 300:
+        raise RuntimeError(f"GitHub API error: {resp.status_code}")
+    result = json.dumps({"ok": True, "status": resp.status_code})
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE jobs SET status='done', result=%s, updated_at=NOW() WHERE id=%s",
+            (result, job_id),
+        )
+    log.info("job %d done", job_id)
+    conn.commit()
+
+
+_JOB_HANDLERS: dict[str, Callable[[psycopg.Connection, int, str], None]] = {
+    JOB_TYPE_CLEAR_ACTIONS_CACHE: _process_clear_actions_cache,
+}
+
+
+def process_job(conn: psycopg.Connection, job_id: int, job_type: str, payload_raw: str) -> None:
+    handler = _JOB_HANDLERS.get(job_type)
+    if handler is None:
+        log.error("job %d has unsupported job_type %r", job_id, job_type)
+        _mark_failed(conn, job_id, f"Unsupported job_type: {job_type}")
+        return
     try:
-        payload = json.loads(payload_raw)
-        owner, repo = payload["owner"], payload["repo"]
-        token = decrypt_job_token(payload["token"], settings.job_secret_key.get_secret_value())
-        params = {k: payload[k] for k in ("key", "ref") if payload.get(k)}
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
-        with httpx.Client(timeout=20) as client:
-            resp = client.delete(
-                f"{base}/repos/{owner}/{repo}/actions/caches",
-                headers=headers,
-                params=params,
-            )
-        if resp.status_code >= 300:
-            raise RuntimeError(f"GitHub API error: {resp.status_code}")
-        result = json.dumps({"ok": True, "status": resp.status_code})
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE jobs SET status='done', result=%s, updated_at=NOW() WHERE id=%s",
-                (result, job_id),
-            )
-        log.info("job %d done", job_id)
+        handler(conn, job_id, payload_raw)
     except Exception as error:
         log.error("job %d failed: %s", job_id, error)
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE jobs SET status='failed', result=%s, updated_at=NOW() WHERE id=%s",
-                (sanitize_error(error), job_id),
-            )
-    conn.commit()
+        _mark_failed(conn, job_id, str(error))
 
 
 def run() -> None:
@@ -94,18 +116,17 @@ def run() -> None:
                         WHERE id = (
                             SELECT id FROM jobs
                             WHERE status = 'queued'
-                              AND job_type = 'github.clear_actions_cache'
                             ORDER BY id
                             LIMIT 1
                             FOR UPDATE SKIP LOCKED
                         )
-                        RETURNING id, payload
+                        RETURNING id, job_type, payload
                     """)
                     row = cur.fetchone()
 
                 if row:
                     conn.commit()
-                    process_job(conn, *row)
+                    process_job(conn, row[0], row[1], row[2])
         except psycopg.OperationalError:
             log.error("database connection failed, retrying in %ds", poll_seconds)
         except Exception as error:

@@ -53,7 +53,7 @@ def test_process_job_marks_done_on_success():
         mock_client.delete = MagicMock(return_value=mock_response)
         mock_client_cls.return_value = mock_client
 
-        process_job(conn, 1, _payload())
+        process_job(conn, 1, "github.clear_actions_cache", _payload())
 
     sql, params = conn._cursor.calls[0]
     assert "status='done'" in sql
@@ -78,7 +78,7 @@ def test_process_job_marks_failed_on_http_error():
         mock_client.delete = MagicMock(return_value=mock_response)
         mock_client_cls.return_value = mock_client
 
-        process_job(conn, 2, _payload())
+        process_job(conn, 2, "github.clear_actions_cache", _payload())
 
     sql, params = conn._cursor.calls[0]
     assert "status='failed'" in sql
@@ -97,7 +97,7 @@ def test_process_job_marks_failed_on_network_error():
         mock_client.delete = MagicMock(side_effect=ConnectionError("timeout"))
         mock_client_cls.return_value = mock_client
 
-        process_job(conn, 3, _payload())
+        process_job(conn, 3, "github.clear_actions_cache", _payload())
 
     sql, params = conn._cursor.calls[0]
     assert "status='failed'" in sql
@@ -115,7 +115,7 @@ def test_process_job_truncates_long_error():
         mock_client.delete = MagicMock(side_effect=ConnectionError("x" * 1000))
         mock_client_cls.return_value = mock_client
 
-        process_job(conn, 4, _payload())
+        process_job(conn, 4, "github.clear_actions_cache", _payload())
 
     sql, params = conn._cursor.calls[0]
     assert len(params[0]) <= 500
@@ -134,8 +134,17 @@ def test_process_job_redacts_token_shaped_text_in_error():
         )
         mock_client_cls.return_value = mock_client
 
-        process_job(conn, 5, _payload())
+        process_job(conn, 5, "github.clear_actions_cache", _payload())
 
     sql, params = conn._cursor.calls[0]
     assert "ghp_" not in params[0]
     assert "[redacted]" in params[0]
+
+
+def test_process_job_marks_failed_on_unknown_job_type():
+    conn = _FakeConn()
+    process_job(conn, 9, "github.unknown_job", _payload())
+    sql, params = conn._cursor.calls[0]
+    assert "status='failed'" in sql
+    assert "Unsupported job_type" in params[0]
+    assert conn.committed is True
