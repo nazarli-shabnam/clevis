@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
+from src.core.config import settings
 from src.core.db import User, get_db
 from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role
 from src.repositories import installation_repo
@@ -24,8 +25,16 @@ from src.schemas.installation import (
     SyncInstallationsInput,
     SyncInstallationsResponse,
 )
+from src.services import github_app
 
 router = APIRouter()
+
+
+def _ensure_installation_token(installation_id: int | None) -> None:
+    """Mint an installation token so App auth is exercised on sync."""
+    if installation_id is None or settings.github_app_id is None:
+        return
+    github_app.get_installation_token(installation_id)
 
 
 @router.get("/orgs/{org_login}/installations", response_model=list[InstallationOut])
@@ -51,6 +60,7 @@ def sync_org_installation(
         installation_id=payload.installation_id,
         org_id=ctx.org.id,
     )
+    _ensure_installation_token(payload.installation_id)
     return {"synced": True, "token_ref": row.token_ref}
 
 
@@ -92,4 +102,5 @@ def sync_personal_installation(
         installation_id=payload.installation_id,
         owner_user_id=user.id,
     )
+    _ensure_installation_token(payload.installation_id)
     return {"synced": True, "token_ref": row.token_ref}
