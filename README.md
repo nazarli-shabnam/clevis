@@ -9,7 +9,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/nazarli-shabnam/clevis/ci.yml?style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/nazarli-shabnam/clevis/actions/workflows/ci.yml)
 [![CodeQL](https://img.shields.io/github/actions/workflow/status/nazarli-shabnam/clevis/codeql.yml?style=for-the-badge&logo=github&logoColor=white&label=CodeQL)](https://github.com/nazarli-shabnam/clevis/actions/workflows/codeql.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-a855f7?style=for-the-badge)](LICENSE)
-[![Self-host](https://img.shields.io/badge/Self--host-Docker_Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)](#self-host)
+[![Self-host](https://img.shields.io/badge/Self--host-Docker_Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)](#quickstart)
 
 <br/>
 
@@ -68,7 +68,7 @@ Clevis is three independently deployable services around one shared check librar
 
 ---
 
-## Self-host
+## Quickstart
 
 **Prerequisites:** Docker + Docker Compose.
 
@@ -81,67 +81,25 @@ docker compose up --build -d
 
 Then open the UI at **`http://localhost:3000`**.
 
-> [!IMPORTANT]
-> **CI secret required.** The Python test job needs a `JOB_SECRET_KEY` repository secret
-> (*GitHub → Settings → Secrets and variables → Actions*). Generate one with `openssl rand -hex 32`.
-
-<details>
-<summary><b>Local development (without Docker)</b></summary>
-
-```bash
-# One-time setup
-cp .env.example .env
-pip install -r apps/api/requirements.txt
-pip install -r requirements-test.txt
-pip install -e packages/checks
-cd apps/ui && bun install
-```
-
-Run each service in its own terminal:
-
-```bash
-docker compose up db                              # Postgres
-cd apps/api && alembic upgrade head && uvicorn src.main:app --reload   # API  → :8080
-cd apps/ui && bun run dev                          # UI   → :3000
-cd apps/worker && python src/worker.py             # worker (optional)
-```
-
-Run the tests:
-
-```bash
-pytest -q                 # Python (hits a real Postgres; transaction-isolated)
-cd apps/ui && bun run check   # UI: typecheck + lint + build
-```
-
-See [`CLAUDE.md`](CLAUDE.md) for full architecture and configuration notes.
-
-</details>
+Full env var reference, GitHub App registration, and production hardening notes live in [`docs/self-hosting.md`](docs/self-hosting.md). Local dev without Docker is covered in [`AGENTS.md`](AGENTS.md#running-locally).
 
 ---
 
-## CI / CD
+## Get started
 
-CI runs on **every pull request** and on **pushes to any branch**, verifying:
+Once the instance is running, here's how to go from a fresh deploy to a connected GitHub org:
 
-- UI TypeScript typecheck + production build
-- Python source compilation
-- Docker image builds for `api`, `worker`, and `ui`
+1. **Create the first account.** The first visit lands on `/setup`, which creates the initial admin. After that, sign in with a password or the "Sign in with GitHub" button.
+2. **Connect a GitHub org or account.** Go to **Settings → Connected orgs** and click **Install GitHub App** — this sends you to GitHub to authorize Clevis for that org/account, which is what grants read access to its repos. (The App itself is a one-time setup step for whoever deployed the instance — see [`docs/self-hosting.md`](docs/self-hosting.md) if that hasn't been done yet.)
+3. **Add a personal access token (temporary, still required).** The Health & Security and Cache pages haven't moved onto the GitHub App token path yet, so they still read from **Settings → Personal access tokens (legacy)** — add a token there per org with repo-read scope. This step goes away once those pages are migrated.
 
-On version tags (`v*`), images are published to the GitHub Container Registry so others can self-host without building from source:
-
-```
-ghcr.io/<owner>/clevis-api
-ghcr.io/<owner>/clevis-worker
-ghcr.io/<owner>/clevis-ui
-```
-
-[CodeQL](https://github.com/nazarli-shabnam/clevis/actions/workflows/codeql.yml) scans the codebase for security issues on a schedule.
+That's it — Overview, Activity, Repositories, and Collaborators work off the connected org from step 2; Health & Security and Cache additionally need step 3 for now.
 
 ---
 
 ## Contributing
 
-Contributions are welcome. Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) first — commits follow [Conventional Commits](https://www.conventionalcommits.org/) (enforced via commitlint), and the design language for any UI work is documented in [`DESIGN.md`](DESIGN.md).
+Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for dev setup, CI checks, and commit conventions, and [`DESIGN.md`](DESIGN.md) for UI design language.
 
 Found a security issue? Please follow the [security policy](SECURITY.md) rather than opening a public issue.
 
