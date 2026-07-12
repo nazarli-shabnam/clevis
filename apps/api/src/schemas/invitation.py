@@ -37,3 +37,9 @@ class InvitationPreview(BaseModel):
 class InvitationAcceptResponse(BaseModel):
     org_login: str
     role: str
+
+
+class PendingInvitationOut(BaseModel):
+    org_login: str
+    token: str
+    expires_at: datetime

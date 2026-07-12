@@ -108,3 +108,9 @@ export interface InvitationPreview {
   org_login: string
   status: "pending" | "accepted" | "revoked"
 }
+
+export interface PendingInvitationOut {
+  org_login: string
+  token: string
+  expires_at: string
+}

@@ -169,3 +169,14 @@ def test_list_invitations_reflects_expired_status(db, acme_org):
     assert len(body) == 1
     assert body[0]["status"] == "expired"
     assert "expires_at" in body[0]
+
+
+def test_list_my_pending_invitations(db, acme_org):
+    created = _client(db, acme_org["admin"]).post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+    resp = _client(db, acme_org["invitee"]).get("/me/invitations/pending")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["org_login"] == "acme"
+    token = created["invite_link"].rsplit("/", 1)[-1]
+    assert body[0]["token"] == token

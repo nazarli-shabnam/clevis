@@ -8,6 +8,7 @@ import type {
   InvitationCreateResponse,
   InvitationOut,
   InvitationPreview,
+  PendingInvitationOut,
   JobOut,
   MyOrgMembership,
   SavedTokenMeta,
@@ -177,6 +178,7 @@ export const api = {
     revoke: (orgLogin: string, invitationId: number) =>
       post<InvitationOut>(`/orgs/${encodeURIComponent(orgLogin)}/invitations/${invitationId}/revoke`, {}),
     preview: (token: string) => get<InvitationPreview>(`/invitations/${encodeURIComponent(token)}`),
+    pending: () => get<PendingInvitationOut[]>("/me/invitations/pending"),
     accept: (token: string) => post<{ org_login: string; role: string }>(`/invitations/${encodeURIComponent(token)}/accept`, {}),
   },
   tokens: {

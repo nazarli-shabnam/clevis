@@ -65,9 +65,29 @@ export default function OverviewPage() {
     retry: false,
   })
 
+  const pendingInvitesQuery = useQuery({
+    queryKey: ["invitations", "pending"],
+    queryFn: () => api.invitations.pending(),
+  })
+
   return (
     <>
       <PageHeader title="Overview" description="Your GitHub organization at a glance." />
+
+      {(pendingInvitesQuery.data?.length ?? 0) > 0 && (
+        <div className="mb-4 border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
+          <p className="font-medium text-foreground mb-2">Pending organization invitations</p>
+          <ul className="space-y-1">
+            {pendingInvitesQuery.data!.map((invite) => (
+              <li key={invite.token}>
+                <Link href={`/invite/${invite.token}`} className="text-primary hover:underline">
+                  Join {invite.org_login}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-px mb-6 border border-border bg-border">
         <LiveStatCard

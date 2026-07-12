@@ -25,6 +25,7 @@ from src.schemas.invitation import (
     InvitationCreateResponse,
     InvitationOut,
     InvitationPreview,
+    PendingInvitationOut,
 )
 
 router = APIRouter()
@@ -80,6 +81,29 @@ def list_invitations(
         )
         for inv in invitations
     ]
+
+
+@router.get("/me/invitations/pending", response_model=list[PendingInvitationOut])
+def list_my_pending_invitations(
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    invitations = invitation_repo.list_pending_for_email(db, user.email)
+    results: list[PendingInvitationOut] = []
+    for invitation in invitations:
+        if _is_expired(invitation):
+            continue
+        org = db.query(Org).filter(Org.id == invitation.org_id).first()
+        if org is None:
+            continue
+        results.append(
+            PendingInvitationOut(
+                org_login=org.github_login,
+                token=invitation.token,
+                expires_at=invitation.expires_at,
+            )
+        )
+    return results
 
 
 @router.post("/orgs/{org_login}/invitations/{invitation_id}/revoke", response_model=InvitationOut)
