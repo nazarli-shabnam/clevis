@@ -137,3 +137,12 @@ def test_sync_personal_installation_login_mismatch_forbidden(db):
         json={"account_login": "someone-else", "account_type": "User", "installation_id": 3},
     )
     assert resp.status_code == 403
+
+
+def test_sync_personal_installation_rejects_organization_account_type(db):
+    me = _make_user(db, "shabnam@e.com", github_login="shabnam")
+    resp = _client(db, me).post(
+        "/me/installations/sync",
+        json={"account_login": "acme", "account_type": "Organization", "installation_id": 3},
+    )
+    assert resp.status_code == 403
