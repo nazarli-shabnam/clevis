@@ -91,6 +91,30 @@ bun run test
 pytest -q
 ```
 
+### Coverage — enforced in CI
+
+CI enforces two coverage gates, both self-hosted (no external service):
+
+1. **Global floor** — a regression guard, not a target. Overall coverage can't drop below the last-measured baseline (currently ~85% Python, ~21% UI — the UI number is low because most `app/**` page components aren't unit-tested yet, not because the gate is lenient). This just stops things from getting worse.
+2. **Diff coverage** — the real gate. New or changed lines in your PR must be covered by a test (currently `--fail-under=90`), checked against `origin/main` via [`diff-cover`](https://github.com/Bachmann1234/diff-cover). This is what actually enforces the rule above ("bug-fix PRs must include a regression test") — it will fail your PR if you touch a line with no test exercising it, regardless of the file's pre-existing coverage.
+
+Check both locally before opening a PR:
+
+```bash
+# Python — from repo root, with the local Postgres db running (see `docker compose up db`)
+pytest -q --cov=apps/api/src --cov=apps/worker/src --cov=packages/checks/src --cov-report=xml --cov-report=term
+diff-cover coverage.xml --compare-branch=origin/main --fail-under=90
+
+# UI — from apps/ui
+bun run test:coverage
+# diff-cover needs lcov.info's paths to be repo-root-relative (vitest emits them relative
+# to apps/ui); rewrite them and run from the repo root:
+cd .. && sed -E 's#^SF:(.*)$#SF:apps/ui/\1#' apps/ui/coverage/lcov.info | tr '\134' '/' > apps/ui/coverage/lcov-root-relative.info
+diff-cover apps/ui/coverage/lcov-root-relative.info --compare-branch=origin/main --fail-under=90
+```
+
+`pip install diff-cover` if you don't have it (it's in `requirements-test.txt` already for the Python side).
+
 ## Checks to run before opening a PR
 
 These mirror [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
@@ -102,11 +126,11 @@ cd apps/ui
 bun install --frozen-lockfile
 bun run typecheck
 bun run lint
-bun run test
+bun run test:coverage
 bun run build
 ```
 
-(`bun run check` runs typecheck, lint, and build together — but not `test`; run that separately.)
+(`bun run check` runs typecheck, lint, and build together — but not tests; run those separately. See [Coverage](#coverage--enforced-in-ci) above for the diff-coverage check CI also runs.)
 
 ### Python (API + worker)
 
@@ -116,7 +140,7 @@ python -m pip install -r apps/api/requirements.txt
 python -m pip install -r apps/worker/requirements.txt
 python -m pip install -e packages/checks
 python -m pip install -r requirements-test.txt
-python -m pytest -q
+python -m pytest -q --cov=apps/api/src --cov=apps/worker/src --cov=packages/checks/src --cov-report=xml --cov-report=term --cov-fail-under=85
 python -m compileall apps/api/src apps/worker/src
 ```
 
