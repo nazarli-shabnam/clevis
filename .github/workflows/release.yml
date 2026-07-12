@@ -38,7 +38,7 @@ jobs:
       - name: Build + Push Worker
         uses: docker/build-push-action@v6
         with:
-          context: apps/worker
+          context: .
           file: apps/worker/Dockerfile
           push: true
           tags: |
