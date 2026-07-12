@@ -5,7 +5,11 @@ import type {
   CacheListResponse,
   CheckValue,
   InstallationMeta,
+  InvitationCreateResponse,
+  InvitationOut,
+  InvitationPreview,
   JobOut,
+  MyOrgMembership,
   SavedTokenMeta,
 } from "./types"
 
@@ -96,6 +100,10 @@ async function del(path: string): Promise<void> {
     method: "DELETE",
     headers: { ...getAuthHeaders() },
   })
+  if (res.status === 401) {
+    if (typeof window !== "undefined") localStorage.removeItem(_TOKEN_KEY)
+    window.dispatchEvent(new Event("clevis:unauthorized"))
+  }
   if (!res.ok) {
     const json = await res.json().catch(() => ({}))
     throw new Error((json as { detail?: string }).detail ?? `Request failed: ${res.status}`)
@@ -124,8 +132,9 @@ function normalizeCheckValue(id: string, raw: unknown): CheckValue {
 
 export const api = {
   analytics: {
+    // Self-service: the caller brings their own token, scoped to their personal context.
     overview: async (owner: string, token: string): Promise<AnalyticsOverviewResponse> => {
-      const data = await post<AnalyticsOverviewResponse>("/analytics/overview", { owner, token })
+      const data = await post<AnalyticsOverviewResponse>("/me/analytics/overview", { owner, token })
       return {
         ...data,
         checks: data.checks.map((c) => ({ ...c, value: normalizeCheckValue(c.id, c.value) })),
@@ -134,12 +143,19 @@ export const api = {
   },
   cache: {
     list: (owner: string, repo: string, token: string) =>
-      post<CacheListResponse>(`/repos/${owner}/${repo}/actions-caches`, { token }),
+      post<CacheListResponse>(
+        `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions-caches`,
+        { token },
+      ),
     clear: (
       owner: string,
       repo: string,
       body: { token: string; actor: string; dry_run: boolean; key?: string; ref?: string },
-    ) => post<CacheClearResponse>(`/repos/${owner}/${repo}/actions-caches/clear`, body),
+    ) =>
+      post<CacheClearResponse>(
+        `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions-caches/clear`,
+        body,
+      ),
   },
   jobs: {
     list: () => get<JobOut[]>("/jobs"),
@@ -149,7 +165,19 @@ export const api = {
       get<AuditLogOut[]>(`/audit${action ? `?action=${encodeURIComponent(action)}` : ""}`),
   },
   installations: {
-    list: () => get<InstallationMeta[]>("/github/app/installations"),
+    list: () => get<InstallationMeta[]>("/me/installations"),
+  },
+  orgs: {
+    mine: () => get<MyOrgMembership[]>("/me/orgs"),
+  },
+  invitations: {
+    create: (orgLogin: string, email: string) =>
+      post<InvitationCreateResponse>(`/orgs/${encodeURIComponent(orgLogin)}/invitations`, { email }),
+    list: (orgLogin: string) => get<InvitationOut[]>(`/orgs/${encodeURIComponent(orgLogin)}/invitations`),
+    revoke: (orgLogin: string, invitationId: number) =>
+      post<InvitationOut>(`/orgs/${encodeURIComponent(orgLogin)}/invitations/${invitationId}/revoke`, {}),
+    preview: (token: string) => get<InvitationPreview>(`/invitations/${encodeURIComponent(token)}`),
+    accept: (token: string) => post<{ org_login: string; role: string }>(`/invitations/${encodeURIComponent(token)}/accept`, {}),
   },
   tokens: {
     list: () => get<SavedTokenMeta[]>("/tokens"),
@@ -167,16 +195,16 @@ export const api = {
   auth: {
     setupRequired: () => get<{ setup_required: boolean }>("/auth/setup-required"),
     setup: (email: string, password: string, name?: string) =>
-      post<{ access_token: string; user: { id: number; email: string; name: string | null; is_owner: boolean } }>(
+      post<{ access_token: string; user: { id: number; email: string; name: string | null; is_workspace_admin: boolean } }>(
         "/auth/setup",
         { email, password, name },
       ),
     register: (email: string, password: string, name?: string) =>
-      post<{ access_token: string; user: { id: number; email: string; name: string | null; is_owner: boolean } }>(
+      post<{ access_token: string; user: { id: number; email: string; name: string | null; is_workspace_admin: boolean } }>(
         "/auth/register",
         { email, password, name },
       ),
     patchMe: (name: string) =>
-      patch<{ id: number; email: string; name: string | null; is_owner: boolean }>("/auth/me", { name }),
+      patch<{ id: number; email: string; name: string | null; is_workspace_admin: boolean }>("/auth/me", { name }),
   },
 }

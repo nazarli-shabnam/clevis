@@ -103,3 +103,39 @@ def test_process_job_marks_failed_on_network_error():
     assert "status='failed'" in sql
     assert "timeout" in params[0]
     assert conn.committed is True
+
+
+def test_process_job_truncates_long_error():
+    conn = _FakeConn()
+
+    with patch("worker.httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.delete = MagicMock(side_effect=ConnectionError("x" * 1000))
+        mock_client_cls.return_value = mock_client
+
+        process_job(conn, 4, _payload())
+
+    sql, params = conn._cursor.calls[0]
+    assert len(params[0]) <= 500
+    assert params[0].endswith("...(truncated)")
+
+
+def test_process_job_redacts_token_shaped_text_in_error():
+    conn = _FakeConn()
+
+    with patch("worker.httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.delete = MagicMock(
+            side_effect=ConnectionError("failed with ghp_abcdefghijklmnopqrstuvwxyz0123456789")
+        )
+        mock_client_cls.return_value = mock_client
+
+        process_job(conn, 5, _payload())
+
+    sql, params = conn._cursor.calls[0]
+    assert "ghp_" not in params[0]
+    assert "[redacted]" in params[0]

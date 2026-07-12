@@ -22,7 +22,7 @@ import jwt
 
 from src.core.config import settings
 
-_OAUTH_SCOPE = "read:user user:email"
+_OAUTH_SCOPE = "read:user user:email read:org"
 _STATE_TTL_SECONDS = 600  # 10 minutes between /login and /callback
 _STATE_ALG = "HS256"
 _STATE_PURPOSE = "github_oauth"
@@ -140,6 +140,38 @@ def fetch_identity(user_token: str) -> GitHubIdentity:
         email=email,
         avatar_url=user.get("avatar_url"),
     )
+
+
+@dataclass
+class GitHubOrgMembership:
+    github_org_id: int
+    login: str
+    role: str  # "admin" | "member"
+
+
+def list_user_org_memberships(user_token: str) -> list[GitHubOrgMembership]:
+    """List the authenticated user's active org memberships, role included (needs read:org
+    scope). One endpoint replaces the old list-orgs-then-check-each-role N+1 pattern —
+    GET /user/memberships/orgs returns the caller's role per org in a single (paginated)
+    call. Follows the Link header so callers in >100 orgs still get the full list.
+    """
+    api = settings.github_api_base.rstrip("/")
+    headers = {
+        "Authorization": f"Bearer {user_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    memberships: list[GitHubOrgMembership] = []
+    url = f"{api}/user/memberships/orgs?state=active&per_page=100"
+    with httpx.Client(timeout=20) as client:
+        while url:
+            resp = client.get(url, headers=headers)
+            resp.raise_for_status()
+            for m in resp.json():
+                org = m["organization"]
+                memberships.append(GitHubOrgMembership(github_org_id=org["id"], login=org["login"], role=m["role"]))
+            url = resp.links.get("next", {}).get("url")
+    return memberships
 
 
 def _primary_verified_email(emails: list[dict]) -> str | None:

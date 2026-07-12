@@ -2,8 +2,15 @@
 JWT helpers and FastAPI auth dependencies.
 
 Two access levels:
-  - require_auth  — any authenticated user (valid JWT)
-  - require_owner — authenticated user with is_owner=True (instance config only)
+  - require_auth           — any authenticated user (valid JWT, not revoked)
+  - require_workspace_admin — authenticated user with is_workspace_admin=True (instance config only)
+
+Org-scoped access levels (member/admin per org) live in src/core/rbac.py, since they
+require a DB lookup rather than just the JWT claims.
+
+require_auth hits the DB on every request to compare the JWT's token_version claim
+against the user's current value, so that revoke-sessions (or any future forced logout)
+takes effect immediately instead of waiting out the 30-day token expiry.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -12,8 +19,10 @@ import jwt
 from fastapi import Cookie, Depends, HTTPException, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from src.core.config import settings
+from src.core.db import User, get_db
 
 _ALGORITHM = "HS256"
 _TOKEN_EXPIRE_DAYS = 30
@@ -53,15 +62,18 @@ class UserOut(BaseModel):
     id: int
     email: str
     name: str | None
-    is_owner: bool
+    is_workspace_admin: bool
 
 
-def create_access_token(user_id: int, email: str, is_owner: bool, name: str | None = None) -> str:
+def create_access_token(
+    user_id: int, email: str, is_workspace_admin: bool, name: str | None = None, token_version: int = 0
+) -> str:
     payload = {
         "sub": str(user_id),
         "email": email,
-        "is_owner": is_owner,
+        "is_workspace_admin": is_workspace_admin,
         "name": name,
+        "token_version": token_version,
         "exp": datetime.now(timezone.utc) + timedelta(days=_TOKEN_EXPIRE_DAYS),
     }
     return jwt.encode(payload, settings.auth_secret.get_secret_value(), algorithm=_ALGORITHM)
@@ -83,11 +95,14 @@ def decode_access_token(token: str) -> dict:
 def require_auth(
     credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
     session: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+    db: Session = Depends(get_db),
 ) -> UserOut:
     """Dependency: validates the JWT (Authorization header or session cookie) and returns the user.
 
     Prefers the Bearer header (API clients) and falls back to the httpOnly session cookie
-    (browser sessions established via GitHub OAuth). Raises 401 if neither is present/valid.
+    (browser sessions established via GitHub OAuth). Raises 401 if neither is present/valid,
+    or if the token's token_version claim no longer matches the user's current value (i.e.
+    the session was revoked via POST /auth/me/revoke-sessions).
     """
     token = credentials.credentials if credentials else session
     if not token:
@@ -101,16 +116,19 @@ def require_auth(
         user_id = int(sub)
     except (ValueError, TypeError):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token claims")
+    db_user = db.query(User).filter(User.id == user_id).first()
+    if db_user is None or db_user.token_version != payload.get("token_version", 0):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked")
     return UserOut(
         id=user_id,
         email=email,
         name=payload.get("name"),
-        is_owner=bool(payload.get("is_owner", False)),
+        is_workspace_admin=bool(payload.get("is_workspace_admin", False)),
     )
 
 
-def require_owner(user: UserOut = Depends(require_auth)) -> UserOut:
-    """Dependency: raises 403 if the authenticated user is not the instance owner."""
-    if not user.is_owner:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Owner access required")
+def require_workspace_admin(user: UserOut = Depends(require_auth)) -> UserOut:
+    """Dependency: raises 403 if the authenticated user is not the workspace admin."""
+    if not user.is_workspace_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Workspace admin access required")
     return user

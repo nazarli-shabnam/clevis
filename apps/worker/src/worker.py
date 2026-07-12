@@ -6,6 +6,7 @@ import httpx
 import psycopg
 
 from _crypto import decrypt_job_token
+from _sanitize import sanitize_error
 from config import settings
 
 logging.basicConfig(
@@ -74,7 +75,7 @@ def process_job(conn: psycopg.Connection, job_id: int, payload_raw: str) -> None
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE jobs SET status='failed', result=%s, updated_at=NOW() WHERE id=%s",
-                (str(error), job_id),
+                (sanitize_error(error), job_id),
             )
     conn.commit()
 

@@ -41,7 +41,7 @@ def test_build_authorize_url(oauth_configured):
     qs = parse_qs(parsed.query)
     assert qs["client_id"] == [_CLIENT_ID]
     assert qs["redirect_uri"] == [_REDIRECT]
-    assert qs["scope"] == ["read:user user:email"]
+    assert qs["scope"] == ["read:user user:email read:org"]
     assert qs["state"] == ["st"]
 
 
@@ -114,6 +114,34 @@ def test_fetch_identity_falls_back_to_emails_endpoint():
         ident = github_oauth.fetch_identity("gho_x")
     assert ident.email == "main@example.com"
     assert client.get.call_count == 2
+
+
+def test_list_user_org_memberships_follows_pagination():
+    page1 = MagicMock(
+        links={"next": {"url": "https://api.github.com/user/memberships/orgs?page=2"}},
+        json=MagicMock(
+            return_value=[
+                {"role": "admin", "organization": {"id": 1, "login": "acme"}},
+            ]
+        ),
+    )
+    page2 = MagicMock(
+        links={},
+        json=MagicMock(
+            return_value=[
+                {"role": "member", "organization": {"id": 2, "login": "other-org"}},
+            ]
+        ),
+    )
+    with patch("src.services.github_oauth.httpx.Client") as mock_cls:
+        client = MagicMock()
+        client.__enter__ = MagicMock(return_value=client)
+        client.__exit__ = MagicMock(return_value=False)
+        client.get = MagicMock(side_effect=[page1, page2])
+        mock_cls.return_value = client
+        memberships = github_oauth.list_user_org_memberships("gho_x")
+    assert client.get.call_count == 2
+    assert [(m.login, m.role) for m in memberships] == [("acme", "admin"), ("other-org", "member")]
 
 
 def test_not_configured_raises(monkeypatch):

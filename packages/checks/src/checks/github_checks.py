@@ -36,6 +36,15 @@ def _get_all_pages(base_url: str, path: str, token: str) -> list:
     return results
 
 
+def _branch_protection_status(exc: httpx.HTTPStatusError) -> str:
+    code = exc.response.status_code
+    if code == 404:
+        return "unprotected"
+    if code in (403, 429):
+        return "unknown"
+    return "unprotected"
+
+
 class OrgMFARequired(Check):
     metadata = CheckMetadata(
         check_id="organization_members_mfa_required",
@@ -52,7 +61,12 @@ class OrgMFARequired(Check):
         repos: list | None = None,  # unused — MFA check operates at org level
     ) -> dict:
         org = _get(f"{base_url}/orgs/{owner}", token)
-        enabled = bool(org.get("two_factor_requirement_enabled", False))
+        if "two_factor_requirement_enabled" not in org:
+            return {
+                "status": "error",
+                "value": "Token lacks org-owner scope to read MFA requirement status",
+            }
+        enabled = bool(org["two_factor_requirement_enabled"])
         return {"status": "pass" if enabled else "fail", "value": enabled}
 
 
@@ -75,6 +89,7 @@ class BranchProtectionEnabled(Check):
             repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
         checked = 0
         protected = 0
+        unknown = 0
         for repo in repos:
             checked += 1
             branch = repo.get("default_branch")
@@ -82,10 +97,19 @@ class BranchProtectionEnabled(Check):
                 details = _get(f"{base_url}/repos/{owner}/{repo['name']}/branches/{branch}", token)
                 if details.get("protected"):
                     protected += 1
-            except httpx.HTTPStatusError:
-                pass  # treat inaccessible branches as unprotected
-        compliant = checked > 0 and checked == protected
-        return {"status": "pass" if compliant else "fail", "value": {"checked": checked, "protected": protected}}
+            except httpx.HTTPStatusError as exc:
+                if _branch_protection_status(exc) == "unknown":
+                    unknown += 1
+            except httpx.HTTPError:
+                unknown += 1
+        evaluable = checked - unknown
+        if evaluable == 0:
+            return {"status": "error", "value": {"checked": checked, "protected": protected, "unknown": unknown}}
+        compliant = protected == evaluable
+        return {
+            "status": "pass" if compliant else "fail",
+            "value": {"checked": checked, "protected": protected, "unknown": unknown},
+        }
 
 
 class SecretScanningEnabled(Check):
@@ -108,7 +132,7 @@ class SecretScanningEnabled(Check):
         enabled = 0
         total = len(repos)
         for repo in repos:
-            sec = repo.get("security_and_analysis", {})
+            sec = repo.get("security_and_analysis") or {}
             if sec.get("secret_scanning", {}).get("status") == "enabled":
                 enabled += 1
         compliant = total > 0 and enabled == total

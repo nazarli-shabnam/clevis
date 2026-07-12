@@ -43,7 +43,7 @@ def _identity(**kw) -> GitHubIdentity:
 
 def test_first_user_becomes_owner(db):
     user = find_or_create_user(db, _identity())
-    assert user.is_owner is True
+    assert user.is_workspace_admin is True
     assert user.github_user_id == 1001
     assert user.password_hash is None
 
@@ -51,18 +51,18 @@ def test_first_user_becomes_owner(db):
 def test_second_user_is_member(db):
     find_or_create_user(db, _identity())
     second = find_or_create_user(db, _identity(github_user_id=2002, login="hubot", email="hubot@example.com"))
-    assert second.is_owner is False
+    assert second.is_workspace_admin is False
 
 
 def test_links_existing_email_user_and_keeps_role(db):
-    existing = User(email="owner@example.com", name="Owner", password_hash="x", is_owner=True)
+    existing = User(email="owner@example.com", name="Owner", password_hash="x", is_workspace_admin=True)
     db.add(existing)
     db.commit()
     db.refresh(existing)
     linked = find_or_create_user(db, _identity(github_user_id=555, email="owner@example.com"))
     assert linked.id == existing.id
     assert linked.github_user_id == 555
-    assert linked.is_owner is True
+    assert linked.is_workspace_admin is True
 
 
 def test_idempotent_by_github_id(db):
@@ -80,12 +80,13 @@ def test_login_redirects_to_github(gh_client, oauth_configured):
     assert resp.headers["location"].startswith("https://github.com/login/oauth/authorize")
 
 
-def test_login_unconfigured_returns_503(gh_client, monkeypatch):
+def test_login_unconfigured_redirects_to_ui_with_error(gh_client, monkeypatch):
     # Force unconfigured regardless of the ambient .env (a real App may be configured locally).
     monkeypatch.setattr(settings, "github_app_client_id", None)
     monkeypatch.setattr(settings, "github_app_client_secret", None)
     resp = gh_client.get("/auth/github/login", follow_redirects=False)
-    assert resp.status_code == 503
+    assert resp.status_code == 303
+    assert resp.headers["location"].endswith("/login?error=github_not_configured")
 
 
 def test_callback_creates_user_and_sets_cookie(gh_client, db):
@@ -93,6 +94,7 @@ def test_callback_creates_user_and_sets_cookie(gh_client, db):
         patch("src.routers.github_auth.github_oauth.verify_state", return_value=True),
         patch("src.routers.github_auth.github_oauth.exchange_code_for_token", return_value="gho_x"),
         patch("src.routers.github_auth.github_oauth.fetch_identity", return_value=_identity()),
+        patch("src.routers.github_auth.org_provisioning.sync_org_admin_memberships", return_value=None),
     ):
         resp = gh_client.get("/auth/github/callback?code=c&state=s", follow_redirects=False)
     assert resp.status_code == 303
@@ -103,4 +105,17 @@ def test_callback_creates_user_and_sets_cookie(gh_client, db):
 def test_callback_rejects_bad_state(gh_client):
     with patch("src.routers.github_auth.github_oauth.verify_state", return_value=False):
         resp = gh_client.get("/auth/github/callback?code=c&state=bad", follow_redirects=False)
-    assert resp.status_code == 400
+    assert resp.status_code == 303
+    assert resp.headers["location"].endswith("/login?error=github_invalid_state")
+
+
+def test_callback_redirects_to_ui_on_oauth_error(gh_client):
+    from src.services.github_oauth import GitHubOAuthError
+
+    with (
+        patch("src.routers.github_auth.github_oauth.verify_state", return_value=True),
+        patch("src.routers.github_auth.github_oauth.exchange_code_for_token", side_effect=GitHubOAuthError("bad_verification_code")),
+    ):
+        resp = gh_client.get("/auth/github/callback?code=c&state=s", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"].endswith("/login?error=github_oauth_failed")

@@ -13,6 +13,8 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Warning, Eye, Key, CircleNotch, Trash } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
+import { parseOwnerRepo } from "@/lib/repo-segment"
+import { shouldApplyResolvedToken } from "@/lib/token-resolve"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
 import { CHART_COLORS } from "@/lib/charts/theme"
 import { formatBytes, relativeTime, classifyStaleness, stalenessColor } from "@/lib/format"
@@ -24,12 +26,19 @@ export default function CachePage() {
   const [tokenSaved, setTokenSaved] = useState(false)
   const [actor, setActor] = useState("")
 
-  const [owner, repo] = (params.repo || "").split("~")
+  const parsed = parseOwnerRepo(params.repo || "")
+  const owner = parsed?.owner ?? ""
+  const repo = parsed?.repo ?? ""
 
   // Auto-resolve saved token for this owner
   const resolveMutation = useMutation({
     mutationFn: (org: string) => api.tokens.resolve(org),
-    onSuccess: (data) => { setToken(data.token); setTokenSaved(true) },
+    onSuccess: (data, org) => {
+      if (shouldApplyResolvedToken(org, owner)) {
+        setToken(data.token)
+        setTokenSaved(true)
+      }
+    },
     onError: () => setTokenSaved(false),
   })
 
@@ -69,6 +78,17 @@ export default function CachePage() {
     name: ref,
     mb: Math.round((bytes / 1_048_576) * 100) / 100,
   }))
+
+  if (!parsed) {
+    return (
+      <>
+        <PageHeader title="Actions Cache" description="Invalid repository route." />
+        <div className="bg-card border border-border px-4 py-6 text-sm text-muted-foreground">
+          Expected URL format: <span className="font-mono">/repos/owner~repo/cache</span>
+        </div>
+      </>
+    )
+  }
 
   return (
     <>

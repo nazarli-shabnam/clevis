@@ -72,6 +72,49 @@ Use **Conventional Commits**, for example:
 
 CI runs Commitlint on the commits in each push or pull request, so messages that do not follow the convention will fail the **Commit Messages** check.
 
+## Testing
+
+**Bug-fix PRs must include a regression test** that exercises the failure scenario described in the linked issue — not just a description or manual test-plan checklist. A fix without a test that would have caught the original bug is not considered complete.
+
+Two established patterns to follow, depending on what you're testing:
+
+- **Pure-function unit test** — for logic extracted into a small helper (e.g. `apps/ui/lib/repo-segment.ts`, `apps/ui/lib/token-resolve.ts`, or a Python function). Plain `describe`/`it` (UI) or a `test_*` function (Python), no rendering or mocking needed. See `apps/ui/tests/lib/repo-segment.test.ts` or `apps/ui/tests/lib/token-resolve.test.ts`.
+- **Hook/component test with mocked I/O** — for behavior that lives in a React hook or component (e.g. `useAuth`, `AuthGuard`) or a Python function that hits the network/DB. On the UI side, use `renderHook`/`render` from `@testing-library/react` with `vi.stubGlobal("fetch", ...)` or `vi.mock(...)` to control responses — see `apps/ui/tests/lib/auth-context.test.tsx` or `apps/ui/tests/components/auth-guard.test.tsx`. On the Python side, tests run against a real Postgres database inside a transaction/savepoint (see `apps/api/tests/conftest.py`) rather than mocking the DB.
+
+Run the full test suites before opening a PR:
+
+```bash
+# UI, from apps/ui
+bun run test
+
+# Python (API + worker + packages/checks), from repo root
+pytest -q
+```
+
+### Coverage — enforced in CI
+
+CI enforces two coverage gates, both self-hosted (no external service):
+
+1. **Global floor** — a regression guard, not a target. Overall coverage can't drop below the last-measured baseline (currently ~85% Python, ~21% UI — the UI number is low because most `app/**` page components aren't unit-tested yet, not because the gate is lenient). This just stops things from getting worse.
+2. **Diff coverage** — the real gate. New or changed lines in your PR must be covered by a test (currently `--fail-under=90`), checked against `origin/main` via [`diff-cover`](https://github.com/Bachmann1234/diff-cover). This is what actually enforces the rule above ("bug-fix PRs must include a regression test") — it will fail your PR if you touch a line with no test exercising it, regardless of the file's pre-existing coverage.
+
+Check both locally before opening a PR:
+
+```bash
+# Python — from repo root, with the local Postgres db running (see `docker compose up db`)
+pytest -q --cov=apps/api/src --cov=apps/worker/src --cov=packages/checks/src --cov-report=xml --cov-report=term
+diff-cover coverage.xml --compare-branch=origin/main --fail-under=90
+
+# UI — from apps/ui
+bun run test:coverage
+# diff-cover needs lcov.info's paths to be repo-root-relative (vitest emits them relative
+# to apps/ui); rewrite them and run from the repo root:
+cd .. && sed -E 's#^SF:(.*)$#SF:apps/ui/\1#' apps/ui/coverage/lcov.info | tr '\134' '/' > apps/ui/coverage/lcov-root-relative.info
+diff-cover apps/ui/coverage/lcov-root-relative.info --compare-branch=origin/main --fail-under=90
+```
+
+`pip install diff-cover` if you don't have it (it's in `requirements-test.txt` already for the Python side).
+
 ## Checks to run before opening a PR
 
 These mirror [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
@@ -82,10 +125,12 @@ These mirror [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 cd apps/ui
 bun install --frozen-lockfile
 bun run typecheck
+bun run lint
+bun run test:coverage
 bun run build
 ```
 
-(`bun run check` runs typecheck and build together.)
+(`bun run check` runs typecheck, lint, and build together — but not tests; run those separately. See [Coverage](#coverage--enforced-in-ci) above for the diff-coverage check CI also runs.)
 
 ### Python (API + worker)
 
@@ -93,24 +138,71 @@ bun run build
 python -m pip install --upgrade pip
 python -m pip install -r apps/api/requirements.txt
 python -m pip install -r apps/worker/requirements.txt
+python -m pip install -e packages/checks
+python -m pip install -r requirements-test.txt
+python -m pytest -q --cov=apps/api/src --cov=apps/worker/src --cov=packages/checks/src --cov-report=xml --cov-report=term --cov-fail-under=85
 python -m compileall apps/api/src apps/worker/src
 ```
 
 ### Docker images
 
-From the **repository root**:
+From the **repository root** (both `apps/api` and `apps/worker` build from the repo root so their images can install the shared `packages/checks` dependency; `apps/ui` has no such dependency and builds from its own directory):
 
 ```bash
 docker build -t clevis-api -f apps/api/Dockerfile .
-docker build -t clevis-worker -f apps/worker/Dockerfile apps/worker
+docker build -t clevis-worker -f apps/worker/Dockerfile .
 docker build -t clevis-ui -f apps/ui/Dockerfile apps/ui
 ```
+
+CI also smoke-tests the API and worker images after building — it runs each image's entrypoint module directly (`import src.main` / `import worker`) with dummy env vars, bypassing `entrypoint.sh` so no live DB is required. This catches a class of bug that a plain `docker build` can't: an image that builds fine but is missing a runtime dependency (e.g. `packages/checks` not being installed), which only surfaces once the container actually runs. If you change either Dockerfile, run the equivalent locally before opening a PR:
+
+```bash
+docker run --rm --entrypoint python \
+  -e DATABASE_URL=postgresql+psycopg://smoke:smoke@localhost:5432/smoke \
+  -e JOB_SECRET_KEY=local-smoke-test-key -e AUTH_SECRET=local-smoke-test-secret \
+  clevis-api -c "import src.main"
+
+docker run --rm --entrypoint python \
+  -e DATABASE_URL=postgresql://smoke:smoke@localhost:5432/smoke \
+  -e JOB_SECRET_KEY=local-smoke-test-key \
+  clevis-worker -c "import worker"
+```
+
+### E2E tests
+
+Auth-flow critical paths (login, GitHub OAuth error redirect, logout, mid-session 401 handling) are covered by Playwright tests in `apps/ui/e2e/`, run against the **full docker-compose stack** — the real Docker images, not app code in isolation, so this catches deployment-shaped bugs unit tests can't (it's the same infra that would have caught the worker `packages/checks` gap). CI runs this as a required check (`E2E Tests`).
+
+Run locally, from the **repository root**:
+
+```bash
+# ⚠️ Uses whatever DB_USER/DB_PASSWORD is in your .env. If you use dummy/different
+# credentials than your normal local dev .env, the Postgres volume gets initialized with
+# those on first run — Postgres only sets the password at first init, so switching .env
+# credentials afterward will fail with "password authentication failed". If that happens,
+# `docker volume rm clevis_pgdata` to force a clean re-init (you'll lose local dev DB data).
+docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile backend --profile frontend up --build -d
+
+# Wait for both to respond (compose healthchecks cover db/api; poll ui yourself):
+curl http://localhost:8080/healthz
+curl http://localhost:3000/login
+
+cd apps/ui
+bunx playwright install --with-deps chromium   # one-time, or after a Playwright version bump
+E2E_BASE_URL=http://localhost:3000 E2E_API_BASE=http://localhost:8080 bun run test:e2e
+```
+
+**CORS note:** the API's `CORS_ORIGINS` defaults to `["http://localhost:3000"]`. If you publish the UI on a different local port (e.g. to avoid clashing with another process already on 3000), add a matching `CORS_ORIGINS=["http://localhost:<port>"]` to `.env` and restart the `api` container — otherwise the browser's `fetch` calls fail with a generic "Failed to fetch" (a CORS rejection, not a real app or network error, but that's all the browser reports).
+
+Tear down afterward with `docker compose -f docker-compose.yml -f docker-compose.ci.yml down` (add `-v` only if you want to wipe the DB volume too).
+
+`docker-compose.ci.yml` is a CI-only override — the base `docker-compose.yml` deliberately has no host port bindings (Traefik-only, production security posture), so this override publishes `api:8080` and `ui:3000` to the runner for Playwright to reach.
 
 ## Pull requests
 
 - Open a PR against the branch your maintainers use as the integration target (often `main`).
 - Keep changes focused; unrelated drive-by refactors make review harder.
-- Ensure all CI jobs pass (commits, UI, Python, Docker builds).
+- Ensure all CI jobs pass (commits, UI, Python, Docker build + smoke-test, E2E).
+- Bug-fix PRs should include a regression test — see [Testing](#testing) above.
 
 ## Security and configuration
 

@@ -6,10 +6,12 @@ import { Trash, Plus, CircleNotch, Check, ArrowSquareOut } from "@phosphor-icons
 import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import Link from "next/link"
 import { api } from "@/lib/api/client"
+import { initialConfigValues, mergeSavedConfigValue } from "@/lib/config-values"
 import { useAuth } from "@/lib/auth-context"
 import { THEMES, useTheme } from "@/lib/theme"
-import type { InstallationMeta, SavedTokenMeta } from "@/lib/api/types"
+import type { InstallationMeta, MyOrgMembership, SavedTokenMeta } from "@/lib/api/types"
 
 // ── Profile section ──────────────────────────────────────────────────────────
 
@@ -133,7 +135,74 @@ function SectionError({ message, onRetry, retrying }: { message: string; onRetry
   )
 }
 
-// ── Connected organizations section (GitHub App) ─────────────────────────────
+// ── Org memberships section ───────────────────────────────────────────────────
+
+function OrgMembershipsSection() {
+  const { data: memberships = [], isLoading, isError, error, isFetching, refetch } = useQuery<MyOrgMembership[]>({
+    queryKey: ["my-orgs"],
+    queryFn: () => api.orgs.mine(),
+  })
+
+  return (
+    <div className="bg-card border border-border">
+      <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+        <span className="section-label">Your organizations</span>
+        {memberships.length > 0 && <span className="stat-chip">{memberships.length}</span>}
+      </div>
+
+      {isLoading ? (
+        <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
+          <CircleNotch className="size-3.5 animate-spin" /> Loading…
+        </div>
+      ) : isError ? (
+        <SectionError
+          message={error instanceof Error ? error.message : "Failed to load organizations."}
+          onRetry={() => refetch()}
+          retrying={isFetching}
+        />
+      ) : memberships.length === 0 ? (
+        <div className="px-4 py-6">
+          <p className="text-sm text-muted-foreground">
+            You&rsquo;re not a member of any organization yet. Sign in as a GitHub org admin to connect one, or
+            accept an invite link from an org admin.
+          </p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="text-left text-muted-foreground font-medium px-4 py-2">Organization</th>
+                <th className="text-left text-muted-foreground font-medium px-4 py-2">Role</th>
+                <th className="px-4 py-2" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {memberships.map((m) => (
+                <tr key={m.org_login} className="hover:bg-elevated transition-colors">
+                  <td className="px-4 py-2.5 font-mono text-foreground/80">{m.org_login}</td>
+                  <td className="px-4 py-2.5 text-muted-foreground">{m.role}</td>
+                  <td className="px-4 py-2.5 text-right">
+                    {m.role === "admin" && (
+                      <Link
+                        href={`/settings/org/${encodeURIComponent(m.org_login)}/members`}
+                        className="text-xs text-primary hover:underline"
+                      >
+                        Manage members
+                      </Link>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Connected organizations (GitHub App, personal installs) ──────────────────
 
 function ConnectedOrgsSection() {
   const { data: installs = [], isLoading, isError, error, isFetching, refetch } = useQuery<InstallationMeta[]>({
@@ -146,7 +215,7 @@ function ConnectedOrgsSection() {
   return (
     <div className="bg-card border border-border">
       <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-        <span className="section-label">Connected organizations</span>
+        <span className="section-label">Personal GitHub installs</span>
         {installs.length > 0 && <span className="stat-chip">{installs.length} connected</span>}
       </div>
 
@@ -360,7 +429,7 @@ function InstanceConfigSection() {
   const [errors, setErrors] = useState<Record<string, string>>({})
 
   useEffect(() => {
-    if (config) setValues(config)
+    if (config) setValues((prev) => initialConfigValues(prev, config))
   }, [config])
 
   async function saveKey(key: string) {
@@ -368,7 +437,11 @@ function InstanceConfigSection() {
     setErrors((prev) => ({ ...prev, [key]: "" }))
     try {
       await api.config.update(key, values[key] ?? "")
-      qc.invalidateQueries({ queryKey: ["config"] })
+      const updated = await qc.fetchQuery<Record<string, string>>({
+        queryKey: ["config"],
+        queryFn: api.config.getAll,
+      })
+      setValues((prev) => mergeSavedConfigValue(prev, updated, key))
     } catch (err) {
       setErrors((prev) => ({ ...prev, [key]: err instanceof Error ? err.message : "Save failed" }))
     } finally {
@@ -445,9 +518,10 @@ export default function SettingsPage() {
       <div className="flex flex-col gap-4">
         <ProfileSection />
         <AppearanceSection />
+        <OrgMembershipsSection />
         <ConnectedOrgsSection />
         <SavedTokensSection />
-        {user?.is_owner && <InstanceConfigSection />}
+        {user?.is_workspace_admin && <InstanceConfigSection />}
       </div>
     </>
   )

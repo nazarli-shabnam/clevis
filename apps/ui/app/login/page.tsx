@@ -1,12 +1,12 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { CircleNotch } from "@phosphor-icons/react"
+import { CircleNotch, Warning } from "@phosphor-icons/react"
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
 
@@ -19,20 +19,52 @@ function GithubMark() {
   )
 }
 
+// Only accept unambiguous same-site relative paths: reject protocol-relative ("//..."),
+// backslash variants (some browsers normalize "/\..." to "//..."), and control characters
+// that could let URL parsing reinterpret this as an external navigation target.
+function safeNextPath(next: string | null): string {
+  if (!next || !next.startsWith("/") || next.startsWith("//")) return "/"
+  if (next.includes("\\") || /[\x00-\x1f\x7f]/.test(next)) return "/"
+  return next
+}
+
+const GITHUB_ERROR_MESSAGES: Record<string, string> = {
+  github_not_configured: "GitHub sign-in isn't set up on this server yet. Use email and password, or ask an admin to configure it.",
+  github_invalid_state: "Your GitHub sign-in attempt expired or was invalid. Please try again.",
+  github_oauth_failed: "GitHub sign-in failed. Please try again.",
+}
+
+function githubErrorMessage(code: string | null): string {
+  if (!code) return ""
+  return GITHUB_ERROR_MESSAGES[code] || "GitHub sign-in failed. Please try again."
+}
+
 export default function LoginPage() {
-  const { user, login, isLoading } = useAuth()
+  const { user, login, isLoading, logoutWarning, clearLogoutWarning } = useAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const next = safeNextPath(searchParams.get("next"))
 
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [error, setError] = useState("")
+  const [error, setError] = useState(() => githubErrorMessage(searchParams.get("error")))
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // Strip ?error= from the URL once read, so a refresh doesn't re-show a stale message.
+  useEffect(() => {
+    if (!searchParams.get("error")) return
+    const params = new URLSearchParams(searchParams)
+    params.delete("error")
+    const qs = params.toString()
+    router.replace(qs ? `/login?${qs}` : "/login")
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Redirect if already authenticated or setup is needed
   useEffect(() => {
     if (isLoading) return
     if (user) {
-      router.replace("/")
+      router.replace(next)
       return
     }
     api.auth.setupRequired()
@@ -42,15 +74,16 @@ export default function LoginPage() {
       .catch(() => {
         // API unreachable — stay on login page; user will see the form
       })
-  }, [isLoading, user, router])
+  }, [isLoading, user, router, next])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError("")
+    clearLogoutWarning()
     setIsSubmitting(true)
     try {
       await login(email, password)
-      router.replace("/")
+      router.replace(next)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed")
     } finally {
@@ -67,6 +100,16 @@ export default function LoginPage() {
           </p>
           <h1 className="text-2xl font-semibold text-foreground">Sign in</h1>
         </div>
+
+        {logoutWarning && (
+          <div
+            role="alert"
+            className="mb-4 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+          >
+            <Warning className="size-3.5 mt-0.5 shrink-0" />
+            <p>{logoutWarning}</p>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <div>

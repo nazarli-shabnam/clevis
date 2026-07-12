@@ -6,10 +6,10 @@ from src.repositories import audit_repo, job_repo
 from src.schemas.cache import CacheClearInput
 
 
-def clear(db: Session, owner: str, repo: str, payload: CacheClearInput) -> dict:
+def clear(db: Session, owner: str, repo: str, payload: CacheClearInput, actor: str) -> dict:
     target = f"{owner}/{repo}"
     if payload.dry_run:
-        audit_repo.write(db, payload.actor, "cache.clear.dry_run", target, payload.model_dump(exclude={"token"}))
+        audit_repo.write(db, actor, "cache.clear.dry_run", target, payload.model_dump(exclude={"token"}))
         return {"queued": False, "dry_run": True, "message": "Dry run completed."}
 
     encrypted_token = encrypt_job_token(
@@ -22,7 +22,7 @@ def clear(db: Session, owner: str, repo: str, payload: CacheClearInput) -> dict:
         "token": encrypted_token,
         "key": payload.key,
         "ref": payload.ref,
-        "actor": payload.actor,
+        "actor": actor,
     })
-    audit_repo.write(db, payload.actor, "cache.clear.queued", target, {"job_id": job_id, **payload.model_dump(exclude={"token"})})
+    audit_repo.write(db, actor, "cache.clear.queued", target, {"job_id": job_id, **payload.model_dump(exclude={"token"})})
     return {"queued": True, "job_id": job_id}
