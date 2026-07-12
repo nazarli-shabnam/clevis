@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -6,16 +6,29 @@ const orgsMineMock = vi.fn();
 const installationsListMock = vi.fn();
 const tokensListMock = vi.fn();
 const configGetAllMock = vi.fn();
+const patchMeMock = vi.fn();
+const configUpdateMock = vi.fn();
 
 vi.mock("@/lib/api/client", () => ({
   api: {
     orgs: { mine: (...args: unknown[]) => orgsMineMock(...args) },
     installations: { list: (...args: unknown[]) => installationsListMock(...args) },
     tokens: { list: (...args: unknown[]) => tokensListMock(...args) },
-    config: { getAll: (...args: unknown[]) => configGetAllMock(...args) },
-    auth: { patchMe: vi.fn() },
+    config: {
+      getAll: (...args: unknown[]) => configGetAllMock(...args),
+      update: (...args: unknown[]) => configUpdateMock(...args),
+    },
+    auth: { patchMe: (...args: unknown[]) => patchMeMock(...args) },
   },
 }));
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
 
 import { AuthProvider } from "@/lib/auth-context";
 import SettingsPage from "@/app/settings/page";
@@ -60,11 +73,14 @@ describe("SettingsPage", () => {
     installationsListMock.mockReset();
     tokensListMock.mockReset();
     configGetAllMock.mockReset();
+    patchMeMock.mockReset();
+    configUpdateMock.mockReset();
     localStorage.clear();
     localStorage.setItem(TOKEN_KEY, makeAdminJwt());
   });
 
   afterEach(() => {
+    cleanup();
     vi.restoreAllMocks();
   });
 
@@ -87,5 +103,62 @@ describe("SettingsPage", () => {
       expect(screen.getByText("Instance configuration")).toBeInTheDocument();
     });
     expect(screen.getAllByRole("button", { name: "Save" }).length).toBeGreaterThan(0);
+  });
+
+  it("shows a saving spinner then a saved confirmation when the profile is updated", async () => {
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([]);
+    configGetAllMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true" });
+
+    const patchGate = deferred<{ id: number; email: string; name: string | null; is_workspace_admin: boolean }>();
+    patchMeMock.mockReturnValue(patchGate.promise);
+
+    renderPage();
+
+    const nameInput = screen.getByPlaceholderText("Your name");
+    fireEvent.change(nameInput, { target: { value: "New Name" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Saving…/ })).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      patchGate.resolve({ id: 1, email: "admin@example.com", name: "New Name", is_workspace_admin: true });
+      await patchGate.promise;
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Saved/ })).toBeInTheDocument();
+    });
+  });
+
+  it("shows a saving spinner on the instance config field being saved", async () => {
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([]);
+    configGetAllMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true" });
+
+    const updateGate = deferred<Record<string, string>>();
+    configUpdateMock.mockReturnValue(updateGate.promise);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Instance configuration")).toBeInTheDocument();
+    });
+
+    const saveButtons = screen.getAllByRole("button", { name: "Save" });
+    fireEvent.click(saveButtons[0]);
+
+    await waitFor(() => {
+      expect(saveButtons[0]).toBeDisabled();
+    });
+
+    await act(async () => {
+      updateGate.resolve({ worker_poll_seconds: "5", registration_enabled: "true" });
+      await updateGate.promise;
+    });
   });
 });
