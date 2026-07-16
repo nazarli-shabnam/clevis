@@ -50,10 +50,12 @@ interface Profile {
 
 function ProfileDropdown({
   profile,
+  defaultOrg,
   onClose,
   onSignOut,
 }: {
   profile: Profile
+  defaultOrg: string
   onClose: () => void
   onSignOut: () => void
 }) {
@@ -102,14 +104,15 @@ function ProfileDropdown({
           <GearSix className="size-3" />
           Settings
         </Link>
-        <button
-          disabled
-          className="flex items-center gap-1.5 px-2.5 py-1.5 text-[0.75rem] font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground bg-sidebar-accent/60 hover:bg-sidebar-accent border border-sidebar-border/60 transition-colors flex-1 justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Coming soon"
+        <Link
+          href={defaultOrg ? `/settings/org/${encodeURIComponent(defaultOrg)}/members` : "/settings"}
+          onClick={onClose}
+          title={defaultOrg ? undefined : "Set a default organization in Settings first"}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-[0.75rem] font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground bg-sidebar-accent/60 hover:bg-sidebar-accent border border-sidebar-border/60 transition-colors flex-1 justify-center"
         >
           <UserPlus className="size-3" />
           Invite members
-        </button>
+        </Link>
       </div>
 
       {/* Sign out */}
@@ -185,6 +188,7 @@ export function AppSidebar() {
         {open && (
           <ProfileDropdown
             profile={profile}
+            defaultOrg={defaultOrg}
             onClose={() => setOpen(false)}
             onSignOut={() => { logout(); setOpen(false); router.replace("/login") }}
           />
