@@ -7,8 +7,10 @@ const tokensUpsertMock = vi.fn();
 const cacheListMock = vi.fn();
 const cacheClearMock = vi.fn();
 
+let currentRepoParam = "acme~demo";
+
 vi.mock("next/navigation", () => ({
-  useParams: () => ({ repo: "acme~demo" }),
+  useParams: () => ({ repo: currentRepoParam }),
 }));
 
 vi.mock("@/lib/api/client", () => ({
@@ -30,15 +32,25 @@ function renderPage() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const utils = render(
     <QueryClientProvider client={queryClient}>
       <CachePage />
     </QueryClientProvider>,
   );
+  return {
+    ...utils,
+    rerenderSamePage: () =>
+      utils.rerender(
+        <QueryClientProvider client={queryClient}>
+          <CachePage />
+        </QueryClientProvider>,
+      ),
+  };
 }
 
 describe("CachePage", () => {
   beforeEach(() => {
+    currentRepoParam = "acme~demo";
     tokensResolveMock.mockReset();
     tokensUpsertMock.mockReset();
     cacheListMock.mockReset();
@@ -75,5 +87,39 @@ describe("CachePage", () => {
   it("keeps the Clear button disabled until an actor is entered", async () => {
     renderPage();
     expect(screen.getByRole("button", { name: /^clear$/i })).toBeDisabled();
+  });
+
+  it("clears the stale cache table and clear result when navigating to a different repo under the same owner", async () => {
+    cacheListMock.mockResolvedValue({
+      actions_caches: [
+        {
+          id: 1,
+          key: "api-cache-key",
+          ref: "refs/heads/main",
+          size_in_bytes: 1024,
+          created_at: "2026-01-01T00:00:00Z",
+          last_accessed_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+    });
+    cacheClearMock.mockResolvedValue({ queued: true, dry_run: false, job_id: 42 });
+
+    const { rerenderSamePage } = renderPage();
+
+    // Load caches and queue a real clear for acme/demo.
+    fireEvent.click(screen.getByRole("button", { name: /load caches/i }));
+    await waitFor(() => expect(screen.getByText("api-cache-key")).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText("actor"), { target: { value: "me@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: /^clear$/i }));
+    await waitFor(() => expect(screen.getByText(/job #42/i)).toBeInTheDocument());
+
+    // Navigate to a different repo under the same owner — same component instance, new params.
+    currentRepoParam = "acme~other";
+    rerenderSamePage();
+
+    await waitFor(() => expect(screen.getByText(/acme\/other/i)).toBeInTheDocument());
+    expect(screen.queryByText("api-cache-key")).not.toBeInTheDocument();
+    expect(screen.queryByText(/job #42/i)).not.toBeInTheDocument();
   });
 });
