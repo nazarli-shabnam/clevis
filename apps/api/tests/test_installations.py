@@ -1,5 +1,8 @@
 """Tests for org-scoped and personal installation endpoints."""
 
+from unittest.mock import patch
+
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -8,8 +11,16 @@ from src.core.auth import UserOut, require_auth
 from src.core.db import User, get_db
 from src.repositories import installation_repo, org_membership_repo, org_repo
 from src.routers.installations import router as inst_router
+from src.services import github_app
 
 _OUTSIDER = UserOut(id=99999, email="outsider@e.com", name=None, is_workspace_admin=False)
+
+
+def _mock_installation(account_login: str, account_type: str):
+    return patch(
+        "src.routers.installations.github_app.get_installation",
+        return_value={"account": {"login": account_login, "type": account_type}},
+    )
 
 
 def _make_user(db, email: str, github_login: str | None = None) -> UserOut:
@@ -82,10 +93,11 @@ def test_sync_org_installation_requires_admin(db, acme_org):
 
 
 def test_sync_org_installation_admin_ok(db, acme_org):
-    resp = _client(db, acme_org["admin"]).post(
-        "/orgs/acme/installations/sync",
-        json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
-    )
+    with _mock_installation("acme", "Organization"):
+        resp = _client(db, acme_org["admin"]).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
     assert resp.status_code == 200
     assert resp.json()["synced"] is True
 
@@ -113,10 +125,11 @@ def test_personal_installations_scoped_to_self(db):
 
 def test_sync_personal_installation(db):
     me = _make_user(db, "shabnam@e.com", github_login="shabnam")
-    resp = _client(db, me).post(
-        "/me/installations/sync",
-        json={"account_login": "shabnam", "account_type": "User", "installation_id": 3},
-    )
+    with _mock_installation("shabnam", "User"):
+        resp = _client(db, me).post(
+            "/me/installations/sync",
+            json={"account_login": "shabnam", "account_type": "User", "installation_id": 3},
+        )
     assert resp.status_code == 200
     assert resp.json()["synced"] is True
 
@@ -142,9 +155,57 @@ def test_sync_personal_installation_login_mismatch_forbidden(db):
 def test_sync_org_installation_upserts_existing_row(db, acme_org):
     client = _client(db, acme_org["admin"])
     payload = {"account_login": "acme", "account_type": "Organization", "installation_id": 7}
-    assert client.post("/orgs/acme/installations/sync", json=payload).status_code == 200
-    payload["installation_id"] = 8
-    assert client.post("/orgs/acme/installations/sync", json=payload).status_code == 200
+    with _mock_installation("acme", "Organization"):
+        assert client.post("/orgs/acme/installations/sync", json=payload).status_code == 200
+        payload["installation_id"] = 8
+        assert client.post("/orgs/acme/installations/sync", json=payload).status_code == 200
     rows = client.get("/orgs/acme/installations").json()
     assert len(rows) == 1
     assert rows[0]["installation_id"] == 8
+
+
+def test_sync_org_installation_rejects_installation_id_owned_by_a_different_account(db, acme_org):
+    with _mock_installation("someone-else", "Organization"):
+        resp = _client(db, acme_org["admin"]).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 422
+    assert installation_repo.list_for_org(db, org_id=acme_org["org"].id) == []
+
+
+def test_sync_org_installation_rejects_nonexistent_installation_id(db, acme_org):
+    response = httpx.Response(404, request=httpx.Request("GET", "https://api.github.com/app/installations/7"))
+    with patch(
+        "src.routers.installations.github_app.get_installation",
+        side_effect=httpx.HTTPStatusError("not found", request=response.request, response=response),
+    ):
+        resp = _client(db, acme_org["admin"]).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 422
+    assert installation_repo.list_for_org(db, org_id=acme_org["org"].id) == []
+
+
+def test_sync_org_installation_returns_503_when_app_not_configured(db, acme_org):
+    with patch(
+        "src.routers.installations.github_app.get_installation",
+        side_effect=github_app.GitHubAppNotConfigured("not configured"),
+    ):
+        resp = _client(db, acme_org["admin"]).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 503
+    assert installation_repo.list_for_org(db, org_id=acme_org["org"].id) == []
+
+
+def test_sync_org_installation_skips_verification_when_installation_id_omitted(db, acme_org):
+    with patch("src.routers.installations.github_app.get_installation") as mock_get:
+        resp = _client(db, acme_org["admin"]).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization"},
+        )
+    assert resp.status_code == 200
+    mock_get.assert_not_called()

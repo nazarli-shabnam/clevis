@@ -84,6 +84,25 @@ def _request_installation_token(installation_id: int) -> _CachedToken:
     return _CachedToken(token=data["token"], expires_at=expires_at.timestamp())
 
 
+def get_installation(installation_id: int) -> dict:
+    """Look up an installation by ID using the App's own JWT (not an installation
+    token) — used to verify a client-supplied installation_id is real and confirm
+    which account it actually belongs to, before trusting it. Raises
+    httpx.HTTPStatusError (404 if the installation doesn't exist) or
+    GitHubAppNotConfigured."""
+    app_jwt = generate_app_jwt()
+    url = f"{settings.github_api_base}/app/installations/{installation_id}"
+    headers = {
+        "Authorization": f"Bearer {app_jwt}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    with httpx.Client(timeout=20) as client:
+        resp = client.get(url, headers=headers)
+    resp.raise_for_status()
+    return resp.json()
+
+
 def get_installation_token(installation_id: int) -> str:
     """Return a valid installation access token, minting and caching it as needed."""
     with _lock:
