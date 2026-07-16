@@ -161,7 +161,7 @@ export default function CachePage() {
               />
             </div>
             <Button
-              onClick={() => listMutation.mutate()}
+              onClick={() => { setClearArmed(false); listMutation.mutate() }}
               disabled={isLoading}
               className="mt-1"
             >

@@ -121,6 +121,26 @@ describe("CachePage", () => {
     expect(cacheClearMock).not.toHaveBeenCalled();
   });
 
+  it("disarms the confirm state if Load caches is clicked before confirming", async () => {
+    cacheListMock.mockResolvedValue({ actions_caches: [] });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("actor"), { target: { value: "me@example.com" } });
+    const clearButton = screen.getByRole("button", { name: /^clear$/i });
+    await waitFor(() => expect(clearButton).not.toBeDisabled());
+
+    fireEvent.click(clearButton);
+    await screen.findByRole("button", { name: /confirm clear/i });
+
+    fireEvent.click(screen.getByRole("button", { name: /load caches/i }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /confirm clear/i })).not.toBeInTheDocument(),
+    );
+    expect(cacheClearMock).not.toHaveBeenCalled();
+  });
+
   it("auto-disarms the confirm state after a few seconds of inactivity", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
