@@ -43,31 +43,45 @@ def _read_poll_seconds() -> int:
         return 5
 
 
-def process_job(conn: psycopg.Connection, job_id: int, payload_raw: str) -> None:
+def _clear_actions_cache(payload: dict) -> dict:
     base = settings.github_api_base
+    owner, repo = payload["owner"], payload["repo"]
+    token = decrypt_job_token(payload["token"], settings.job_secret_key.get_secret_value())
+    params = {k: payload[k] for k in ("key", "ref") if payload.get(k)}
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    with httpx.Client(timeout=20) as client:
+        resp = client.delete(
+            f"{base}/repos/{owner}/{repo}/actions/caches",
+            headers=headers,
+            params=params,
+        )
+    if resp.status_code >= 300:
+        raise RuntimeError(f"GitHub API error: {resp.status_code}")
+    return {"ok": True, "status": resp.status_code}
+
+
+# job_type -> handler. Each handler takes the decoded payload dict and returns
+# a JSON-serializable result on success, or raises on failure.
+JOB_HANDLERS = {
+    "github.clear_actions_cache": _clear_actions_cache,
+}
+
+
+def process_job(conn: psycopg.Connection, job_id: int, job_type: str, payload_raw: str) -> None:
     try:
+        handler = JOB_HANDLERS.get(job_type)
+        if handler is None:
+            raise ValueError(f"no handler registered for job_type {job_type!r}")
         payload = json.loads(payload_raw)
-        owner, repo = payload["owner"], payload["repo"]
-        token = decrypt_job_token(payload["token"], settings.job_secret_key.get_secret_value())
-        params = {k: payload[k] for k in ("key", "ref") if payload.get(k)}
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
-        with httpx.Client(timeout=20) as client:
-            resp = client.delete(
-                f"{base}/repos/{owner}/{repo}/actions/caches",
-                headers=headers,
-                params=params,
-            )
-        if resp.status_code >= 300:
-            raise RuntimeError(f"GitHub API error: {resp.status_code}")
-        result = json.dumps({"ok": True, "status": resp.status_code})
+        result = handler(payload)
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE jobs SET status='done', result=%s, updated_at=NOW() WHERE id=%s",
-                (result, job_id),
+                (json.dumps(result), job_id),
             )
         log.info("job %d done", job_id)
     except Exception as error:
@@ -94,12 +108,11 @@ def run() -> None:
                         WHERE id = (
                             SELECT id FROM jobs
                             WHERE status = 'queued'
-                              AND job_type = 'github.clear_actions_cache'
                             ORDER BY id
                             LIMIT 1
                             FOR UPDATE SKIP LOCKED
                         )
-                        RETURNING id, payload
+                        RETURNING id, job_type, payload
                     """)
                     row = cur.fetchone()
 
