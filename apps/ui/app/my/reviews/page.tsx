@@ -7,7 +7,7 @@ export default function MyReviewsPage() {
   return (
     <>
       <PageHeader title="My Reviews" description="PRs awaiting your review." />
-      <EmptyStatePage message="— no organization connected" />
+      <EmptyStatePage message="My reviews — coming soon" />
     </>
   )
 }

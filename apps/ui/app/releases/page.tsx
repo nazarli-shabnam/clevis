@@ -7,7 +7,7 @@ export default function ReleasesPage() {
   return (
     <>
       <PageHeader title="Releases" description="Release history across your organization." />
-      <EmptyStatePage message="— no organization connected" />
+      <EmptyStatePage message="Releases — coming soon" />
     </>
   )
 }
