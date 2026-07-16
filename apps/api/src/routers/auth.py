@@ -24,8 +24,9 @@ from sqlalchemy.orm import Session
 
 from src.core.app_config import get_config
 from src.core.auth import UserOut, clear_session_cookie, create_access_token, require_auth
-from src.core.db import User, get_db
+from src.core.db import Org, User, get_db
 from src.core.rate_limit import rate_limit
+from src.repositories import invitation_repo
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -62,10 +63,17 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class PendingInvitationSummary(BaseModel):
+    org_login: str
+    token: str
+    expires_at: datetime
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserOut
+    pending_invitations: list[PendingInvitationSummary] = []
 
 
 class MeResponse(BaseModel):
@@ -84,6 +92,19 @@ class PatchMeRequest(BaseModel):
 
 class SetupRequiredResponse(BaseModel):
     setup_required: bool
+
+
+def _pending_invitations_for(db: Session, email: str) -> list[PendingInvitationSummary]:
+    """Invitations sent to this email that are still pending and unexpired — surfaced
+    at register/login so a user doesn't need the original invite link to discover them."""
+    invitations = invitation_repo.list_pending_for_email(db, email)
+    summaries = []
+    for inv in invitations:
+        org = db.query(Org).filter(Org.id == inv.org_id).first()
+        if org is None:
+            continue
+        summaries.append(PendingInvitationSummary(org_login=org.github_login, token=inv.token, expires_at=inv.expires_at))
+    return summaries
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -142,7 +163,11 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
     token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name, user.token_version)
-    return {"access_token": token, "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin)}
+    return {
+        "access_token": token,
+        "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin),
+        "pending_invitations": _pending_invitations_for(db, user.email),
+    }
 
 
 @router.post("/logout")
@@ -159,7 +184,11 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     if not user or not _verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name, user.token_version)
-    return {"access_token": token, "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin)}
+    return {
+        "access_token": token,
+        "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin),
+        "pending_invitations": _pending_invitations_for(db, user.email),
+    }
 
 
 @router.get("/me", response_model=MeResponse)

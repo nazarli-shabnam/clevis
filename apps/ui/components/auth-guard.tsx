@@ -2,6 +2,7 @@
 
 import { useEffect } from "react"
 import { useRouter, usePathname } from "next/navigation"
+import { X } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
 
@@ -11,7 +12,7 @@ const PUBLIC_ROUTES = ["/login", "/setup", "/register"]
 const PUBLIC_ROUTE_PREFIXES = ["/invite/"]
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { user, isLoading, logout } = useAuth()
+  const { user, isLoading, logout, pendingInvitations, dismissPendingInvitations } = useAuth()
   const router = useRouter()
   const pathname = usePathname()
 
@@ -67,5 +68,29 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     </div>
   )
 
-  return <>{children}</>
+  return (
+    <>
+      {pendingInvitations.length > 0 && (
+        <div className="bg-primary/10 border-b border-primary/30 px-4 py-2 flex items-center justify-center gap-3 text-xs text-primary flex-wrap">
+          {pendingInvitations.map((inv) => (
+            <a
+              key={inv.token}
+              href={`/invite/${inv.token}`}
+              className="underline underline-offset-2 hover:no-underline"
+            >
+              You&rsquo;re invited to join {inv.org_login} — accept invite
+            </a>
+          ))}
+          <button
+            onClick={dismissPendingInvitations}
+            className="text-primary/60 hover:text-primary"
+            aria-label="Dismiss"
+          >
+            <X className="size-3" />
+          </button>
+        </div>
+      )}
+      {children}
+    </>
+  )
 }

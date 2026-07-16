@@ -9,7 +9,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { AuthGuard } from "@/components/auth-guard";
-import { AuthProvider } from "@/lib/auth-context";
+import { AuthProvider, useAuth } from "@/lib/auth-context";
 
 const TOKEN_KEY = "clevis:token";
 
@@ -93,5 +93,70 @@ describe("AuthGuard clevis:unauthorized handling", () => {
     });
 
     expect(replace).toHaveBeenCalledWith("/login");
+  });
+});
+
+function SetSessionWithInvite() {
+  const { setSession } = useAuth();
+  return (
+    <button
+      onClick={() =>
+        setSession(makeJwt(1, "user@example.com"), { id: 1, email: "user@example.com", name: null, is_workspace_admin: false }, [
+          { org_login: "acme", token: "inv-token-123", expires_at: "2030-01-01T00:00:00Z" },
+        ])
+      }
+    >
+      trigger setSession
+    </button>
+  )
+}
+
+describe("AuthGuard pending invitations banner", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    replace.mockClear();
+    localStorage.setItem(TOKEN_KEY, makeJwt(1, "user@example.com"));
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/me")) {
+          return Promise.resolve(
+            jsonResponse({ id: 1, email: "user@example.com", name: null, is_workspace_admin: false }),
+          );
+        }
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("shows a link for each pending invitation and dismisses them", async () => {
+    render(
+      <AuthProvider>
+        <AuthGuard>
+          <SetSessionWithInvite />
+        </AuthGuard>
+      </AuthProvider>,
+    );
+
+    const triggerButton = await screen.findByRole("button", { name: /trigger setSession/i });
+    await act(async () => {
+      triggerButton.click();
+    });
+
+    const link = await screen.findByRole("link", { name: /invited to join acme/i });
+    expect(link).toHaveAttribute("href", "/invite/inv-token-123");
+
+    await act(async () => {
+      screen.getByRole("button", { name: /dismiss/i }).click();
+    });
+
+    expect(screen.queryByRole("link", { name: /invited to join acme/i })).not.toBeInTheDocument();
   });
 });

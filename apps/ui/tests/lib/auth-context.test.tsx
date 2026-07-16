@@ -287,3 +287,143 @@ describe("AuthProvider logoutWarning", () => {
     expect(result.current.logoutWarning).toBeNull();
   });
 });
+
+describe("AuthProvider pendingInvitations", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const invite = { org_login: "acme", token: "inv-token-123", expires_at: "2030-01-01T00:00:00Z" };
+
+  it("captures pending_invitations from a successful login response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/login")) {
+          return Promise.resolve(
+            jsonResponse({ access_token: makeJwt(1, "member@e.com"), user: passwordUser, pending_invitations: [invite] }),
+          );
+        }
+        if (url.endsWith("/auth/me")) return Promise.resolve(new Response(null, { status: 401 }));
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <AuthProvider>{children}</AuthProvider>
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await act(async () => {
+      await result.current.login("member@example.com", "supersecret1234");
+    });
+
+    expect(result.current.pendingInvitations).toEqual([invite]);
+  });
+
+  it("defaults to an empty list when the login response omits pending_invitations", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/login")) {
+          return Promise.resolve(jsonResponse({ access_token: makeJwt(1, "member@e.com"), user: passwordUser }));
+        }
+        if (url.endsWith("/auth/me")) return Promise.resolve(new Response(null, { status: 401 }));
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <AuthProvider>{children}</AuthProvider>
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await act(async () => {
+      await result.current.login("member@example.com", "supersecret1234");
+    });
+
+    expect(result.current.pendingInvitations).toEqual([]);
+  });
+
+  it("captures pending invitations passed to setSession (register flow)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/me")) return Promise.resolve(new Response(null, { status: 401 }));
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <AuthProvider>{children}</AuthProvider>
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    act(() => {
+      result.current.setSession(makeJwt(1, "member@e.com"), passwordUser, [invite]);
+    });
+
+    expect(result.current.pendingInvitations).toEqual([invite]);
+  });
+
+  it("clears pendingInvitations via dismissPendingInvitations", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/me")) return Promise.resolve(new Response(null, { status: 401 }));
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <AuthProvider>{children}</AuthProvider>
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    act(() => {
+      result.current.setSession(makeJwt(1, "member@e.com"), passwordUser, [invite]);
+    });
+    expect(result.current.pendingInvitations).toEqual([invite]);
+
+    act(() => {
+      result.current.dismissPendingInvitations();
+    });
+    expect(result.current.pendingInvitations).toEqual([]);
+  });
+
+  it("clears pendingInvitations on logout", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/me")) return Promise.resolve(new Response(null, { status: 401 }));
+        if (url.endsWith("/auth/logout")) return Promise.resolve(new Response(null, { status: 204 }));
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <AuthProvider>{children}</AuthProvider>
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    act(() => {
+      result.current.setSession(makeJwt(1, "member@e.com"), passwordUser, [invite]);
+    });
+    expect(result.current.pendingInvitations).toEqual([invite]);
+
+    act(() => {
+      result.current.logout();
+    });
+    expect(result.current.pendingInvitations).toEqual([]);
+  });
+});

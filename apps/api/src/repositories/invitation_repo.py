@@ -42,6 +42,10 @@ def list_for_org(db: Session, org_id: int) -> list[Invitation]:
 def list_pending_for_email(db: Session, email: str) -> list[Invitation]:
     return (
         db.query(Invitation)
-        .filter(Invitation.email.ilike(email), Invitation.status == "pending")
+        .filter(
+            Invitation.email.ilike(email),
+            Invitation.status == "pending",
+            Invitation.expires_at > datetime.now(timezone.utc),
+        )
         .all()
     )

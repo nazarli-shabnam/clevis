@@ -10,6 +10,7 @@ import type {
   InvitationPreview,
   JobOut,
   MyOrgMembership,
+  PendingInvitationSummary,
   SavedTokenMeta,
 } from "./types"
 
@@ -201,10 +202,11 @@ export const api = {
         { email, password, name },
       ),
     register: (email: string, password: string, name?: string) =>
-      post<{ access_token: string; user: { id: number; email: string; name: string | null; is_workspace_admin: boolean } }>(
-        "/auth/register",
-        { email, password, name },
-      ),
+      post<{
+        access_token: string
+        user: { id: number; email: string; name: string | null; is_workspace_admin: boolean }
+        pending_invitations: PendingInvitationSummary[]
+      }>("/auth/register", { email, password, name }),
     patchMe: (name: string) =>
       patch<{ id: number; email: string; name: string | null; is_workspace_admin: boolean }>("/auth/me", { name }),
   },

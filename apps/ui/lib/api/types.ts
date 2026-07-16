@@ -90,6 +90,12 @@ export interface MyOrgMembership {
   role: "admin" | "member"
 }
 
+export interface PendingInvitationSummary {
+  org_login: string
+  token: string
+  expires_at: string
+}
+
 export interface InvitationOut {
   id: number
   org_id: number
