@@ -11,7 +11,7 @@ import type { MyOrgMembership } from "@/lib/api/types"
 export default function CollaboratorsPage() {
   const router = useRouter()
 
-  const { data: memberships = [], isLoading } = useQuery<MyOrgMembership[]>({
+  const { data: memberships = [], isLoading, isError } = useQuery<MyOrgMembership[]>({
     queryKey: ["my-orgs"],
     queryFn: () => api.orgs.mine(),
   })
@@ -45,10 +45,17 @@ export default function CollaboratorsPage() {
         description="Manage your organization's team and invitations."
       />
       <div className="bg-card border border-border">
-        <EmptyState
-          title="No organization to manage"
-          description="Member management is available for organizations where you're an admin. Visit Settings to see your organizations."
-        />
+        {isError ? (
+          <EmptyState
+            title="Couldn't load your organizations"
+            description="Something went wrong checking your organization memberships. Try refreshing the page."
+          />
+        ) : (
+          <EmptyState
+            title="No organization to manage"
+            description="Member management is available for organizations where you're an admin. Visit Settings to see your organizations."
+          />
+        )}
       </div>
     </>
   )

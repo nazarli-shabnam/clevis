@@ -74,4 +74,16 @@ describe("CollaboratorsPage", () => {
     );
     expect(replaceMock).not.toHaveBeenCalled();
   });
+
+  it("shows an error message instead of a false no-admin-org state when the fetch fails", async () => {
+    orgsMineMock.mockRejectedValue(new Error("network error"));
+
+    renderPage();
+
+    await waitFor(() =>
+      expect(screen.getByText(/couldn.t load your organizations/i)).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/no organization to manage/i)).not.toBeInTheDocument();
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
 });
