@@ -24,7 +24,7 @@ function PendingInvitationsPeek() {
   return (
     <ul>
       {pendingInvitations.map((inv) => (
-        <li key={inv.token}>{inv.org_login}</li>
+        <li key={inv.org_login}>{inv.org_login}</li>
       ))}
     </ul>
   );
@@ -65,7 +65,7 @@ describe("RegisterPage", () => {
     registerMock.mockResolvedValue({
       access_token: "a.b.c",
       user: { id: 1, email: "new@example.com", name: null, is_workspace_admin: false },
-      pending_invitations: [{ org_login: "acme", token: "inv-token-123", expires_at: "2030-01-01T00:00:00Z" }],
+      pending_invitations: [{ org_login: "acme", expires_at: "2030-01-01T00:00:00Z" }],
     });
 
     renderPage();

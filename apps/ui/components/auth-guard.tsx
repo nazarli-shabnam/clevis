@@ -72,15 +72,15 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     <>
       {pendingInvitations.length > 0 && (
         <div className="bg-primary/10 border-b border-primary/30 px-4 py-2 flex items-center justify-center gap-3 text-xs text-primary flex-wrap">
-          {pendingInvitations.map((inv) => (
-            <a
-              key={inv.token}
-              href={`/invite/${inv.token}`}
-              className="underline underline-offset-2 hover:no-underline"
-            >
-              You&rsquo;re invited to join {inv.org_login} — accept invite
-            </a>
-          ))}
+          <span>
+            {/* Informational only — deliberately not a link. The accept token isn't
+                exposed here (see PendingInvitationSummary), so this can't double as a
+                shortcut to accept; find the original invite link, or ask an admin to
+                resend it. */}
+            You have a pending invite to join{" "}
+            {pendingInvitations.map((inv) => inv.org_login).join(", ")} — use your invite link, or ask an org
+            admin to resend it.
+          </span>
           <button
             onClick={dismissPendingInvitations}
             className="text-primary/60 hover:text-primary"

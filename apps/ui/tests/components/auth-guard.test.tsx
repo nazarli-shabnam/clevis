@@ -102,7 +102,7 @@ function SetSessionWithInvite() {
     <button
       onClick={() =>
         setSession(makeJwt(1, "user@example.com"), { id: 1, email: "user@example.com", name: null, is_workspace_admin: false }, [
-          { org_login: "acme", token: "inv-token-123", expires_at: "2030-01-01T00:00:00Z" },
+          { org_login: "acme", expires_at: "2030-01-01T00:00:00Z" },
         ])
       }
     >
@@ -136,7 +136,7 @@ describe("AuthGuard pending invitations banner", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows a link for each pending invitation and dismisses them", async () => {
+  it("shows an informational (non-link) notice naming the org and dismisses it", async () => {
     render(
       <AuthProvider>
         <AuthGuard>
@@ -150,13 +150,16 @@ describe("AuthGuard pending invitations banner", () => {
       triggerButton.click();
     });
 
-    const link = await screen.findByRole("link", { name: /invited to join acme/i });
-    expect(link).toHaveAttribute("href", "/invite/inv-token-123");
+    const notice = await screen.findByText(/pending invite to join.*acme/i);
+    // Must never be a link — no accept token is exposed to this banner (see
+    // PendingInvitationSummary), since "logged in as email X" isn't proof of owning
+    // inbox X in this app (no email verification on registration).
+    expect(screen.queryByRole("link", { name: /acme/i })).not.toBeInTheDocument();
 
     await act(async () => {
       screen.getByRole("button", { name: /dismiss/i }).click();
     });
 
-    expect(screen.queryByRole("link", { name: /invited to join acme/i })).not.toBeInTheDocument();
+    expect(notice).not.toBeInTheDocument();
   });
 });

@@ -182,7 +182,11 @@ def test_register_surfaces_pending_invitation(auth_client, db):
     pending = resp.json()["pending_invitations"]
     assert len(pending) == 1
     assert pending[0]["org_login"] == "acme"
-    assert "token" in pending[0]
+    # The accept token must never be exposed here — registration has no email
+    # verification, so "an account with this email" isn't proof of owning the inbox
+    # the real invite was sent to. Handing back the token would let anyone who merely
+    # knows a victim's email claim their pending invitation.
+    assert "token" not in pending[0]
 
 
 def test_register_pending_invitation_matches_case_insensitively(auth_client, db):

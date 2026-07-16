@@ -298,7 +298,7 @@ describe("AuthProvider pendingInvitations", () => {
     vi.restoreAllMocks();
   });
 
-  const invite = { org_login: "acme", token: "inv-token-123", expires_at: "2030-01-01T00:00:00Z" };
+  const invite = { org_login: "acme", expires_at: "2030-01-01T00:00:00Z" };
 
   it("captures pending_invitations from a successful login response", async () => {
     vi.stubGlobal(

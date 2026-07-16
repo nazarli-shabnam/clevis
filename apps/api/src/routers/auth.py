@@ -64,8 +64,13 @@ class LoginRequest(BaseModel):
 
 
 class PendingInvitationSummary(BaseModel):
+    # Deliberately excludes the invitation token: registration has no email-verification
+    # step anywhere in this app, so "an account with email X" is not proof of controlling
+    # inbox X. Handing back the accept-capability token here would let anyone who merely
+    # knows a victim's email address (self-asserted at register, never verified) claim
+    # their pending org invitation without ever seeing the real invite link — this must
+    # stay informational only ("an invite exists"), never a shortcut to accepting it.
     org_login: str
-    token: str
     expires_at: datetime
 
 
@@ -103,7 +108,7 @@ def _pending_invitations_for(db: Session, email: str) -> list[PendingInvitationS
         org = db.query(Org).filter(Org.id == inv.org_id).first()
         if org is None:
             continue
-        summaries.append(PendingInvitationSummary(org_login=org.github_login, token=inv.token, expires_at=inv.expires_at))
+        summaries.append(PendingInvitationSummary(org_login=org.github_login, expires_at=inv.expires_at))
     return summaries
 
 

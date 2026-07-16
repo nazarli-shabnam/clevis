@@ -91,8 +91,8 @@ export interface MyOrgMembership {
 }
 
 export interface PendingInvitationSummary {
+  // No token here by design — see PendingInvitationSummary in apps/api/src/routers/auth.py.
   org_login: string
-  token: string
   expires_at: string
 }
 
