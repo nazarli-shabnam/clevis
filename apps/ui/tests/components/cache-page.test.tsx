@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -75,5 +75,73 @@ describe("CachePage", () => {
   it("keeps the Clear button disabled until an actor is entered", async () => {
     renderPage();
     expect(screen.getByRole("button", { name: /^clear$/i })).toBeDisabled();
+  });
+
+  it("requires a second click on Clear before actually clearing caches", async () => {
+    cacheClearMock.mockResolvedValue({ queued: true, dry_run: false, job_id: 7 });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("actor"), { target: { value: "me@example.com" } });
+    const clearButton = screen.getByRole("button", { name: /^clear$/i });
+    await waitFor(() => expect(clearButton).not.toBeDisabled());
+
+    fireEvent.click(clearButton);
+
+    // First click only arms the button — no request fired yet.
+    expect(cacheClearMock).not.toHaveBeenCalled();
+    const confirmButton = await screen.findByRole("button", { name: /confirm clear/i });
+    expect(screen.getByText(/click again to permanently delete/i)).toBeInTheDocument();
+
+    fireEvent.click(confirmButton);
+
+    await waitFor(() =>
+      expect(cacheClearMock).toHaveBeenCalledWith("acme", "demo", {
+        token: "",
+        actor: "me@example.com",
+        dry_run: false,
+      }),
+    );
+  });
+
+  it("disarms the confirm state if the actor is edited before confirming", async () => {
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("actor"), { target: { value: "me@example.com" } });
+    const clearButton = screen.getByRole("button", { name: /^clear$/i });
+    await waitFor(() => expect(clearButton).not.toBeDisabled());
+
+    fireEvent.click(clearButton);
+    await screen.findByRole("button", { name: /confirm clear/i });
+
+    fireEvent.change(screen.getByPlaceholderText("actor"), { target: { value: "someone-else@example.com" } });
+
+    expect(screen.queryByRole("button", { name: /confirm clear/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^clear$/i })).toBeInTheDocument();
+    expect(cacheClearMock).not.toHaveBeenCalled();
+  });
+
+  it("auto-disarms the confirm state after a few seconds of inactivity", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderPage();
+
+      fireEvent.change(screen.getByPlaceholderText("actor"), { target: { value: "me@example.com" } });
+      const clearButton = screen.getByRole("button", { name: /^clear$/i });
+      await waitFor(() => expect(clearButton).not.toBeDisabled());
+
+      fireEvent.click(clearButton);
+      await screen.findByRole("button", { name: /confirm clear/i });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4000);
+      });
+
+      expect(screen.queryByRole("button", { name: /confirm clear/i })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^clear$/i })).toBeInTheDocument();
+      expect(cacheClearMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
