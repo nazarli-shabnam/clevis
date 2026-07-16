@@ -21,7 +21,7 @@ This is the infrastructure/ops guide — getting the Clevis stack itself running
 3. Register a GitHub App on github.com (**Settings → Developer settings → GitHub Apps → New GitHub App**) so users can connect their orgs after the instance is running:
    - **Homepage URL** — your deployed UI URL.
    - **Callback URL** — `<NEXT_PUBLIC_API_BASE>/auth/github/callback` (this exact path is required for "Sign in with GitHub" to work).
-   - **Webhook** — can be left disabled/unconfigured; Clevis doesn't currently consume GitHub webhooks, so there's nothing to point it at yet.
+   - **Webhook** — optional, but recommended: point it at `<NEXT_PUBLIC_API_BASE>/webhooks/github`, generate a webhook secret, and set `GITHUB_APP_WEBHOOK_SECRET` in `.env` to the same value. Without it, `github_installations` rows are never cleaned up when a user uninstalls the App — they just go stale.
    - Grant read access to the repository/organization data the security checks need (contents, metadata, administration, members) — generate a private key once the App is created.
    - Copy the resulting values into `.env`: `GITHUB_APP_ID`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY` (the full `.pem` contents). Also set `NEXT_PUBLIC_GITHUB_APP_SLUG` to the App's slug (from its public page URL) — this powers the "Install GitHub App" button in the UI.
 

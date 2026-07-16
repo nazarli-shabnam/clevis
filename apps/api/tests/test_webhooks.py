@@ -1,0 +1,132 @@
+"""Tests for the GitHub App webhook receiver."""
+
+import hashlib
+import hmac
+import json
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from pydantic import SecretStr
+
+from src.core.config import settings
+from src.core.db import AuditLog, get_db
+from src.repositories import installation_repo, org_repo
+from src.routers.webhooks import router as webhooks_router
+
+_SECRET = "test-webhook-secret"
+
+
+@pytest.fixture()
+def webhook_client(db, monkeypatch):
+    monkeypatch.setattr(settings, "github_app_webhook_secret", SecretStr(_SECRET))
+    app = FastAPI()
+    app.include_router(webhooks_router)
+    app.dependency_overrides[get_db] = lambda: db
+    return TestClient(app)
+
+
+def _sign(body: bytes, secret: str = _SECRET) -> str:
+    return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+def _post(client, event: str, payload: dict, *, secret: str = _SECRET, signature: str | None = None):
+    body = json.dumps(payload).encode()
+    sig = signature if signature is not None else _sign(body, secret)
+    return client.post(
+        "/webhooks/github",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-GitHub-Event": event,
+            "X-Hub-Signature-256": sig,
+        },
+    )
+
+
+def test_rejects_missing_signature(webhook_client):
+    resp = webhook_client.post(
+        "/webhooks/github",
+        content=b'{"action": "deleted"}',
+        headers={"X-GitHub-Event": "installation"},
+    )
+    assert resp.status_code == 401
+
+
+def test_rejects_invalid_signature(webhook_client):
+    resp = _post(webhook_client, "installation", {"action": "deleted"}, signature="sha256=deadbeef")
+    assert resp.status_code == 401
+
+
+def test_rejects_signature_signed_with_wrong_secret(webhook_client):
+    resp = _post(webhook_client, "installation", {"action": "deleted"}, secret="wrong-secret")
+    assert resp.status_code == 401
+
+
+def test_returns_503_when_webhook_secret_not_configured(db, monkeypatch):
+    monkeypatch.setattr(settings, "github_app_webhook_secret", None)
+    app = FastAPI()
+    app.include_router(webhooks_router)
+    app.dependency_overrides[get_db] = lambda: db
+    client = TestClient(app)
+    resp = _post(client, "installation", {"action": "deleted"})
+    assert resp.status_code == 503
+
+
+def test_installation_deleted_removes_matching_rows_and_writes_audit_log(db, webhook_client):
+    org = org_repo.get_or_create(db, github_login="acme")
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id
+    )
+
+    resp = _post(webhook_client, "installation", {"action": "deleted", "installation": {"id": 42}})
+
+    assert resp.status_code == 200
+    assert installation_repo.list_for_org(db, org_id=org.id) == []
+    logs = db.query(AuditLog).filter(AuditLog.action == "installation.deleted").all()
+    assert len(logs) == 1
+    assert logs[0].actor == "github-webhook"
+    assert logs[0].target == "42"
+
+
+def test_installation_deleted_only_removes_matching_installation_id(db, webhook_client):
+    org = org_repo.get_or_create(db, github_login="acme")
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id
+    )
+
+    resp = _post(webhook_client, "installation", {"action": "deleted", "installation": {"id": 999}})
+
+    assert resp.status_code == 200
+    assert len(installation_repo.list_for_org(db, org_id=org.id)) == 1
+
+
+def test_installation_created_action_is_a_no_op(db, webhook_client):
+    org = org_repo.get_or_create(db, github_login="acme")
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id
+    )
+
+    resp = _post(webhook_client, "installation", {"action": "created", "installation": {"id": 42}})
+
+    assert resp.status_code == 200
+    assert len(installation_repo.list_for_org(db, org_id=org.id)) == 1
+
+
+def test_unrecognized_event_type_returns_200_without_side_effects(webhook_client):
+    resp = _post(webhook_client, "ping", {"zen": "hello"})
+    assert resp.status_code == 200
+
+
+def test_malformed_json_body_returns_400(webhook_client):
+    body = b"not json"
+    resp = webhook_client.post(
+        "/webhooks/github",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-GitHub-Event": "installation",
+            "X-Hub-Signature-256": _sign(body),
+        },
+    )
+    assert resp.status_code == 400
