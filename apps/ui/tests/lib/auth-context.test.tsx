@@ -24,6 +24,18 @@ function makeJwt(sub: number, email: string): string {
   return `${header}.${payload}.sig`;
 }
 
+function makeJwtForUser(user: AuthUser): string {
+  const header = b64url({ alg: "none", typ: "JWT" });
+  const payload = b64url({
+    sub: String(user.id),
+    email: user.email,
+    name: user.name,
+    is_workspace_admin: user.is_workspace_admin,
+    exp: Math.floor(Date.now() / 1000) + 3600,
+  });
+  return `${header}.${payload}.sig`;
+}
+
 const passwordUser: AuthUser = {
   id: 2,
   email: "password@example.com",
@@ -285,5 +297,109 @@ describe("AuthProvider logoutWarning", () => {
     });
 
     expect(result.current.logoutWarning).toBeNull();
+  });
+});
+
+describe("AuthProvider authUnconfirmed", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("retries once after a transient /auth/me failure and clears authUnconfirmed on success", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    localStorage.setItem(TOKEN_KEY, makeJwtForUser(cookieUser));
+
+    let meCallCount = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/me")) {
+          meCallCount += 1;
+          if (meCallCount === 1) return Promise.reject(new Error("network blip"));
+          return Promise.resolve(jsonResponse(cookieUser));
+        }
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <AuthProvider>{children}</AuthProvider>
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    // Optimistic decode from the stored JWT applies immediately.
+    expect(result.current.user).toEqual(cookieUser);
+    expect(result.current.authUnconfirmed).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    await waitFor(() => expect(meCallCount).toBe(2));
+    expect(result.current.authUnconfirmed).toBe(false);
+    expect(result.current.user).toEqual(cookieUser);
+  });
+
+  it("marks authUnconfirmed after the retry also fails, without clearing the optimistic user", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    localStorage.setItem(TOKEN_KEY, makeJwtForUser(cookieUser));
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/me")) return Promise.reject(new Error("network down"));
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <AuthProvider>{children}</AuthProvider>
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    expect(result.current.user).toEqual(cookieUser);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    await waitFor(() => expect(result.current.authUnconfirmed).toBe(true));
+    // The optimistic user is kept (not wiped) — the caller decides what to do with the flag.
+    expect(result.current.user).toEqual(cookieUser);
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  it("does not set authUnconfirmed when there was no stored token to begin with", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/me")) return Promise.reject(new Error("network down"));
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <AuthProvider>{children}</AuthProvider>
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.authUnconfirmed).toBe(false);
+    expect(result.current.user).toBeNull();
   });
 });

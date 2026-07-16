@@ -14,6 +14,10 @@ interface AuthContextValue {
   token: string | null
   isLoading: boolean
   logoutWarning: string | null
+  /** True once the optimistic JWT-derived user could not be confirmed against
+   *  the server (network error, timeout, or non-401 failure) after a retry —
+   *  `user` may be stale (e.g. is_workspace_admin) until the next successful check. */
+  authUnconfirmed: boolean
   login(email: string, password: string): Promise<void>
   logout(): void
   clearLogoutWarning(): void
@@ -52,6 +56,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [logoutWarning, setLogoutWarning] = useState<string | null>(null)
+  const [authUnconfirmed, setAuthUnconfirmed] = useState(false)
   const sessionEpochRef = useRef(0)
 
   const bumpSessionEpoch = useCallback(() => {
@@ -72,11 +77,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem(_TOKEN_KEY)
     setToken(null)
     setUser(null)
+    setAuthUnconfirmed(false)
   }, [bumpSessionEpoch])
 
   useEffect(() => {
     const epochAtStart = sessionEpochRef.current
     const stored = localStorage.getItem(_TOKEN_KEY)
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
 
     if (stored) {
       const optimistic = parseJwtPayload(stored)
@@ -87,29 +94,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 15000)
-    fetch(`${BASE}/auth/me`, {
-      headers: stored ? { Authorization: `Bearer ${stored}` } : {},
-      credentials: "include",
-      signal: controller.signal,
-    })
-      .then(async (res) => {
-        if (sessionEpochRef.current !== epochAtStart) return
-        if (res.status === 401) {
-          if (stored) logout()
-          return
-        }
-        if (!res.ok) return
-        const data = (await res.json()) as AuthUser
-        if (stored) setToken(stored)
-        setUser(data)
+    function checkMe(attempt: number) {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 15000)
+      let willRetry = false
+
+      fetch(`${BASE}/auth/me`, {
+        headers: stored ? { Authorization: `Bearer ${stored}` } : {},
+        credentials: "include",
+        signal: controller.signal,
       })
-      .catch(() => {})
-      .finally(() => {
-        clearTimeout(timer)
-        setIsLoading(false)
-      })
+        .then(async (res) => {
+          if (sessionEpochRef.current !== epochAtStart) return
+          if (res.status === 401) {
+            if (stored) logout()
+            return
+          }
+          if (!res.ok) throw new Error(`auth/me responded ${res.status}`)
+          const data = (await res.json()) as AuthUser
+          if (stored) setToken(stored)
+          setUser(data)
+          setAuthUnconfirmed(false)
+        })
+        .catch(() => {
+          if (sessionEpochRef.current !== epochAtStart) return
+          // One retry for a transient network hiccup/timeout before treating the
+          // optimistic (or absent) user as unconfirmed instead of trusting it forever.
+          if (attempt === 0) {
+            willRetry = true
+            retryTimer = setTimeout(() => checkMe(1), 2000)
+            return
+          }
+          if (stored) setAuthUnconfirmed(true)
+        })
+        .finally(() => {
+          clearTimeout(timer)
+          // Keep isLoading true while a retry is pending; otherwise this is the
+          // terminal outcome for this mount's check (success, 401, exhausted
+          // retries, or a stale epoch after a concurrent login/logout) and the
+          // initial loading phase is over regardless of which branch ran.
+          if (!willRetry) setIsLoading(false)
+        })
+    }
+
+    checkMe(0)
+
+    return () => clearTimeout(retryTimer)
   }, [logout])
 
   const login = useCallback(async (email: string, password: string) => {
@@ -126,6 +156,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem(_TOKEN_KEY, access_token)
     setToken(access_token)
     setUser(u)
+    setAuthUnconfirmed(false)
   }, [bumpSessionEpoch, clearLogoutWarning])
 
   const updateUser = useCallback((patch: Partial<AuthUser>) => {
@@ -138,6 +169,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem(_TOKEN_KEY, jwtToken)
     setToken(jwtToken)
     setUser(authUser)
+    setAuthUnconfirmed(false)
   }, [bumpSessionEpoch, clearLogoutWarning])
 
   return (
@@ -147,6 +179,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         token,
         isLoading,
         logoutWarning,
+        authUnconfirmed,
         login,
         logout,
         clearLogoutWarning,

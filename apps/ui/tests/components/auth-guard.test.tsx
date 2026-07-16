@@ -95,3 +95,50 @@ describe("AuthGuard clevis:unauthorized handling", () => {
     expect(replace).toHaveBeenCalledWith("/login");
   });
 });
+
+describe("AuthGuard authUnconfirmed banner", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    replace.mockClear();
+    localStorage.setItem(TOKEN_KEY, makeJwt(1, "user@example.com"));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("shows a banner once the session can't be confirmed with the server, without blocking the page", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/me")) return Promise.reject(new Error("network down"));
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+
+    render(
+      <AuthProvider>
+        <AuthGuard>
+          <div>protected content</div>
+        </AuthGuard>
+      </AuthProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByText("protected content")).toBeInTheDocument());
+    expect(screen.queryByText(/couldn.t confirm your session/i)).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    await waitFor(() =>
+      expect(screen.getByText(/couldn.t confirm your session/i)).toBeInTheDocument(),
+    );
+    // Still renders the page — the stale optimistic state is surfaced, not hidden behind it.
+    expect(screen.getByText("protected content")).toBeInTheDocument();
+  });
+});

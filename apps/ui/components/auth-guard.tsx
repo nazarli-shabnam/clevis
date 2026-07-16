@@ -11,7 +11,7 @@ const PUBLIC_ROUTES = ["/login", "/setup", "/register"]
 const PUBLIC_ROUTE_PREFIXES = ["/invite/"]
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { user, isLoading, logout } = useAuth()
+  const { user, isLoading, logout, authUnconfirmed } = useAuth()
   const router = useRouter()
   const pathname = usePathname()
 
@@ -67,5 +67,14 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     </div>
   )
 
-  return <>{children}</>
+  return (
+    <>
+      {authUnconfirmed && (
+        <div className="bg-yellow-500/10 border-b border-yellow-500/30 px-4 py-1.5 text-center text-xs text-yellow-400">
+          Couldn&rsquo;t confirm your session with the server — your account info may be out of date until it&rsquo;s reachable again.
+        </div>
+      )}
+      {children}
+    </>
+  )
 }
