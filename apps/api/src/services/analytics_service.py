@@ -21,8 +21,9 @@ def get_overview(owner: str, token: str) -> dict:
     base_url = settings.github_api_base
     report = run_all_checks(owner=owner, token=token, base_url=base_url)
     checks = report["checks"]
-    failed = [c for c in checks if c["status"] in ("fail", "error")]
-    score = 100 - int((len(failed) / max(1, len(checks))) * 100)
+    scored = [c for c in checks if c["status"] != "not_applicable"]
+    failed = [c for c in scored if c["status"] in ("fail", "error")]
+    score = 100 - int((len(failed) / max(1, len(scored))) * 100)
     return {
         "owner": owner,
         "score": score,
