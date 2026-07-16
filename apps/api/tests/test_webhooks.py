@@ -130,3 +130,52 @@ def test_malformed_json_body_returns_400(webhook_client):
         },
     )
     assert resp.status_code == 400
+
+
+def test_non_ascii_signature_header_is_a_clean_401_not_a_crash(webhook_client):
+    # hmac.compare_digest raises TypeError on a `str` with non-ASCII characters.
+    # HTTP header values are latin-1, so a raw byte like \xe9 is a valid header on
+    # the wire but decodes to a non-ASCII Python str — pass raw bytes (not a str,
+    # which httpx would refuse to even encode as a header) to actually exercise
+    # that path. Must fail closed with 401, not bubble up as an unhandled 500.
+    body = json.dumps({"action": "deleted"}).encode()
+    resp = webhook_client.post(
+        "/webhooks/github",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-GitHub-Event": "installation",
+            "X-Hub-Signature-256": b"sha256=\xe9\xe9\xe9\xe9",
+        },
+    )
+    assert resp.status_code == 401
+
+
+def test_oversized_body_rejected_with_413(webhook_client):
+    from src.routers.webhooks import _MAX_BODY_BYTES
+
+    oversized = b"a" * (_MAX_BODY_BYTES + 1)
+    resp = webhook_client.post(
+        "/webhooks/github",
+        content=oversized,
+        headers={
+            "Content-Type": "application/octet-stream",
+            "X-GitHub-Event": "installation",
+            "X-Hub-Signature-256": _sign(oversized),
+        },
+    )
+    assert resp.status_code == 413
+
+
+def test_installation_deleted_ignores_non_integer_installation_id(db, webhook_client):
+    org = org_repo.get_or_create(db, github_login="acme")
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id
+    )
+
+    resp = _post(webhook_client, "installation", {"action": "deleted", "installation": {"id": "not-an-int"}})
+
+    assert resp.status_code == 200
+    # Nothing should be deleted, and no exception should propagate from a type mismatch
+    # hitting the database — an installation_id of the wrong type must be a safe no-op.
+    assert len(installation_repo.list_for_org(db, org_id=org.id)) == 1
