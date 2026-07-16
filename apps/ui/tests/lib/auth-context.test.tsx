@@ -129,6 +129,43 @@ describe("AuthProvider mount /auth/me race", () => {
     expect(result.current.user).toEqual(passwordUser);
   });
 
+  it("does not overwrite a concurrent login even if the stale response's body resolves after the login completes", async () => {
+    // Headers resolve before login() runs, but res.json() only resolves after —
+    // this exercises the epoch re-check *after* the `await res.json()` in the
+    // /auth/me handler, distinct from the epoch check at the top of the handler.
+    let resolveJson!: () => void;
+    const jsonPromise = new Promise<unknown>((resolve) => {
+      resolveJson = () => resolve(cookieUser);
+    });
+    const staleResponse = {
+      ok: true,
+      status: 200,
+      json: () => jsonPromise,
+    } as Response;
+
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <AuthProvider>{children}</AuthProvider>
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await act(async () => {
+      meDeferred.resolve(staleResponse);
+    });
+
+    await act(async () => {
+      await result.current.login("password@example.com", "supersecret1234");
+    });
+
+    expect(result.current.user).toEqual(passwordUser);
+
+    await act(async () => {
+      resolveJson();
+    });
+
+    // The stale /auth/me body must not clobber the concurrently-logged-in user.
+    expect(result.current.user).toEqual(passwordUser);
+  });
+
   it("ignores a stale /auth/me response after logout", async () => {
     localStorage.setItem(TOKEN_KEY, makeJwt(cookieUser.id, cookieUser.email));
 
@@ -375,6 +412,41 @@ describe("AuthProvider authUnconfirmed", () => {
     // The optimistic user is kept (not wiped) — the caller decides what to do with the flag.
     expect(result.current.user).toEqual(cookieUser);
     expect(result.current.isLoading).toBe(false);
+  });
+
+  it("clears authUnconfirmed on the next 'online' event once connectivity returns", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    localStorage.setItem(TOKEN_KEY, makeJwtForUser(cookieUser));
+
+    let online = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/me")) {
+          return online ? Promise.resolve(jsonResponse(cookieUser)) : Promise.reject(new Error("offline"));
+        }
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <AuthProvider>{children}</AuthProvider>
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    await waitFor(() => expect(result.current.authUnconfirmed).toBe(true));
+
+    online = true;
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+    });
+
+    await waitFor(() => expect(result.current.authUnconfirmed).toBe(false));
+    expect(result.current.user).toEqual(cookieUser);
   });
 
   it("does not set authUnconfirmed when there was no stored token to begin with", async () => {
