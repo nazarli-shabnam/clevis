@@ -1,13 +1,14 @@
 """Worker job processing: unit-style tests with mocked GitHub HTTP and psycopg connection."""
 
 import json
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import httpx
 
 from _crypto import encrypt_job_token
 from config import settings
-from worker import MAX_RETRIES, process_job
+from worker import MAX_RETRIES, RECLAIM_TIMEOUT_MINUTES, _reclaim_stale_jobs, process_job
 
 
 class _FakeCursor:
@@ -245,3 +246,52 @@ def test_process_job_rejects_empty_string_fields():
     sql, params = conn._cursor.calls[0]
     assert "status='failed'" in sql
     assert conn.committed is True
+
+
+def test_process_job_terminal_write_is_a_noop_if_reclaimed_out_from_under_it(worker_db):
+    """If the reclaim sweep resets this job back to 'queued' (or another worker later
+    claims it) while this call is still in flight, process_job's own terminal write
+    must not clobber that newer state — the WHERE status='processing' guard should
+    make it a no-op instead of a lost update."""
+    conn, created_ids = worker_db
+    stale = datetime.now(timezone.utc) - timedelta(minutes=RECLAIM_TIMEOUT_MINUTES + 5)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO jobs (job_type, payload, status, retry_count, updated_at)
+            VALUES ('github.clear_actions_cache', '{}', 'processing', 0, %s)
+            RETURNING id
+            """,
+            (stale,),
+        )
+        job_id = cur.fetchone()[0]
+    conn.commit()
+    created_ids.append(job_id)
+
+    # Simulate the reclaim sweep firing while this worker is still mid-process_job for
+    # the same job (e.g. this worker stalled past the reclaim timeout).
+    _reclaim_stale_jobs(conn)
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, retry_count FROM jobs WHERE id = %s", (job_id,))
+        reclaimed_status, reclaimed_retry_count = cur.fetchone()
+    assert reclaimed_status == "queued"
+    assert reclaimed_retry_count == 1
+
+    mock_response = MagicMock()
+    mock_response.status_code = 204
+    mock_response.text = ""
+    with patch("worker.httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.delete = MagicMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        # This worker's in-memory retry_count is stale (captured before the reclaim).
+        process_job(conn, job_id, _payload(), retry_count=0)
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, retry_count FROM jobs WHERE id = %s", (job_id,))
+        final_status, final_retry_count = cur.fetchone()
+    assert final_status == "queued"
+    assert final_retry_count == 1

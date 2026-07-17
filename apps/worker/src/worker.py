@@ -61,9 +61,13 @@ class ClearActionsCachePayload(BaseModel):
 
 
 def _mark_done(conn: psycopg.Connection, job_id: int, result: dict) -> None:
+    # WHERE status='processing' guards against a lost update if the reclaim sweep
+    # already reset this job (e.g. this worker stalled past RECLAIM_TIMEOUT_MINUTES)
+    # out from under us — the write becomes a safe no-op instead of clobbering
+    # whatever state/retry_count the reclaim (or another worker) since wrote.
     with conn.cursor() as cur:
         cur.execute(
-            "UPDATE jobs SET status='done', result=%s, updated_at=NOW() WHERE id=%s",
+            "UPDATE jobs SET status='done', result=%s, updated_at=NOW() WHERE id=%s AND status='processing'",
             (json.dumps(result), job_id),
         )
     conn.commit()
@@ -72,7 +76,7 @@ def _mark_done(conn: psycopg.Connection, job_id: int, result: dict) -> None:
 def _mark_failed(conn: psycopg.Connection, job_id: int, error_text: str) -> None:
     with conn.cursor() as cur:
         cur.execute(
-            "UPDATE jobs SET status='failed', result=%s, updated_at=NOW() WHERE id=%s",
+            "UPDATE jobs SET status='failed', result=%s, updated_at=NOW() WHERE id=%s AND status='processing'",
             (error_text, job_id),
         )
     conn.commit()
@@ -83,13 +87,15 @@ def _requeue_for_retry(conn: psycopg.Connection, job_id: int, retry_count: int, 
     if new_count > MAX_RETRIES:
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE jobs SET status='failed', retry_count=%s, result=%s, updated_at=NOW() WHERE id=%s",
+                "UPDATE jobs SET status='failed', retry_count=%s, result=%s, updated_at=NOW() "
+                "WHERE id=%s AND status='processing'",
                 (new_count, f"exceeded max retry attempts ({MAX_RETRIES}): {error_text}", job_id),
             )
     else:
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE jobs SET status='queued', retry_count=%s, result=%s, updated_at=NOW() WHERE id=%s",
+                "UPDATE jobs SET status='queued', retry_count=%s, result=%s, updated_at=NOW() "
+                "WHERE id=%s AND status='processing'",
                 (new_count, error_text, job_id),
             )
     conn.commit()
