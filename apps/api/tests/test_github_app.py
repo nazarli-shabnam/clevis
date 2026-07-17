@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
+import httpx
 import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -100,3 +101,46 @@ def test_not_configured_raises(monkeypatch):
     monkeypatch.setattr(settings, "github_app_private_key", None)
     with pytest.raises(github_app.GitHubAppNotConfigured):
         github_app.generate_app_jwt()
+
+
+def test_get_installation_uses_app_jwt_not_installation_token(app_configured):
+    with patch("src.services.github_app.httpx.Client") as mock_cls:
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_resp = MagicMock()
+        mock_resp.json = MagicMock(return_value={"id": 99, "account": {"login": "acme", "type": "Organization"}})
+        mock_client.get = MagicMock(return_value=mock_resp)
+        mock_cls.return_value = mock_client
+
+        result = github_app.get_installation(99)
+
+    assert result["account"]["login"] == "acme"
+    url = mock_client.get.call_args.args[0]
+    assert url.endswith("/app/installations/99")
+    auth_header = mock_client.get.call_args.kwargs["headers"]["Authorization"]
+    # Distinct from an installation access token (which get_installation_token would mint) —
+    # this must be the App's own JWT, decodable with the App's public key.
+    token = auth_header.removeprefix("Bearer ")
+    decoded = jwt.decode(token, app_configured, algorithms=["RS256"], options={"verify_exp": False})
+    assert decoded["iss"] == _APP_ID
+
+
+def test_get_installation_raises_on_404(app_configured):
+    with patch("src.services.github_app.httpx.Client") as mock_cls:
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError(
+                "not found",
+                request=httpx.Request("GET", "https://api.github.com/app/installations/404"),
+                response=httpx.Response(404),
+            )
+        )
+        mock_client.get = MagicMock(return_value=mock_resp)
+        mock_cls.return_value = mock_client
+
+        with pytest.raises(httpx.HTTPStatusError):
+            github_app.get_installation(404)

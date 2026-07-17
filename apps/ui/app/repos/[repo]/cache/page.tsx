@@ -51,6 +51,14 @@ export default function CachePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner])
 
+  // Reset stale cache-table/clear-result data from the previous repo whenever the
+  // route's owner~repo segment changes, even if only the repo (not the owner) differs.
+  useEffect(() => {
+    listMutation.reset()
+    clearMutation.reset()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.repo])
+
   const saveTokenMutation = useMutation({
     mutationFn: () => api.tokens.upsert(owner, token.trim()),
     onSuccess: () => setTokenSaved(true),

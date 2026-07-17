@@ -90,6 +90,12 @@ export interface MyOrgMembership {
   role: "admin" | "member"
 }
 
+export interface PendingInvitationSummary {
+  // No token here by design — see PendingInvitationSummary in apps/api/src/routers/auth.py.
+  org_login: string
+  expires_at: string
+}
+
 export interface InvitationOut {
   id: number
   org_id: number

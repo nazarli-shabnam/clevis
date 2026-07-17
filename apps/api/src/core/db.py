@@ -79,6 +79,10 @@ class Job(Base):
     payload: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
     result: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Counts attempts caused by either the worker reclaiming a job stuck in
+    # 'processing' (its worker likely crashed) or a transient failure being requeued —
+    # a single shared cap on both prevents a job from retrying forever either way.
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

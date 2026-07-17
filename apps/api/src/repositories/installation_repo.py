@@ -102,3 +102,11 @@ def list_for_user(db: Session, owner_user_id: int) -> list[GitHubInstallation]:
         .order_by(GitHubInstallation.created_at.desc())
         .all()
     )
+
+
+def delete_by_installation_id(db: Session, installation_id: int) -> int:
+    """Remove every row referencing a GitHub installation_id (e.g. on uninstall).
+    Returns the number of rows deleted."""
+    count = db.query(GitHubInstallation).filter(GitHubInstallation.installation_id == installation_id).delete()
+    db.commit()
+    return count

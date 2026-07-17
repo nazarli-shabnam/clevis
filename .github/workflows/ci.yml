@@ -33,7 +33,17 @@ jobs:
 
       - name: Lint commits (push)
         if: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' && github.event.before != '0000000000000000000000000000000000000000' }}
-        run: npx commitlint --from ${{ github.event.before }} --to ${{ github.sha }} --verbose
+        # github.event.before can be a commit no longer reachable from github.sha (e.g. after a
+        # rebase or force-push rewrites history), which makes the range invalid and this step
+        # fail even though nothing is actually wrong with the commit messages. When that happens,
+        # skip rather than fail: if this branch has an open PR, the pull_request-triggered lint
+        # job above already covers the same commits against a stable base.sha.
+        run: |
+          if git merge-base --is-ancestor ${{ github.event.before }} ${{ github.sha }} 2>/dev/null; then
+            npx commitlint --from ${{ github.event.before }} --to ${{ github.sha }} --verbose
+          else
+            echo "::notice::${{ github.event.before }} is not an ancestor of ${{ github.sha }} (likely a rebase/force-push) — skipping push-triggered lint for this range."
+          fi
 
   ui:
     name: UI Typecheck + Test + Build
