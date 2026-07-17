@@ -201,6 +201,33 @@ def test_sync_org_installation_returns_503_when_app_not_configured(db, acme_org)
     assert installation_repo.list_for_org(db, org_id=acme_org["org"].id) == []
 
 
+def test_sync_org_installation_returns_400_on_other_github_api_error(db, acme_org):
+    response = httpx.Response(500, request=httpx.Request("GET", "https://api.github.com/app/installations/7"))
+    with patch(
+        "src.routers.installations.github_app.get_installation",
+        side_effect=httpx.HTTPStatusError("server error", request=response.request, response=response),
+    ):
+        resp = _client(db, acme_org["admin"]).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 400
+    assert installation_repo.list_for_org(db, org_id=acme_org["org"].id) == []
+
+
+def test_sync_org_installation_returns_503_on_github_network_error(db, acme_org):
+    with patch(
+        "src.routers.installations.github_app.get_installation",
+        side_effect=httpx.ConnectError("connection refused"),
+    ):
+        resp = _client(db, acme_org["admin"]).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 503
+    assert installation_repo.list_for_org(db, org_id=acme_org["org"].id) == []
+
+
 def test_sync_org_installation_skips_verification_when_installation_id_omitted(db, acme_org):
     with patch("src.routers.installations.github_app.get_installation") as mock_get:
         resp = _client(db, acme_org["admin"]).post(
