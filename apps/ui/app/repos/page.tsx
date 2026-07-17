@@ -15,6 +15,16 @@ import { relativeTime } from "@/lib/format"
 import { useInView } from "@/lib/use-in-view"
 import type { RepoSummary } from "@/lib/api/types"
 
+type SortKey = "pushed" | "stars" | "name"
+
+function sortRepos(repos: RepoSummary[], sort: SortKey): RepoSummary[] {
+  const sorted = [...repos]
+  if (sort === "stars") sorted.sort((a, b) => b.stargazers_count - a.stargazers_count)
+  else if (sort === "name") sorted.sort((a, b) => a.name.localeCompare(b.name))
+  else sorted.sort((a, b) => (b.pushed_at ?? "").localeCompare(a.pushed_at ?? ""))
+  return sorted
+}
+
 function RepoActivityCell({ org, repo, token }: { org: string; repo: string; token: string }) {
   const [ref, inView] = useInView<HTMLDivElement>()
   const { data, isLoading } = useQuery({
@@ -32,6 +42,33 @@ function RepoActivityCell({ org, repo, token }: { org: string; repo: string; tok
         <span className="text-muted-foreground text-[0.6875rem]">— no recent activity</span>
       ) : (
         <MiniSparkline data={weeks} height={28} />
+      )}
+    </div>
+  )
+}
+
+function RepoReleaseCell({ org, repo, token }: { org: string; repo: string; token: string }) {
+  const [ref, inView] = useInView<HTMLDivElement>()
+  // Same query key as RepoActivityCell — React Query dedupes the fetch, this just
+  // reads a different field off the already-fetched (or in-flight) stats response.
+  const { data, isLoading } = useQuery({
+    queryKey: ["repo-stats", org, repo, token],
+    queryFn: () => api.repos.stats(org, org, repo, token),
+    enabled: inView,
+  })
+
+  const release = data?.latest_release
+  return (
+    <div ref={ref}>
+      {!inView || isLoading ? (
+        <Skeleton className="h-3 w-16 ml-auto" />
+      ) : !release ? (
+        <span className="text-muted-foreground text-[0.6875rem]">—</span>
+      ) : (
+        <span className="text-[0.6875rem] text-muted-foreground whitespace-nowrap">
+          {release.tag_name}
+          {release.published_at && <> · {relativeTime(release.published_at)}</>}
+        </span>
       )}
     </div>
   )
@@ -62,7 +99,7 @@ function RepoPullsCell({ org, repo, token }: { org: string; repo: string; token:
 function RepoRow({ org, repo, token }: { org: string; repo: RepoSummary; token: string }) {
   return (
     <tr className="hover:bg-muted/40 transition-colors">
-      <td className="px-4 py-2.5">
+      <td className="px-4 py-2.5 max-w-[16rem]">
         <div className="flex items-center gap-1.5">
           {repo.private && <Lock className="size-3 text-muted-foreground shrink-0" />}
           <Link
@@ -81,6 +118,9 @@ function RepoRow({ org, repo, token }: { org: string; repo: RepoSummary; token: 
             <ArrowSquareOut className="size-3" />
           </a>
         </div>
+        {repo.description && (
+          <p className="text-[0.6875rem] text-muted-foreground truncate mt-0.5">{repo.description}</p>
+        )}
       </td>
       <td className="px-4 py-2.5 text-muted-foreground">{repo.language ?? "—"}</td>
       <td className="px-4 py-2.5 text-right text-muted-foreground tabular-nums">
@@ -94,6 +134,9 @@ function RepoRow({ org, repo, token }: { org: string; repo: RepoSummary; token: 
       </td>
       <td className="px-4 py-2.5 w-32">
         <RepoActivityCell org={org} repo={repo.name} token={token} />
+      </td>
+      <td className="px-4 py-2.5 text-right">
+        <RepoReleaseCell org={org} repo={repo.name} token={token} />
       </td>
       <td className="px-4 py-2.5 text-right text-muted-foreground whitespace-nowrap">
         {repo.pushed_at ? relativeTime(repo.pushed_at) : "—"}
@@ -115,6 +158,7 @@ export default function ReposPage() {
   const [token, setToken] = useState("")
   const [tokenSaved, setTokenSaved] = useState(false)
   const [search, setSearch] = useState("")
+  const [sort, setSort] = useState<SortKey>("pushed")
 
   useEffect(() => {
     const defaultOrg = localStorage.getItem("default_org") || ""
@@ -169,8 +213,9 @@ export default function ReposPage() {
     })
   }
 
-  const repos = (listMutation.data?.repos ?? []).filter((r) =>
-    r.name.toLowerCase().includes(search.toLowerCase()),
+  const repos = sortRepos(
+    (listMutation.data?.repos ?? []).filter((r) => r.name.toLowerCase().includes(search.toLowerCase())),
+    sort,
   )
 
   return (
@@ -261,6 +306,15 @@ export default function ReposPage() {
                       onChange={(e) => setSearch(e.target.value)}
                       className="h-7 w-40 text-xs"
                     />
+                    <select
+                      value={sort}
+                      onChange={(e) => setSort(e.target.value as SortKey)}
+                      className="text-xs bg-card border border-border text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
+                    >
+                      <option value="pushed">Sort: Pushed</option>
+                      <option value="stars">Sort: Stars</option>
+                      <option value="name">Sort: Name</option>
+                    </select>
                     <span className="stat-chip">{repos.length} of {listMutation.data.total}</span>
                   </>
                 )}
@@ -278,6 +332,7 @@ export default function ReposPage() {
                         <td className="px-4 py-3"><Skeleton className="h-3 w-10 ml-auto" /></td>
                         <td className="px-4 py-3"><Skeleton className="h-3 w-10 ml-auto" /></td>
                         <td className="px-4 py-3"><Skeleton className="h-6 w-24" /></td>
+                        <td className="px-4 py-3"><Skeleton className="h-3 w-16 ml-auto" /></td>
                         <td className="px-4 py-3"><Skeleton className="h-3 w-16 ml-auto" /></td>
                         <td className="px-4 py-3"><Skeleton className="h-3 w-10 ml-auto" /></td>
                       </tr>
@@ -301,6 +356,7 @@ export default function ReposPage() {
                       <th className="text-right text-muted-foreground font-medium px-4 py-2">Stars</th>
                       <th className="text-right text-muted-foreground font-medium px-4 py-2">Open PRs</th>
                       <th className="text-left text-muted-foreground font-medium px-4 py-2">Activity (8w)</th>
+                      <th className="text-right text-muted-foreground font-medium px-4 py-2">Release</th>
                       <th className="text-right text-muted-foreground font-medium px-4 py-2">Pushed</th>
                       <th className="px-4 py-2" />
                     </tr>

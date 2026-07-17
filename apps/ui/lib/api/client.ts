@@ -14,6 +14,7 @@ import type {
   PendingInvitationSummary,
   RepoListResponse,
   RepoPullsResponse,
+  RepoSecurityResponse,
   RepoStatsResponse,
   SavedTokenMeta,
   SyncInstallationsResponse,
@@ -175,6 +176,11 @@ export const api = {
     pulls: (org: string, owner: string, repo: string, token: string) =>
       post<RepoPullsResponse>(
         `/orgs/${encodeURIComponent(org)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`,
+        { token: token || undefined },
+      ),
+    security: (org: string, owner: string, repo: string, token: string) =>
+      post<RepoSecurityResponse>(
+        `/orgs/${encodeURIComponent(org)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/security`,
         { token: token || undefined },
       ),
   },

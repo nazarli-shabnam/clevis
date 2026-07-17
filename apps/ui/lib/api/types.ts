@@ -56,8 +56,11 @@ export interface RepoSummary {
   name: string
   full_name: string
   private: boolean
+  description: string | null
   language: string | null
   stargazers_count: number
+  forks_count: number
+  watchers_count: number
   open_issues_count: number
   pushed_at: string | null
   default_branch: string
@@ -76,11 +79,23 @@ export interface CommitActivityWeek {
   days: number[]
 }
 
+export interface LatestRelease {
+  tag_name: string
+  published_at: string | null
+  html_url: string
+}
+
 export interface RepoStatsResponse {
   repository: string
   commit_activity: CommitActivityWeek[]
   participation: { all?: number[]; owner?: number[] }
   contributors: { login?: string; total: number }[]
+  stargazers_count: number
+  forks_count: number
+  watchers_count: number
+  open_issues_count: number
+  default_branch: string
+  latest_release: LatestRelease | null
 }
 
 export interface PullSummary {
@@ -95,6 +110,12 @@ export interface RepoPullsResponse {
   repository: string
   total: number
   pulls: PullSummary[]
+}
+
+export interface RepoSecurityResponse {
+  repository: string
+  branch_protection: "protected" | "unprotected" | "unknown"
+  secret_scanning: "enabled" | "disabled"
 }
 
 export interface JobOut {

@@ -48,7 +48,18 @@ describe("ReposPage", () => {
     reposStatsMock.mockReset();
     reposPullsMock.mockReset();
     tokensResolveMock.mockRejectedValue(new Error("no saved token"));
-    reposStatsMock.mockResolvedValue({ repository: "acme/demo", commit_activity: [], participation: {}, contributors: [] });
+    reposStatsMock.mockResolvedValue({
+      repository: "acme/demo",
+      commit_activity: [],
+      participation: {},
+      contributors: [],
+      stargazers_count: 3,
+      forks_count: 0,
+      watchers_count: 3,
+      open_issues_count: 1,
+      default_branch: "main",
+      latest_release: null,
+    });
     reposPullsMock.mockResolvedValue({ repository: "acme/demo", total: 0, pulls: [] });
   });
 
@@ -71,8 +82,11 @@ describe("ReposPage", () => {
           name: "demo",
           full_name: "acme/demo",
           private: false,
+          description: null,
           language: "Python",
           stargazers_count: 3,
+          forks_count: 0,
+          watchers_count: 3,
           open_issues_count: 1,
           pushed_at: "2026-07-01T00:00:00Z",
           default_branch: "main",
@@ -105,8 +119,11 @@ describe("ReposPage", () => {
           name: "demo",
           full_name: "acme/demo",
           private: false,
+          description: null,
           language: "Python",
           stargazers_count: 3,
+          forks_count: 0,
+          watchers_count: 3,
           open_issues_count: 1,
           pushed_at: "2026-07-01T00:00:00Z",
           default_branch: "main",
@@ -226,8 +243,11 @@ describe("ReposPage", () => {
           name: "secret-repo",
           full_name: "acme/secret-repo",
           private: true,
+          description: null,
           language: null,
           stargazers_count: 42,
+          forks_count: 2,
+          watchers_count: 42,
           open_issues_count: 5,
           pushed_at: null,
           default_branch: "main",
@@ -258,8 +278,11 @@ describe("ReposPage", () => {
           name: "demo",
           full_name: "acme/demo",
           private: false,
+          description: null,
           language: "Python",
           stargazers_count: 3,
+          forks_count: 0,
+          watchers_count: 3,
           open_issues_count: 1,
           pushed_at: "2026-07-01T00:00:00Z",
           default_branch: "main",
@@ -272,6 +295,12 @@ describe("ReposPage", () => {
       commit_activity: Array.from({ length: 8 }, (_, i) => ({ week: i, total: i + 1, days: [] })),
       participation: {},
       contributors: [],
+      stargazers_count: 3,
+      forks_count: 0,
+      watchers_count: 3,
+      open_issues_count: 1,
+      default_branch: "main",
+      latest_release: null,
     });
 
     renderPage();
@@ -292,8 +321,11 @@ describe("ReposPage", () => {
           name: "demo",
           full_name: "acme/demo",
           private: false,
+          description: null,
           language: "Python",
           stargazers_count: 3,
+          forks_count: 0,
+          watchers_count: 3,
           open_issues_count: 1,
           pushed_at: "2026-07-01T00:00:00Z",
           default_branch: "main",
@@ -331,5 +363,121 @@ describe("ReposPage", () => {
     fireEvent.keyDown(tokenInput, { key: "Enter" });
 
     await waitFor(() => expect(reposListMock).toHaveBeenCalledWith("acme", ""));
+  });
+
+  it("renders a repo's description, truncated, under its name", async () => {
+    reposListMock.mockResolvedValue({
+      org: "acme",
+      total: 1,
+      repos: [
+        {
+          name: "demo",
+          full_name: "acme/demo",
+          private: false,
+          description: "A demo repository for testing",
+          language: "Python",
+          stargazers_count: 3,
+          forks_count: 0,
+          watchers_count: 3,
+          open_issues_count: 1,
+          pushed_at: "2026-07-01T00:00:00Z",
+          default_branch: "main",
+          html_url: "https://github.com/acme/demo",
+        },
+      ],
+    });
+
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /load repositories/i }));
+
+    expect(await screen.findByText("A demo repository for testing")).toBeInTheDocument();
+  });
+
+  it("reorders rows when the Sort control is changed", async () => {
+    reposListMock.mockResolvedValue({
+      org: "acme",
+      total: 2,
+      repos: [
+        {
+          name: "zebra",
+          full_name: "acme/zebra",
+          private: false,
+          description: null,
+          language: "Go",
+          stargazers_count: 1,
+          forks_count: 0,
+          watchers_count: 1,
+          open_issues_count: 0,
+          pushed_at: "2026-07-01T00:00:00Z",
+          default_branch: "main",
+          html_url: "https://github.com/acme/zebra",
+        },
+        {
+          name: "alpha",
+          full_name: "acme/alpha",
+          private: false,
+          description: null,
+          language: "Go",
+          stargazers_count: 99,
+          forks_count: 0,
+          watchers_count: 99,
+          open_issues_count: 0,
+          pushed_at: "2026-06-01T00:00:00Z",
+          default_branch: "main",
+          html_url: "https://github.com/acme/alpha",
+        },
+      ],
+    });
+
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /load repositories/i }));
+    await waitFor(() => expect(screen.getByText("zebra")).toBeInTheDocument());
+
+    const rowNames = () => screen.getAllByRole("row").slice(1).map((r) => r.textContent);
+    // Default sort is "pushed" (most recent first) — zebra (07-01) before alpha (06-01).
+    expect(rowNames()[0]).toContain("zebra");
+
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "stars" } });
+    // Sorted by stars descending — alpha (99) now first.
+    await waitFor(() => expect(rowNames()[0]).toContain("alpha"));
+
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "name" } });
+    // Alphabetical — alpha before zebra.
+    await waitFor(() => expect(rowNames()[0]).toContain("alpha"));
+  });
+
+  it("percent-encodes the org and repo name in navigation links (CodeQL js/xss-through-dom fix)", async () => {
+    reposListMock.mockResolvedValue({
+      org: "acme",
+      total: 1,
+      repos: [
+        {
+          name: "weird name",
+          full_name: "acme/weird name",
+          private: false,
+          description: null,
+          language: null,
+          stargazers_count: 0,
+          forks_count: 0,
+          watchers_count: 0,
+          open_issues_count: 0,
+          pushed_at: null,
+          default_branch: "main",
+          html_url: "https://github.com/acme/weird%20name",
+        },
+      ],
+    });
+
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /load repositories/i }));
+
+    const repoLink = await screen.findByRole("link", { name: "weird name" });
+    expect(repoLink).toHaveAttribute("href", "/repos/acme~weird%20name");
+
+    const cacheLink = screen.getByRole("link", { name: /cache/i });
+    expect(cacheLink).toHaveAttribute("href", "/repos/acme~weird%20name/cache");
   });
 });
