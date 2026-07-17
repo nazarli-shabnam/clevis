@@ -25,6 +25,7 @@ export default function CachePage() {
   const [token, setToken] = useState("")
   const [tokenSaved, setTokenSaved] = useState(false)
   const [actor, setActor] = useState("")
+  const [clearArmed, setClearArmed] = useState(false)
 
   const parsed = parseOwnerRepo(params.repo || "")
   const owner = parsed?.owner ?? ""
@@ -51,13 +52,24 @@ export default function CachePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner])
 
-  // Reset stale cache-table/clear-result data from the previous repo whenever the
-  // route's owner~repo segment changes, even if only the repo (not the owner) differs.
+  // Reset stale cache-table/clear-result data and any armed "Confirm clear" state
+  // from the previous repo whenever the route's owner~repo segment changes, even if
+  // only the repo (not the owner) differs.
   useEffect(() => {
     listMutation.reset()
     clearMutation.reset()
+    setClearArmed(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.repo])
+
+  // Auto-disarm if the user doesn't confirm within a few seconds, so a stray
+  // later click on the same button spot can't be mistaken for a confirmation.
+  useEffect(() => {
+    if (!clearArmed) return
+    const timer = setTimeout(() => setClearArmed(false), 4000)
+    return () => clearTimeout(timer)
+  }, [clearArmed])
+
 
   const saveTokenMutation = useMutation({
     mutationFn: () => api.tokens.upsert(owner, token.trim()),
@@ -151,11 +163,11 @@ export default function CachePage() {
               <Input
                 placeholder="actor"
                 value={actor}
-                onChange={(e) => setActor(e.target.value)}
+                onChange={(e) => { setActor(e.target.value); setClearArmed(false) }}
               />
             </div>
             <Button
-              onClick={() => listMutation.mutate()}
+              onClick={() => { setClearArmed(false); listMutation.mutate() }}
               disabled={isLoading}
               className="mt-1"
             >
@@ -174,7 +186,7 @@ export default function CachePage() {
             <div className="grid grid-cols-2 gap-2">
               <Button
                 variant="outline"
-                onClick={() => clearMutation.mutate(true)}
+                onClick={() => { setClearArmed(false); clearMutation.mutate(true) }}
                 disabled={isLoading || !actor}
               >
                 <Eye className="size-3.5" />
@@ -182,13 +194,26 @@ export default function CachePage() {
               </Button>
               <Button
                 variant="destructive"
-                onClick={() => clearMutation.mutate(false)}
+                onClick={() => {
+                  if (clearArmed) {
+                    setClearArmed(false)
+                    clearMutation.mutate(false)
+                  } else {
+                    setClearArmed(true)
+                  }
+                }}
                 disabled={isLoading || !actor}
               >
                 <Trash className="size-3.5" />
-                Clear
+                {clearArmed ? "Confirm clear" : "Clear"}
               </Button>
             </div>
+            {clearArmed && (
+              <p className="text-xs text-yellow-400/80 flex items-center gap-1.5">
+                <Warning className="size-3 shrink-0" />
+                Click again to permanently delete these caches — this can&rsquo;t be undone.
+              </p>
+            )}
             {clearMutation.isError && (
               <p className="text-xs text-destructive flex items-center gap-1.5">
                 <Warning className="size-3 shrink-0" />

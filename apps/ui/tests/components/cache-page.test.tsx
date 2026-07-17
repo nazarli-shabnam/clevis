@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -89,6 +89,126 @@ describe("CachePage", () => {
     expect(screen.getByRole("button", { name: /^clear$/i })).toBeDisabled();
   });
 
+  it("requires a second click on Clear before actually clearing caches", async () => {
+    cacheClearMock.mockResolvedValue({ queued: true, dry_run: false, job_id: 7 });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("actor"), { target: { value: "me@example.com" } });
+    const clearButton = screen.getByRole("button", { name: /^clear$/i });
+    await waitFor(() => expect(clearButton).not.toBeDisabled());
+
+    fireEvent.click(clearButton);
+
+    // First click only arms the button — no request fired yet.
+    expect(cacheClearMock).not.toHaveBeenCalled();
+    const confirmButton = await screen.findByRole("button", { name: /confirm clear/i });
+    expect(screen.getByText(/click again to permanently delete/i)).toBeInTheDocument();
+
+    fireEvent.click(confirmButton);
+
+    await waitFor(() =>
+      expect(cacheClearMock).toHaveBeenCalledWith("acme", "demo", {
+        token: "",
+        actor: "me@example.com",
+        dry_run: false,
+      }),
+    );
+  });
+
+  it("disarms the confirm state if the actor is edited before confirming", async () => {
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("actor"), { target: { value: "me@example.com" } });
+    const clearButton = screen.getByRole("button", { name: /^clear$/i });
+    await waitFor(() => expect(clearButton).not.toBeDisabled());
+
+    fireEvent.click(clearButton);
+    await screen.findByRole("button", { name: /confirm clear/i });
+
+    fireEvent.change(screen.getByPlaceholderText("actor"), { target: { value: "someone-else@example.com" } });
+
+    expect(screen.queryByRole("button", { name: /confirm clear/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^clear$/i })).toBeInTheDocument();
+    expect(cacheClearMock).not.toHaveBeenCalled();
+  });
+
+  it("disarms the confirm state if Load caches is clicked before confirming", async () => {
+    cacheListMock.mockResolvedValue({ actions_caches: [] });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("actor"), { target: { value: "me@example.com" } });
+    const clearButton = screen.getByRole("button", { name: /^clear$/i });
+    await waitFor(() => expect(clearButton).not.toBeDisabled());
+
+    fireEvent.click(clearButton);
+    await screen.findByRole("button", { name: /confirm clear/i });
+
+    fireEvent.click(screen.getByRole("button", { name: /load caches/i }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /confirm clear/i })).not.toBeInTheDocument(),
+    );
+    expect(cacheClearMock).not.toHaveBeenCalled();
+  });
+
+  it("auto-disarms the confirm state after a few seconds of inactivity", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderPage();
+
+      fireEvent.change(screen.getByPlaceholderText("actor"), { target: { value: "me@example.com" } });
+      const clearButton = screen.getByRole("button", { name: /^clear$/i });
+      await waitFor(() => expect(clearButton).not.toBeDisabled());
+
+      fireEvent.click(clearButton);
+      await screen.findByRole("button", { name: /confirm clear/i });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4000);
+      });
+
+      expect(screen.queryByRole("button", { name: /confirm clear/i })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^clear$/i })).toBeInTheDocument();
+      expect(cacheClearMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("disarms the confirm state when the route's repo param changes", async () => {
+    cacheClearMock.mockResolvedValue({ queued: true, dry_run: false, job_id: 7 });
+
+    const { rerenderSamePage } = renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("actor"), { target: { value: "me@example.com" } });
+    const clearButton = screen.getByRole("button", { name: /^clear$/i });
+    await waitFor(() => expect(clearButton).not.toBeDisabled());
+
+    fireEvent.click(clearButton);
+    await screen.findByRole("button", { name: /confirm clear/i });
+    expect(screen.getByText(/click again to permanently delete/i)).toBeInTheDocument();
+
+    // Navigate to a different repo — same component instance, new route params
+    // (in-place rerender, not unmount/remount, so this actually exercises the
+    // params.repo-keyed disarm effect rather than trivially passing).
+    currentRepoParam = "acme~other";
+    rerenderSamePage();
+
+    await waitFor(() => expect(screen.getByText(/acme\/other/i)).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /confirm clear/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^clear$/i })).toBeInTheDocument();
+    expect(screen.queryByText(/click again to permanently delete/i)).not.toBeInTheDocument();
+    expect(cacheClearMock).not.toHaveBeenCalled();
+
+    // A click on the new repo re-arms rather than immediately firing a clear
+    // against it — the stale confirmation must not carry over.
+    fireEvent.click(screen.getByRole("button", { name: /^clear$/i }));
+    expect(cacheClearMock).not.toHaveBeenCalled();
+    await screen.findByRole("button", { name: /confirm clear/i });
+  });
+
   it("clears the stale cache table and clear result when navigating to a different repo under the same owner", async () => {
     cacheListMock.mockResolvedValue({
       actions_caches: [
@@ -112,6 +232,8 @@ describe("CachePage", () => {
 
     fireEvent.change(screen.getByPlaceholderText("actor"), { target: { value: "me@example.com" } });
     fireEvent.click(screen.getByRole("button", { name: /^clear$/i }));
+    const confirmButton = await screen.findByRole("button", { name: /confirm clear/i });
+    fireEvent.click(confirmButton);
     await waitFor(() => expect(screen.getByText(/job #42/i)).toBeInTheDocument());
 
     // Navigate to a different repo under the same owner — same component instance, new params.
