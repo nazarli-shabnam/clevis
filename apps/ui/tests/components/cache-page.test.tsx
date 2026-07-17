@@ -209,6 +209,66 @@ describe("CachePage", () => {
     await screen.findByRole("button", { name: /confirm clear/i });
   });
 
+  it("auto-applies a resolved saved token and shows the saved badge", async () => {
+    tokensResolveMock.mockReset();
+    tokensResolveMock.mockResolvedValue({ token: "ghp_saved_1234567890123456789012" });
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText(/saved/i)).toBeInTheDocument());
+  });
+
+  it("lets the user type and save a token, then shows the saved badge", async () => {
+    tokensUpsertMock.mockResolvedValue({ org: "acme", label: null, created_at: "", updated_at: "" });
+
+    renderPage();
+    await waitFor(() => expect(tokensResolveMock).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByPlaceholderText(/leave blank/i), {
+      target: { value: "ghp_manual_1234567890123456789012" },
+    });
+
+    const saveButton = await screen.findByRole("button", { name: /save token for this org/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => expect(tokensUpsertMock).toHaveBeenCalledWith("acme", "ghp_manual_1234567890123456789012"));
+    expect(await screen.findByText(/saved/i)).toBeInTheDocument();
+  });
+
+  it("shows an error message if saving the token fails", async () => {
+    tokensUpsertMock.mockRejectedValue(new Error("Could not save token"));
+
+    renderPage();
+    await waitFor(() => expect(tokensResolveMock).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByPlaceholderText(/leave blank/i), {
+      target: { value: "ghp_manual_1234567890123456789012" },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /save token for this org/i }));
+
+    expect(await screen.findByText(/could not save token/i)).toBeInTheDocument();
+  });
+
+  it("shows an error message when loading caches fails", async () => {
+    cacheListMock.mockRejectedValue(new Error("GitHub API unreachable"));
+
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /load caches/i }));
+
+    expect(await screen.findByText(/github api unreachable/i)).toBeInTheDocument();
+  });
+
+  it("shows an error message when a clear request fails", async () => {
+    cacheClearMock.mockRejectedValue(new Error("Could not clear caches"));
+
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("actor"), { target: { value: "me@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: /^clear$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /confirm clear/i }));
+
+    expect(await screen.findByText(/could not clear caches/i)).toBeInTheDocument();
+  });
+
   it("clears the stale cache table and clear result when navigating to a different repo under the same owner", async () => {
     cacheListMock.mockResolvedValue({
       actions_caches: [

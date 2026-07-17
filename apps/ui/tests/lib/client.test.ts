@@ -79,6 +79,45 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
   });
 });
 
+describe("api.repos", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function stubOkJson(body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))),
+    );
+  }
+
+  it("POSTs to /orgs/{org}/repos with token: undefined when the token field is empty", async () => {
+    stubOkJson({ org: "acme", total: 0, repos: [] });
+    const result = await api.repos.list("acme", "");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/orgs/acme/repos");
+    expect(JSON.parse(init.body as string)).toEqual({ token: undefined });
+    expect(result).toEqual({ org: "acme", total: 0, repos: [] });
+  });
+
+  it("POSTs to /orgs/{org}/repos/{owner}/{repo}/stats", async () => {
+    stubOkJson({ repository: "acme/demo", commit_activity: [], participation: {}, contributors: [] });
+    await api.repos.stats("acme", "acme", "demo", "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/orgs/acme/repos/acme/demo/stats");
+    expect(JSON.parse(init.body as string)).toEqual({ token: "ghp_test" });
+  });
+
+  it("POSTs to /orgs/{org}/repos/{owner}/{repo}/pulls", async () => {
+    stubOkJson({ repository: "acme/demo", total: 0, pulls: [] });
+    await api.repos.pulls("acme", "acme", "demo", "");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/orgs/acme/repos/acme/demo/pulls");
+    expect(JSON.parse(init.body as string)).toEqual({ token: undefined });
+  });
+});
+
 describe("installations.lookup / installations.sync", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
