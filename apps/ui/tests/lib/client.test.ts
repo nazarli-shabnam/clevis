@@ -78,3 +78,50 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
     expect(JSON.parse(init.body as string)).toEqual({ token: undefined, actor: "me", dry_run: true });
   });
 });
+
+describe("installations.lookup / installations.sync", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function stubOkJson(body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))),
+    );
+  }
+
+  it("GETs /me/installations/lookup/{id}", async () => {
+    stubOkJson({ account_login: "shabnam", account_type: "User" });
+    const result = await api.installations.lookup(42);
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/installations/lookup/42");
+    expect(result).toEqual({ account_login: "shabnam", account_type: "User" });
+  });
+
+  it("POSTs to /me/installations/sync for scope: me", async () => {
+    stubOkJson({ synced: true, token_ref: "tok_x" });
+    await api.installations.sync(
+      { scope: "me" },
+      { account_login: "shabnam", account_type: "User", installation_id: 42 },
+    );
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/installations/sync");
+    expect(JSON.parse(init.body as string)).toEqual({
+      account_login: "shabnam",
+      account_type: "User",
+      installation_id: 42,
+    });
+  });
+
+  it("POSTs to /orgs/{orgLogin}/installations/sync for scope: org", async () => {
+    stubOkJson({ synced: true, token_ref: "tok_y" });
+    await api.installations.sync(
+      { scope: "org", orgLogin: "acme" },
+      { account_login: "acme", account_type: "Organization", installation_id: 7 },
+    );
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/orgs/acme/installations/sync");
+  });
+});

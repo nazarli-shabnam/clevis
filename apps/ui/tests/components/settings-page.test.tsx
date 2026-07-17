@@ -9,10 +9,11 @@ const configGetAllMock = vi.fn();
 const patchMeMock = vi.fn();
 const configUpdateMock = vi.fn();
 const routerReplace = vi.fn();
+let searchParams = new URLSearchParams();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: routerReplace }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => searchParams,
 }));
 
 vi.mock("@/lib/api/client", () => ({
@@ -81,6 +82,8 @@ describe("SettingsPage", () => {
     configGetAllMock.mockReset();
     patchMeMock.mockReset();
     configUpdateMock.mockReset();
+    routerReplace.mockClear();
+    searchParams = new URLSearchParams();
     localStorage.clear();
     localStorage.setItem(TOKEN_KEY, makeAdminJwt());
   });
@@ -166,5 +169,20 @@ describe("SettingsPage", () => {
       updateGate.resolve({ worker_poll_seconds: "5", registration_enabled: "true" });
       await updateGate.promise;
     });
+  });
+
+  it("shows a success banner and strips the query param when landing with ?installed=1", async () => {
+    searchParams = new URLSearchParams({ installed: "1" });
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([]);
+    configGetAllMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true" });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("GitHub App installation connected.")).toBeInTheDocument();
+    });
+    expect(routerReplace).toHaveBeenCalledWith("/settings");
   });
 });
