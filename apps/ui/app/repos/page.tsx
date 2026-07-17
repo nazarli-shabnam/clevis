@@ -137,14 +137,30 @@ export default function ReposPage() {
     onSuccess: () => setTokenSaved(true),
   })
 
+  // Frozen at the moment "Load repositories" is triggered — otherwise editing the org or
+  // token fields after a list is loaded would point already-rendered rows at the wrong
+  // scope (per-row requests for the new org against the old org's repo names) or refetch
+  // every row on each keystroke. Passed as mutate()'s per-call onSuccess rather than the
+  // hook-level one: TanStack Query re-binds hook-level callbacks on every render, so if the
+  // user edits owner/token again *while the request is still in flight*, a hook-level
+  // onSuccess would use the edited (wrong) values instead of the ones actually requested.
+  const [loadedOrg, setLoadedOrg] = useState("")
   const [loadedToken, setLoadedToken] = useState("")
 
   const listMutation = useMutation({
     mutationFn: () => api.repos.list(owner.trim(), token),
-    // Freeze the token used for per-row lazy fetches at load time — otherwise editing the
-    // token field after a list is loaded would refetch every visible row on each keystroke.
-    onSuccess: () => setLoadedToken(token),
   })
+
+  function loadRepos() {
+    const requestedOrg = owner.trim()
+    const requestedToken = token
+    listMutation.mutate(undefined, {
+      onSuccess: () => {
+        setLoadedOrg(requestedOrg)
+        setLoadedToken(requestedToken)
+      },
+    })
+  }
 
   const repos = (listMutation.data?.repos ?? []).filter((r) =>
     r.name.toLowerCase().includes(search.toLowerCase()),
@@ -170,7 +186,7 @@ export default function ReposPage() {
                 placeholder="e.g. octocat"
                 value={owner}
                 onChange={(e) => setOwner(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && owner && !listMutation.isPending && listMutation.mutate()}
+                onKeyDown={(e) => e.key === "Enter" && owner && !listMutation.isPending && loadRepos()}
               />
             </div>
             <div>
@@ -191,11 +207,11 @@ export default function ReposPage() {
                 value={token}
                 onChange={(e) => { setToken(e.target.value); setTokenSaved(false) }}
                 className="font-mono"
-                onKeyDown={(e) => e.key === "Enter" && owner && !listMutation.isPending && listMutation.mutate()}
+                onKeyDown={(e) => e.key === "Enter" && owner && !listMutation.isPending && loadRepos()}
               />
             </div>
             <Button
-              onClick={() => listMutation.mutate()}
+              onClick={loadRepos}
               disabled={listMutation.isPending || !owner}
               className="mt-1"
             >
@@ -284,7 +300,7 @@ export default function ReposPage() {
                   </thead>
                   <tbody className="divide-y divide-border">
                     {repos.map((r) => (
-                      <RepoRow key={r.full_name} org={owner.trim()} repo={r} token={loadedToken} />
+                      <RepoRow key={r.full_name} org={loadedOrg} repo={r} token={loadedToken} />
                     ))}
                   </tbody>
                 </table>

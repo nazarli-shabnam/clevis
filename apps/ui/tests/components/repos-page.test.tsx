@@ -283,6 +283,44 @@ describe("ReposPage", () => {
     await waitFor(() => expect(screen.queryByText(/no recent activity/i)).not.toBeInTheDocument());
   });
 
+  it("keeps rendered rows scoped to the org they were loaded for, even if the org field is edited afterward without reloading", async () => {
+    reposListMock.mockResolvedValue({
+      org: "acme",
+      total: 1,
+      repos: [
+        {
+          name: "demo",
+          full_name: "acme/demo",
+          private: false,
+          language: "Python",
+          stargazers_count: 3,
+          open_issues_count: 1,
+          pushed_at: "2026-07-01T00:00:00Z",
+          default_branch: "main",
+          html_url: "https://github.com/acme/demo",
+        },
+      ],
+    });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /load repositories/i }));
+    await waitFor(() => expect(screen.getByText("demo")).toBeInTheDocument());
+    await waitFor(() => expect(reposStatsMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
+
+    reposStatsMock.mockClear();
+    reposPullsMock.mockClear();
+
+    // Edit the org field without clicking "Load repositories" again — the still-rendered
+    // "acme" row must keep using "acme" for its lazy fetches and cache link, not "other-org".
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "other-org" } });
+
+    expect(screen.getByRole("link", { name: /cache/i })).toHaveAttribute("href", "/repos/acme~demo/cache");
+    expect(reposStatsMock).not.toHaveBeenCalledWith("other-org", "other-org", "demo", "");
+    expect(reposPullsMock).not.toHaveBeenCalledWith("other-org", "other-org", "demo", "");
+  });
+
   it("triggers a load on Enter in the token field", async () => {
     reposListMock.mockResolvedValue({ org: "acme", total: 0, repos: [] });
 
