@@ -73,6 +73,16 @@ async def github_webhook(request: Request, db: Session = Depends(get_db)):
 
     if event == "installation" and payload.get("action") == "deleted":
         _handle_installation_deleted(db, payload)
+    # installation.created is deliberately a no-op: rows are only ever written to
+    # github_installations by the authenticated /orgs/{org}/installations/sync and
+    # /me/installations/sync endpoints, which independently verify (via
+    # _verify_installation, see #141) that the installation_id genuinely belongs to
+    # the claimed account before persisting. Auto-creating a row straight from this
+    # webhook would mean trusting GitHub's payload to decide which clevis org/user it
+    # belongs to with no equivalent ownership check — that's a bigger trust-boundary
+    # decision than "keep an existing verified row in sync," so it's left to the
+    # explicit sync flow rather than done implicitly here.
+    #
     # installation_repositories (repo access added/removed within an existing
     # installation) has nothing to sync yet — github_installations tracks the
     # installation itself, not per-repo access, so there's no row-level change
