@@ -16,7 +16,7 @@ export interface CheckResult {
   title: string
   severity: "high" | "medium" | "low"
   remediation: string
-  status: "pass" | "fail"
+  status: "pass" | "fail" | "error" | "not_applicable"
   value: CheckValue
 }
 

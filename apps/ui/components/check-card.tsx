@@ -1,4 +1,4 @@
-import { CheckCircle, XCircle } from "@phosphor-icons/react"
+import { CheckCircle, MinusCircle, XCircle } from "@phosphor-icons/react"
 import type { CheckResult, CheckValue } from "@/lib/api/types"
 
 interface CheckCardProps {
@@ -56,13 +56,20 @@ function CheckValueDisplay({ value }: { value: CheckValue }) {
 
 export function CheckCard({ check }: CheckCardProps) {
   const pass = check.status === "pass"
+  const notApplicable = check.status === "not_applicable"
   return (
     <div
       className={`bg-card border p-3.5 flex items-start gap-3 transition-colors duration-200 ease-(--ease-out) ${
-        pass ? "border-accent/20 hover:border-accent/35" : "border-destructive/25 hover:border-destructive/45"
+        notApplicable
+          ? "border-border/40 hover:border-border/60"
+          : pass
+            ? "border-accent/20 hover:border-accent/35"
+            : "border-destructive/25 hover:border-destructive/45"
       }`}
     >
-      {pass ? (
+      {notApplicable ? (
+        <MinusCircle className="size-4 shrink-0 mt-0.5 text-muted-foreground" />
+      ) : pass ? (
         <CheckCircle className="size-4 shrink-0 mt-0.5 text-accent" />
       ) : (
         <XCircle className="size-4 shrink-0 mt-0.5 text-destructive" />
@@ -70,9 +77,13 @@ export function CheckCard({ check }: CheckCardProps) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 mb-0.5 flex-wrap">
           <span className="text-sm font-medium leading-snug">{check.title}</span>
-          <span className={`text-[0.6875rem] font-mono font-medium ${severityLabel[check.severity] ?? "text-muted-foreground"}`}>
-            {check.severity}
-          </span>
+          {notApplicable ? (
+            <span className="stat-chip">Not applicable</span>
+          ) : (
+            <span className={`text-[0.6875rem] font-mono font-medium ${severityLabel[check.severity] ?? "text-muted-foreground"}`}>
+              {check.severity}
+            </span>
+          )}
         </div>
         <p className="text-xs text-muted-foreground leading-relaxed">{check.remediation}</p>
         <CheckValueDisplay value={check.value} />

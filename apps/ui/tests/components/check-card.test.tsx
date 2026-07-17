@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
 
 import { CheckCard } from "@/components/check-card";
 import type { CheckResult } from "@/lib/api/types";
@@ -14,6 +14,10 @@ const baseCheck: CheckResult = {
 };
 
 describe("CheckCard", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   it("renders a passing check with its boolean value", () => {
     render(<CheckCard check={baseCheck} />);
 
@@ -33,5 +37,24 @@ describe("CheckCard", () => {
     );
 
     expect(screen.getByText(/2 \/ 10/)).toBeInTheDocument();
+  });
+
+  it("renders a not_applicable check with neutral styling, not failed styling", () => {
+    const { container } = render(
+      <CheckCard
+        check={{
+          ...baseCheck,
+          status: "not_applicable",
+          value: null,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Not applicable")).toBeInTheDocument();
+    expect(screen.queryByText("high")).not.toBeInTheDocument();
+
+    const card = container.firstElementChild;
+    expect(card?.className).not.toContain("border-destructive");
+    expect(card?.className).not.toContain("border-accent");
   });
 });
