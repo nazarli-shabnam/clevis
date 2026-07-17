@@ -52,6 +52,51 @@ export interface CacheClearResponse {
   message?: string | null
 }
 
+export interface RepoSummary {
+  name: string
+  full_name: string
+  private: boolean
+  language: string | null
+  stargazers_count: number
+  open_issues_count: number
+  pushed_at: string | null
+  default_branch: string
+  html_url: string
+}
+
+export interface RepoListResponse {
+  org: string
+  total: number
+  repos: RepoSummary[]
+}
+
+export interface CommitActivityWeek {
+  week: number
+  total: number
+  days: number[]
+}
+
+export interface RepoStatsResponse {
+  repository: string
+  commit_activity: CommitActivityWeek[]
+  participation: { all?: number[]; owner?: number[] }
+  contributors: { login?: string; total: number }[]
+}
+
+export interface PullSummary {
+  number: number
+  title: string
+  user: string | null
+  created_at: string
+  html_url: string
+}
+
+export interface RepoPullsResponse {
+  repository: string
+  total: number
+  pulls: PullSummary[]
+}
+
 export interface JobOut {
   id: number
   job_type: string
