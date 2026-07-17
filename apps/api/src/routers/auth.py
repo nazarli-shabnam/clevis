@@ -171,7 +171,10 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     return {
         "access_token": token,
         "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin),
-        "pending_invitations": _pending_invitations_for(db, user.email),
+        # Never populated here: register has no email-verification step, so a self-asserted
+        # email is not proof of inbox control — looking this up would let an attacker learn
+        # whether/where a victim's email has a pending invite just by registering with it.
+        "pending_invitations": [],
     }
 
 

@@ -169,37 +169,26 @@ def test_login_github_only_user_returns_401(auth_client, db):
 
 # pending invitations surfaced at register/login
 
-def test_register_surfaces_pending_invitation(auth_client, db):
+def test_register_never_surfaces_pending_invitation(auth_client, db):
+    """Registration has no email-verification step, so a self-asserted email is not proof
+    of inbox control. Even though the same email/lookup would find a real pending
+    invitation (confirmed below via list_pending_for_email directly), the register
+    response must never expose it — otherwise anyone who merely knows a victim's email
+    could learn whether/where they have a pending org invite by registering with it."""
     owner = _setup_owner(auth_client, email="owner@example.com")
     org = org_repo.get_or_create(db, github_login="acme")
     invitation_repo.create(db, org_id=org.id, email="newmember@example.com", invited_by_user_id=owner["user"]["id"])
 
-    resp = auth_client.post(
-        "/auth/register", json={"email": "newmember@example.com", "password": "supersecret1234"}
-    )
-
-    assert resp.status_code == 201
-    pending = resp.json()["pending_invitations"]
-    assert len(pending) == 1
-    assert pending[0]["org_login"] == "acme"
-    # The accept token must never be exposed here — registration has no email
-    # verification, so "an account with this email" isn't proof of owning the inbox
-    # the real invite was sent to. Handing back the token would let anyone who merely
-    # knows a victim's email claim their pending invitation.
-    assert "token" not in pending[0]
-
-
-def test_register_pending_invitation_matches_case_insensitively(auth_client, db):
-    owner = _setup_owner(auth_client, email="owner@example.com")
-    org = org_repo.get_or_create(db, github_login="acme")
-    invitation_repo.create(db, org_id=org.id, email="NewMember@Example.com", invited_by_user_id=owner["user"]["id"])
+    # Sanity check: the invitation genuinely exists and matches — this isn't a case
+    # of "there was nothing to leak".
+    assert len(invitation_repo.list_pending_for_email(db, "newmember@example.com")) == 1
 
     resp = auth_client.post(
         "/auth/register", json={"email": "newmember@example.com", "password": "supersecret1234"}
     )
 
     assert resp.status_code == 201
-    assert len(resp.json()["pending_invitations"]) == 1
+    assert resp.json()["pending_invitations"] == []
 
 
 def test_login_surfaces_pending_invitation(auth_client, db):
