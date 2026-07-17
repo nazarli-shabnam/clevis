@@ -2,8 +2,6 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const tokensResolveMock = vi.fn();
-const tokensUpsertMock = vi.fn();
 const cacheListMock = vi.fn();
 const cacheClearMock = vi.fn();
 
@@ -15,10 +13,6 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/lib/api/client", () => ({
   api: {
-    tokens: {
-      resolve: (...args: unknown[]) => tokensResolveMock(...args),
-      upsert: (...args: unknown[]) => tokensUpsertMock(...args),
-    },
     cache: {
       list: (...args: unknown[]) => cacheListMock(...args),
       clear: (...args: unknown[]) => cacheClearMock(...args),
@@ -51,11 +45,8 @@ function renderPage() {
 describe("CachePage", () => {
   beforeEach(() => {
     currentRepoParam = "acme~demo";
-    tokensResolveMock.mockReset();
-    tokensUpsertMock.mockReset();
     cacheListMock.mockReset();
     cacheClearMock.mockReset();
-    tokensResolveMock.mockRejectedValue(new Error("no saved token"));
   });
 
   afterEach(() => {
@@ -77,11 +68,16 @@ describe("CachePage", () => {
 
     await waitFor(() =>
       expect(cacheClearMock).toHaveBeenCalledWith("acme", "demo", {
-        token: "",
         actor: "me@example.com",
         dry_run: true,
       }),
     );
+  });
+
+  it("does not render a legacy PAT input", () => {
+    renderPage();
+    expect(screen.queryByPlaceholderText(/ghp_/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /save token/i })).not.toBeInTheDocument();
   });
 
   it("keeps the Clear button disabled until an actor is entered", async () => {
@@ -109,7 +105,6 @@ describe("CachePage", () => {
 
     await waitFor(() =>
       expect(cacheClearMock).toHaveBeenCalledWith("acme", "demo", {
-        token: "",
         actor: "me@example.com",
         dry_run: false,
       }),

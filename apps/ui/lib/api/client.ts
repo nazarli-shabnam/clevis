@@ -135,10 +135,13 @@ function normalizeCheckValue(id: string, raw: unknown): CheckValue {
 
 export const api = {
   analytics: {
-    // token is optional — the API falls back to a connected GitHub App installation
-    // token when one exists for this owner, so an empty field is fine to send.
-    overview: async (owner: string, token: string): Promise<AnalyticsOverviewResponse> => {
-      const data = await post<AnalyticsOverviewResponse>("/me/analytics/overview", { owner, token: token || undefined })
+    // Prefer omitting token — the API mints a GitHub App installation token when
+    // the owner is connected. An explicit token remains supported for tests/tools.
+    overview: async (owner: string, token?: string): Promise<AnalyticsOverviewResponse> => {
+      const data = await post<AnalyticsOverviewResponse>("/me/analytics/overview", {
+        owner,
+        ...(token ? { token } : {}),
+      })
       return {
         ...data,
         checks: data.checks.map((c) => ({ ...c, value: normalizeCheckValue(c.id, c.value) })),
@@ -146,19 +149,25 @@ export const api = {
     },
   },
   cache: {
-    list: (owner: string, repo: string, token: string) =>
+    list: (owner: string, repo: string, token?: string) =>
       post<CacheListResponse>(
         `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions-caches`,
-        { token: token || undefined },
+        token ? { token } : {},
       ),
     clear: (
       owner: string,
       repo: string,
-      body: { token: string; actor: string; dry_run: boolean; key?: string; ref?: string },
+      body: { actor: string; dry_run: boolean; token?: string; key?: string; ref?: string },
     ) =>
       post<CacheClearResponse>(
         `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions-caches/clear`,
-        { ...body, token: body.token || undefined },
+        {
+          actor: body.actor,
+          dry_run: body.dry_run,
+          ...(body.token ? { token: body.token } : {}),
+          ...(body.key !== undefined ? { key: body.key } : {}),
+          ...(body.ref !== undefined ? { ref: body.ref } : {}),
+        },
       ),
   },
   jobs: {

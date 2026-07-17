@@ -3,16 +3,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const jobsListMock = vi.fn();
-const tokensResolveMock = vi.fn();
 const analyticsOverviewMock = vi.fn();
 
 vi.mock("@/lib/api/client", () => ({
   api: {
     jobs: {
       list: (...args: unknown[]) => jobsListMock(...args),
-    },
-    tokens: {
-      resolve: (...args: unknown[]) => tokensResolveMock(...args),
     },
     analytics: {
       overview: (...args: unknown[]) => analyticsOverviewMock(...args),
@@ -36,7 +32,6 @@ function renderPage() {
 describe("OverviewPage stat cards", () => {
   beforeEach(() => {
     jobsListMock.mockReset();
-    tokensResolveMock.mockReset();
     analyticsOverviewMock.mockReset();
     jobsListMock.mockResolvedValue([]);
     localStorage.clear();
@@ -54,7 +49,6 @@ describe("OverviewPage stat cards", () => {
       expect(screen.getAllByText("Configure →")).toHaveLength(2);
     });
 
-    expect(tokensResolveMock).not.toHaveBeenCalled();
     expect(analyticsOverviewMock).not.toHaveBeenCalled();
 
     const configureLinks = screen.getAllByRole("link", { name: /Configure →/i });
@@ -63,9 +57,8 @@ describe("OverviewPage stat cards", () => {
     }
   });
 
-  it("shows a loading state once configured, then the real numbers", async () => {
+  it("loads overview via GitHub App path (no PAT resolve) once an org is configured", async () => {
     localStorage.setItem("default_org", "acme");
-    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
 
     const gate = new Promise<{ owner: string; score: number; total_checks: number; failed_checks: number; repo_count: number; checks: [] }>(
       (resolve) => {
@@ -78,7 +71,7 @@ describe("OverviewPage stat cards", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(analyticsOverviewMock).toHaveBeenCalledWith("acme", "ghp_test");
+      expect(analyticsOverviewMock).toHaveBeenCalledWith("acme");
     });
 
     await waitFor(() => {
@@ -91,7 +84,6 @@ describe("OverviewPage stat cards", () => {
 
   it("always renders Open PRs and Team Members as N/A, regardless of org state", async () => {
     localStorage.setItem("default_org", "acme");
-    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
     analyticsOverviewMock.mockResolvedValue({
       owner: "acme", score: 100, total_checks: 1, failed_checks: 0, repo_count: 1, checks: [],
     });

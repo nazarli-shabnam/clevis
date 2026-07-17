@@ -8,9 +8,8 @@ import { CheckCard } from "@/components/check-card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Warning, Key } from "@phosphor-icons/react"
+import { Warning } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
-import { shouldApplyResolvedToken } from "@/lib/token-resolve"
 import { DonutChart } from "@/components/charts/donut-chart"
 import type { CheckResult } from "@/lib/api/types"
 
@@ -65,8 +64,6 @@ export default function SecurityPage() {
   const searchParams = useSearchParams()
 
   const [owner, setOwner] = useState("")
-  const [token, setToken] = useState("")
-  const [tokenSaved, setTokenSaved] = useState(false)
 
   const statusFilter   = (searchParams.get("status")   ?? "all") as "all" | "pass" | "fail"
   const severityFilter = (searchParams.get("severity") ?? "all") as "all" | "high" | "medium" | "low"
@@ -83,31 +80,10 @@ export default function SecurityPage() {
     if (defaultOrg) setOwner(defaultOrg)
   }, [])
 
-  const resolveMutation = useMutation({
-    mutationFn: (org: string) => api.tokens.resolve(org),
-    onSuccess: (data, org) => {
-      if (shouldApplyResolvedToken(org, owner)) {
-        setToken(data.token)
-        setTokenSaved(true)
-      }
-    },
-    onError: () => setTokenSaved(false),
-  })
-
-  useEffect(() => {
-    setToken("")
-    setTokenSaved(false)
-    if (owner.trim().length > 2) resolveMutation.mutate(owner.trim())
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [owner])
-
-  const saveTokenMutation = useMutation({
-    mutationFn: () => api.tokens.upsert(owner.trim(), token.trim()),
-    onSuccess: () => setTokenSaved(true),
-  })
-
+  // Token is omitted — the API mints a GitHub App installation token when the
+  // org is connected (see token_resolution.resolve_org_token / resolve_personal_token).
   const scan = useMutation({
-    mutationFn: () => api.analytics.overview(owner, token),
+    mutationFn: () => api.analytics.overview(owner),
   })
 
   const filteredChecks = scan.data
@@ -131,7 +107,7 @@ export default function SecurityPage() {
     <>
       <PageHeader
         title="Health & Security"
-        description="Run security checks against a GitHub organization."
+        description="Run security checks against a GitHub organization via the connected GitHub App."
       />
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -149,27 +125,9 @@ export default function SecurityPage() {
                 onChange={(e) => setOwner(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && owner && !scan.isPending && scan.mutate()}
               />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-foreground mb-1.5 flex items-center gap-1.5">
-                GitHub Token
-                <span className="text-[0.6875rem] text-muted-foreground font-normal">
-                  optional if the GitHub App is connected for this org
-                </span>
-                {tokenSaved && (
-                  <span className="inline-flex items-center gap-1 text-[0.6875rem] text-primary">
-                    <Key className="size-3" />saved
-                  </span>
-                )}
-              </label>
-              <Input
-                placeholder="ghp_... (leave blank to use the connected GitHub App)"
-                type="password"
-                value={token}
-                onChange={(e) => { setToken(e.target.value); setTokenSaved(false) }}
-                className="font-mono"
-                onKeyDown={(e) => e.key === "Enter" && owner && !scan.isPending && scan.mutate()}
-              />
+              <p className="text-[0.6875rem] text-muted-foreground mt-1.5">
+                Uses the GitHub App installation for this org. Connect one under Settings → Connected orgs if scans fail.
+              </p>
             </div>
             <Button
               onClick={() => scan.mutate()}
@@ -178,16 +136,6 @@ export default function SecurityPage() {
             >
               {scan.isPending ? "Scanning…" : "Run scan"}
             </Button>
-            {!tokenSaved && token && owner && (
-              <Button
-                variant="outline"
-                onClick={() => saveTokenMutation.mutate()}
-                disabled={saveTokenMutation.isPending}
-              >
-                <Key className="size-3.5" />
-                {saveTokenMutation.isPending ? "Saving…" : "Save token for this org"}
-              </Button>
-            )}
             {scan.isError && (
               <div className="flex items-start gap-2 text-xs text-destructive">
                 <Warning className="size-3.5 mt-0.5 shrink-0" />

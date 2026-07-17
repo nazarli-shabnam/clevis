@@ -57,25 +57,58 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
     );
   }
 
-  it("sends token: undefined for analytics.overview when the token field is empty", async () => {
+  it("omits token for analytics.overview when none is provided (GitHub App path)", async () => {
     stubOkJson({ owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [] });
-    await api.analytics.overview("acme", "");
+    await api.analytics.overview("acme");
     const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(JSON.parse(init.body as string)).toEqual({ owner: "acme", token: undefined });
+    expect(JSON.parse(init.body as string)).toEqual({ owner: "acme" });
   });
 
-  it("sends token: undefined for cache.list when the token field is empty", async () => {
+  it("omits token for cache.list when none is provided", async () => {
     stubOkJson({ repository: "acme/demo", total: 0, actions_caches: [] });
-    await api.cache.list("acme", "demo", "");
+    await api.cache.list("acme", "demo");
     const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(JSON.parse(init.body as string)).toEqual({ token: undefined });
+    expect(JSON.parse(init.body as string)).toEqual({});
   });
 
-  it("sends token: undefined for cache.clear when the token field is empty", async () => {
+  it("omits token for cache.clear when none is provided", async () => {
     stubOkJson({ queued: false, dry_run: true });
-    await api.cache.clear("acme", "demo", { token: "", actor: "me", dry_run: true });
+    await api.cache.clear("acme", "demo", { actor: "me", dry_run: true });
     const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(JSON.parse(init.body as string)).toEqual({ token: undefined, actor: "me", dry_run: true });
+    expect(JSON.parse(init.body as string)).toEqual({ actor: "me", dry_run: true });
+  });
+
+  it("forwards an explicit token when callers still pass one", async () => {
+    stubOkJson({ owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [] });
+    await api.analytics.overview("acme", "ghp_explicit");
+    const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({ owner: "acme", token: "ghp_explicit" });
+  });
+
+  it("forwards an explicit token for cache.list", async () => {
+    stubOkJson({ repository: "acme/demo", total: 0, actions_caches: [] });
+    await api.cache.list("acme", "demo", "ghp_list");
+    const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({ token: "ghp_list" });
+  });
+
+  it("forwards token, key, and ref for cache.clear when provided", async () => {
+    stubOkJson({ queued: true, dry_run: false, job_id: 9 });
+    await api.cache.clear("acme", "demo", {
+      actor: "me",
+      dry_run: false,
+      token: "ghp_clear",
+      key: "build-cache",
+      ref: "refs/heads/main",
+    });
+    const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({
+      actor: "me",
+      dry_run: false,
+      token: "ghp_clear",
+      key: "build-cache",
+      ref: "refs/heads/main",
+    });
   });
 });
 

@@ -49,18 +49,12 @@ export default function OverviewPage() {
     setOrg(localStorage.getItem("default_org") || "")
   }, [])
 
-  const resolveQuery = useQuery({
-    queryKey: ["tokens.resolve", org],
-    queryFn: () => api.tokens.resolve(org),
-    enabled: org.trim().length > 2,
-    retry: false,
-  })
-
-  const configured = !!resolveQuery.data?.token
+  // Stats use the GitHub App installation token server-side — no legacy PAT resolve.
+  const configured = org.trim().length > 2
 
   const overviewQuery = useQuery({
     queryKey: ["analytics.overview", org],
-    queryFn: () => api.analytics.overview(org, resolveQuery.data!.token),
+    queryFn: () => api.analytics.overview(org),
     enabled: configured,
     retry: false,
   })

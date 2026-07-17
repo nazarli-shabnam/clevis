@@ -2,8 +2,6 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const tokensResolveMock = vi.fn();
-const tokensUpsertMock = vi.fn();
 const analyticsOverviewMock = vi.fn();
 
 vi.mock("next/navigation", () => ({
@@ -13,10 +11,6 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/lib/api/client", () => ({
   api: {
-    tokens: {
-      resolve: (...args: unknown[]) => tokensResolveMock(...args),
-      upsert: (...args: unknown[]) => tokensUpsertMock(...args),
-    },
     analytics: {
       overview: (...args: unknown[]) => analyticsOverviewMock(...args),
     },
@@ -38,10 +32,7 @@ function renderPage() {
 
 describe("SecurityPage", () => {
   beforeEach(() => {
-    tokensResolveMock.mockReset();
-    tokensUpsertMock.mockReset();
     analyticsOverviewMock.mockReset();
-    tokensResolveMock.mockRejectedValue(new Error("no saved token"));
     localStorage.clear();
   });
 
@@ -50,7 +41,7 @@ describe("SecurityPage", () => {
     vi.restoreAllMocks();
   });
 
-  it("allows running a scan with no token entered (GitHub App fallback)", async () => {
+  it("runs a scan with no PAT — relies on the GitHub App installation token", async () => {
     analyticsOverviewMock.mockResolvedValue({
       owner: "acme",
       score: 100,
@@ -69,10 +60,11 @@ describe("SecurityPage", () => {
 
     fireEvent.click(scanButton);
 
-    await waitFor(() => expect(analyticsOverviewMock).toHaveBeenCalledWith("acme", ""));
+    await waitFor(() => expect(analyticsOverviewMock).toHaveBeenCalledWith("acme"));
+    expect(screen.queryByPlaceholderText(/ghp_/i)).not.toBeInTheDocument();
   });
 
-  it("runs a scan on Enter in the organization field with no token entered", async () => {
+  it("runs a scan on Enter in the organization field without a PAT field", async () => {
     analyticsOverviewMock.mockResolvedValue({
       owner: "acme",
       score: 100,
@@ -89,26 +81,19 @@ describe("SecurityPage", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /run scan/i })).not.toBeDisabled());
 
     fireEvent.keyDown(orgInput, { key: "Enter" });
-    await waitFor(() => expect(analyticsOverviewMock).toHaveBeenCalledWith("acme", ""));
+    await waitFor(() => expect(analyticsOverviewMock).toHaveBeenCalledWith("acme"));
   });
 
-  it("runs a scan on Enter in the token field", async () => {
-    analyticsOverviewMock.mockResolvedValue({
-      owner: "acme",
-      score: 100,
-      total_checks: 0,
-      failed_checks: 0,
-      repo_count: 0,
-      checks: [],
-    });
+  it("surfaces API errors when no GitHub App installation is available", async () => {
+    analyticsOverviewMock.mockRejectedValue(new Error("No GitHub App installation found for 'acme'"));
 
     renderPage();
 
     fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
-    const tokenInput = screen.getByPlaceholderText(/leave blank to use the connected GitHub App/i);
-    fireEvent.change(tokenInput, { target: { value: "ghp_test" } });
+    fireEvent.click(screen.getByRole("button", { name: /run scan/i }));
 
-    fireEvent.keyDown(tokenInput, { key: "Enter" });
-    await waitFor(() => expect(analyticsOverviewMock).toHaveBeenCalledWith("acme", "ghp_test"));
+    await waitFor(() =>
+      expect(screen.getByText(/No GitHub App installation found for 'acme'/i)).toBeInTheDocument(),
+    );
   });
 });

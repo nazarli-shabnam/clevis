@@ -325,7 +325,7 @@ function SavedTokensSection() {
           )}
         </div>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Being replaced by the GitHub App. Still used by Health &amp; Security and Cache pages until they move to the App.
+          Legacy fallback only. Health &amp; Security, Cache, and Overview use a connected GitHub App installation — prefer Settings → Connected orgs.
         </p>
       </div>
 

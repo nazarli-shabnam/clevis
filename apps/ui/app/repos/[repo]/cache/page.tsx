@@ -11,10 +11,9 @@ import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Warning, Eye, Key, CircleNotch, Trash } from "@phosphor-icons/react"
+import { Warning, Eye, CircleNotch, Trash } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { parseOwnerRepo } from "@/lib/repo-segment"
-import { shouldApplyResolvedToken } from "@/lib/token-resolve"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
 import { CHART_COLORS } from "@/lib/charts/theme"
 import { formatBytes, relativeTime, classifyStaleness, stalenessColor } from "@/lib/format"
@@ -22,35 +21,12 @@ import type { CacheEntry } from "@/lib/api/types"
 
 export default function CachePage() {
   const params = useParams<{ repo: string }>()
-  const [token, setToken] = useState("")
-  const [tokenSaved, setTokenSaved] = useState(false)
   const [actor, setActor] = useState("")
   const [clearArmed, setClearArmed] = useState(false)
 
   const parsed = parseOwnerRepo(params.repo || "")
   const owner = parsed?.owner ?? ""
   const repo = parsed?.repo ?? ""
-
-  // Auto-resolve saved token for this owner
-  const resolveMutation = useMutation({
-    mutationFn: (org: string) => api.tokens.resolve(org),
-    onSuccess: (data, org) => {
-      if (shouldApplyResolvedToken(org, owner)) {
-        setToken(data.token)
-        setTokenSaved(true)
-      }
-    },
-    onError: () => setTokenSaved(false),
-  })
-
-  useEffect(() => {
-    if (owner) {
-      setToken("")
-      setTokenSaved(false)
-      resolveMutation.mutate(owner)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [owner])
 
   // Reset stale cache-table/clear-result data and any armed "Confirm clear" state
   // from the previous repo whenever the route's owner~repo segment changes, even if
@@ -70,19 +46,14 @@ export default function CachePage() {
     return () => clearTimeout(timer)
   }, [clearArmed])
 
-
-  const saveTokenMutation = useMutation({
-    mutationFn: () => api.tokens.upsert(owner, token.trim()),
-    onSuccess: () => setTokenSaved(true),
-  })
-
+  // Token omitted — the API mints a GitHub App installation token when connected.
   const listMutation = useMutation({
-    mutationFn: () => api.cache.list(owner, repo, token),
+    mutationFn: () => api.cache.list(owner, repo),
   })
 
   const clearMutation = useMutation({
     mutationFn: (dryRun: boolean) =>
-      api.cache.clear(owner, repo, { token, actor, dry_run: dryRun }),
+      api.cache.clear(owner, repo, { actor, dry_run: dryRun }),
   })
 
   const isLoading = listMutation.isPending || clearMutation.isPending
@@ -121,43 +92,9 @@ export default function CachePage() {
             <span className="section-label">Configuration</span>
           </div>
           <div className="p-4 flex flex-col gap-3">
-            <div>
-              <label className="text-xs font-medium text-foreground mb-1.5 flex items-center gap-1.5">
-                GitHub Token
-                <span className="text-[0.6875rem] text-muted-foreground font-normal">
-                  optional if the GitHub App is connected for this org
-                </span>
-                {tokenSaved && (
-                  <span className="inline-flex items-center gap-1 text-[0.6875rem] text-primary">
-                    <Key className="size-3" />saved
-                  </span>
-                )}
-              </label>
-              <Input
-                placeholder="ghp_... (leave blank to use the connected GitHub App)"
-                type="password"
-                value={token}
-                onChange={(e) => { setToken(e.target.value); setTokenSaved(false) }}
-                className="font-mono"
-              />
-            </div>
-            {!tokenSaved && token && (
-              <Button
-                variant="outline"
-                onClick={() => saveTokenMutation.mutate()}
-                disabled={saveTokenMutation.isPending}
-                className="w-full"
-              >
-                <Key className="size-3.5" />
-                {saveTokenMutation.isPending ? "Saving…" : "Save token for this org"}
-              </Button>
-            )}
-            {saveTokenMutation.isError && (
-              <p className="text-xs text-destructive flex items-center gap-1.5">
-                <Warning className="size-3 shrink-0" />
-                {saveTokenMutation.error.message}
-              </p>
-            )}
+            <p className="text-[0.6875rem] text-muted-foreground">
+              Uses the GitHub App installation for <span className="font-mono">{owner}</span>. Connect one under Settings → Connected orgs if requests fail.
+            </p>
             <div>
               <label className="text-xs font-medium text-foreground block mb-1.5">Actor</label>
               <Input
