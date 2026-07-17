@@ -1,4 +1,5 @@
 """Tests for auth router and config router."""
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
@@ -7,11 +8,23 @@ from fastapi.testclient import TestClient
 
 from src.core.auth import UserOut, require_auth, require_workspace_admin
 from src.core.db import get_db
+from src.core.rate_limit import _buckets as _rate_limit_buckets
+from src.repositories import invitation_repo, org_repo
 from src.routers.auth import router as auth_router
 from src.routers.config import router as config_router
 
 
 # ── Auth router ───────────────────────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """/auth/login and /auth/register are rate-limited per client IP via a module-level
+    in-memory bucket that persists across tests in the same process — reset it so one
+    test's request volume can't tip a later, unrelated test over the threshold."""
+    _rate_limit_buckets.clear()
+    yield
+    _rate_limit_buckets.clear()
+
 
 @pytest.fixture()
 def auth_app(db):
@@ -152,6 +165,97 @@ def test_login_github_only_user_returns_401(auth_client, db):
     )
     assert resp.status_code == 401
     assert resp.json()["detail"] == "Invalid credentials"
+
+
+# pending invitations surfaced at register/login
+
+def test_register_never_surfaces_pending_invitation(auth_client, db):
+    """Registration has no email-verification step, so a self-asserted email is not proof
+    of inbox control. Even though the same email/lookup would find a real pending
+    invitation (confirmed below via list_pending_for_email directly), the register
+    response must never expose it — otherwise anyone who merely knows a victim's email
+    could learn whether/where they have a pending org invite by registering with it."""
+    owner = _setup_owner(auth_client, email="owner@example.com")
+    org = org_repo.get_or_create(db, github_login="acme")
+    invitation_repo.create(db, org_id=org.id, email="newmember@example.com", invited_by_user_id=owner["user"]["id"])
+
+    # Sanity check: the invitation genuinely exists and matches — this isn't a case
+    # of "there was nothing to leak".
+    assert len(invitation_repo.list_pending_for_email(db, "newmember@example.com")) == 1
+
+    resp = auth_client.post(
+        "/auth/register", json={"email": "newmember@example.com", "password": "supersecret1234"}
+    )
+
+    assert resp.status_code == 201
+    assert resp.json()["pending_invitations"] == []
+
+
+def test_login_surfaces_pending_invitation(auth_client, db):
+    owner = _setup_owner(auth_client, email="owner@example.com")
+    auth_client.post(
+        "/auth/register", json={"email": "member@example.com", "password": "supersecret1234"}
+    )
+    org = org_repo.get_or_create(db, github_login="acme")
+    invitation_repo.create(db, org_id=org.id, email="member@example.com", invited_by_user_id=owner["user"]["id"])
+
+    resp = auth_client.post(
+        "/auth/login", json={"email": "member@example.com", "password": "supersecret1234"}
+    )
+
+    assert resp.status_code == 200
+    pending = resp.json()["pending_invitations"]
+    assert len(pending) == 1
+    assert pending[0]["org_login"] == "acme"
+
+
+def test_login_omits_expired_invitation(auth_client, db):
+    owner = _setup_owner(auth_client, email="owner@example.com")
+    auth_client.post(
+        "/auth/register", json={"email": "member@example.com", "password": "supersecret1234"}
+    )
+    org = org_repo.get_or_create(db, github_login="acme")
+    invitation = invitation_repo.create(
+        db, org_id=org.id, email="member@example.com", invited_by_user_id=owner["user"]["id"]
+    )
+    invitation.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+    db.commit()
+
+    resp = auth_client.post(
+        "/auth/login", json={"email": "member@example.com", "password": "supersecret1234"}
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["pending_invitations"] == []
+
+
+def test_login_omits_accepted_invitation(auth_client, db):
+    owner = _setup_owner(auth_client, email="owner@example.com")
+    auth_client.post(
+        "/auth/register", json={"email": "member@example.com", "password": "supersecret1234"}
+    )
+    org = org_repo.get_or_create(db, github_login="acme")
+    invitation = invitation_repo.create(
+        db, org_id=org.id, email="member@example.com", invited_by_user_id=owner["user"]["id"]
+    )
+    invitation.status = "accepted"
+    db.commit()
+
+    resp = auth_client.post(
+        "/auth/login", json={"email": "member@example.com", "password": "supersecret1234"}
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["pending_invitations"] == []
+
+
+def test_login_with_no_pending_invitations_returns_empty_list(auth_client):
+    _setup_owner(auth_client, email="owner@example.com")
+    resp = auth_client.post(
+        "/auth/login", json={"email": "owner@example.com", "password": "supersecret1234"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["pending_invitations"] == []
 
 
 # me
