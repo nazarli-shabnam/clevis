@@ -7,8 +7,10 @@ const tokensUpsertMock = vi.fn();
 const cacheListMock = vi.fn();
 const cacheClearMock = vi.fn();
 
+let currentRepoParam = "acme~demo";
+
 vi.mock("next/navigation", () => ({
-  useParams: () => ({ repo: "acme~demo" }),
+  useParams: () => ({ repo: currentRepoParam }),
 }));
 
 vi.mock("@/lib/api/client", () => ({
@@ -30,15 +32,25 @@ function renderPage() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const utils = render(
     <QueryClientProvider client={queryClient}>
       <CachePage />
     </QueryClientProvider>,
   );
+  return {
+    ...utils,
+    rerenderSamePage: () =>
+      utils.rerender(
+        <QueryClientProvider client={queryClient}>
+          <CachePage />
+        </QueryClientProvider>,
+      ),
+  };
 }
 
 describe("CachePage", () => {
   beforeEach(() => {
+    currentRepoParam = "acme~demo";
     tokensResolveMock.mockReset();
     tokensUpsertMock.mockReset();
     cacheListMock.mockReset();
@@ -163,5 +175,37 @@ describe("CachePage", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("disarms the confirm state when the route's repo param changes", async () => {
+    cacheClearMock.mockResolvedValue({ queued: true, dry_run: false, job_id: 7 });
+
+    const { rerenderSamePage } = renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("actor"), { target: { value: "me@example.com" } });
+    const clearButton = screen.getByRole("button", { name: /^clear$/i });
+    await waitFor(() => expect(clearButton).not.toBeDisabled());
+
+    fireEvent.click(clearButton);
+    await screen.findByRole("button", { name: /confirm clear/i });
+    expect(screen.getByText(/click again to permanently delete/i)).toBeInTheDocument();
+
+    // Navigate to a different repo — same component instance, new route params
+    // (in-place rerender, not unmount/remount, so this actually exercises the
+    // params.repo-keyed disarm effect rather than trivially passing).
+    currentRepoParam = "acme~other";
+    rerenderSamePage();
+
+    await waitFor(() => expect(screen.getByText(/acme\/other/i)).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /confirm clear/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^clear$/i })).toBeInTheDocument();
+    expect(screen.queryByText(/click again to permanently delete/i)).not.toBeInTheDocument();
+    expect(cacheClearMock).not.toHaveBeenCalled();
+
+    // A click on the new repo re-arms rather than immediately firing a clear
+    // against it — the stale confirmation must not carry over.
+    fireEvent.click(screen.getByRole("button", { name: /^clear$/i }));
+    expect(cacheClearMock).not.toHaveBeenCalled();
+    await screen.findByRole("button", { name: /confirm clear/i });
   });
 });
