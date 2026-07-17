@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useMutation } from "@tanstack/react-query"
 import Link from "next/link"
 import { Input } from "@/components/ui/input"
@@ -17,11 +17,17 @@ import type { CacheEntry } from "@/lib/api/types"
 interface CachePanelProps {
   owner: string
   repo: string
+  // The repo detail page keeps this panel mounted behind all three tabs (fixes a
+  // dangling aria-controls reference — see repos/[repo]/page.tsx), so without this
+  // flag it would auto-resolve a token on every page load even if the user never
+  // opens the Actions Cache tab. Defaults to true for the standalone /cache route,
+  // which has no tabs and is always "active".
+  active?: boolean
 }
 
 /** Actions-cache list/clear UI — the standalone /repos/{repo}/cache route and the
  * repo detail page's "Actions Cache" tab both render this. */
-export function CachePanel({ owner, repo }: CachePanelProps) {
+export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
   const [token, setToken] = useState("")
   const [tokenSaved, setTokenSaved] = useState(false)
   const [actor, setActor] = useState("")
@@ -39,14 +45,27 @@ export function CachePanel({ owner, repo }: CachePanelProps) {
     onError: () => setTokenSaved(false),
   })
 
+  // Resolve at most once per owner, deferred until the panel is actually active (so
+  // opening the repo detail page never resolves a token for a tab the user hasn't
+  // clicked into yet) but NOT re-triggered every time the tab is revisited — otherwise
+  // switching tabs and back would wipe out whatever the user had typed in the meantime.
+  const resolvedForOwnerRef = useRef(false)
+
   useEffect(() => {
+    resolvedForOwnerRef.current = false
     if (owner) {
       setToken("")
       setTokenSaved(false)
+    }
+  }, [owner])
+
+  useEffect(() => {
+    if (owner && active && !resolvedForOwnerRef.current) {
+      resolvedForOwnerRef.current = true
       resolveMutation.mutate(owner)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [owner])
+  }, [owner, active])
 
   // Reset stale cache-table/clear-result data and any armed "Confirm clear" state
   // whenever the owner/repo this panel is scoped to changes (route navigation, or a

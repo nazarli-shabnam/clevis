@@ -73,6 +73,12 @@ describe("ReposPage", () => {
     expect(screen.getByRole("button", { name: /load repositories/i })).toBeDisabled();
   });
 
+  it("keeps Load repositories disabled for a whitespace-only organization", () => {
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "   " } });
+    expect(screen.getByRole("button", { name: /load repositories/i })).toBeDisabled();
+  });
+
   it("loads and renders repos for the entered org", async () => {
     reposListMock.mockResolvedValue({
       org: "acme",
@@ -479,5 +485,39 @@ describe("ReposPage", () => {
 
     const cacheLink = screen.getByRole("link", { name: /cache/i });
     expect(cacheLink).toHaveAttribute("href", "/repos/acme~weird%20name/cache");
+  });
+
+  it("shows a distinct error indicator, not an empty state, when a row's stats/pulls fetch fails", async () => {
+    reposListMock.mockResolvedValue({
+      org: "acme",
+      total: 1,
+      repos: [
+        {
+          name: "demo",
+          full_name: "acme/demo",
+          private: false,
+          description: null,
+          language: "Python",
+          stargazers_count: 3,
+          forks_count: 0,
+          watchers_count: 3,
+          open_issues_count: 1,
+          pushed_at: "2026-07-01T00:00:00Z",
+          default_branch: "main",
+          html_url: "https://github.com/acme/demo",
+        },
+      ],
+    });
+    reposStatsMock.mockRejectedValue(new Error("GitHub API unreachable"));
+    reposPullsMock.mockRejectedValue(new Error("GitHub API unreachable"));
+
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /load repositories/i }));
+    await waitFor(() => expect(screen.getByText("demo")).toBeInTheDocument());
+
+    // Regression: a failed fetch must not render identically to "no activity"/"0 PRs".
+    await waitFor(() => expect(screen.getAllByText(/failed to load/i).length).toBeGreaterThan(0));
+    expect(screen.queryByText(/no recent activity/i)).not.toBeInTheDocument();
   });
 });

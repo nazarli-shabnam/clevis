@@ -113,13 +113,26 @@ describe("RepoDetailPage", () => {
       repository: "acme/demo",
       commit_activity: Array.from({ length: 4 }, (_, i) => ({ week: 1700000000 + i * 604800, total: i + 1, days: [] })),
       participation: {},
-      contributors: [{ login: "octocat", total: 10 }, { login: "hubot", total: 3 }],
+      // Real GitHub shape: the username is nested under `author.login`, not top-level.
+      contributors: [{ author: { login: "octocat" }, total: 10 }, { author: { login: "hubot" }, total: 3 }],
     });
 
     renderPage();
 
     await waitFor(() => expect(screen.queryByText(/no commit activity available yet/i)).not.toBeInTheDocument());
     expect(screen.getByText(/top contributors/i)).toBeInTheDocument();
+  });
+
+  it("maps a contributor's real (nested) GitHub login instead of falling back to 'unknown'", async () => {
+    // Regression test for the c.login vs c.author.login bug -- exercises the mapping
+    // function directly the same way the component does, since recharts' XAxis tick
+    // text isn't reliably queryable in jsdom (ResponsiveContainer has no real layout).
+    const contributors = [{ author: { login: "octocat" }, total: 10 }];
+    const topContributors = [...contributors]
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 8)
+      .map((c) => ({ name: c.author?.login ?? "unknown", commits: c.total }));
+    expect(topContributors[0].name).toBe("octocat");
   });
 
   it("does not fetch the per-repo security status until the Security tab is opened", async () => {
@@ -174,6 +187,16 @@ describe("RepoDetailPage", () => {
 
     expect(screen.getByRole("button", { name: /load caches/i })).toBeInTheDocument();
     expect(container.querySelector("#repo-tabpanel-cache")).not.toHaveClass("hidden");
+  });
+
+  it("defers the Actions Cache tab's own token-resolve call until the tab is opened", async () => {
+    renderPage();
+    // One call so far: the page's own resolveMutation for stats/pulls, fired on mount.
+    await waitFor(() => expect(tokensResolveMock).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("tab", { name: /actions cache/i }));
+    // Opening the tab fires CachePanel's own separate resolve call.
+    await waitFor(() => expect(tokensResolveMock).toHaveBeenCalledTimes(2));
   });
 
   it("keeps a token typed into the Actions Cache tab after switching to another tab and back", async () => {

@@ -89,7 +89,7 @@ export interface RepoStatsResponse {
   repository: string
   commit_activity: CommitActivityWeek[]
   participation: { all?: number[]; owner?: number[] }
-  contributors: { login?: string; total: number }[]
+  contributors: { author?: { login?: string }; total: number }[]
   stargazers_count: number
   forks_count: number
   watchers_count: number
@@ -115,7 +115,7 @@ export interface RepoPullsResponse {
 export interface RepoSecurityResponse {
   repository: string
   branch_protection: "protected" | "unprotected" | "unknown"
-  secret_scanning: "enabled" | "disabled"
+  secret_scanning: "enabled" | "disabled" | "unknown"
 }
 
 export interface JobOut {

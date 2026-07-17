@@ -33,21 +33,27 @@ const TABS: { id: Tab; label: string }[] = [
 function tabButtonId(id: Tab) { return `repo-tab-${id}` }
 function tabPanelId(id: Tab) { return `repo-tabpanel-${id}` }
 
+type Tone = "good" | "bad" | "unknown"
+
+const TONE_STYLES: Record<Tone, { Icon: typeof ShieldCheck; color: string }> = {
+  good: { Icon: ShieldCheck, color: "text-green-400" },
+  bad: { Icon: ShieldWarning, color: "text-red-400" },
+  unknown: { Icon: Shield, color: "text-muted-foreground" },
+}
+
 function SecurityStatusRow({
   label,
-  status,
-  passLabel,
-  failLabel,
+  tone,
+  goodLabel,
+  badLabel,
 }: {
   label: string
-  status: "protected" | "unprotected" | "unknown"
-  passLabel: string
-  failLabel: string
+  tone: Tone
+  goodLabel: string
+  badLabel: string
 }) {
-  const Icon = status === "protected" ? ShieldCheck : status === "unprotected" ? ShieldWarning : Shield
-  const color =
-    status === "protected" ? "text-green-400" : status === "unprotected" ? "text-red-400" : "text-muted-foreground"
-  const text = status === "protected" ? passLabel : status === "unprotected" ? failLabel : "Unknown"
+  const { Icon, color } = TONE_STYLES[tone]
+  const text = tone === "good" ? goodLabel : tone === "bad" ? badLabel : "Unknown"
   return (
     <div className="flex items-center gap-2 text-xs">
       <Icon className={`size-4 shrink-0 ${color}`} />
@@ -146,7 +152,7 @@ export default function RepoDetailPage() {
   const topContributors = [...(statsQuery.data?.contributors ?? [])]
     .sort((a, b) => b.total - a.total)
     .slice(0, 8)
-    .map((c) => ({ name: c.login ?? "unknown", commits: c.total }))
+    .map((c) => ({ name: c.author?.login ?? "unknown", commits: c.total }))
 
   return (
     <>
@@ -294,7 +300,7 @@ export default function RepoDetailPage() {
         aria-labelledby={tabButtonId("cache")}
         tabIndex={0}
       >
-        <CachePanel owner={owner} repo={repo} />
+        <CachePanel owner={owner} repo={repo} active={tab === "cache"} />
       </div>
 
       <div
@@ -327,15 +333,27 @@ export default function RepoDetailPage() {
             <div className="flex flex-col gap-2">
               <SecurityStatusRow
                 label="Default branch protection"
-                status={securityQuery.data.branch_protection}
-                passLabel="Protected"
-                failLabel="Unprotected"
+                tone={
+                  securityQuery.data.branch_protection === "protected"
+                    ? "good"
+                    : securityQuery.data.branch_protection === "unprotected"
+                      ? "bad"
+                      : "unknown"
+                }
+                goodLabel="Protected"
+                badLabel="Unprotected"
               />
               <SecurityStatusRow
                 label="Secret scanning"
-                status={securityQuery.data.secret_scanning === "enabled" ? "protected" : "unprotected"}
-                passLabel="Enabled"
-                failLabel="Disabled"
+                tone={
+                  securityQuery.data.secret_scanning === "enabled"
+                    ? "good"
+                    : securityQuery.data.secret_scanning === "disabled"
+                      ? "bad"
+                      : "unknown"
+                }
+                goodLabel="Enabled"
+                badLabel="Disabled"
               />
             </div>
           ) : null}

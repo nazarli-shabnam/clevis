@@ -25,9 +25,17 @@ function sortRepos(repos: RepoSummary[], sort: SortKey): RepoSummary[] {
   return sorted
 }
 
+function CellLoadError() {
+  return (
+    <span className="inline-flex items-center gap-1 text-destructive text-[0.6875rem]" title="Failed to load">
+      <Warning className="size-3" /> failed to load
+    </span>
+  )
+}
+
 function RepoActivityCell({ org, repo, token }: { org: string; repo: string; token: string }) {
   const [ref, inView] = useInView<HTMLDivElement>()
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["repo-stats", org, repo, token],
     queryFn: () => api.repos.stats(org, org, repo, token),
     enabled: inView,
@@ -38,6 +46,8 @@ function RepoActivityCell({ org, repo, token }: { org: string; repo: string; tok
     <div ref={ref}>
       {!inView || isLoading ? (
         <Skeleton className="h-8 w-24" />
+      ) : isError ? (
+        <CellLoadError />
       ) : weeks.length === 0 || weeks.every((n) => n === 0) ? (
         <span className="text-muted-foreground text-[0.6875rem]">— no recent activity</span>
       ) : (
@@ -51,7 +61,7 @@ function RepoReleaseCell({ org, repo, token }: { org: string; repo: string; toke
   const [ref, inView] = useInView<HTMLDivElement>()
   // Same query key as RepoActivityCell — React Query dedupes the fetch, this just
   // reads a different field off the already-fetched (or in-flight) stats response.
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["repo-stats", org, repo, token],
     queryFn: () => api.repos.stats(org, org, repo, token),
     enabled: inView,
@@ -62,6 +72,8 @@ function RepoReleaseCell({ org, repo, token }: { org: string; repo: string; toke
     <div ref={ref}>
       {!inView || isLoading ? (
         <Skeleton className="h-3 w-16 ml-auto" />
+      ) : isError ? (
+        <CellLoadError />
       ) : !release ? (
         <span className="text-muted-foreground text-[0.6875rem]">—</span>
       ) : (
@@ -76,7 +88,7 @@ function RepoReleaseCell({ org, repo, token }: { org: string; repo: string; toke
 
 function RepoPullsCell({ org, repo, token }: { org: string; repo: string; token: string }) {
   const [ref, inView] = useInView<HTMLDivElement>()
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["repo-pulls", org, repo, token],
     queryFn: () => api.repos.pulls(org, org, repo, token),
     enabled: inView,
@@ -86,6 +98,8 @@ function RepoPullsCell({ org, repo, token }: { org: string; repo: string; token:
     <div ref={ref}>
       {!inView || isLoading ? (
         <Skeleton className="h-4 w-10 ml-auto" />
+      ) : isError ? (
+        <CellLoadError />
       ) : (
         <span className="inline-flex items-center gap-1 text-muted-foreground tabular-nums">
           <GitPullRequest className="size-3.5" />
@@ -238,7 +252,7 @@ export default function ReposPage() {
                 placeholder="e.g. octocat"
                 value={owner}
                 onChange={(e) => setOwner(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && owner && !listMutation.isPending && loadRepos()}
+                onKeyDown={(e) => e.key === "Enter" && owner.trim() && !listMutation.isPending && loadRepos()}
               />
             </div>
             <div>
@@ -259,12 +273,12 @@ export default function ReposPage() {
                 value={token}
                 onChange={(e) => { setToken(e.target.value); setTokenSaved(false) }}
                 className="font-mono"
-                onKeyDown={(e) => e.key === "Enter" && owner && !listMutation.isPending && loadRepos()}
+                onKeyDown={(e) => e.key === "Enter" && owner.trim() && !listMutation.isPending && loadRepos()}
               />
             </div>
             <Button
               onClick={loadRepos}
-              disabled={listMutation.isPending || !owner}
+              disabled={listMutation.isPending || !owner.trim()}
               className="mt-1"
             >
               {listMutation.isPending ? (
