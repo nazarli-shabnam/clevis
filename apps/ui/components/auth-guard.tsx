@@ -2,6 +2,7 @@
 
 import { useEffect } from "react"
 import { useRouter, usePathname } from "next/navigation"
+import { X } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
 
@@ -11,7 +12,7 @@ const PUBLIC_ROUTES = ["/login", "/setup", "/register"]
 const PUBLIC_ROUTE_PREFIXES = ["/invite/"]
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { user, isLoading, logout } = useAuth()
+  const { user, isLoading, logout, pendingInvitations, dismissPendingInvitations } = useAuth()
   const router = useRouter()
   const pathname = usePathname()
 
@@ -67,5 +68,29 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     </div>
   )
 
-  return <>{children}</>
+  return (
+    <>
+      {pendingInvitations.length > 0 && (
+        <div className="bg-primary/10 border-b border-primary/30 px-4 py-2 flex items-center justify-center gap-3 text-xs text-primary flex-wrap">
+          <span>
+            {/* Informational only — deliberately not a link. The accept token isn't
+                exposed here (see PendingInvitationSummary), so this can't double as a
+                shortcut to accept; find the original invite link, or ask an admin to
+                resend it. */}
+            You have a pending invite to join{" "}
+            {pendingInvitations.map((inv) => inv.org_login).join(", ")} — use your invite link, or ask an org
+            admin to resend it.
+          </span>
+          <button
+            onClick={dismissPendingInvitations}
+            className="text-primary/60 hover:text-primary"
+            aria-label="Dismiss"
+          >
+            <X className="size-3" />
+          </button>
+        </div>
+      )}
+      {children}
+    </>
+  )
 }
