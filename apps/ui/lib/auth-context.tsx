@@ -167,18 +167,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!authUnconfirmed) return
     function handleOnline() {
+      const epochAtStart = sessionEpochRef.current
       const stored = localStorage.getItem(_TOKEN_KEY)
       fetch(`${BASE}/auth/me`, {
         headers: stored ? { Authorization: `Bearer ${stored}` } : {},
         credentials: "include",
       })
         .then(async (res) => {
+          if (sessionEpochRef.current !== epochAtStart) return
           if (res.status === 401) {
             if (stored) logout()
             return
           }
           if (!res.ok) return
           const data = (await res.json()) as AuthUser
+          // Re-check after the await — a concurrent login()/logout() could have
+          // bumped the epoch while the body was being parsed, in which case this
+          // response is stale and must not clobber the newer session.
+          if (sessionEpochRef.current !== epochAtStart) return
           if (stored) setToken(stored)
           setUser(data)
           setAuthUnconfirmed(false)

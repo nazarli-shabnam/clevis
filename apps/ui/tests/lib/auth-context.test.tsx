@@ -474,4 +474,76 @@ describe("AuthProvider authUnconfirmed", () => {
     expect(result.current.authUnconfirmed).toBe(false);
     expect(result.current.user).toBeNull();
   });
+
+  it("does not overwrite a concurrent login with a stale online-reconnect /auth/me response", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    localStorage.setItem(TOKEN_KEY, makeJwtForUser(cookieUser));
+
+    const passwordToken = makeJwt(passwordUser.id, passwordUser.email);
+
+    let meCallCount = 0;
+    const onlineDeferred = (() => {
+      let resolve!: (response: Response) => void;
+      const promise = new Promise<Response>((res) => {
+        resolve = res;
+      });
+      return { promise, resolve };
+    })();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/me")) {
+          meCallCount += 1;
+          // Mount attempt (1) and its retry (2) both fail, so authUnconfirmed
+          // becomes true; the online-triggered call (3) is held open so a
+          // concurrent login can race it.
+          if (meCallCount <= 2) return Promise.reject(new Error("network down"));
+          return onlineDeferred.promise;
+        }
+        if (url.endsWith("/auth/login")) {
+          return Promise.resolve(
+            jsonResponse({ access_token: passwordToken, user: passwordUser }),
+          );
+        }
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <AuthProvider>{children}</AuthProvider>
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    await waitFor(() => expect(result.current.authUnconfirmed).toBe(true));
+
+    // Connectivity returns, firing the online handler's /auth/me check —
+    // its response is held open via onlineDeferred.
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+    });
+    await waitFor(() => expect(meCallCount).toBe(3));
+
+    // A password login happens while that online-triggered fetch is still
+    // in flight.
+    await act(async () => {
+      await result.current.login("password@example.com", "supersecret1234");
+    });
+
+    expect(result.current.user).toEqual(passwordUser);
+    expect(result.current.token).toEqual(passwordToken);
+
+    // The stale online-triggered /auth/me response resolves after the login.
+    await act(async () => {
+      onlineDeferred.resolve(jsonResponse(cookieUser));
+    });
+
+    // It must not clobber the newer, concurrently-logged-in session.
+    expect(result.current.user).toEqual(passwordUser);
+    expect(result.current.token).toEqual(passwordToken);
+  });
 });
