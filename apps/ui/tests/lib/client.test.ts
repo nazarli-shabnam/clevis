@@ -85,6 +85,13 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
     expect(JSON.parse(init.body as string)).toEqual({ owner: "acme", token: "ghp_explicit" });
   });
 
+  it("omits blank or whitespace-only tokens so the App path stays clean", async () => {
+    stubOkJson({ owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [] });
+    await api.analytics.overview("acme", "   ");
+    const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({ owner: "acme" });
+  });
+
   it("forwards an explicit token for cache.list", async () => {
     stubOkJson({ repository: "acme/demo", total: 0, actions_caches: [] });
     await api.cache.list("acme", "demo", "ghp_list");

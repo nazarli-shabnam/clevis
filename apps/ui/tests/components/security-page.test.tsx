@@ -62,6 +62,9 @@ describe("SecurityPage", () => {
 
     await waitFor(() => expect(analyticsOverviewMock).toHaveBeenCalledWith("acme"));
     expect(screen.queryByPlaceholderText(/ghp_/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Uses the GitHub App installation for this org/i),
+    ).toBeInTheDocument();
   });
 
   it("runs a scan on Enter in the organization field without a PAT field", async () => {

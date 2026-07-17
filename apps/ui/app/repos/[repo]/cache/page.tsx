@@ -89,10 +89,10 @@ export default function CachePage() {
         {/* Config panel */}
         <div className="bg-card border border-border">
           <div className="px-4 py-3 border-b border-border">
-            <span className="section-label">Configuration</span>
+            <span className="section-title">Configuration</span>
           </div>
           <div className="p-4 flex flex-col gap-3">
-            <p className="text-[0.6875rem] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Uses the GitHub App installation for <span className="font-mono">{owner}</span>. Connect one under Settings → Connected orgs if requests fail.
             </p>
             <div>

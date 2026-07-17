@@ -88,7 +88,7 @@ def test_resolve_org_token_falls_back_when_installation_token_mint_fails(db, app
 
 def test_resolve_org_token_raises_when_nothing_available(db, app_configured):
     org = org_repo.get_or_create(db, github_login="acme")
-    with pytest.raises(NoGitHubTokenAvailable):
+    with pytest.raises(NoGitHubTokenAvailable, match="Connected orgs"):
         resolve_org_token(db, org_id=org.id, account_login="acme", client_token=None)
 
 
@@ -105,5 +105,5 @@ def test_resolve_personal_token_uses_installation_when_connected(db, app_configu
 
 def test_resolve_personal_token_raises_when_nothing_available(db, app_configured):
     user = _make_user(db, "shabnam@e.com")
-    with pytest.raises(NoGitHubTokenAvailable):
+    with pytest.raises(NoGitHubTokenAvailable, match="Connected orgs"):
         resolve_personal_token(db, owner_user_id=user.id, account_login="shabnam", client_token=None)

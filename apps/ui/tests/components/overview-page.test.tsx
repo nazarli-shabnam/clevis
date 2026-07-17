@@ -42,7 +42,7 @@ describe("OverviewPage stat cards", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows Configure links for Repositories/Security Score when no org is configured", async () => {
+  it("shows Configure links to Settings when no org is configured", async () => {
     renderPage();
 
     await waitFor(() => {
@@ -53,7 +53,7 @@ describe("OverviewPage stat cards", () => {
 
     const configureLinks = screen.getAllByRole("link", { name: /Configure →/i });
     for (const link of configureLinks) {
-      expect(link).toHaveAttribute("href", "/security");
+      expect(link).toHaveAttribute("href", "/settings");
     }
   });
 
@@ -80,6 +80,23 @@ describe("OverviewPage stat cards", () => {
     });
 
     expect(screen.queryAllByText("Configure →")).toHaveLength(0);
+  });
+
+  it("surfaces API errors and a Settings CTA when no GitHub App installation is available", async () => {
+    localStorage.setItem("default_org", "acme");
+    analyticsOverviewMock.mockRejectedValue(
+      new Error("No GitHub App installation found for 'acme' and no token was provided."),
+    );
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText(/No GitHub App installation found for 'acme'/i)).toBeInTheDocument();
+    });
+    expect(screen.getByRole("link", { name: /Connect a GitHub App in Settings/i })).toHaveAttribute(
+      "href",
+      "/settings",
+    );
   });
 
   it("always renders Open PRs and Team Members as N/A, regardless of org state", async () => {

@@ -138,9 +138,10 @@ export const api = {
     // Prefer omitting token — the API mints a GitHub App installation token when
     // the owner is connected. An explicit token remains supported for tests/tools.
     overview: async (owner: string, token?: string): Promise<AnalyticsOverviewResponse> => {
+      const trimmed = token?.trim()
       const data = await post<AnalyticsOverviewResponse>("/me/analytics/overview", {
         owner,
-        ...(token ? { token } : {}),
+        ...(trimmed ? { token: trimmed } : {}),
       })
       return {
         ...data,
@@ -149,26 +150,30 @@ export const api = {
     },
   },
   cache: {
-    list: (owner: string, repo: string, token?: string) =>
-      post<CacheListResponse>(
+    list: (owner: string, repo: string, token?: string) => {
+      const trimmed = token?.trim()
+      return post<CacheListResponse>(
         `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions-caches`,
-        token ? { token } : {},
-      ),
+        trimmed ? { token: trimmed } : {},
+      )
+    },
     clear: (
       owner: string,
       repo: string,
       body: { actor: string; dry_run: boolean; token?: string; key?: string; ref?: string },
-    ) =>
-      post<CacheClearResponse>(
+    ) => {
+      const trimmed = body.token?.trim()
+      return post<CacheClearResponse>(
         `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions-caches/clear`,
         {
           actor: body.actor,
           dry_run: body.dry_run,
-          ...(body.token ? { token: body.token } : {}),
+          ...(trimmed ? { token: trimmed } : {}),
           ...(body.key !== undefined ? { key: body.key } : {}),
           ...(body.ref !== undefined ? { ref: body.ref } : {}),
         },
-      ),
+      )
+    },
   },
   jobs: {
     list: () => get<JobOut[]>("/jobs"),

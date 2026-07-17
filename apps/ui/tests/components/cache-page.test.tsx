@@ -78,6 +78,7 @@ describe("CachePage", () => {
     renderPage();
     expect(screen.queryByPlaceholderText(/ghp_/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /save token/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/Uses the GitHub App installation for/i)).toBeInTheDocument();
   });
 
   it("keeps the Clear button disabled until an actor is entered", async () => {

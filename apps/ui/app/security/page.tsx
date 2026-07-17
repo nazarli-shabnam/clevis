@@ -125,7 +125,7 @@ export default function SecurityPage() {
                 onChange={(e) => setOwner(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && owner && !scan.isPending && scan.mutate()}
               />
-              <p className="text-[0.6875rem] text-muted-foreground mt-1.5">
+              <p className="text-xs text-muted-foreground mt-1.5">
                 Uses the GitHub App installation for this org. Connect one under Settings → Connected orgs if scans fail.
               </p>
             </div>

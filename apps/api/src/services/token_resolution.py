@@ -62,7 +62,7 @@ def resolve_org_token(db: Session, *, org_id: int, account_login: str, client_to
         return client_token
     raise NoGitHubTokenAvailable(
         f"No GitHub App installation found for '{account_login}' and no token was provided. "
-        "Install the GitHub App for this organization, or add a personal access token in Settings."
+        "Install the GitHub App for this organization in Settings → Connected orgs."
     )
 
 
@@ -79,5 +79,5 @@ def resolve_personal_token(db: Session, *, owner_user_id: int, account_login: st
         return client_token
     raise NoGitHubTokenAvailable(
         f"No GitHub App installation found for '{account_login}' and no token was provided. "
-        "Install the GitHub App, or add a personal access token in Settings."
+        "Install the GitHub App in Settings → Connected orgs."
     )

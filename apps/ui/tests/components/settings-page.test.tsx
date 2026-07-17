@@ -185,4 +185,21 @@ describe("SettingsPage", () => {
     });
     expect(routerReplace).toHaveBeenCalledWith("/settings");
   });
+
+  it("describes legacy PATs as fallback-only after App migration", async () => {
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([]);
+    configGetAllMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true" });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Personal access tokens (legacy)")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/Legacy fallback only\. Health & Security, Cache, and Overview use a connected GitHub App/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Still used by Health/i)).not.toBeInTheDocument();
+  });
 });
