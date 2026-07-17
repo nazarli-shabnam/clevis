@@ -3,6 +3,7 @@
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
+import { useQuery } from "@tanstack/react-query"
 import { GearSix, Check, SignOut, UserPlus } from "@phosphor-icons/react"
 import {
   Sidebar,
@@ -16,6 +17,8 @@ import {
   SidebarSeparator,
 } from "@/components/ui/sidebar"
 import { useAuth } from "@/lib/auth-context"
+import { api } from "@/lib/api/client"
+import type { MyOrgMembership } from "@/lib/api/types"
 
 // Settings is no longer in the sidebar nav — it lives inside the profile dropdown.
 const groups = [
@@ -50,10 +53,12 @@ interface Profile {
 
 function ProfileDropdown({
   profile,
+  inviteHref,
   onClose,
   onSignOut,
 }: {
   profile: Profile
+  inviteHref: string
   onClose: () => void
   onSignOut: () => void
 }) {
@@ -102,14 +107,15 @@ function ProfileDropdown({
           <GearSix className="size-3" />
           Settings
         </Link>
-        <button
-          disabled
-          className="flex items-center gap-1.5 px-2.5 py-1.5 text-[0.75rem] font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground bg-sidebar-accent/60 hover:bg-sidebar-accent border border-sidebar-border/60 transition-colors flex-1 justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Coming soon"
+        <Link
+          href={inviteHref}
+          onClick={onClose}
+          title={inviteHref === "/settings" ? "Set a default organization in Settings first" : undefined}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-[0.75rem] font-medium text-sidebar-foreground/70 hover:text-sidebar-foreground bg-sidebar-accent/60 hover:bg-sidebar-accent border border-sidebar-border/60 transition-colors flex-1 justify-center"
         >
           <UserPlus className="size-3" />
           Invite members
-        </button>
+        </Link>
       </div>
 
       {/* Sign out */}
@@ -140,6 +146,22 @@ export function AppSidebar() {
     org: defaultOrg || "no org connected",
     email: user?.email || "",
   }
+
+  // Same query key as the /collaborators redirect page so TanStack Query dedupes
+  // the request when both are mounted. Only route the "Invite members" link at an
+  // org where the user is actually an admin — mirrors the /collaborators fallback
+  // logic (prefer default_org, else the first admin org, else /settings).
+  const { data: memberships = [], isLoading: membershipsLoading } = useQuery<MyOrgMembership[]>({
+    queryKey: ["my-orgs"],
+    queryFn: () => api.orgs.mine(),
+  })
+  const adminOrgs = memberships.filter((m) => m.role === "admin")
+  const inviteTarget = membershipsLoading
+    ? undefined
+    : adminOrgs.find((m) => m.org_login === defaultOrg) || adminOrgs[0]
+  const inviteHref = inviteTarget
+    ? `/settings/org/${encodeURIComponent(inviteTarget.org_login)}/members`
+    : "/settings"
 
   // Close on click outside
   useEffect(() => {
@@ -185,6 +207,7 @@ export function AppSidebar() {
         {open && (
           <ProfileDropdown
             profile={profile}
+            inviteHref={inviteHref}
             onClose={() => setOpen(false)}
             onSignOut={() => { logout(); setOpen(false); router.replace("/login") }}
           />

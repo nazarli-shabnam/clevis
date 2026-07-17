@@ -1,6 +1,7 @@
 "use client"
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react"
+import type { PendingInvitationSummary } from "@/lib/api/types"
 
 export interface AuthUser {
   id: number
@@ -20,11 +21,13 @@ interface AuthContextValue {
    *  check, which happens on login/setSession or once the browser is back
    *  online. */
   authUnconfirmed: boolean
+  pendingInvitations: PendingInvitationSummary[]
   login(email: string, password: string): Promise<void>
   logout(): void
   clearLogoutWarning(): void
   updateUser(u: Partial<AuthUser>): void
-  setSession(jwtToken: string, authUser: AuthUser): void
+  setSession(jwtToken: string, authUser: AuthUser, pendingInvitations?: PendingInvitationSummary[]): void
+  dismissPendingInvitations(): void
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -59,7 +62,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
   const [logoutWarning, setLogoutWarning] = useState<string | null>(null)
   const [authUnconfirmed, setAuthUnconfirmed] = useState(false)
+  const [pendingInvitations, setPendingInvitations] = useState<PendingInvitationSummary[]>([])
   const sessionEpochRef = useRef(0)
+
+  const dismissPendingInvitations = useCallback(() => {
+    setPendingInvitations([])
+  }, [])
 
   const bumpSessionEpoch = useCallback(() => {
     sessionEpochRef.current += 1
@@ -80,6 +88,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(null)
     setUser(null)
     setAuthUnconfirmed(false)
+    setPendingInvitations([])
   }, [bumpSessionEpoch])
 
   useEffect(() => {
@@ -203,12 +212,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail ?? "Login failed")
-    const { access_token, user: u } = data as { access_token: string; user: AuthUser }
+    const { access_token, user: u, pending_invitations } = data as {
+      access_token: string
+      user: AuthUser
+      pending_invitations?: PendingInvitationSummary[]
+    }
     bumpSessionEpoch()
     clearLogoutWarning()
     localStorage.setItem(_TOKEN_KEY, access_token)
     setToken(access_token)
     setUser(u)
+    setPendingInvitations(pending_invitations ?? [])
     setAuthUnconfirmed(false)
     setIsLoading(false)
   }, [bumpSessionEpoch, clearLogoutWarning])
@@ -217,15 +231,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser((prev) => (prev ? { ...prev, ...patch } : prev))
   }, [])
 
-  const setSession = useCallback((jwtToken: string, authUser: AuthUser) => {
-    bumpSessionEpoch()
-    clearLogoutWarning()
-    localStorage.setItem(_TOKEN_KEY, jwtToken)
-    setToken(jwtToken)
-    setUser(authUser)
-    setAuthUnconfirmed(false)
-    setIsLoading(false)
-  }, [bumpSessionEpoch, clearLogoutWarning])
+  const setSession = useCallback(
+    (jwtToken: string, authUser: AuthUser, invitations: PendingInvitationSummary[] = []) => {
+      bumpSessionEpoch()
+      clearLogoutWarning()
+      localStorage.setItem(_TOKEN_KEY, jwtToken)
+      setToken(jwtToken)
+      setUser(authUser)
+      setPendingInvitations(invitations)
+      setAuthUnconfirmed(false)
+      setIsLoading(false)
+    },
+    [bumpSessionEpoch, clearLogoutWarning],
+  )
 
   return (
     <AuthContext.Provider
@@ -235,11 +253,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isLoading,
         logoutWarning,
         authUnconfirmed,
+        pendingInvitations,
         login,
         logout,
         clearLogoutWarning,
         updateUser,
         setSession,
+        dismissPendingInvitations,
       }}
     >
       {children}

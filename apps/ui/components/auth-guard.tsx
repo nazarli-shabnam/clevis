@@ -2,6 +2,7 @@
 
 import { useEffect } from "react"
 import { useRouter, usePathname } from "next/navigation"
+import { X } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
 
@@ -11,7 +12,7 @@ const PUBLIC_ROUTES = ["/login", "/setup", "/register"]
 const PUBLIC_ROUTE_PREFIXES = ["/invite/"]
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { user, isLoading, logout, authUnconfirmed } = useAuth()
+  const { user, isLoading, logout, authUnconfirmed, pendingInvitations, dismissPendingInvitations } = useAuth()
   const router = useRouter()
   const pathname = usePathname()
 
@@ -72,6 +73,26 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       {authUnconfirmed && (
         <div className="bg-yellow-500/10 border-b border-yellow-500/30 px-4 py-1.5 text-center text-xs text-yellow-400">
           Couldn&rsquo;t confirm your session with the server — your account info may be out of date until it&rsquo;s reachable again.
+        </div>
+      )}
+      {pendingInvitations.length > 0 && (
+        <div className="bg-primary/10 border-b border-primary/30 px-4 py-2 flex items-center justify-center gap-3 text-xs text-primary flex-wrap">
+          <span>
+            {/* Informational only — deliberately not a link. The accept token isn't
+                exposed here (see PendingInvitationSummary), so this can't double as a
+                shortcut to accept; find the original invite link, or ask an admin to
+                resend it. */}
+            You have a pending invite to join{" "}
+            {pendingInvitations.map((inv) => inv.org_login).join(", ")} — use your invite link, or ask an org
+            admin to resend it.
+          </span>
+          <button
+            onClick={dismissPendingInvitations}
+            className="text-primary/60 hover:text-primary"
+            aria-label="Dismiss"
+          >
+            <X className="size-3" />
+          </button>
         </div>
       )}
       {children}
