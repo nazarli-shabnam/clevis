@@ -8,7 +8,7 @@ const cacheListMock = vi.fn();
 const cacheClearMock = vi.fn();
 const reposStatsMock = vi.fn();
 const reposPullsMock = vi.fn();
-const analyticsOverviewMock = vi.fn();
+const reposSecurityMock = vi.fn();
 
 let currentRepoParam = "acme~demo";
 
@@ -29,9 +29,7 @@ vi.mock("@/lib/api/client", () => ({
     repos: {
       stats: (...args: unknown[]) => reposStatsMock(...args),
       pulls: (...args: unknown[]) => reposPullsMock(...args),
-    },
-    analytics: {
-      overview: (...args: unknown[]) => analyticsOverviewMock(...args),
+      security: (...args: unknown[]) => reposSecurityMock(...args),
     },
   },
 }));
@@ -67,13 +65,19 @@ describe("RepoDetailPage", () => {
     cacheClearMock.mockReset();
     reposStatsMock.mockReset();
     reposPullsMock.mockReset();
-    analyticsOverviewMock.mockReset();
+    reposSecurityMock.mockReset();
     tokensResolveMock.mockRejectedValue(new Error("no saved token"));
     reposStatsMock.mockResolvedValue({
       repository: "acme/demo",
       commit_activity: [],
       participation: {},
       contributors: [],
+      stargazers_count: 24,
+      forks_count: 3,
+      watchers_count: 24,
+      open_issues_count: 12,
+      default_branch: "main",
+      latest_release: null,
     });
     reposPullsMock.mockResolvedValue({ repository: "acme/demo", total: 0, pulls: [] });
   });
@@ -118,42 +122,72 @@ describe("RepoDetailPage", () => {
     expect(screen.getByText(/top contributors/i)).toBeInTheDocument();
   });
 
-  it("does not fetch the org-wide security scan until the Security tab is opened", async () => {
+  it("does not fetch the per-repo security status until the Security tab is opened", async () => {
     renderPage();
 
     await waitFor(() => expect(reposStatsMock).toHaveBeenCalled());
-    expect(analyticsOverviewMock).not.toHaveBeenCalled();
+    expect(reposSecurityMock).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("tab", { name: /security/i }));
 
-    await waitFor(() => expect(analyticsOverviewMock).toHaveBeenCalledWith("acme", ""));
+    await waitFor(() => expect(reposSecurityMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
   });
 
-  it("renders the security score once the scan resolves", async () => {
-    analyticsOverviewMock.mockResolvedValue({
-      owner: "acme",
-      score: 82,
-      total_checks: 10,
-      failed_checks: 2,
-      repo_count: 5,
-      checks: [],
+  it("renders the repo's own branch-protection and secret-scanning status, not an org score", async () => {
+    reposSecurityMock.mockResolvedValue({
+      repository: "acme/demo",
+      branch_protection: "protected",
+      secret_scanning: "enabled",
     });
 
     renderPage();
     fireEvent.click(screen.getByRole("tab", { name: /security/i }));
 
-    await waitFor(() => expect(screen.getByText("82")).toBeInTheDocument());
-    expect(screen.getByText(/8 passed/i)).toBeInTheDocument();
-    expect(screen.getByText(/2 failed/i)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/protected/i)).toBeInTheDocument());
+    expect(screen.getByText(/enabled/i)).toBeInTheDocument();
+    // Regression: this used to render an org-wide numeric score (e.g. "82") instead
+    // of per-repo status — make sure that's gone.
+    expect(screen.queryByText(/organization security score/i)).not.toBeInTheDocument();
+  });
+
+  it("renders unprotected/disabled and unknown security statuses distinctly", async () => {
+    reposSecurityMock.mockResolvedValue({
+      repository: "acme/demo",
+      branch_protection: "unknown",
+      secret_scanning: "disabled",
+    });
+
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /security/i }));
+
+    await waitFor(() => expect(screen.getByText(/unknown/i)).toBeInTheDocument());
+    expect(screen.getByText(/disabled/i)).toBeInTheDocument();
   });
 
   it("switches to the Actions Cache tab and renders the shared cache panel", async () => {
     cacheListMock.mockResolvedValue({ repository: "acme/demo", total: 0, actions_caches: [] });
 
-    renderPage();
+    const { container } = renderPage();
+    expect(container.querySelector("#repo-tabpanel-cache")).toHaveClass("hidden");
+
     fireEvent.click(screen.getByRole("tab", { name: /actions cache/i }));
 
     expect(screen.getByRole("button", { name: /load caches/i })).toBeInTheDocument();
+    expect(container.querySelector("#repo-tabpanel-cache")).not.toHaveClass("hidden");
+  });
+
+  it("keeps a token typed into the Actions Cache tab after switching to another tab and back", async () => {
+    renderPage();
+
+    fireEvent.click(screen.getByRole("tab", { name: /actions cache/i }));
+    fireEvent.change(screen.getByPlaceholderText(/ghp_\.\.\. \(leave blank/i), {
+      target: { value: "ghp_typed_by_user_1234567890" },
+    });
+
+    fireEvent.click(screen.getByRole("tab", { name: /security/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /actions cache/i }));
+
+    expect(screen.getByPlaceholderText(/ghp_\.\.\. \(leave blank/i)).toHaveValue("ghp_typed_by_user_1234567890");
   });
 
   it("shows the loading placeholder then the resolved count in the header", async () => {
@@ -187,8 +221,8 @@ describe("RepoDetailPage", () => {
     expect(await screen.findByText(/github api unreachable/i)).toBeInTheDocument();
   });
 
-  it("shows an inline error when the security scan fails", async () => {
-    analyticsOverviewMock.mockRejectedValue(new Error("No GitHub App installation found"));
+  it("shows an inline error when the security status request fails", async () => {
+    reposSecurityMock.mockRejectedValue(new Error("No GitHub App installation found"));
 
     renderPage();
     fireEvent.click(screen.getByRole("tab", { name: /security/i }));
@@ -196,24 +230,81 @@ describe("RepoDetailPage", () => {
     expect(await screen.findByText(/no github app installation found/i)).toBeInTheDocument();
   });
 
+  it("renders the Overview stats grid (stars, forks, watchers, default branch, open issues, latest release)", async () => {
+    reposStatsMock.mockResolvedValue({
+      repository: "acme/demo",
+      commit_activity: [],
+      participation: {},
+      contributors: [],
+      stargazers_count: 24,
+      forks_count: 3,
+      watchers_count: 24,
+      open_issues_count: 12,
+      default_branch: "main",
+      latest_release: { tag_name: "v0.4.1", published_at: "2026-07-15T00:00:00Z", html_url: "https://x/tag/v0.4.1" },
+    });
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText(/24 stars/i)).toBeInTheDocument());
+    expect(screen.getByText(/3 forks/i)).toBeInTheDocument();
+    expect(screen.getByText(/24 watchers/i)).toBeInTheDocument();
+    expect(screen.getByText(/12 open issues/i)).toBeInTheDocument();
+    expect(screen.getByText("main")).toBeInTheDocument();
+    expect(screen.getByText("v0.4.1")).toBeInTheDocument();
+  });
+
+  it("shows a placeholder instead of a release tag when the repo has no releases", async () => {
+    const { container } = renderPage();
+    await waitFor(() => expect(reposStatsMock).toHaveBeenCalled());
+    await waitFor(() => expect(container.textContent).toContain("Latest release —"));
+  });
+
   it("remembers this org as the default before following the full-report link", async () => {
     localStorage.clear();
     renderPage();
     fireEvent.click(screen.getByRole("tab", { name: /security/i }));
 
-    fireEvent.click(screen.getByRole("link", { name: /full report/i }));
+    fireEvent.click(screen.getByRole("link", { name: /org-wide report/i }));
 
     expect(localStorage.getItem("default_org")).toBe("acme");
   });
 
-  it("wires each tab to its panel via aria-controls/id/aria-labelledby", () => {
-    renderPage();
+  it("wires every tab to a panel that actually exists in the document, for all three tabs", () => {
+    // Regression test: the panels must stay mounted (visibility toggled via a class,
+    // not conditional `&&` rendering) or aria-controls/aria-labelledby point at IDs
+    // that don't resolve to any element for whichever tab isn't currently active.
+    const { container } = renderPage();
 
-    const overviewTab = screen.getByRole("tab", { name: /overview/i });
-    const overviewPanel = screen.getByRole("tabpanel");
+    for (const name of [/^overview$/i, /actions cache/i, /security/i]) {
+      const tab = screen.getByRole("tab", { name });
+      const controlsId = tab.getAttribute("aria-controls");
+      expect(controlsId).toBeTruthy();
 
-    expect(overviewTab).toHaveAttribute("aria-controls", overviewPanel.id);
-    expect(overviewPanel).toHaveAttribute("aria-labelledby", overviewTab.id);
+      const panel = container.querySelector(`#${controlsId}`);
+      expect(panel).not.toBeNull();
+      expect(panel).toHaveAttribute("role", "tabpanel");
+      expect(panel).toHaveAttribute("aria-labelledby", tab.id);
+    }
+  });
+
+  it("hides the inactive tabs' panels and shows only the active one, including via keyboard navigation", () => {
+    const { container } = renderPage();
+    const getPanel = (id: string) => container.querySelector(`#repo-tabpanel-${id}`) as HTMLElement;
+
+    expect(getPanel("overview")).not.toHaveClass("hidden");
+    expect(getPanel("cache")).toHaveClass("hidden");
+    expect(getPanel("security")).toHaveClass("hidden");
+
+    fireEvent.click(screen.getByRole("tab", { name: /actions cache/i }));
+    expect(getPanel("overview")).toHaveClass("hidden");
+    expect(getPanel("cache")).not.toHaveClass("hidden");
+    expect(getPanel("security")).toHaveClass("hidden");
+
+    fireEvent.keyDown(screen.getByRole("tab", { name: /actions cache/i }), { key: "ArrowRight" });
+    expect(getPanel("cache")).toHaveClass("hidden");
+    expect(getPanel("security")).not.toHaveClass("hidden");
+    expect(getPanel("overview")).toHaveClass("hidden");
   });
 
   it("only the active tab is in the normal tab order (roving tabindex)", () => {
@@ -265,5 +356,44 @@ describe("RepoDetailPage", () => {
     await waitFor(() =>
       expect(screen.getByRole("tab", { name: /overview/i })).toHaveAttribute("aria-selected", "true"),
     );
+  });
+
+  it("keeps a typed Actions Cache token when navigating to a different repo under the same org", async () => {
+    // The token is org-scoped (GitHub PAT/App token isn't per-repo), so it should survive
+    // a repo-only route change even though CachePanel's own [owner, repo] effect resets
+    // the repo-specific cache list/clear-armed state on every such navigation.
+    const { rerenderSamePage } = renderPage();
+
+    fireEvent.click(screen.getByRole("tab", { name: /actions cache/i }));
+    fireEvent.change(screen.getByPlaceholderText(/ghp_\.\.\. \(leave blank/i), {
+      target: { value: "ghp_still_valid_for_acme_1234567890" },
+    });
+
+    currentRepoParam = "acme~other";
+    rerenderSamePage();
+
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /overview/i })).toHaveAttribute("aria-selected", "true"),
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /actions cache/i }));
+    expect(screen.getByPlaceholderText(/ghp_\.\.\. \(leave blank/i)).toHaveValue("ghp_still_valid_for_acme_1234567890");
+  });
+
+  it("clears a typed Actions Cache token when navigating to a different org", async () => {
+    const { rerenderSamePage } = renderPage();
+
+    fireEvent.click(screen.getByRole("tab", { name: /actions cache/i }));
+    fireEvent.change(screen.getByPlaceholderText(/ghp_\.\.\. \(leave blank/i), {
+      target: { value: "ghp_only_valid_for_acme_1234567890" },
+    });
+
+    currentRepoParam = "other-org~demo";
+    rerenderSamePage();
+
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /overview/i })).toHaveAttribute("aria-selected", "true"),
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /actions cache/i }));
+    expect(screen.getByPlaceholderText(/ghp_\.\.\. \(leave blank/i)).toHaveValue("");
   });
 });

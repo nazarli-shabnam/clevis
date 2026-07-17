@@ -9,7 +9,7 @@ import Link from "next/link"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { Skeleton } from "@/components/ui/skeleton"
-import { GitPullRequest, ArrowSquareOut } from "@phosphor-icons/react"
+import { GitPullRequest, ArrowSquareOut, Star, GitFork, Eye, ShieldCheck, ShieldWarning, Shield } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { parseOwnerRepo } from "@/lib/repo-segment"
 import { shouldApplyResolvedToken } from "@/lib/token-resolve"
@@ -18,6 +18,7 @@ import { BarGroupChart } from "@/components/charts/bar-group-chart"
 import { HeatmapCalendar } from "@/components/charts/heatmap-calendar"
 import { CHART_COLORS } from "@/lib/charts/theme"
 import { CachePanel } from "@/components/repo/cache-panel"
+import { cn } from "@/lib/utils"
 
 const HEATMAP_SCALE = [CHART_COLORS.grid, "#1e3a8a", "#1d4ed8", "#3b82f6", "#60a5fa"]
 
@@ -31,6 +32,30 @@ const TABS: { id: Tab; label: string }[] = [
 
 function tabButtonId(id: Tab) { return `repo-tab-${id}` }
 function tabPanelId(id: Tab) { return `repo-tabpanel-${id}` }
+
+function SecurityStatusRow({
+  label,
+  status,
+  passLabel,
+  failLabel,
+}: {
+  label: string
+  status: "protected" | "unprotected" | "unknown"
+  passLabel: string
+  failLabel: string
+}) {
+  const Icon = status === "protected" ? ShieldCheck : status === "unprotected" ? ShieldWarning : Shield
+  const color =
+    status === "protected" ? "text-green-400" : status === "unprotected" ? "text-red-400" : "text-muted-foreground"
+  const text = status === "protected" ? passLabel : status === "unprotected" ? failLabel : "Unknown"
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <Icon className={`size-4 shrink-0 ${color}`} />
+      <span className="text-foreground">{label}</span>
+      <span className={`ml-auto font-medium ${color}`}>{text}</span>
+    </div>
+  )
+}
 
 export default function RepoDetailPage() {
   const params = useParams<{ repo: string }>()
@@ -93,13 +118,12 @@ export default function RepoDetailPage() {
     enabled: !!owner && !!repo,
   })
 
-  // Org-wide security scan is a heavier call (every check across every repo in the org,
-  // not just this one) — only fire it once the Security tab is actually opened, not on
-  // every repo detail page visit.
+  // Per-repo branch-protection/secret-scanning status — still gated on the Security
+  // tab actually being opened, so visiting the Overview/Cache tabs never fires it.
   const securityQuery = useQuery({
-    queryKey: ["repo-detail-security", owner, token],
-    queryFn: () => api.analytics.overview(owner, token),
-    enabled: tab === "security" && !!owner,
+    queryKey: ["repo-detail-security", owner, repo, token],
+    queryFn: () => api.repos.security(owner, owner, repo, token),
+    enabled: tab === "security" && !!owner && !!repo,
   })
 
   if (!parsed) {
@@ -160,122 +184,163 @@ export default function RepoDetailPage() {
         ))}
       </div>
 
-      {tab === "overview" && (
-        <div
-          className="grid gap-4 lg:grid-cols-2"
-          role="tabpanel"
-          id={tabPanelId("overview")}
-          aria-labelledby={tabButtonId("overview")}
-          tabIndex={0}
-        >
-          <div className="bg-card border border-border lg:col-span-2">
-            <div className="px-4 py-3 border-b border-border">
-              <span className="section-label">Commit activity — 52 weeks</span>
-            </div>
-            <div className="p-4">
-              {statsQuery.isLoading ? (
-                <Skeleton className="h-60 w-full" />
-              ) : areaData.length === 0 ? (
-                <p className="text-sm text-muted-foreground font-mono py-8 text-center">
-                  — no commit activity available yet
-                </p>
-              ) : (
-                <AreaTimeChart data={areaData} label="commits" height={240} />
-              )}
-            </div>
-          </div>
-
-          <div className="bg-card border border-border">
-            <div className="px-4 py-3 border-b border-border">
-              <span className="section-label">Activity calendar</span>
-            </div>
-            <div className="p-4">
-              {statsQuery.isLoading ? (
-                <Skeleton className="h-24 w-full" />
-              ) : heatmapData.length === 0 ? (
-                <p className="text-sm text-muted-foreground font-mono">— no data yet</p>
-              ) : (
-                <HeatmapCalendar data={heatmapData} colorScale={HEATMAP_SCALE} />
-              )}
-            </div>
-          </div>
-
-          <div className="bg-card border border-border">
-            <div className="px-4 py-3 border-b border-border">
-              <span className="section-label">Top contributors</span>
-            </div>
-            <div className="p-4">
-              {statsQuery.isLoading ? (
-                <Skeleton className="h-24 w-full" />
-              ) : topContributors.length === 0 ? (
-                <p className="text-sm text-muted-foreground font-mono">— no contributor data yet</p>
-              ) : (
-                <BarGroupChart
-                  data={topContributors}
-                  bars={[{ key: "commits", color: CHART_COLORS.primary }]}
-                  height={180}
-                />
-              )}
-            </div>
-          </div>
-
-          {statsQuery.isError && (
-            <p className="text-xs text-destructive lg:col-span-2">{statsQuery.error.message}</p>
-          )}
-        </div>
-      )}
-
-      {tab === "cache" && (
-        <div role="tabpanel" id={tabPanelId("cache")} aria-labelledby={tabButtonId("cache")} tabIndex={0}>
-          <CachePanel owner={owner} repo={repo} />
-        </div>
-      )}
-
-      {tab === "security" && (
-        <div
-          className="bg-card border border-border"
-          role="tabpanel"
-          id={tabPanelId("security")}
-          aria-labelledby={tabButtonId("security")}
-          tabIndex={0}
-        >
-          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-            <span className="section-label">Organization security score</span>
-            <Link
-              href="/security"
-              onClick={() => localStorage.setItem("default_org", owner)}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1"
-            >
-              Full report <ArrowSquareOut className="size-3" />
-            </Link>
+      <div
+        className={cn("grid gap-4 lg:grid-cols-2", tab !== "overview" && "hidden")}
+        role="tabpanel"
+        id={tabPanelId("overview")}
+        aria-labelledby={tabButtonId("overview")}
+        tabIndex={0}
+      >
+        <div className="bg-card border border-border lg:col-span-2">
+          <div className="px-4 py-3 border-b border-border">
+            <span className="section-label">Repository</span>
           </div>
           <div className="p-4">
-            <p className="text-xs text-muted-foreground mb-3">
-              This score covers every repository in <span className="font-mono">{owner}</span>, not just{" "}
-              <span className="font-mono">{repo}</span> — there is no per-repo security scan yet.
-            </p>
-            {securityQuery.isLoading ? (
-              <Skeleton className="h-16 w-full" />
-            ) : securityQuery.isError ? (
-              <p className="text-xs text-destructive">{securityQuery.error.message}</p>
-            ) : securityQuery.data ? (
-              <div className="flex items-center gap-4">
-                <span className="text-2xl font-bold tabular-nums text-foreground">{securityQuery.data.score}</span>
-                <div className="flex items-center gap-2">
-                  <span className="stat-chip">
-                    {securityQuery.data.total_checks - securityQuery.data.failed_checks} passed
-                  </span>
-                  {securityQuery.data.failed_checks > 0 && (
-                    <span className="stat-chip text-red-400 border-red-500/30">
-                      {securityQuery.data.failed_checks} failed
-                    </span>
+            {statsQuery.isLoading ? (
+              <Skeleton className="h-6 w-full" />
+            ) : (
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
+                <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                  <Star className="size-3.5" />
+                  {statsQuery.data?.stargazers_count ?? 0} stars
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                  <GitFork className="size-3.5" />
+                  {statsQuery.data?.forks_count ?? 0} forks
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                  <Eye className="size-3.5" />
+                  {statsQuery.data?.watchers_count ?? 0} watchers
+                </span>
+                <span className="text-muted-foreground">
+                  {statsQuery.data?.open_issues_count ?? 0} open issues
+                </span>
+                <span className="text-muted-foreground">
+                  Default branch <span className="font-mono">{statsQuery.data?.default_branch ?? "—"}</span>
+                </span>
+                <span className="text-muted-foreground">
+                  Latest release{" "}
+                  {statsQuery.data?.latest_release ? (
+                    <span className="font-mono">{statsQuery.data.latest_release.tag_name}</span>
+                  ) : (
+                    "—"
                   )}
-                </div>
+                </span>
               </div>
-            ) : null}
+            )}
           </div>
         </div>
-      )}
+
+        <div className="bg-card border border-border lg:col-span-2">
+          <div className="px-4 py-3 border-b border-border">
+            <span className="section-label">Commit activity — 52 weeks</span>
+          </div>
+          <div className="p-4">
+            {statsQuery.isLoading ? (
+              <Skeleton className="h-60 w-full" />
+            ) : areaData.length === 0 ? (
+              <p className="text-sm text-muted-foreground font-mono py-8 text-center">
+                — no commit activity available yet
+              </p>
+            ) : (
+              <AreaTimeChart data={areaData} label="commits" height={240} />
+            )}
+          </div>
+        </div>
+
+        <div className="bg-card border border-border">
+          <div className="px-4 py-3 border-b border-border">
+            <span className="section-label">Activity calendar</span>
+          </div>
+          <div className="p-4">
+            {statsQuery.isLoading ? (
+              <Skeleton className="h-24 w-full" />
+            ) : heatmapData.length === 0 ? (
+              <p className="text-sm text-muted-foreground font-mono">— no data yet</p>
+            ) : (
+              <HeatmapCalendar data={heatmapData} colorScale={HEATMAP_SCALE} />
+            )}
+          </div>
+        </div>
+
+        <div className="bg-card border border-border">
+          <div className="px-4 py-3 border-b border-border">
+            <span className="section-label">Top contributors</span>
+          </div>
+          <div className="p-4">
+            {statsQuery.isLoading ? (
+              <Skeleton className="h-24 w-full" />
+            ) : topContributors.length === 0 ? (
+              <p className="text-sm text-muted-foreground font-mono">— no contributor data yet</p>
+            ) : (
+              <BarGroupChart
+                data={topContributors}
+                bars={[{ key: "commits", color: CHART_COLORS.primary }]}
+                height={180}
+              />
+            )}
+          </div>
+        </div>
+
+        {statsQuery.isError && (
+          <p className="text-xs text-destructive lg:col-span-2">{statsQuery.error.message}</p>
+        )}
+      </div>
+
+      <div
+        className={cn(tab !== "cache" && "hidden")}
+        role="tabpanel"
+        id={tabPanelId("cache")}
+        aria-labelledby={tabButtonId("cache")}
+        tabIndex={0}
+      >
+        <CachePanel owner={owner} repo={repo} />
+      </div>
+
+      <div
+        className={cn("bg-card border border-border", tab !== "security" && "hidden")}
+        role="tabpanel"
+        id={tabPanelId("security")}
+        aria-labelledby={tabButtonId("security")}
+        tabIndex={0}
+      >
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          <span className="section-label">Repository security status</span>
+          <Link
+            href="/security"
+            onClick={() => localStorage.setItem("default_org", owner)}
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1"
+          >
+            Org-wide report <ArrowSquareOut className="size-3" />
+          </Link>
+        </div>
+        <div className="p-4">
+          <p className="text-xs text-muted-foreground mb-3">
+            Default-branch protection and secret scanning for <span className="font-mono">{owner}/{repo}</span>{" "}
+            specifically.
+          </p>
+          {securityQuery.isLoading ? (
+            <Skeleton className="h-16 w-full" />
+          ) : securityQuery.isError ? (
+            <p className="text-xs text-destructive">{securityQuery.error.message}</p>
+          ) : securityQuery.data ? (
+            <div className="flex flex-col gap-2">
+              <SecurityStatusRow
+                label="Default branch protection"
+                status={securityQuery.data.branch_protection}
+                passLabel="Protected"
+                failLabel="Unprotected"
+              />
+              <SecurityStatusRow
+                label="Secret scanning"
+                status={securityQuery.data.secret_scanning === "enabled" ? "protected" : "unprotected"}
+                passLabel="Enabled"
+                failLabel="Disabled"
+              />
+            </div>
+          ) : null}
+        </div>
+      </div>
     </>
   )
 }
