@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const replace = vi.fn();
@@ -41,20 +42,29 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 function renderSidebar() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
   return render(
-    <AuthProvider>
-      <SidebarProvider>
-        <AppSidebar />
-      </SidebarProvider>
-    </AuthProvider>,
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <SidebarProvider>
+          <AppSidebar />
+        </SidebarProvider>
+      </AuthProvider>
+    </QueryClientProvider>,
   );
 }
+
+// Mutable per-test fixture for the /me/orgs response; reset in beforeEach.
+let orgMemberships: { org_login: string; role: "admin" | "member" }[] = [];
 
 describe("AppSidebar Invite members button", () => {
   beforeEach(() => {
     localStorage.clear();
     replace.mockClear();
     localStorage.setItem(TOKEN_KEY, makeJwt());
+    orgMemberships = [];
 
     vi.stubGlobal(
       "matchMedia",
@@ -79,6 +89,9 @@ describe("AppSidebar Invite members button", () => {
             jsonResponse({ id: 1, email: "user@example.com", name: "User", is_workspace_admin: false }),
           );
         }
+        if (url.endsWith("/me/orgs")) {
+          return Promise.resolve(jsonResponse(orgMemberships));
+        }
         return Promise.reject(new Error(`Unexpected fetch: ${url}`));
       }),
     );
@@ -90,14 +103,15 @@ describe("AppSidebar Invite members button", () => {
     vi.restoreAllMocks();
   });
 
-  it("links to the org's members page when a default_org is set", async () => {
+  it("links to the org's members page when a default_org is set and the user is admin there", async () => {
+    orgMemberships = [{ org_login: "acme", role: "admin" }];
     localStorage.setItem("default_org", "acme");
     renderSidebar();
 
     fireEvent.click(screen.getByRole("button", { name: /user/i }));
 
     const link = await screen.findByRole("link", { name: /invite members/i });
-    expect(link).toHaveAttribute("href", "/settings/org/acme/members");
+    await waitFor(() => expect(link).toHaveAttribute("href", "/settings/org/acme/members"));
   });
 
   it("links to Settings when no default_org is set, instead of being a dead disabled button", async () => {
@@ -108,5 +122,30 @@ describe("AppSidebar Invite members button", () => {
     const link = await screen.findByRole("link", { name: /invite members/i });
     expect(link).toHaveAttribute("href", "/settings");
     expect(link).not.toHaveAttribute("disabled");
+  });
+
+  it("falls back to the first admin org when default_org is set but the user isn't admin there", async () => {
+    orgMemberships = [
+      { org_login: "acme", role: "member" },
+      { org_login: "widgets-inc", role: "admin" },
+    ];
+    localStorage.setItem("default_org", "acme");
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: /user/i }));
+
+    const link = await screen.findByRole("link", { name: /invite members/i });
+    await waitFor(() => expect(link).toHaveAttribute("href", "/settings/org/widgets-inc/members"));
+  });
+
+  it("falls back to Settings when default_org is set but the user is admin of no org", async () => {
+    orgMemberships = [{ org_login: "acme", role: "member" }];
+    localStorage.setItem("default_org", "acme");
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: /user/i }));
+
+    const link = await screen.findByRole("link", { name: /invite members/i });
+    await waitFor(() => expect(link).toHaveAttribute("href", "/settings"));
   });
 });
