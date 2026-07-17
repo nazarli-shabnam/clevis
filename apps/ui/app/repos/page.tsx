@@ -12,34 +12,50 @@ import { api } from "@/lib/api/client"
 import { shouldApplyResolvedToken } from "@/lib/token-resolve"
 import { MiniSparkline } from "@/components/charts/mini-sparkline"
 import { relativeTime } from "@/lib/format"
+import { useInView } from "@/lib/use-in-view"
 import type { RepoSummary } from "@/lib/api/types"
 
 function RepoActivityCell({ org, repo, token }: { org: string; repo: string; token: string }) {
+  const [ref, inView] = useInView<HTMLDivElement>()
   const { data, isLoading } = useQuery({
     queryKey: ["repo-stats", org, repo, token],
     queryFn: () => api.repos.stats(org, org, repo, token),
+    enabled: inView,
   })
 
-  if (isLoading) return <Skeleton className="h-8 w-24" />
   const weeks = (data?.commit_activity ?? []).slice(-8).map((w) => w.total)
-  if (weeks.length === 0 || weeks.every((n) => n === 0)) {
-    return <span className="text-muted-foreground text-[0.6875rem]">— no recent activity</span>
-  }
-  return <MiniSparkline data={weeks} height={28} />
+  return (
+    <div ref={ref}>
+      {!inView || isLoading ? (
+        <Skeleton className="h-8 w-24" />
+      ) : weeks.length === 0 || weeks.every((n) => n === 0) ? (
+        <span className="text-muted-foreground text-[0.6875rem]">— no recent activity</span>
+      ) : (
+        <MiniSparkline data={weeks} height={28} />
+      )}
+    </div>
+  )
 }
 
 function RepoPullsCell({ org, repo, token }: { org: string; repo: string; token: string }) {
+  const [ref, inView] = useInView<HTMLDivElement>()
   const { data, isLoading } = useQuery({
     queryKey: ["repo-pulls", org, repo, token],
     queryFn: () => api.repos.pulls(org, org, repo, token),
+    enabled: inView,
   })
 
-  if (isLoading) return <Skeleton className="h-4 w-10 ml-auto" />
   return (
-    <span className="inline-flex items-center gap-1 text-muted-foreground tabular-nums">
-      <GitPullRequest className="size-3.5" />
-      {data?.total ?? 0}
-    </span>
+    <div ref={ref}>
+      {!inView || isLoading ? (
+        <Skeleton className="h-4 w-10 ml-auto" />
+      ) : (
+        <span className="inline-flex items-center gap-1 text-muted-foreground tabular-nums">
+          <GitPullRequest className="size-3.5" />
+          {data?.total ?? 0}
+        </span>
+      )}
+    </div>
   )
 }
 
@@ -121,8 +137,13 @@ export default function ReposPage() {
     onSuccess: () => setTokenSaved(true),
   })
 
+  const [loadedToken, setLoadedToken] = useState("")
+
   const listMutation = useMutation({
     mutationFn: () => api.repos.list(owner.trim(), token),
+    // Freeze the token used for per-row lazy fetches at load time — otherwise editing the
+    // token field after a list is loaded would refetch every visible row on each keystroke.
+    onSuccess: () => setLoadedToken(token),
   })
 
   const repos = (listMutation.data?.repos ?? []).filter((r) =>
@@ -263,7 +284,7 @@ export default function ReposPage() {
                   </thead>
                   <tbody className="divide-y divide-border">
                     {repos.map((r) => (
-                      <RepoRow key={r.full_name} org={owner.trim()} repo={r} token={token} />
+                      <RepoRow key={r.full_name} org={owner.trim()} repo={r} token={loadedToken} />
                     ))}
                   </tbody>
                 </table>
