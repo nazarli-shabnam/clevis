@@ -66,7 +66,7 @@ function RepoRow({ org, repo, token }: { org: string; repo: RepoSummary; token: 
         <div className="flex items-center gap-1.5">
           {repo.private && <Lock className="size-3 text-muted-foreground shrink-0" />}
           <Link
-            href={`/repos/${org}~${repo.name}`}
+            href={`/repos/${encodeURIComponent(org)}~${encodeURIComponent(repo.name)}`}
             className="font-mono text-foreground/90 hover:text-primary transition-colors truncate"
           >
             {repo.name}
@@ -100,7 +100,7 @@ function RepoRow({ org, repo, token }: { org: string; repo: RepoSummary; token: 
       </td>
       <td className="px-4 py-2.5 text-right whitespace-nowrap">
         <Link
-          href={`/repos/${org}~${repo.name}/cache`}
+          href={`/repos/${encodeURIComponent(org)}~${encodeURIComponent(repo.name)}/cache`}
           className="text-xs text-muted-foreground hover:text-foreground transition-colors"
         >
           Cache →
