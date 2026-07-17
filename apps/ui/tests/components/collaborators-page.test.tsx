@@ -64,6 +64,23 @@ describe("CollaboratorsPage", () => {
     );
   });
 
+  it("falls back to an admin org when the saved default_org isn't an admin org", async () => {
+    localStorage.setItem("default_org", "widgets");
+    orgsMineMock.mockResolvedValue([
+      { org_login: "widgets", role: "member" },
+      { org_login: "acme", role: "admin" },
+    ]);
+
+    renderPage();
+
+    await waitFor(() =>
+      expect(replaceMock).toHaveBeenCalledWith("/settings/org/acme/members"),
+    );
+    expect(replaceMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("/settings/org/widgets/"),
+    );
+  });
+
   it("shows a message instead of redirecting when the user has no admin org", async () => {
     orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "member" }]);
 
