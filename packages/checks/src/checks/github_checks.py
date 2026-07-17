@@ -87,6 +87,8 @@ class BranchProtectionEnabled(Check):
     ) -> dict:
         if repos is None:
             repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
+        if len(repos) == 0:
+            return {"status": "not_applicable", "value": {"checked": 0, "protected": 0, "unknown": 0}}
         checked = 0
         protected = 0
         unknown = 0
@@ -129,11 +131,13 @@ class SecretScanningEnabled(Check):
     ) -> dict:
         if repos is None:
             repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
-        enabled = 0
         total = len(repos)
+        if total == 0:
+            return {"status": "not_applicable", "value": {"enabled": 0, "total": 0}}
+        enabled = 0
         for repo in repos:
             sec = repo.get("security_and_analysis") or {}
             if sec.get("secret_scanning", {}).get("status") == "enabled":
                 enabled += 1
-        compliant = total > 0 and enabled == total
+        compliant = enabled == total
         return {"status": "pass" if compliant else "fail", "value": {"enabled": enabled, "total": total}}
