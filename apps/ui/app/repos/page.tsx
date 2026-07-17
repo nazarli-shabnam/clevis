@@ -7,7 +7,7 @@ import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Warning, Key, CircleNotch, Lock, Star, GitPullRequest } from "@phosphor-icons/react"
+import { Warning, Key, CircleNotch, Lock, Star, GitPullRequest, ArrowSquareOut } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { shouldApplyResolvedToken } from "@/lib/token-resolve"
 import { MiniSparkline } from "@/components/charts/mini-sparkline"
@@ -65,13 +65,20 @@ function RepoRow({ org, repo, token }: { org: string; repo: RepoSummary; token: 
       <td className="px-4 py-2.5">
         <div className="flex items-center gap-1.5">
           {repo.private && <Lock className="size-3 text-muted-foreground shrink-0" />}
+          <Link
+            href={`/repos/${org}~${repo.name}`}
+            className="font-mono text-foreground/90 hover:text-primary transition-colors truncate"
+          >
+            {repo.name}
+          </Link>
           <a
             href={repo.html_url}
             target="_blank"
             rel="noreferrer"
-            className="font-mono text-foreground/90 hover:text-primary transition-colors truncate"
+            title="Open on GitHub"
+            className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
           >
-            {repo.name}
+            <ArrowSquareOut className="size-3" />
           </a>
         </div>
       </td>
