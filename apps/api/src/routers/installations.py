@@ -10,6 +10,10 @@
                                               caller is a real GitHub org admin.
   GET  /me/installations                     list the current user's personal installations
   POST /me/installations/sync                connect a personal (User-type) GitHub installation
+  GET  /me/installations/lookup/{id}          resolve an installation_id to the account it belongs
+                                              to, so the post-install UI callback (which only gets
+                                              installation_id/setup_action from GitHub) knows
+                                              whether to call the /me or /orgs sync endpoint next.
 """
 
 import httpx
@@ -21,6 +25,7 @@ from src.core.db import User, get_db
 from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role
 from src.repositories import installation_repo
 from src.schemas.installation import (
+    InstallationLookupOut,
     InstallationOut,
     SyncInstallationsInput,
     SyncInstallationsResponse,
@@ -30,14 +35,11 @@ from src.services import github_app
 router = APIRouter()
 
 
-def _verify_installation(installation_id: int | None, account_login: str, account_type: str) -> None:
-    """Confirm a client-supplied installation_id genuinely belongs to the claimed
-    account before it's persisted as trusted data. No-op if installation_id wasn't
-    supplied — there's nothing to verify in that case."""
-    if installation_id is None:
-        return
+def _fetch_installation(installation_id: int) -> dict:
+    """Look up an installation_id via the GitHub App's own credentials, mapping
+    GitHub/transport errors to the HTTPException shape callers expect."""
     try:
-        installation = github_app.get_installation(installation_id)
+        return github_app.get_installation(installation_id)
     except github_app.GitHubAppNotConfigured:
         raise HTTPException(
             status_code=503,
@@ -50,6 +52,15 @@ def _verify_installation(installation_id: int | None, account_login: str, accoun
     except httpx.RequestError:
         raise HTTPException(status_code=503, detail="GitHub API unreachable")
 
+
+def _verify_installation(installation_id: int | None, account_login: str, account_type: str) -> None:
+    """Confirm a client-supplied installation_id genuinely belongs to the claimed
+    account before it's persisted as trusted data. No-op if installation_id wasn't
+    supplied — there's nothing to verify in that case."""
+    if installation_id is None:
+        return
+    installation = _fetch_installation(installation_id)
+
     account = installation.get("account") or {}
     actual_login = account.get("login", "")
     actual_type = account.get("type", "")
@@ -61,6 +72,19 @@ def _verify_installation(installation_id: int | None, account_login: str, accoun
                 f"'{actual_login}', not {account_type} '{account_login}'"
             ),
         )
+
+
+@router.get("/me/installations/lookup/{installation_id}", response_model=InstallationLookupOut)
+def lookup_installation(
+    installation_id: int,
+    _user: UserOut = Depends(require_auth),
+):
+    installation = _fetch_installation(installation_id)
+    account = installation.get("account") or {}
+    return {
+        "account_login": account.get("login", ""),
+        "account_type": account.get("type", ""),
+    }
 
 
 @router.get("/orgs/{org_login}/installations", response_model=list[InstallationOut])

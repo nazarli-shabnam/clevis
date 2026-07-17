@@ -85,6 +85,16 @@ export interface InstallationMeta {
   created_at: string
 }
 
+export interface InstallationLookup {
+  account_login: string
+  account_type: string
+}
+
+export interface SyncInstallationsResponse {
+  synced: boolean
+  token_ref: string
+}
+
 export interface MyOrgMembership {
   org_login: string
   role: "admin" | "member"

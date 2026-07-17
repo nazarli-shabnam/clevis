@@ -1,8 +1,9 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Trash, Plus, CircleNotch, Check, ArrowSquareOut } from "@phosphor-icons/react"
+import { Trash, Plus, CircleNotch, Check, ArrowSquareOut, CheckCircle } from "@phosphor-icons/react"
 import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -525,10 +526,26 @@ function InstanceConfigSection() {
 
 export default function SettingsPage() {
   const { user } = useAuth()
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const [justInstalled, setJustInstalled] = useState(false)
+
+  useEffect(() => {
+    if (searchParams.get("installed") === "1") {
+      setJustInstalled(true)
+      router.replace("/settings")
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <>
       <PageHeader title="Settings" description="Configure your workspace." />
+      {justInstalled && (
+        <div className="mb-4 px-4 py-2.5 bg-primary/10 border border-primary/30 text-sm text-primary flex items-center gap-1.5">
+          <CheckCircle className="size-3.5" /> GitHub App installation connected.
+        </div>
+      )}
       <div className="flex flex-col gap-4">
         <ProfileSection />
         <AppearanceSection />

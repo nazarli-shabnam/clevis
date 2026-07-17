@@ -4,6 +4,7 @@ import type {
   CacheClearResponse,
   CacheListResponse,
   CheckValue,
+  InstallationLookup,
   InstallationMeta,
   InvitationCreateResponse,
   InvitationOut,
@@ -12,6 +13,7 @@ import type {
   MyOrgMembership,
   PendingInvitationSummary,
   SavedTokenMeta,
+  SyncInstallationsResponse,
 } from "./types"
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
@@ -168,6 +170,18 @@ export const api = {
   },
   installations: {
     list: () => get<InstallationMeta[]>("/me/installations"),
+    lookup: (installationId: number) =>
+      get<InstallationLookup>(`/me/installations/lookup/${installationId}`),
+    sync: (
+      target: { scope: "me" } | { scope: "org"; orgLogin: string },
+      body: { account_login: string; account_type: string; installation_id: number },
+    ) =>
+      target.scope === "me"
+        ? post<SyncInstallationsResponse>("/me/installations/sync", body)
+        : post<SyncInstallationsResponse>(
+            `/orgs/${encodeURIComponent(target.orgLogin)}/installations/sync`,
+            body,
+          ),
   },
   orgs: {
     mine: () => get<MyOrgMembership[]>("/me/orgs"),
