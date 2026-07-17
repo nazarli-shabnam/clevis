@@ -57,4 +57,25 @@ describe("CheckCard", () => {
     expect(card?.className).not.toContain("border-destructive");
     expect(card?.className).not.toContain("border-accent");
   });
+
+  it("falls back to the neutral color for a severity not present in the label map", () => {
+    render(
+      <CheckCard
+        check={{
+          ...baseCheck,
+          // severity is a "high" | "medium" | "low" union at the type level,
+          // but the component defends against unmapped values at runtime
+          // (e.g. a future backend severity level) via `?? "text-muted-foreground"`.
+          // Cast through unknown to exercise that fallback branch.
+          severity: "critical" as unknown as CheckResult["severity"],
+        }}
+      />,
+    );
+
+    const severitySpan = screen.getByText("critical");
+    expect(severitySpan.className).toContain("text-muted-foreground");
+    expect(severitySpan.className).not.toContain("text-red-400");
+    expect(severitySpan.className).not.toContain("text-yellow-400");
+    expect(severitySpan.className).not.toContain("text-blue-400");
+  });
 });
