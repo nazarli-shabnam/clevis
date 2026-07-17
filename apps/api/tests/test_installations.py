@@ -236,3 +236,54 @@ def test_sync_org_installation_skips_verification_when_installation_id_omitted(d
         )
     assert resp.status_code == 200
     mock_get.assert_not_called()
+
+
+def test_sync_personal_installation_rejects_installation_id_owned_by_a_different_account(db):
+    me = _make_user(db, "shabnam@e.com", github_login="shabnam")
+    with _mock_installation("someone-else", "User"):
+        resp = _client(db, me).post(
+            "/me/installations/sync",
+            json={"account_login": "shabnam", "account_type": "User", "installation_id": 3},
+        )
+    assert resp.status_code == 422
+    assert installation_repo.list_for_user(db, owner_user_id=me.id) == []
+
+
+def test_sync_personal_installation_rejects_nonexistent_installation_id(db):
+    me = _make_user(db, "shabnam@e.com", github_login="shabnam")
+    response = httpx.Response(404, request=httpx.Request("GET", "https://api.github.com/app/installations/3"))
+    with patch(
+        "src.routers.installations.github_app.get_installation",
+        side_effect=httpx.HTTPStatusError("not found", request=response.request, response=response),
+    ):
+        resp = _client(db, me).post(
+            "/me/installations/sync",
+            json={"account_login": "shabnam", "account_type": "User", "installation_id": 3},
+        )
+    assert resp.status_code == 422
+    assert installation_repo.list_for_user(db, owner_user_id=me.id) == []
+
+
+def test_sync_personal_installation_returns_503_when_app_not_configured(db):
+    me = _make_user(db, "shabnam@e.com", github_login="shabnam")
+    with patch(
+        "src.routers.installations.github_app.get_installation",
+        side_effect=github_app.GitHubAppNotConfigured("not configured"),
+    ):
+        resp = _client(db, me).post(
+            "/me/installations/sync",
+            json={"account_login": "shabnam", "account_type": "User", "installation_id": 3},
+        )
+    assert resp.status_code == 503
+    assert installation_repo.list_for_user(db, owner_user_id=me.id) == []
+
+
+def test_sync_personal_installation_skips_verification_when_installation_id_omitted(db):
+    me = _make_user(db, "shabnam@e.com", github_login="shabnam")
+    with patch("src.routers.installations.github_app.get_installation") as mock_get:
+        resp = _client(db, me).post(
+            "/me/installations/sync",
+            json={"account_login": "shabnam", "account_type": "User"},
+        )
+    assert resp.status_code == 200
+    mock_get.assert_not_called()
