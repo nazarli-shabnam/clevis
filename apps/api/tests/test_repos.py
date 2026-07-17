@@ -49,8 +49,11 @@ def test_list_repos_returns_paginated_results(repos_client):
                 "name": "demo",
                 "full_name": "acme/demo",
                 "private": False,
+                "description": "A demo repository",
                 "language": "Python",
                 "stargazers_count": 3,
+                "forks_count": 1,
+                "watchers_count": 3,
                 "open_issues_count": 1,
                 "pushed_at": "2026-07-01T00:00:00Z",
                 "default_branch": "main",
@@ -82,9 +85,23 @@ def test_list_repos_maps_github_status_error_to_400(repos_client):
     assert "404" in resp.json()["detail"]
 
 
+_REPO_META = {
+    "stargazers_count": 24,
+    "forks_count": 3,
+    "watchers_count": 24,
+    "open_issues_count": 12,
+    "default_branch": "main",
+}
+
+
+def _not_found() -> httpx.HTTPStatusError:
+    request = httpx.Request("GET", "https://api.github.com/x")
+    return httpx.HTTPStatusError("missing", request=request, response=httpx.Response(404, request=request))
+
+
 def test_repo_stats_treats_202_empty_body_as_not_ready(repos_client):
     with patch("src.routers.repos.GitHubClient") as mock_client:
-        mock_client.return_value.request.side_effect = [{}, {}, {}]
+        mock_client.return_value.request.side_effect = [_REPO_META, {}, {}, {}, _not_found()]
         resp = repos_client.post(
             "/orgs/acme/repos/acme/demo/stats", json={"token": "ghp_testtoken123456789012345678901234"}
         )
@@ -95,12 +112,45 @@ def test_repo_stats_treats_202_empty_body_as_not_ready(repos_client):
     assert body["contributors"] == []
 
 
+def test_repo_stats_includes_repo_metadata_and_latest_release(repos_client):
+    release = {
+        "tag_name": "v0.4.1",
+        "published_at": "2026-07-15T00:00:00Z",
+        "html_url": "https://github.com/acme/demo/releases/tag/v0.4.1",
+    }
+    with patch("src.routers.repos.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = [_REPO_META, [], {}, [], release]
+        resp = repos_client.post(
+            "/orgs/acme/repos/acme/demo/stats", json={"token": "ghp_testtoken123456789012345678901234"}
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["stargazers_count"] == 24
+    assert body["forks_count"] == 3
+    assert body["watchers_count"] == 24
+    assert body["open_issues_count"] == 12
+    assert body["default_branch"] == "main"
+    assert body["latest_release"] == release
+
+
+def test_repo_stats_latest_release_is_null_when_repo_has_no_releases(repos_client):
+    with patch("src.routers.repos.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = [_REPO_META, [], {}, [], _not_found()]
+        resp = repos_client.post(
+            "/orgs/acme/repos/acme/demo/stats", json={"token": "ghp_testtoken123456789012345678901234"}
+        )
+    assert resp.status_code == 200
+    assert resp.json()["latest_release"] is None
+
+
 def test_repo_stats_second_call_is_served_from_cache(repos_client):
     with patch("src.routers.repos.GitHubClient") as mock_client:
         mock_client.return_value.request.side_effect = [
+            _REPO_META,
             [{"week": 1, "total": 5}],
             {"all": [1], "owner": [1]},
             [{"login": "octocat", "total": 5}],
+            _not_found(),
         ]
         first = repos_client.post(
             "/orgs/acme/repos/acme/demo/stats", json={"token": "ghp_testtoken123456789012345678901234"}
@@ -111,7 +161,7 @@ def test_repo_stats_second_call_is_served_from_cache(repos_client):
     assert first.status_code == 200
     assert second.status_code == 200
     assert first.json() == second.json()
-    assert mock_client.return_value.request.call_count == 3
+    assert mock_client.return_value.request.call_count == 5
 
 
 def test_list_repos_maps_github_request_error_to_503(repos_client):
@@ -181,6 +231,94 @@ def test_list_pulls_returns_summaries(repos_client):
     mock_client.return_value.request_paginated.assert_called_once_with(
         "/repos/acme/demo/pulls", params={"state": "open"}
     )
+
+
+def test_repo_security_returns_protected_and_enabled(repos_client):
+    with (
+        patch("src.routers.repos.GitHubClient") as mock_client,
+        patch(
+            "checks.github_checks.BranchProtectionEnabled.run",
+            return_value={"status": "pass", "value": {"checked": 1, "protected": 1, "unknown": 0}},
+        ),
+        patch(
+            "checks.github_checks.SecretScanningEnabled.run",
+            return_value={"status": "pass", "value": {"enabled": 1, "total": 1}},
+        ),
+    ):
+        mock_client.return_value.request.return_value = {"name": "demo", "default_branch": "main"}
+        resp = repos_client.post(
+            "/orgs/acme/repos/acme/demo/security", json={"token": "ghp_testtoken123456789012345678901234"}
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["branch_protection"] == "protected"
+    assert body["secret_scanning"] == "enabled"
+
+
+def test_repo_security_returns_unprotected_and_disabled(repos_client):
+    with (
+        patch("src.routers.repos.GitHubClient") as mock_client,
+        patch(
+            "checks.github_checks.BranchProtectionEnabled.run",
+            return_value={"status": "fail", "value": {"checked": 1, "protected": 0, "unknown": 0}},
+        ),
+        patch(
+            "checks.github_checks.SecretScanningEnabled.run",
+            return_value={"status": "fail", "value": {"enabled": 0, "total": 1}},
+        ),
+    ):
+        mock_client.return_value.request.return_value = {"name": "demo", "default_branch": "main"}
+        resp = repos_client.post(
+            "/orgs/acme/repos/acme/demo/security", json={"token": "ghp_testtoken123456789012345678901234"}
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["branch_protection"] == "unprotected"
+    assert body["secret_scanning"] == "disabled"
+
+
+def test_repo_security_returns_unknown_when_branch_check_inconclusive(repos_client):
+    # e.g. the token lacks permission to read branch protection (403/429 inside the check).
+    with (
+        patch("src.routers.repos.GitHubClient") as mock_client,
+        patch(
+            "checks.github_checks.BranchProtectionEnabled.run",
+            return_value={"status": "error", "value": {"checked": 1, "protected": 0, "unknown": 1}},
+        ),
+        patch(
+            "checks.github_checks.SecretScanningEnabled.run",
+            return_value={"status": "pass", "value": {"enabled": 1, "total": 1}},
+        ),
+    ):
+        mock_client.return_value.request.return_value = {"name": "demo", "default_branch": "main"}
+        resp = repos_client.post(
+            "/orgs/acme/repos/acme/demo/security", json={"token": "ghp_testtoken123456789012345678901234"}
+        )
+    assert resp.status_code == 200
+    assert resp.json()["branch_protection"] == "unknown"
+
+
+def test_repo_security_no_installation_and_no_token_returns_400(repos_client):
+    resp = repos_client.post("/orgs/acme/repos/acme/demo/security", json={})
+    assert resp.status_code == 400
+
+
+def test_repo_security_owner_mismatch_returns_403(repos_client):
+    resp = repos_client.post(
+        "/orgs/acme/repos/someone-else/demo/security", json={"token": "ghp_testtoken123456789012345678901234"}
+    )
+    assert resp.status_code == 403
+
+
+def test_repo_security_maps_github_status_error_to_400(repos_client):
+    response = httpx.Response(404, request=httpx.Request("GET", "https://api.github.com/x"))
+    error = httpx.HTTPStatusError("missing", request=response.request, response=response)
+    with patch("src.routers.repos.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = error
+        resp = repos_client.post(
+            "/orgs/acme/repos/acme/demo/security", json={"token": "ghp_testtoken123456789012345678901234"}
+        )
+    assert resp.status_code == 400
 
 
 def test_non_member_forbidden(db):
