@@ -39,8 +39,12 @@ export default function RegisterPage() {
 
     setIsSubmitting(true)
     try {
-      const { access_token, user: newUser } = await api.auth.register(email, password, name || undefined)
-      setSession(access_token, newUser)
+      const { access_token, user: newUser, pending_invitations } = await api.auth.register(
+        email,
+        password,
+        name || undefined,
+      )
+      setSession(access_token, newUser, pending_invitations)
       router.replace("/")
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed")

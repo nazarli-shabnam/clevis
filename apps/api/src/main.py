@@ -19,6 +19,7 @@ from src.routers import (
     jobs,
     orgs,
     tokens,
+    webhooks,
 )
 
 # CORS allowed origins are a deploy-time security boundary, set via the CORS_ORIGINS env var.
@@ -65,3 +66,4 @@ app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 app.include_router(audit.router, prefix="/audit", tags=["audit"])
 app.include_router(tokens.router, prefix="/tokens", tags=["tokens"])
 app.include_router(config.router, prefix="/config", tags=["config"])
+app.include_router(webhooks.router, tags=["webhooks"])

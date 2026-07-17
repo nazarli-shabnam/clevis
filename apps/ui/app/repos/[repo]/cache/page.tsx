@@ -52,9 +52,14 @@ export default function CachePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner])
 
-  // Never let an armed "Confirm clear" survive navigating to a different repo.
+  // Reset stale cache-table/clear-result data and any armed "Confirm clear" state
+  // from the previous repo whenever the route's owner~repo segment changes, even if
+  // only the repo (not the owner) differs.
   useEffect(() => {
+    listMutation.reset()
+    clearMutation.reset()
     setClearArmed(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.repo])
 
   // Auto-disarm if the user doesn't confirm within a few seconds, so a stray
@@ -64,6 +69,7 @@ export default function CachePage() {
     const timer = setTimeout(() => setClearArmed(false), 4000)
     return () => clearTimeout(timer)
   }, [clearArmed])
+
 
   const saveTokenMutation = useMutation({
     mutationFn: () => api.tokens.upsert(owner, token.trim()),

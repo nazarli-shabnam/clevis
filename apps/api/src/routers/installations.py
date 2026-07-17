@@ -12,6 +12,7 @@
   POST /me/installations/sync                connect a personal (User-type) GitHub installation
 """
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -24,8 +25,42 @@ from src.schemas.installation import (
     SyncInstallationsInput,
     SyncInstallationsResponse,
 )
+from src.services import github_app
 
 router = APIRouter()
+
+
+def _verify_installation(installation_id: int | None, account_login: str, account_type: str) -> None:
+    """Confirm a client-supplied installation_id genuinely belongs to the claimed
+    account before it's persisted as trusted data. No-op if installation_id wasn't
+    supplied — there's nothing to verify in that case."""
+    if installation_id is None:
+        return
+    try:
+        installation = github_app.get_installation(installation_id)
+    except github_app.GitHubAppNotConfigured:
+        raise HTTPException(
+            status_code=503,
+            detail="GitHub App is not configured; cannot verify installation_id",
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise HTTPException(status_code=422, detail=f"installation_id {installation_id} does not exist")
+        raise HTTPException(status_code=400, detail=f"GitHub API error: {exc.response.status_code}")
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail="GitHub API unreachable")
+
+    account = installation.get("account") or {}
+    actual_login = account.get("login", "")
+    actual_type = account.get("type", "")
+    if actual_login.lower() != account_login.lower() or actual_type != account_type:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"installation_id {installation_id} belongs to {actual_type} "
+                f"'{actual_login}', not {account_type} '{account_login}'"
+            ),
+        )
 
 
 @router.get("/orgs/{org_login}/installations", response_model=list[InstallationOut])
@@ -43,6 +78,7 @@ def sync_org_installation(
     db: Session = Depends(get_db),
 ):
     assert_owner_matches_org(payload.account_login, ctx)
+    _verify_installation(payload.installation_id, payload.account_login, payload.account_type)
     row = installation_repo.create(
         db,
         account_login=payload.account_login,
@@ -84,6 +120,7 @@ def sync_personal_installation(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="account_login must match your own GitHub account",
         )
+    _verify_installation(payload.installation_id, payload.account_login, payload.account_type)
     row = installation_repo.create(
         db,
         account_login=payload.account_login,
