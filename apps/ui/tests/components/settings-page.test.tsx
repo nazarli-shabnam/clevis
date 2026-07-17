@@ -8,6 +8,12 @@ const tokensListMock = vi.fn();
 const configGetAllMock = vi.fn();
 const patchMeMock = vi.fn();
 const configUpdateMock = vi.fn();
+const routerReplace = vi.fn();
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: routerReplace }),
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 vi.mock("@/lib/api/client", () => ({
   api: {
