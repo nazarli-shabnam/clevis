@@ -114,6 +114,45 @@ def test_repo_stats_second_call_is_served_from_cache(repos_client):
     assert mock_client.return_value.request.call_count == 3
 
 
+def test_list_repos_maps_github_request_error_to_503(repos_client):
+    with patch("src.routers.repos.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.side_effect = httpx.RequestError("boom")
+        resp = repos_client.post("/orgs/acme/repos", json={"token": "ghp_testtoken123456789012345678901234"})
+    assert resp.status_code == 503
+
+
+def test_repo_stats_no_installation_and_no_token_returns_400(repos_client):
+    resp = repos_client.post("/orgs/acme/repos/acme/demo/stats", json={})
+    assert resp.status_code == 400
+
+
+def test_repo_stats_maps_github_status_error_to_400(repos_client):
+    response = httpx.Response(500, request=httpx.Request("GET", "https://api.github.com/x"))
+    error = httpx.HTTPStatusError("boom", request=response.request, response=response)
+    with patch("src.routers.repos.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = error
+        resp = repos_client.post(
+            "/orgs/acme/repos/acme/demo/stats", json={"token": "ghp_testtoken123456789012345678901234"}
+        )
+    assert resp.status_code == 400
+
+
+def test_list_pulls_maps_github_status_error_to_400(repos_client):
+    response = httpx.Response(404, request=httpx.Request("GET", "https://api.github.com/x"))
+    error = httpx.HTTPStatusError("missing", request=response.request, response=response)
+    with patch("src.routers.repos.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.side_effect = error
+        resp = repos_client.post(
+            "/orgs/acme/repos/acme/demo/pulls", json={"token": "ghp_testtoken123456789012345678901234"}
+        )
+    assert resp.status_code == 400
+
+
+def test_list_pulls_no_installation_and_no_token_returns_400(repos_client):
+    resp = repos_client.post("/orgs/acme/repos/acme/demo/pulls", json={})
+    assert resp.status_code == 400
+
+
 def test_repo_stats_owner_mismatch_returns_403(repos_client):
     resp = repos_client.post(
         "/orgs/acme/repos/someone-else/demo/stats", json={"token": "ghp_testtoken123456789012345678901234"}
