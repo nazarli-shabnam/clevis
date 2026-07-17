@@ -56,7 +56,7 @@ def test_process_job_marks_done_on_success():
         mock_client.delete = MagicMock(return_value=mock_response)
         mock_client_cls.return_value = mock_client
 
-        process_job(conn, 1, _payload())
+        process_job(conn, 1, "github.clear_actions_cache", _payload())
 
     sql, params = conn._cursor.calls[0]
     assert "status='done'" in sql
@@ -82,7 +82,7 @@ def test_process_job_marks_failed_on_4xx_http_error():
         mock_client.delete = MagicMock(return_value=mock_response)
         mock_client_cls.return_value = mock_client
 
-        process_job(conn, 2, _payload())
+        process_job(conn, 2, "github.clear_actions_cache", _payload())
 
     sql, params = conn._cursor.calls[0]
     assert "status='failed'" in sql
@@ -106,7 +106,7 @@ def test_process_job_requeues_on_5xx_http_error():
         mock_client.delete = MagicMock(return_value=mock_response)
         mock_client_cls.return_value = mock_client
 
-        process_job(conn, 6, _payload(), retry_count=0)
+        process_job(conn, 6, "github.clear_actions_cache", _payload(), retry_count=0)
 
     sql, params = conn._cursor.calls[0]
     assert "status='queued'" in sql
@@ -129,7 +129,7 @@ def test_process_job_requeues_on_httpx_request_error():
         mock_client.delete = MagicMock(side_effect=httpx.ConnectError("connection refused"))
         mock_client_cls.return_value = mock_client
 
-        process_job(conn, 7, _payload(), retry_count=2)
+        process_job(conn, 7, "github.clear_actions_cache", _payload(), retry_count=2)
 
     sql, params = conn._cursor.calls[0]
     assert "status='queued'" in sql
@@ -153,7 +153,7 @@ def test_process_job_fails_once_retry_cap_exceeded():
         mock_client.delete = MagicMock(return_value=mock_response)
         mock_client_cls.return_value = mock_client
 
-        process_job(conn, 8, _payload(), retry_count=MAX_RETRIES)
+        process_job(conn, 8, "github.clear_actions_cache", _payload(), retry_count=MAX_RETRIES)
 
     sql, params = conn._cursor.calls[0]
     assert "status='failed'" in sql
@@ -177,7 +177,7 @@ def test_process_job_marks_failed_on_unrecognized_exception_safety_net():
         mock_client.delete = MagicMock(side_effect=ConnectionError("timeout"))
         mock_client_cls.return_value = mock_client
 
-        process_job(conn, 3, _payload())
+        process_job(conn, 3, "github.clear_actions_cache", _payload())
 
     sql, params = conn._cursor.calls[0]
     assert "status='failed'" in sql
@@ -195,7 +195,7 @@ def test_process_job_truncates_long_error():
         mock_client.delete = MagicMock(side_effect=ConnectionError("x" * 1000))
         mock_client_cls.return_value = mock_client
 
-        process_job(conn, 4, _payload())
+        process_job(conn, 4, "github.clear_actions_cache", _payload())
 
     sql, params = conn._cursor.calls[0]
     assert len(params[0]) <= 500
@@ -214,7 +214,7 @@ def test_process_job_redacts_token_shaped_text_in_error():
         )
         mock_client_cls.return_value = mock_client
 
-        process_job(conn, 5, _payload())
+        process_job(conn, 5, "github.clear_actions_cache", _payload())
 
     sql, params = conn._cursor.calls[0]
     assert "ghp_" not in params[0]
@@ -226,7 +226,7 @@ def test_process_job_rejects_invalid_payload_without_calling_github():
     bad_payload = json.dumps({"owner": "acme"})  # missing repo/token
 
     with patch("worker.httpx.Client") as mock_client_cls:
-        process_job(conn, 9, bad_payload)
+        process_job(conn, 9, "github.clear_actions_cache", bad_payload)
         mock_client_cls.assert_not_called()
 
     sql, params = conn._cursor.calls[0]
@@ -240,7 +240,7 @@ def test_process_job_rejects_empty_string_fields():
     bad_payload = json.dumps({"owner": "", "repo": "demo", "token": "x"})
 
     with patch("worker.httpx.Client") as mock_client_cls:
-        process_job(conn, 10, bad_payload)
+        process_job(conn, 10, "github.clear_actions_cache", bad_payload)
         mock_client_cls.assert_not_called()
 
     sql, params = conn._cursor.calls[0]
@@ -288,10 +288,45 @@ def test_process_job_terminal_write_is_a_noop_if_reclaimed_out_from_under_it(wor
         mock_client_cls.return_value = mock_client
 
         # This worker's in-memory retry_count is stale (captured before the reclaim).
-        process_job(conn, job_id, _payload(), retry_count=0)
+        process_job(conn, job_id, "github.clear_actions_cache", _payload(), retry_count=0)
 
     with conn.cursor() as cur:
         cur.execute("SELECT status, retry_count FROM jobs WHERE id = %s", (job_id,))
         final_status, final_retry_count = cur.fetchone()
     assert final_status == "queued"
     assert final_retry_count == 1
+
+
+def test_process_job_marks_unknown_job_type_failed_without_calling_github():
+    conn = _FakeConn()
+
+    with patch("worker.httpx.Client") as mock_client_cls:
+        process_job(conn, 6, "some.future.job_type", _payload())
+        mock_client_cls.assert_not_called()
+
+    sql, params = conn._cursor.calls[0]
+    assert "status='failed'" in sql
+    assert params[1] == 6
+    assert "some.future.job_type" in params[0]
+    assert conn.committed is True
+
+
+def test_process_job_dispatches_known_job_type_to_its_handler():
+    conn = _FakeConn()
+
+    mock_response = MagicMock()
+    mock_response.status_code = 204
+    mock_response.text = ""
+
+    with patch("worker.httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.delete = MagicMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        process_job(conn, 7, "github.clear_actions_cache", _payload())
+
+    sql, params = conn._cursor.calls[0]
+    assert "status='done'" in sql
+    assert params[1] == 7

@@ -101,7 +101,24 @@ def _requeue_for_retry(conn: psycopg.Connection, job_id: int, retry_count: int, 
     conn.commit()
 
 
-def process_job(conn: psycopg.Connection, job_id: int, payload_raw: str, retry_count: int = 0) -> None:
+def process_job(conn: psycopg.Connection, job_id: int, job_type: str, payload_raw: str, retry_count: int = 0) -> None:
+    handler = JOB_HANDLERS.get(job_type)
+    if handler is None:
+        log.error("job %d has no handler registered for job_type %r", job_id, job_type)
+        _mark_failed(conn, job_id, f"no handler registered for job_type {job_type!r}")
+        return
+    try:
+        handler(conn, job_id, payload_raw, retry_count)
+    except Exception as error:
+        # Safety net for anything not handled above (e.g. a bug in the handler, or an
+        # unanticipated exception type) — without this, the job would stay 'processing'
+        # until the reclaim sweep picks it up, up to RECLAIM_TIMEOUT_MINUTES later,
+        # instead of failing/retrying immediately.
+        log.error("job %d hit an unexpected error: %s", job_id, error)
+        _mark_failed(conn, job_id, sanitize_error(error))
+
+
+def _handle_clear_actions_cache(conn: psycopg.Connection, job_id: int, payload_raw: str, retry_count: int) -> None:
     try:
         payload = ClearActionsCachePayload.model_validate_json(payload_raw)
     except ValidationError as error:
@@ -125,38 +142,38 @@ def process_job(conn: psycopg.Connection, job_id: int, payload_raw: str, retry_c
     }
 
     try:
-        try:
-            with httpx.Client(timeout=20) as client:
-                resp = client.delete(
-                    f"{base}/repos/{payload.owner}/{payload.repo}/actions/caches",
-                    headers=headers,
-                    params=params,
-                )
-        except httpx.RequestError as error:
-            log.warning("job %d hit a network error (attempt %d): %s", job_id, retry_count + 1, error)
-            _requeue_for_retry(conn, job_id, retry_count, sanitize_error(error))
-            return
+        with httpx.Client(timeout=20) as client:
+            resp = client.delete(
+                f"{base}/repos/{payload.owner}/{payload.repo}/actions/caches",
+                headers=headers,
+                params=params,
+            )
+    except httpx.RequestError as error:
+        log.warning("job %d hit a network error (attempt %d): %s", job_id, retry_count + 1, error)
+        _requeue_for_retry(conn, job_id, retry_count, sanitize_error(error))
+        return
 
-        if resp.status_code >= 500:
-            # 5xx is presumed transient (GitHub-side issue) — worth retrying, unlike 4xx.
-            log.warning("job %d got a %d from GitHub (attempt %d)", job_id, resp.status_code, retry_count + 1)
-            _requeue_for_retry(conn, job_id, retry_count, f"GitHub API error: {resp.status_code}")
-            return
+    if resp.status_code >= 500:
+        # 5xx is presumed transient (GitHub-side issue) — worth retrying, unlike 4xx.
+        log.warning("job %d got a %d from GitHub (attempt %d)", job_id, resp.status_code, retry_count + 1)
+        _requeue_for_retry(conn, job_id, retry_count, f"GitHub API error: {resp.status_code}")
+        return
 
-        if resp.status_code >= 300:
-            log.error("job %d failed: GitHub API error %d", job_id, resp.status_code)
-            _mark_failed(conn, job_id, f"GitHub API error: {resp.status_code}")
-            return
+    if resp.status_code >= 300:
+        log.error("job %d failed: GitHub API error %d", job_id, resp.status_code)
+        _mark_failed(conn, job_id, f"GitHub API error: {resp.status_code}")
+        return
 
-        _mark_done(conn, job_id, {"ok": True, "status": resp.status_code})
-        log.info("job %d done", job_id)
-    except Exception as error:
-        # Safety net for anything not handled above (e.g. a bug in this function, or an
-        # unanticipated exception type) — without this, the job would stay 'processing'
-        # until the reclaim sweep picks it up, up to RECLAIM_TIMEOUT_MINUTES later,
-        # instead of failing/retrying immediately.
-        log.error("job %d hit an unexpected error: %s", job_id, error)
-        _mark_failed(conn, job_id, sanitize_error(error))
+    _mark_done(conn, job_id, {"ok": True, "status": resp.status_code})
+    log.info("job %d done", job_id)
+
+
+# job_type -> handler. Each handler takes (conn, job_id, payload_raw, retry_count) and is
+# responsible for its own payload validation and terminal/retry outcome via _mark_done /
+# _mark_failed / _requeue_for_retry.
+JOB_HANDLERS = {
+    "github.clear_actions_cache": _handle_clear_actions_cache,
+}
 
 
 def _reclaim_stale_jobs(conn: psycopg.Connection) -> None:
@@ -206,12 +223,11 @@ def run() -> None:
                         WHERE id = (
                             SELECT id FROM jobs
                             WHERE status = 'queued'
-                              AND job_type = 'github.clear_actions_cache'
                             ORDER BY id
                             LIMIT 1
                             FOR UPDATE SKIP LOCKED
                         )
-                        RETURNING id, payload, retry_count
+                        RETURNING id, job_type, payload, retry_count
                     """)
                     row = cur.fetchone()
 
