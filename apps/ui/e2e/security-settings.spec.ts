@@ -81,7 +81,7 @@ test.describe("Security scan", () => {
         body: JSON.stringify({
           detail:
             "No GitHub App installation found for 'missing-org' and no token was provided. " +
-            "Install the GitHub App for this organization, or add a personal access token in Settings.",
+            "Install the GitHub App for this organization in Settings → Connected orgs.",
         }),
       })
     })
