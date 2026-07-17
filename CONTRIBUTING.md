@@ -170,7 +170,9 @@ docker run --rm --entrypoint python \
 
 ### E2E tests
 
-Auth-flow critical paths (login, GitHub OAuth error redirect, logout, mid-session 401 handling) are covered by Playwright tests in `apps/ui/e2e/`, run against the **full docker-compose stack** — the real Docker images, not app code in isolation, so this catches deployment-shaped bugs unit tests can't (it's the same infra that would have caught the worker `packages/checks` gap). CI runs this as a required check (`E2E Tests`).
+Auth-flow critical paths (login, GitHub OAuth error redirect, logout, mid-session 401 handling), the Settings GitHub App install surface, and the Security-scan happy/error paths are covered by Playwright tests in `apps/ui/e2e/`, run against the **full docker-compose stack** — the real Docker images, not app code in isolation, so this catches deployment-shaped bugs unit tests can't (it's the same infra that would have caught the worker `packages/checks` gap). CI runs this as a required check (`E2E Tests`).
+
+Security-scan and org-connection specs that need a live GitHub org use Playwright route mocks against the API host — CI has no real App installation, but the browser still exercises the full UI → API client → render path.
 
 Run locally, from the **repository root**:
 
