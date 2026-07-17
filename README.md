@@ -45,7 +45,7 @@ Clevis is three independently deployable services around one shared check librar
 | **`apps/ui`** | Next.js 15 · React 19 · TanStack Query | The dashboard — dense, dark, keyboard-friendly. |
 | **`packages/checks`** | `clevis-checks` (Python) | The security-check engine (MFA, branch protection, secret scanning) with built-in GitHub pagination. |
 
-**Security model:** RBAC is enforced per route (`viewer` / `analyst` / `admin`). GitHub tokens are **never stored persistently** — they are Fernet-encrypted when a job is enqueued and decrypted only at processing time. Every request carries a propagated `X-Request-ID` for traceability.
+**Security model:** Access is enforced per route with JWT auth dependencies (`require_auth`, `require_workspace_admin`) and org-scoped roles (`require_org_role("member"|"admin")`). GitHub credentials may be stored as Fernet-encrypted rows in `saved_tokens` (legacy PAT path); job payloads are also Fernet-encrypted at enqueue time and decrypted only when the worker processes them. Prefer a connected GitHub App installation so the API can mint short-lived installation tokens instead. Every request carries a propagated `X-Request-ID` for traceability.
 
 ---
 
@@ -91,9 +91,9 @@ Once the instance is running, here's how to go from a fresh deploy to a connecte
 
 1. **Create the first account.** The first visit lands on `/setup`, which creates the initial admin. After that, sign in with a password or the "Sign in with GitHub" button.
 2. **Connect a GitHub org or account.** Go to **Settings → Connected orgs** and click **Install GitHub App** — this sends you to GitHub to authorize Clevis for that org/account, which is what grants read access to its repos. GitHub redirects you back into the app once you approve it, and the org/account shows up under "Connected orgs" a few seconds later. (The App itself is a one-time setup step for whoever deployed the instance — see [`docs/self-hosting.md`](docs/self-hosting.md) if that hasn't been done yet.) If you install into a brand-new org and the connection doesn't complete, sign out and back in with **"Sign in with GitHub"** once (this is what verifies your admin access on that org) and retry the install.
-3. **Add a personal access token (temporary, still required).** The Health & Security and Cache pages haven't moved onto the GitHub App token path yet, so they still read from **Settings → Personal access tokens (legacy)** — add a token there per org with repo-read scope. This step goes away once those pages are migrated.
+3. **(Temporary) Add a personal access token only if needed.** Health & Security and Cache still accept a legacy PAT via **Settings → Personal access tokens (legacy)** as a fallback when no GitHub App installation is available for that org. Tracking removal of that requirement: [#189](https://github.com/nazarli-shabnam/clevis/issues/189).
 
-That's it — Overview, Activity, Repositories, and Collaborators work off the connected org from step 2; Health & Security and Cache additionally need step 3 for now.
+That's it — Overview, Activity, Repositories, Collaborators, and (when the App is connected) Health & Security / Cache work off the connected org from step 2.
 
 ---
 
