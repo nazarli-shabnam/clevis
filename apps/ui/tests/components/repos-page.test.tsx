@@ -144,4 +144,154 @@ describe("ReposPage", () => {
     renderPage();
     expect(screen.getByPlaceholderText("e.g. octocat")).toHaveValue("acme");
   });
+
+  it("shows the loading skeleton while the list request is in flight", async () => {
+    let resolveList: (v: unknown) => void = () => {};
+    reposListMock.mockReturnValue(new Promise((resolve) => { resolveList = resolve; }));
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /load repositories/i }));
+
+    expect(await screen.findByText(/loading…/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /loading…/i })).toBeDisabled();
+
+    resolveList({ org: "acme", total: 0, repos: [] });
+    await waitFor(() => expect(screen.queryByText(/loading…/i)).not.toBeInTheDocument());
+  });
+
+  it("triggers a load on Enter in the organization field", async () => {
+    reposListMock.mockResolvedValue({ org: "acme", total: 0, repos: [] });
+
+    renderPage();
+
+    const orgInput = screen.getByPlaceholderText("e.g. octocat");
+    fireEvent.change(orgInput, { target: { value: "acme" } });
+    fireEvent.keyDown(orgInput, { key: "Enter" });
+
+    await waitFor(() => expect(reposListMock).toHaveBeenCalledWith("acme", ""));
+  });
+
+  it("shows a plain empty state (no filter hint) when the org has zero repos", async () => {
+    reposListMock.mockResolvedValue({ org: "acme", total: 0, repos: [] });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /load repositories/i }));
+
+    await waitFor(() => expect(screen.getByText("— no repositories match")).toBeInTheDocument());
+  });
+
+  it("auto-applies a resolved saved token and hides the save-token button", async () => {
+    tokensResolveMock.mockReset();
+    tokensResolveMock.mockResolvedValue({ token: "ghp_saved_token_1234567890123456" });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+
+    await waitFor(() => expect(screen.getByPlaceholderText(/leave blank/i)).toHaveValue("ghp_saved_token_1234567890123456"));
+    expect(screen.getByText(/saved/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /save token for this org/i })).not.toBeInTheDocument();
+  });
+
+  it("offers to save a manually-entered token and calls upsert on click", async () => {
+    tokensUpsertMock.mockResolvedValue({ org: "acme", label: null, created_at: "", updated_at: "" });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    await waitFor(() => expect(tokensResolveMock).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByPlaceholderText(/leave blank/i), {
+      target: { value: "ghp_manual_token_1234567890123456" },
+    });
+
+    const saveButton = await screen.findByRole("button", { name: /save token for this org/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() =>
+      expect(tokensUpsertMock).toHaveBeenCalledWith("acme", "ghp_manual_token_1234567890123456"),
+    );
+  });
+
+  it("renders the private-repo lock indicator, star count, and resolved PR count", async () => {
+    reposListMock.mockResolvedValue({
+      org: "acme",
+      total: 1,
+      repos: [
+        {
+          name: "secret-repo",
+          full_name: "acme/secret-repo",
+          private: true,
+          language: null,
+          stargazers_count: 42,
+          open_issues_count: 5,
+          pushed_at: null,
+          default_branch: "main",
+          html_url: "https://github.com/acme/secret-repo",
+        },
+      ],
+    });
+    reposPullsMock.mockResolvedValue({ repository: "acme/secret-repo", total: 3, pulls: [] });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /load repositories/i }));
+
+    await waitFor(() => expect(screen.getByText("secret-repo")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("3")).toBeInTheDocument());
+    expect(screen.getByText("42")).toBeInTheDocument();
+    // No language and no pushed_at both fall back to the em-dash placeholder.
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("renders a sparkline instead of the no-activity message when a repo has recent commits", async () => {
+    reposListMock.mockResolvedValue({
+      org: "acme",
+      total: 1,
+      repos: [
+        {
+          name: "demo",
+          full_name: "acme/demo",
+          private: false,
+          language: "Python",
+          stargazers_count: 3,
+          open_issues_count: 1,
+          pushed_at: "2026-07-01T00:00:00Z",
+          default_branch: "main",
+          html_url: "https://github.com/acme/demo",
+        },
+      ],
+    });
+    reposStatsMock.mockResolvedValue({
+      repository: "acme/demo",
+      commit_activity: Array.from({ length: 8 }, (_, i) => ({ week: i, total: i + 1, days: [] })),
+      participation: {},
+      contributors: [],
+    });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /load repositories/i }));
+
+    await waitFor(() => expect(screen.getByText("demo")).toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText(/no recent activity/i)).not.toBeInTheDocument());
+  });
+
+  it("triggers a load on Enter in the token field", async () => {
+    reposListMock.mockResolvedValue({ org: "acme", total: 0, repos: [] });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    const tokenInput = screen.getByPlaceholderText(/leave blank/i);
+    fireEvent.keyDown(tokenInput, { key: "Enter" });
+
+    await waitFor(() => expect(reposListMock).toHaveBeenCalledWith("acme", ""));
+  });
 });
