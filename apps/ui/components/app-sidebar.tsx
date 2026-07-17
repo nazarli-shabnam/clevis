@@ -139,13 +139,7 @@ export function AppSidebar() {
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // Profile derived from auth context; fall back to localStorage default_org for org display
   const defaultOrg = typeof window !== "undefined" ? (localStorage.getItem("default_org") || "") : ""
-  const profile: Profile = {
-    name: user?.name || user?.email || "Guest",
-    org: defaultOrg || "no org connected",
-    email: user?.email || "",
-  }
 
   // Same query key as the /collaborators redirect page so TanStack Query dedupes
   // the request when both are mounted. Only route the "Invite members" link at an
@@ -155,6 +149,16 @@ export function AppSidebar() {
     queryKey: ["my-orgs"],
     queryFn: () => api.orgs.mine(),
   })
+
+  // Profile org display reflects real org membership data, not just whatever the user
+  // once typed into the localStorage-backed "default org" field in Settings.
+  const displayOrg = memberships.find((m) => m.org_login === defaultOrg)?.org_login || memberships[0]?.org_login || ""
+  const profile: Profile = {
+    name: user?.name || user?.email || "Guest",
+    org: displayOrg || "no organization connected",
+    email: user?.email || "",
+  }
+
   const adminOrgs = memberships.filter((m) => m.role === "admin")
   const inviteTarget = membershipsLoading
     ? undefined

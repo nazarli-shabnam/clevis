@@ -15,6 +15,11 @@ class SyncInstallationsResponse(BaseModel):
     token_ref: str
 
 
+class InstallationLookupOut(BaseModel):
+    account_login: str
+    account_type: str
+
+
 class InstallationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

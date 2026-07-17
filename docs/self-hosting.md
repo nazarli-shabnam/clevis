@@ -21,9 +21,12 @@ This is the infrastructure/ops guide — getting the Clevis stack itself running
 3. Register a GitHub App on github.com (**Settings → Developer settings → GitHub Apps → New GitHub App**) so users can connect their orgs after the instance is running:
    - **Homepage URL** — your deployed UI URL.
    - **Callback URL** — `<NEXT_PUBLIC_API_BASE>/auth/github/callback` (this exact path is required for "Sign in with GitHub" to work).
+   - **Setup URL** (under "Post installation") — `<NEXT_PUBLIC_UI_BASE>/settings/github-callback`, with **"Redirect on update"** also checked. This is required for the **"Install GitHub App"** button on the Settings page to actually connect an org/account: without it, GitHub has nowhere to send the user back to after installation, so a `github_installations` row never gets created and the app silently behaves as if nothing was ever connected. If this field is left blank, GitHub falls back to redirecting to the Homepage URL instead — which won't complete the connection.
    - **Webhook** — optional, but recommended: point it at `<NEXT_PUBLIC_API_BASE>/webhooks/github`, generate a webhook secret, and set `GITHUB_APP_WEBHOOK_SECRET` in `.env` to the same value. Without it, `github_installations` rows are never cleaned up when a user uninstalls the App — they just go stale.
    - Grant read access to the repository/organization data the security checks need (contents, metadata, administration, members) — generate a private key once the App is created.
    - Copy the resulting values into `.env`: `GITHUB_APP_ID`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY` (the full `.pem` contents). Also set `NEXT_PUBLIC_GITHUB_APP_SLUG` to the App's slug (from its public page URL) — this powers the "Install GitHub App" button in the UI.
+
+   **If you already registered the App before this change:** open the App's settings, go to the "Post installation" section, and add the Setup URL above — existing installs don't need to be redone, only new/updated ones will hit the new callback page.
 
 4. Start the stack:
 

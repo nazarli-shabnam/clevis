@@ -287,3 +287,48 @@ def test_sync_personal_installation_skips_verification_when_installation_id_omit
         )
     assert resp.status_code == 200
     mock_get.assert_not_called()
+
+
+def test_lookup_installation_returns_account(db):
+    me = _make_user(db, "shabnam@e.com", github_login="shabnam")
+    with _mock_installation("shabnam", "User"):
+        resp = _client(db, me).get("/me/installations/lookup/3")
+    assert resp.status_code == 200
+    assert resp.json() == {"account_login": "shabnam", "account_type": "User"}
+
+
+def test_lookup_installation_org_account(db):
+    me = _make_user(db, "shabnam@e.com", github_login="shabnam")
+    with _mock_installation("acme", "Organization"):
+        resp = _client(db, me).get("/me/installations/lookup/7")
+    assert resp.status_code == 200
+    assert resp.json() == {"account_login": "acme", "account_type": "Organization"}
+
+
+def test_lookup_installation_requires_auth(db):
+    app = FastAPI()
+    app.include_router(inst_router)
+    app.dependency_overrides[get_db] = lambda: db
+    resp = TestClient(app).get("/me/installations/lookup/3")
+    assert resp.status_code == 401
+
+
+def test_lookup_installation_rejects_nonexistent_installation_id(db):
+    me = _make_user(db, "shabnam@e.com", github_login="shabnam")
+    response = httpx.Response(404, request=httpx.Request("GET", "https://api.github.com/app/installations/3"))
+    with patch(
+        "src.routers.installations.github_app.get_installation",
+        side_effect=httpx.HTTPStatusError("not found", request=response.request, response=response),
+    ):
+        resp = _client(db, me).get("/me/installations/lookup/3")
+    assert resp.status_code == 422
+
+
+def test_lookup_installation_returns_503_when_app_not_configured(db):
+    me = _make_user(db, "shabnam@e.com", github_login="shabnam")
+    with patch(
+        "src.routers.installations.github_app.get_installation",
+        side_effect=github_app.GitHubAppNotConfigured("not configured"),
+    ):
+        resp = _client(db, me).get("/me/installations/lookup/3")
+    assert resp.status_code == 503
