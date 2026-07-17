@@ -1,4 +1,6 @@
+import hashlib
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 from checks.github_checks import BranchProtectionEnabled, SecretScanningEnabled
@@ -23,7 +25,11 @@ from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_to
 router = APIRouter()
 
 _STATS_CACHE_TTL_SECONDS = 600
-_stats_cache: dict[tuple[str, str], tuple[float, RepoStatsResponse]] = {}
+_stats_cache: dict[tuple[str, str, str], tuple[float, RepoStatsResponse]] = {}
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def _github_error(exc: Exception) -> HTTPException:
@@ -47,14 +53,24 @@ def _list_repos(owner: str, token: str) -> RepoListResponse:
     return {"org": owner, "total": len(repos), "repos": repos}
 
 
+def _fetch_repo_meta(client: GitHubClient, owner: str, repo: str) -> dict:
+    # Metadata (stars/forks/etc.) enriches the response but isn't essential the way
+    # commit_activity/participation/contributors are — a transient failure here
+    # shouldn't discard stats that already succeeded, so degrade to an empty dict
+    # (fields below fall back to sensible defaults) instead of failing the request.
+    try:
+        return client.request("GET", f"/repos/{owner}/{repo}")
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        return {}
+
+
 def _fetch_latest_release(client: GitHubClient, owner: str, repo: str) -> dict | None:
+    # Same reasoning as _fetch_repo_meta: a missing/unreachable release is never fatal,
+    # not just the common "no releases at all" 404 case.
     try:
         release = client.request("GET", f"/repos/{owner}/{repo}/releases/latest")
-    except httpx.HTTPStatusError as exc:
-        # Most repos have no releases at all — GitHub returns 404, not an error.
-        if exc.response.status_code == 404:
-            return None
-        raise
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        return None
     return {
         "tag_name": release["tag_name"],
         "published_at": release.get("published_at"),
@@ -64,11 +80,23 @@ def _fetch_latest_release(client: GitHubClient, owner: str, repo: str) -> dict |
 
 def _fetch_stats(owner: str, repo: str, token: str) -> RepoStatsResponse:
     client = GitHubClient(token)
-    repo_meta = client.request("GET", f"/repos/{owner}/{repo}")
-    commit_activity = client.request("GET", f"/repos/{owner}/{repo}/stats/commit_activity")
-    participation = client.request("GET", f"/repos/{owner}/{repo}/stats/participation")
-    contributors = client.request("GET", f"/repos/{owner}/{repo}/stats/contributors")
-    latest_release = _fetch_latest_release(client, owner, repo)
+    # The five calls are independent — run them concurrently rather than one at a time.
+    # commit_activity/participation/contributors intentionally still propagate real
+    # errors (a 4xx/5xx here means the repo/stats are genuinely unavailable), while
+    # repo_meta/latest_release degrade gracefully — see their own functions.
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        repo_meta_f = pool.submit(_fetch_repo_meta, client, owner, repo)
+        commit_activity_f = pool.submit(client.request, "GET", f"/repos/{owner}/{repo}/stats/commit_activity")
+        participation_f = pool.submit(client.request, "GET", f"/repos/{owner}/{repo}/stats/participation")
+        contributors_f = pool.submit(client.request, "GET", f"/repos/{owner}/{repo}/stats/contributors")
+        latest_release_f = pool.submit(_fetch_latest_release, client, owner, repo)
+
+        repo_meta = repo_meta_f.result()
+        commit_activity = commit_activity_f.result()
+        participation = participation_f.result()
+        contributors = contributors_f.result()
+        latest_release = latest_release_f.result()
+
     return {
         "repository": f"{owner}/{repo}",
         # GitHub computes these stats asynchronously and returns 202 with an empty body
@@ -76,17 +104,17 @@ def _fetch_stats(owner: str, repo: str, token: str) -> RepoStatsResponse:
         "commit_activity": commit_activity if isinstance(commit_activity, list) else [],
         "participation": participation if isinstance(participation, dict) else {},
         "contributors": contributors if isinstance(contributors, list) else [],
-        "stargazers_count": repo_meta["stargazers_count"],
-        "forks_count": repo_meta["forks_count"],
-        "watchers_count": repo_meta["watchers_count"],
-        "open_issues_count": repo_meta["open_issues_count"],
-        "default_branch": repo_meta["default_branch"],
+        "stargazers_count": repo_meta.get("stargazers_count", 0),
+        "forks_count": repo_meta.get("forks_count", 0),
+        "watchers_count": repo_meta.get("watchers_count", 0),
+        "open_issues_count": repo_meta.get("open_issues_count", 0),
+        "default_branch": repo_meta.get("default_branch", ""),
         "latest_release": latest_release,
     }
 
 
 def _cached_stats(owner: str, repo: str, token: str) -> RepoStatsResponse:
-    key = (owner, repo)
+    key = (owner, repo, _token_hash(token))
     now = time.monotonic()
     cached = _stats_cache.get(key)
     if cached and now - cached[0] < _STATS_CACHE_TTL_SECONDS:
@@ -179,10 +207,17 @@ def _fetch_security(owner: str, repo: str, token: str) -> RepoSecurityResponse:
     protected, unknown = branch_result["value"]["protected"], branch_result["value"]["unknown"]
     branch_protection = "unknown" if unknown else ("protected" if protected else "unprotected")
 
-    secret_result = SecretScanningEnabled().run(
-        owner=owner, token=token, base_url=client.base, repos=[repo_meta]
-    )
-    secret_scanning = "enabled" if secret_result["value"]["enabled"] else "disabled"
+    # GitHub only includes `security_and_analysis` on the repo payload for tokens with
+    # admin access to the repo — for a lesser-privileged token the key is simply absent,
+    # which the check itself treats identically to "explicitly disabled". Distinguish
+    # that here so the UI shows "unknown" instead of a confidently-wrong "disabled".
+    if repo_meta.get("security_and_analysis") is None:
+        secret_scanning = "unknown"
+    else:
+        secret_result = SecretScanningEnabled().run(
+            owner=owner, token=token, base_url=client.base, repos=[repo_meta]
+        )
+        secret_scanning = "enabled" if secret_result["value"]["enabled"] else "disabled"
 
     return {
         "repository": f"{owner}/{repo}",

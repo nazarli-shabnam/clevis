@@ -77,4 +77,4 @@ class RepoSecurityInput(BaseModel):
 class RepoSecurityResponse(BaseModel):
     repository: str
     branch_protection: str  # "protected" | "unprotected" | "unknown"
-    secret_scanning: str  # "enabled" | "disabled"
+    secret_scanning: str  # "enabled" | "disabled" | "unknown"

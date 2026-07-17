@@ -1,6 +1,26 @@
+import time
+
 import httpx
 
 from checks.base import Check, CheckMetadata
+
+
+def _get_with_retry(client: httpx.Client, url: str, headers: dict) -> httpx.Response:
+    # Same retry/backoff contract as GitHubClient.request (apps/api/src/services/github_client.py):
+    # 3 attempts, exponential backoff on connection errors or a 429.
+    for attempt in range(3):
+        try:
+            r = client.get(url, headers=headers)
+        except httpx.RequestError:
+            if attempt < 2:
+                time.sleep(2**attempt)
+                continue
+            raise
+        if r.status_code == 429 and attempt < 2:
+            time.sleep(2**attempt)
+            continue
+        return r
+    raise RuntimeError("request loop exhausted without returning")
 
 
 def _get(url: str, token: str) -> dict | list:
@@ -10,7 +30,7 @@ def _get(url: str, token: str) -> dict | list:
         "X-GitHub-Api-Version": "2022-11-28",
     }
     with httpx.Client(timeout=20) as client:
-        r = client.get(url, headers=headers)
+        r = _get_with_retry(client, url, headers)
     r.raise_for_status()
     return r.json()
 
@@ -25,7 +45,7 @@ def _get_all_pages(base_url: str, path: str, token: str) -> list:
     url: str | None = f"{base_url}{path}?per_page=100"
     with httpx.Client(timeout=20) as client:
         while url:
-            r = client.get(url, headers=headers)
+            r = _get_with_retry(client, url, headers)
             r.raise_for_status()
             results.extend(r.json())
             url = None

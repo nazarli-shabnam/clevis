@@ -99,9 +99,44 @@ def _not_found() -> httpx.HTTPStatusError:
     return httpx.HTTPStatusError("missing", request=request, response=httpx.Response(404, request=request))
 
 
+def _stats_side_effect(
+    *,
+    repo_meta=None,
+    commit_activity=None,
+    participation=None,
+    contributors=None,
+    release=None,
+    release_error=None,
+    repo_meta_error=None,
+):
+    # The 5 stats calls now run concurrently (fix for sequential-latency finding), so
+    # unlike a plain ordered side_effect list, responses must be matched by URL --
+    # call order across threads isn't guaranteed.
+    def fn(method, path, **kwargs):
+        if path == "/repos/acme/demo/releases/latest":
+            if release_error is not None:
+                raise release_error
+            return release if release is not None else {}
+        if path == "/repos/acme/demo":
+            if repo_meta_error is not None:
+                raise repo_meta_error
+            return repo_meta if repo_meta is not None else {}
+        if path == "/repos/acme/demo/stats/commit_activity":
+            return commit_activity if commit_activity is not None else {}
+        if path == "/repos/acme/demo/stats/participation":
+            return participation if participation is not None else {}
+        if path == "/repos/acme/demo/stats/contributors":
+            return contributors if contributors is not None else {}
+        raise AssertionError(f"unexpected path {path!r}")
+
+    return fn
+
+
 def test_repo_stats_treats_202_empty_body_as_not_ready(repos_client):
     with patch("src.routers.repos.GitHubClient") as mock_client:
-        mock_client.return_value.request.side_effect = [_REPO_META, {}, {}, {}, _not_found()]
+        mock_client.return_value.request.side_effect = _stats_side_effect(
+            repo_meta=_REPO_META, release_error=_not_found()
+        )
         resp = repos_client.post(
             "/orgs/acme/repos/acme/demo/stats", json={"token": "ghp_testtoken123456789012345678901234"}
         )
@@ -119,7 +154,7 @@ def test_repo_stats_includes_repo_metadata_and_latest_release(repos_client):
         "html_url": "https://github.com/acme/demo/releases/tag/v0.4.1",
     }
     with patch("src.routers.repos.GitHubClient") as mock_client:
-        mock_client.return_value.request.side_effect = [_REPO_META, [], {}, [], release]
+        mock_client.return_value.request.side_effect = _stats_side_effect(repo_meta=_REPO_META, release=release)
         resp = repos_client.post(
             "/orgs/acme/repos/acme/demo/stats", json={"token": "ghp_testtoken123456789012345678901234"}
         )
@@ -135,7 +170,9 @@ def test_repo_stats_includes_repo_metadata_and_latest_release(repos_client):
 
 def test_repo_stats_latest_release_is_null_when_repo_has_no_releases(repos_client):
     with patch("src.routers.repos.GitHubClient") as mock_client:
-        mock_client.return_value.request.side_effect = [_REPO_META, [], {}, [], _not_found()]
+        mock_client.return_value.request.side_effect = _stats_side_effect(
+            repo_meta=_REPO_META, release_error=_not_found()
+        )
         resp = repos_client.post(
             "/orgs/acme/repos/acme/demo/stats", json={"token": "ghp_testtoken123456789012345678901234"}
         )
@@ -143,15 +180,62 @@ def test_repo_stats_latest_release_is_null_when_repo_has_no_releases(repos_clien
     assert resp.json()["latest_release"] is None
 
 
+def test_repo_stats_latest_release_is_null_on_non_404_error_without_failing_the_request(repos_client):
+    # Regression test: a transient failure on the new latest_release call must not
+    # discard the commit_activity/participation/contributors data that succeeded.
+    server_error = httpx.HTTPStatusError(
+        "boom",
+        request=httpx.Request("GET", "https://api.github.com/x"),
+        response=httpx.Response(503, request=httpx.Request("GET", "https://api.github.com/x")),
+    )
+    with patch("src.routers.repos.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = _stats_side_effect(
+            repo_meta=_REPO_META,
+            commit_activity=[{"week": 1, "total": 5}],
+            release_error=server_error,
+        )
+        resp = repos_client.post(
+            "/orgs/acme/repos/acme/demo/stats", json={"token": "ghp_testtoken123456789012345678901234"}
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["commit_activity"] == [{"week": 1, "total": 5}]
+    assert body["latest_release"] is None
+
+
+def test_repo_stats_defaults_metadata_on_repo_meta_failure_without_failing_the_request(repos_client):
+    # Regression test: a transient failure on the new repo_meta call must not discard
+    # the commit_activity/participation/contributors data that succeeded.
+    server_error = httpx.HTTPStatusError(
+        "boom",
+        request=httpx.Request("GET", "https://api.github.com/x"),
+        response=httpx.Response(503, request=httpx.Request("GET", "https://api.github.com/x")),
+    )
+    with patch("src.routers.repos.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = _stats_side_effect(
+            repo_meta_error=server_error,
+            commit_activity=[{"week": 1, "total": 5}],
+            release_error=_not_found(),
+        )
+        resp = repos_client.post(
+            "/orgs/acme/repos/acme/demo/stats", json={"token": "ghp_testtoken123456789012345678901234"}
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["commit_activity"] == [{"week": 1, "total": 5}]
+    assert body["stargazers_count"] == 0
+    assert body["default_branch"] == ""
+
+
 def test_repo_stats_second_call_is_served_from_cache(repos_client):
     with patch("src.routers.repos.GitHubClient") as mock_client:
-        mock_client.return_value.request.side_effect = [
-            _REPO_META,
-            [{"week": 1, "total": 5}],
-            {"all": [1], "owner": [1]},
-            [{"login": "octocat", "total": 5}],
-            _not_found(),
-        ]
+        mock_client.return_value.request.side_effect = _stats_side_effect(
+            repo_meta=_REPO_META,
+            commit_activity=[{"week": 1, "total": 5}],
+            participation={"all": [1], "owner": [1]},
+            contributors=[{"login": "octocat", "total": 5}],
+            release_error=_not_found(),
+        )
         first = repos_client.post(
             "/orgs/acme/repos/acme/demo/stats", json={"token": "ghp_testtoken123456789012345678901234"}
         )
@@ -162,6 +246,26 @@ def test_repo_stats_second_call_is_served_from_cache(repos_client):
     assert second.status_code == 200
     assert first.json() == second.json()
     assert mock_client.return_value.request.call_count == 5
+
+
+def test_repo_stats_different_tokens_are_not_served_from_the_same_cache_entry(repos_client):
+    with patch("src.routers.repos.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = _stats_side_effect(
+            repo_meta=_REPO_META,
+            commit_activity=[{"week": 1, "total": 5}],
+            release_error=_not_found(),
+        )
+        first = repos_client.post(
+            "/orgs/acme/repos/acme/demo/stats", json={"token": "ghp_token_one_1234567890123456789"}
+        )
+        second = repos_client.post(
+            "/orgs/acme/repos/acme/demo/stats", json={"token": "ghp_token_two_1234567890123456789"}
+        )
+    assert first.status_code == 200
+    assert second.status_code == 200
+    # Each distinct token triggers its own fetch (5 calls) rather than reusing the
+    # other token's cached response -- 10 total, not 5.
+    assert mock_client.return_value.request.call_count == 10
 
 
 def test_list_repos_maps_github_request_error_to_503(repos_client):
@@ -245,7 +349,11 @@ def test_repo_security_returns_protected_and_enabled(repos_client):
             return_value={"status": "pass", "value": {"enabled": 1, "total": 1}},
         ),
     ):
-        mock_client.return_value.request.return_value = {"name": "demo", "default_branch": "main"}
+        mock_client.return_value.request.return_value = {
+            "name": "demo",
+            "default_branch": "main",
+            "security_and_analysis": {"secret_scanning": {"status": "enabled"}},
+        }
         resp = repos_client.post(
             "/orgs/acme/repos/acme/demo/security", json={"token": "ghp_testtoken123456789012345678901234"}
         )
@@ -267,7 +375,11 @@ def test_repo_security_returns_unprotected_and_disabled(repos_client):
             return_value={"status": "fail", "value": {"enabled": 0, "total": 1}},
         ),
     ):
-        mock_client.return_value.request.return_value = {"name": "demo", "default_branch": "main"}
+        mock_client.return_value.request.return_value = {
+            "name": "demo",
+            "default_branch": "main",
+            "security_and_analysis": {"secret_scanning": {"status": "disabled"}},
+        }
         resp = repos_client.post(
             "/orgs/acme/repos/acme/demo/security", json={"token": "ghp_testtoken123456789012345678901234"}
         )
@@ -296,6 +408,25 @@ def test_repo_security_returns_unknown_when_branch_check_inconclusive(repos_clie
         )
     assert resp.status_code == 200
     assert resp.json()["branch_protection"] == "unknown"
+
+
+def test_repo_security_returns_unknown_secret_scanning_when_field_is_absent(repos_client):
+    # GitHub only includes `security_and_analysis` for admin-scoped tokens; a lesser-
+    # privileged token gets a repo payload without the key at all, which must read as
+    # "unknown" rather than a confidently-wrong "disabled".
+    with (
+        patch("src.routers.repos.GitHubClient") as mock_client,
+        patch(
+            "checks.github_checks.BranchProtectionEnabled.run",
+            return_value={"status": "pass", "value": {"checked": 1, "protected": 1, "unknown": 0}},
+        ),
+    ):
+        mock_client.return_value.request.return_value = {"name": "demo", "default_branch": "main"}
+        resp = repos_client.post(
+            "/orgs/acme/repos/acme/demo/security", json={"token": "ghp_testtoken123456789012345678901234"}
+        )
+    assert resp.status_code == 200
+    assert resp.json()["secret_scanning"] == "unknown"
 
 
 def test_repo_security_no_installation_and_no_token_returns_400(repos_client):
