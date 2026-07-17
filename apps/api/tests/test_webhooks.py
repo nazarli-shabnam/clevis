@@ -179,3 +179,23 @@ def test_installation_deleted_ignores_non_integer_installation_id(db, webhook_cl
     # Nothing should be deleted, and no exception should propagate from a type mismatch
     # hitting the database — an installation_id of the wrong type must be a safe no-op.
     assert len(installation_repo.list_for_org(db, org_id=org.id)) == 1
+
+
+def test_route_is_registered_on_the_real_app(db, monkeypatch):
+    # Every other test in this file mounts `webhooks_router` on an isolated FastAPI()
+    # instance, so they would all still pass even if `src.main` never actually included
+    # the router — a dropped `app.include_router(webhooks.router, ...)` in main.py would
+    # only surface as a 404 in production. Import the real app the way
+    # `uvicorn src.main:app` does and hit the route through it, so a missing/broken
+    # registration fails here instead.
+    from src.main import app as real_app
+
+    monkeypatch.setattr(settings, "github_app_webhook_secret", SecretStr(_SECRET))
+    real_app.dependency_overrides[get_db] = lambda: db
+    try:
+        resp = _post(TestClient(real_app), "ping", {"zen": "hello"})
+    finally:
+        real_app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
