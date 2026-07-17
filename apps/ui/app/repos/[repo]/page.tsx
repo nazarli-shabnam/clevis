@@ -3,7 +3,7 @@
 // URL: /repos/<owner~name>. The [repo] folder name is Next.js dynamic segment syntax
 // (not a literal path); param holds owner and repo joined with "~" (see repos/page.tsx).
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
 import { useMutation, useQuery } from "@tanstack/react-query"
@@ -29,6 +29,9 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "security", label: "Security" },
 ]
 
+function tabButtonId(id: Tab) { return `repo-tab-${id}` }
+function tabPanelId(id: Tab) { return `repo-tabpanel-${id}` }
+
 export default function RepoDetailPage() {
   const params = useParams<{ repo: string }>()
   const parsed = parseOwnerRepo(params.repo || "")
@@ -37,6 +40,27 @@ export default function RepoDetailPage() {
 
   const [tab, setTab] = useState<Tab>("overview")
   const [token, setToken] = useState("")
+
+  const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({ overview: null, cache: null, security: null })
+
+  function focusTab(id: Tab) {
+    setTab(id)
+    tabRefs.current[id]?.focus()
+  }
+
+  // WAI-ARIA tabs pattern: arrow keys move focus + selection between tabs
+  // (roving tabindex — only the active tab is in the normal Tab order).
+  function handleTabKeyDown(e: React.KeyboardEvent<HTMLButtonElement>, index: number) {
+    let nextIndex: number | null = null
+    if (e.key === "ArrowRight") nextIndex = (index + 1) % TABS.length
+    else if (e.key === "ArrowLeft") nextIndex = (index - 1 + TABS.length) % TABS.length
+    else if (e.key === "Home") nextIndex = 0
+    else if (e.key === "End") nextIndex = TABS.length - 1
+    if (nextIndex !== null) {
+      e.preventDefault()
+      focusTab(TABS[nextIndex].id)
+    }
+  }
 
   const resolveMutation = useMutation({
     mutationFn: (org: string) => api.tokens.resolve(org),
@@ -114,12 +138,17 @@ export default function RepoDetailPage() {
       />
 
       <div className="flex items-center gap-1 border-b border-border mb-4" role="tablist">
-        {TABS.map((t) => (
+        {TABS.map((t, i) => (
           <button
             key={t.id}
+            ref={(el) => { tabRefs.current[t.id] = el }}
             role="tab"
+            id={tabButtonId(t.id)}
+            aria-controls={tabPanelId(t.id)}
             aria-selected={tab === t.id}
+            tabIndex={tab === t.id ? 0 : -1}
             onClick={() => setTab(t.id)}
+            onKeyDown={(e) => handleTabKeyDown(e, i)}
             className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors ${
               tab === t.id
                 ? "border-primary text-foreground"
@@ -132,7 +161,13 @@ export default function RepoDetailPage() {
       </div>
 
       {tab === "overview" && (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div
+          className="grid gap-4 lg:grid-cols-2"
+          role="tabpanel"
+          id={tabPanelId("overview")}
+          aria-labelledby={tabButtonId("overview")}
+          tabIndex={0}
+        >
           <div className="bg-card border border-border lg:col-span-2">
             <div className="px-4 py-3 border-b border-border">
               <span className="section-label">Commit activity — 52 weeks</span>
@@ -190,10 +225,20 @@ export default function RepoDetailPage() {
         </div>
       )}
 
-      {tab === "cache" && <CachePanel owner={owner} repo={repo} />}
+      {tab === "cache" && (
+        <div role="tabpanel" id={tabPanelId("cache")} aria-labelledby={tabButtonId("cache")} tabIndex={0}>
+          <CachePanel owner={owner} repo={repo} />
+        </div>
+      )}
 
       {tab === "security" && (
-        <div className="bg-card border border-border">
+        <div
+          className="bg-card border border-border"
+          role="tabpanel"
+          id={tabPanelId("security")}
+          aria-labelledby={tabButtonId("security")}
+          tabIndex={0}
+        >
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
             <span className="section-label">Organization security score</span>
             <Link

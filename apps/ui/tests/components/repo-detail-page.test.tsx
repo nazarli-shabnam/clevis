@@ -206,6 +206,53 @@ describe("RepoDetailPage", () => {
     expect(localStorage.getItem("default_org")).toBe("acme");
   });
 
+  it("wires each tab to its panel via aria-controls/id/aria-labelledby", () => {
+    renderPage();
+
+    const overviewTab = screen.getByRole("tab", { name: /overview/i });
+    const overviewPanel = screen.getByRole("tabpanel");
+
+    expect(overviewTab).toHaveAttribute("aria-controls", overviewPanel.id);
+    expect(overviewPanel).toHaveAttribute("aria-labelledby", overviewTab.id);
+  });
+
+  it("only the active tab is in the normal tab order (roving tabindex)", () => {
+    renderPage();
+
+    expect(screen.getByRole("tab", { name: /overview/i })).toHaveAttribute("tabindex", "0");
+    expect(screen.getByRole("tab", { name: /actions cache/i })).toHaveAttribute("tabindex", "-1");
+    expect(screen.getByRole("tab", { name: /security/i })).toHaveAttribute("tabindex", "-1");
+  });
+
+  it("moves focus and selection with ArrowRight/ArrowLeft/Home/End", async () => {
+    renderPage();
+
+    const overviewTab = screen.getByRole("tab", { name: /overview/i });
+    const cacheTab = screen.getByRole("tab", { name: /actions cache/i });
+    const securityTab = screen.getByRole("tab", { name: /security/i });
+
+    fireEvent.keyDown(overviewTab, { key: "ArrowRight" });
+    expect(cacheTab).toHaveAttribute("aria-selected", "true");
+    expect(cacheTab).toHaveFocus();
+
+    fireEvent.keyDown(cacheTab, { key: "ArrowRight" });
+    expect(securityTab).toHaveAttribute("aria-selected", "true");
+
+    // Wraps past the last tab back to the first.
+    fireEvent.keyDown(securityTab, { key: "ArrowRight" });
+    expect(overviewTab).toHaveAttribute("aria-selected", "true");
+
+    // Wraps backward past the first tab to the last.
+    fireEvent.keyDown(overviewTab, { key: "ArrowLeft" });
+    expect(securityTab).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.keyDown(securityTab, { key: "Home" });
+    expect(overviewTab).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.keyDown(overviewTab, { key: "End" });
+    expect(securityTab).toHaveAttribute("aria-selected", "true");
+  });
+
   it("resets to the Overview tab when navigating to a different repo", async () => {
     const { rerenderSamePage } = renderPage();
 
