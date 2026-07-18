@@ -81,4 +81,27 @@ describe("ActivityPage", () => {
     expect(await screen.findByText("#1")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText(/refreshes in \d+s/)).toBeInTheDocument());
   });
+
+  it("resolves a short (1-2 character) org login instead of getting stuck unconfigured", async () => {
+    localStorage.setItem("default_org", "hp");
+    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+    githubEventsMock.mockResolvedValue({ org: "hp", events: [] });
+
+    renderPage();
+
+    await waitFor(() => expect(tokensResolveMock).toHaveBeenCalledWith("hp"));
+    expect(await screen.findByText(/no events yet/)).toBeInTheDocument();
+  });
+
+  it("shows an error instead of crashing when the events query runs without a resolved token", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockResolvedValue({ token: "" });
+
+    renderPage();
+
+    // configured is false when token is empty, so the feed never queries and the
+    // configure prompt is shown -- no uncaught exception from a bare `.token` read.
+    expect(await screen.findByText(/No organization configured yet/)).toBeInTheDocument();
+    expect(githubEventsMock).not.toHaveBeenCalled();
+  });
 });

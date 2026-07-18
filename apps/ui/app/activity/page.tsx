@@ -10,7 +10,9 @@ import { api } from "@/lib/api/client"
 
 const EVENTS_REFRESH_SECONDS = 30
 
-function useCountdown(resetKey: number | undefined, seconds: number): number {
+// Isolated into its own component so the 1s tick only re-renders this small chip,
+// not the whole page (and the feed/job lists below it).
+function RefreshCountdown({ resetKey, seconds }: { resetKey: number; seconds: number }) {
   const [remaining, setRemaining] = useState(seconds)
 
   useEffect(() => {
@@ -24,7 +26,7 @@ function useCountdown(resetKey: number | undefined, seconds: number): number {
     return () => clearInterval(interval)
   }, [])
 
-  return remaining
+  return <span className="stat-chip">refreshes in {remaining}s</span>
 }
 
 export default function ActivityPage() {
@@ -42,7 +44,7 @@ export default function ActivityPage() {
   const resolveQuery = useQuery({
     queryKey: ["tokens.resolve", org],
     queryFn: () => api.tokens.resolve(org),
-    enabled: org.trim().length > 2,
+    enabled: org.trim().length > 0,
     retry: false,
   })
 
@@ -50,13 +52,19 @@ export default function ActivityPage() {
 
   const eventsQuery = useQuery({
     queryKey: ["github.events", org],
-    queryFn: () => api.github.events(org, resolveQuery.data!.token),
+    queryFn: () => {
+      const token = resolveQuery.data?.token
+      if (!token) throw new Error("No GitHub token available for this organization")
+      return api.github.events(org, token)
+    },
     enabled: configured,
     retry: false,
     refetchInterval: EVENTS_REFRESH_SECONDS * 1000,
   })
 
-  const countdown = useCountdown(eventsQuery.dataUpdatedAt, EVENTS_REFRESH_SECONDS)
+  // Reset the countdown on either a successful fetch OR a failed one, so it always
+  // tracks the real refetchInterval cadence instead of sticking at 0 after an error.
+  const lastAttemptAt = Math.max(eventsQuery.dataUpdatedAt, eventsQuery.errorUpdatedAt)
 
   return (
     <>
@@ -69,7 +77,7 @@ export default function ActivityPage() {
         <div className="lg:col-span-2 bg-card border border-border">
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
             <span className="section-label">Activity Feed</span>
-            {configured && <span className="stat-chip">refreshes in {countdown}s</span>}
+            {configured && <RefreshCountdown resetKey={lastAttemptAt} seconds={EVENTS_REFRESH_SECONDS} />}
           </div>
           {!configured ? (
             <div className="px-4 py-8">

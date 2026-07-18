@@ -1,7 +1,18 @@
 import time
 import httpx
+from fastapi import HTTPException
 
 from src.core.config import settings
+
+
+def github_error(exc: Exception) -> HTTPException:
+    """Map an httpx exception raised by GitHubClient into the HTTPException every
+    GitHub-proxying router returns to its caller."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return HTTPException(status_code=400, detail=f"GitHub API error: {exc.response.status_code}")
+    if isinstance(exc, httpx.RequestError):
+        return HTTPException(status_code=503, detail="GitHub API unreachable")
+    raise exc
 
 
 class GitHubClient:

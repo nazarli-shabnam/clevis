@@ -9,9 +9,17 @@ from src.core.auth import UserOut, require_auth
 from src.core.db import User, get_db
 from src.repositories import org_membership_repo, org_repo
 from src.routers.github import router as github_router
+from src.routers.github import _events_cache
 from unittest.mock import patch
 
 _ADMIN = UserOut(id=1, email="admin@example.com", name=None, is_workspace_admin=False)
+
+
+@pytest.fixture(autouse=True)
+def _clear_events_cache():
+    _events_cache.clear()
+    yield
+    _events_cache.clear()
 
 
 @pytest.fixture()
@@ -40,6 +48,17 @@ _PUSH_EVENT = {
     "repo": {"name": "acme/api"},
     "payload": {"ref": "refs/heads/main", "commits": [{"sha": "a"}, {"sha": "b"}, {"sha": "c"}]},
     "created_at": "2026-07-17T10:00:00Z",
+}
+
+_LARGE_PUSH_EVENT = {
+    "id": "1b",
+    "type": "PushEvent",
+    "actor": {"login": "alice", "avatar_url": "https://avatars/alice.png"},
+    "repo": {"name": "acme/api"},
+    # GitHub truncates the embedded commits array at 20 even when more were pushed;
+    # `size` carries the true total.
+    "payload": {"ref": "refs/heads/main", "size": 50, "commits": [{"sha": str(i)} for i in range(20)]},
+    "created_at": "2026-07-17T10:05:00Z",
 }
 
 _PR_OPENED_EVENT = {
@@ -111,7 +130,7 @@ def test_events_summarizes_each_event_type(events_client):
         mock_client.return_value.request.return_value = [
             _PUSH_EVENT, _PR_OPENED_EVENT, _PR_MERGED_EVENT, _ISSUE_EVENT, _RELEASE_EVENT, _CREATE_EVENT, _UNKNOWN_EVENT,
         ]
-        resp = events_client.post("/orgs/acme/events", json={"token": "ghp_testtoken123456789012345678901234"})
+        resp = events_client.post("/github/orgs/acme/events", json={"token": "ghp_testtoken123456789012345678901234"})
     assert resp.status_code == 200
     events = resp.json()["events"]
     summaries = {e["id"]: e["summary"] for e in events}
@@ -124,10 +143,20 @@ def test_events_summarizes_each_event_type(events_client):
     assert summaries["7"] == "WatchEvent"
 
 
+def test_events_push_summary_uses_true_total_not_truncated_commit_list(events_client):
+    with patch("src.routers.github.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = [_LARGE_PUSH_EVENT]
+        resp = events_client.post(
+            "/github/orgs/acme/events", json={"token": "ghp_testtoken123456789012345678901234"}
+        )
+    assert resp.status_code == 200
+    assert resp.json()["events"][0]["summary"] == "pushed 50 commits to main"
+
+
 def test_events_excludes_bot_actors(events_client):
     with patch("src.routers.github.GitHubClient") as mock_client:
         mock_client.return_value.request.return_value = [_PUSH_EVENT, _BOT_EVENT]
-        resp = events_client.post("/orgs/acme/events", json={"token": "ghp_testtoken123456789012345678901234"})
+        resp = events_client.post("/github/orgs/acme/events", json={"token": "ghp_testtoken123456789012345678901234"})
     assert resp.status_code == 200
     events = resp.json()["events"]
     assert len(events) == 1
@@ -138,15 +167,49 @@ def test_events_passes_per_page_through(events_client):
     with patch("src.routers.github.GitHubClient") as mock_client:
         mock_client.return_value.request.return_value = []
         events_client.post(
-            "/orgs/acme/events", json={"token": "ghp_testtoken123456789012345678901234", "per_page": 10}
+            "/github/orgs/acme/events", json={"token": "ghp_testtoken123456789012345678901234", "per_page": 10}
         )
     mock_client.return_value.request.assert_called_once_with(
         "GET", "/orgs/acme/events", params={"per_page": 10}
     )
 
 
+def test_events_second_call_is_served_from_cache(events_client):
+    with patch("src.routers.github.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = [_PUSH_EVENT]
+        first = events_client.post(
+            "/github/orgs/acme/events", json={"token": "ghp_testtoken123456789012345678901234"}
+        )
+        second = events_client.post(
+            "/github/orgs/acme/events", json={"token": "ghp_testtoken123456789012345678901234"}
+        )
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json() == second.json()
+    mock_client.return_value.request.assert_called_once()
+
+
+def test_events_different_tokens_are_not_served_from_the_same_cache_entry(events_client):
+    with patch("src.routers.github.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = [_PUSH_EVENT]
+        events_client.post("/github/orgs/acme/events", json={"token": "ghp_token_one_1234567890123456789"})
+        events_client.post("/github/orgs/acme/events", json={"token": "ghp_token_two_1234567890123456789"})
+    assert mock_client.return_value.request.call_count == 2
+
+
+def test_events_non_list_response_returns_502(events_client):
+    # GitHubClient.request falls back to `{}` on an empty response body -- a non-list
+    # response must surface as an error, not silently render as "no events".
+    with patch("src.routers.github.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = {}
+        resp = events_client.post(
+            "/github/orgs/acme/events", json={"token": "ghp_testtoken123456789012345678901234"}
+        )
+    assert resp.status_code == 502
+
+
 def test_events_no_installation_and_no_token_returns_400(events_client):
-    resp = events_client.post("/orgs/acme/events", json={})
+    resp = events_client.post("/github/orgs/acme/events", json={})
     assert resp.status_code == 400
 
 
@@ -155,7 +218,7 @@ def test_events_maps_github_status_error_to_400(events_client):
     error = httpx.HTTPStatusError("missing", request=response.request, response=response)
     with patch("src.routers.github.GitHubClient") as mock_client:
         mock_client.return_value.request.side_effect = error
-        resp = events_client.post("/orgs/acme/events", json={"token": "ghp_testtoken123456789012345678901234"})
+        resp = events_client.post("/github/orgs/acme/events", json={"token": "ghp_testtoken123456789012345678901234"})
     assert resp.status_code == 400
     assert "404" in resp.json()["detail"]
 
@@ -163,7 +226,7 @@ def test_events_maps_github_status_error_to_400(events_client):
 def test_events_maps_github_request_error_to_503(events_client):
     with patch("src.routers.github.GitHubClient") as mock_client:
         mock_client.return_value.request.side_effect = httpx.RequestError("boom")
-        resp = events_client.post("/orgs/acme/events", json={"token": "ghp_testtoken123456789012345678901234"})
+        resp = events_client.post("/github/orgs/acme/events", json={"token": "ghp_testtoken123456789012345678901234"})
     assert resp.status_code == 503
 
 
@@ -173,7 +236,7 @@ def test_events_unknown_org_returns_404(db):
     app.dependency_overrides[require_auth] = lambda: _ADMIN
     app.dependency_overrides[get_db] = lambda: db
     client = TestClient(app)
-    resp = client.post("/orgs/does-not-exist/events", json={})
+    resp = client.post("/github/orgs/does-not-exist/events", json={})
     assert resp.status_code == 404
 
 
@@ -186,5 +249,5 @@ def test_events_non_member_forbidden(db):
     )
     app.dependency_overrides[get_db] = lambda: db
     client = TestClient(app)
-    resp = client.post("/orgs/acme/events", json={})
+    resp = client.post("/github/orgs/acme/events", json={})
     assert resp.status_code == 403

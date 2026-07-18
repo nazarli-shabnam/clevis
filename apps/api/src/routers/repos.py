@@ -19,7 +19,7 @@ from src.schemas.repos import (
     RepoStatsInput,
     RepoStatsResponse,
 )
-from src.services.github_client import GitHubClient
+from src.services.github_client import GitHubClient, github_error as _github_error
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token
 
 router = APIRouter()
@@ -30,14 +30,6 @@ _stats_cache: dict[tuple[str, str, str], tuple[float, RepoStatsResponse]] = {}
 
 def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
-
-
-def _github_error(exc: Exception) -> HTTPException:
-    if isinstance(exc, httpx.HTTPStatusError):
-        return HTTPException(status_code=400, detail=f"GitHub API error: {exc.response.status_code}")
-    if isinstance(exc, httpx.RequestError):
-        return HTTPException(status_code=503, detail="GitHub API unreachable")
-    raise exc
 
 
 def _client_token(payload: RepoListInput | RepoStatsInput | RepoPullsInput | RepoSecurityInput) -> str | None:
