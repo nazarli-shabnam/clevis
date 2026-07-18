@@ -32,7 +32,7 @@ def upgrade() -> None:
         sa.Column("total_checks", sa.Integer(), nullable=False),
         sa.Column("failed_checks", sa.Integer(), nullable=False),
         sa.Column("checks_json", sa.Text(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
     op.create_index("ix_scan_results_owner_created_at", "scan_results", ["owner", "created_at"])
 
