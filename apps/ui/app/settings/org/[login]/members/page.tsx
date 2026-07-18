@@ -1,6 +1,6 @@
 "use client"
 
-import { useParams } from "next/navigation"
+import { useParams, useRouter, useSearchParams } from "next/navigation"
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
@@ -9,7 +9,238 @@ import { Button } from "@/components/ui/button"
 import { CircleNotch, EnvelopeSimple, X } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { addRevokingId, isRevoking, removeRevokingId } from "@/lib/revoke-pending"
+import { relativeTime } from "@/lib/format"
 import type { InvitationOut } from "@/lib/api/types"
+
+const ROSTER_TABS = [
+  { id: "members", label: "Members" },
+  { id: "outside", label: "Outside" },
+  { id: "pending", label: "Pending GitHub invitations" },
+] as const
+
+type RosterTabId = (typeof ROSTER_TABS)[number]["id"]
+
+function GithubRoster({ orgLogin }: { orgLogin: string }) {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const tab = (searchParams.get("roster") ?? "members") as RosterTabId
+  const [search, setSearch] = useState("")
+  const [roleFilter, setRoleFilter] = useState<"all" | "member" | "admin">("all")
+
+  function setTab(id: RosterTabId) {
+    const params = new URLSearchParams(searchParams.toString())
+    if (id === "members") params.delete("roster")
+    else params.set("roster", id)
+    router.replace(`?${params.toString()}`, { scroll: false })
+  }
+
+  const membersQuery = useQuery({
+    queryKey: ["collab", "members", orgLogin, roleFilter],
+    queryFn: () => api.collab.members(orgLogin, roleFilter),
+    enabled: tab === "members",
+  })
+  const outsideQuery = useQuery({
+    queryKey: ["collab", "outside", orgLogin],
+    queryFn: () => api.collab.outsideCollaborators(orgLogin),
+    enabled: tab === "outside",
+  })
+  const pendingQuery = useQuery({
+    queryKey: ["collab", "pending", orgLogin],
+    queryFn: () => api.collab.invitations(orgLogin),
+    enabled: tab === "pending",
+  })
+
+  const activeQuery = tab === "members" ? membersQuery : tab === "outside" ? outsideQuery : pendingQuery
+
+  const filteredMembers = (membersQuery.data?.members ?? []).filter((m) =>
+    m.login.toLowerCase().includes(search.toLowerCase()),
+  )
+  const membersWithout2fa = (membersQuery.data?.members ?? []).filter((m) => m.two_factor_enabled === false).length
+
+  return (
+    <div className="card">
+      <div className="px-4 py-3 border-b border-border">
+        <span className="section-title">GitHub organization roster</span>
+      </div>
+
+      <div className="px-4 py-2.5 border-b border-border flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-1.5">
+          {ROSTER_TABS.map((t) => {
+            const active = tab === t.id
+            return (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                aria-pressed={active}
+                className={`text-xs font-medium px-2.5 py-1 rounded-md border transition-colors ${
+                  active
+                    ? "border-border bg-elevated text-foreground"
+                    : "border-transparent text-muted-foreground hover:bg-elevated"
+                }`}
+              >
+                {t.label}
+              </button>
+            )
+          })}
+        </div>
+        {tab === "members" && (
+          <>
+            <Input
+              placeholder="Search by login…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="max-w-48 h-7 text-xs"
+            />
+            <select
+              value={roleFilter}
+              onChange={(e) => setRoleFilter(e.target.value as "all" | "member" | "admin")}
+              className="text-xs card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
+            >
+              <option value="all">All roles</option>
+              <option value="member">Member</option>
+              <option value="admin">Admin</option>
+            </select>
+          </>
+        )}
+      </div>
+
+      {activeQuery.isLoading ? (
+        <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
+          <CircleNotch className="size-3.5 animate-spin" /> Loading…
+        </div>
+      ) : activeQuery.isError ? (
+        <div className="px-4 py-6">
+          <p className="text-xs text-destructive">{activeQuery.error.message}</p>
+        </div>
+      ) : tab === "members" ? (
+        filteredMembers.length === 0 ? (
+          <div className="px-4 py-8">
+            <p className="text-sm text-muted-foreground">No members found</p>
+          </div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left text-muted-foreground font-medium px-4 py-2">Member</th>
+                    <th className="text-left text-muted-foreground font-medium px-4 py-2">Role</th>
+                    <th className="text-left text-muted-foreground font-medium px-4 py-2">2FA</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {filteredMembers.map((m) => (
+                    <tr key={m.login}>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-2">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={m.avatar_url} alt="" className="size-5 rounded-full" />
+                          <a
+                            href={`https://github.com/${m.login}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-foreground/80 hover:text-foreground"
+                          >
+                            {m.login}
+                          </a>
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5 text-muted-foreground capitalize">{m.role}</td>
+                      <td className="px-4 py-2.5">
+                        {m.two_factor_enabled === true && <span className="stat-chip">✓ 2FA</span>}
+                        {m.two_factor_enabled === false && (
+                          <span className="stat-chip text-red-400 border-red-500/30">No 2FA</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {membersQuery.data?.two_factor_overlay_available && (
+              <div className="px-4 py-2.5 border-t border-border">
+                <span className="text-xs text-muted-foreground">Members without 2FA: {membersWithout2fa}</span>
+              </div>
+            )}
+          </>
+        )
+      ) : tab === "outside" ? (
+        (outsideQuery.data?.collaborators.length ?? 0) === 0 ? (
+          <div className="px-4 py-8">
+            <p className="text-sm text-muted-foreground">No outside collaborators</p>
+          </div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left text-muted-foreground font-medium px-4 py-2">Collaborator</th>
+                    <th className="text-left text-muted-foreground font-medium px-4 py-2">Repos</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {outsideQuery.data!.collaborators.map((c) => (
+                    <tr key={c.login}>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-2">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={c.avatar_url} alt="" className="size-5 rounded-full" />
+                          <span className="text-foreground/80">{c.login}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5 text-muted-foreground">
+                        <div className="flex flex-wrap gap-1">
+                          {c.repos.map((r) => (
+                            <span key={r} className="stat-chip">{r}</span>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {outsideQuery.data && outsideQuery.data.repos_scanned < outsideQuery.data.repos_total && (
+              <div className="px-4 py-2.5 border-t border-border">
+                <span className="text-xs text-muted-foreground">
+                  Scanned {outsideQuery.data.repos_scanned} of {outsideQuery.data.repos_total} repos
+                </span>
+              </div>
+            )}
+          </>
+        )
+      ) : (pendingQuery.data?.invitations.length ?? 0) === 0 ? (
+        <div className="px-4 py-8">
+          <p className="text-sm text-muted-foreground">No pending GitHub invitations</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="text-left text-muted-foreground font-medium px-4 py-2">Invitee</th>
+                <th className="text-left text-muted-foreground font-medium px-4 py-2">Role</th>
+                <th className="text-left text-muted-foreground font-medium px-4 py-2">Invited</th>
+                <th className="text-left text-muted-foreground font-medium px-4 py-2">Inviter</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {pendingQuery.data!.invitations.map((inv, i) => (
+                <tr key={i}>
+                  <td className="px-4 py-2.5 text-foreground/80">{inv.login ?? inv.email}</td>
+                  <td className="px-4 py-2.5 text-muted-foreground capitalize">{inv.role}</td>
+                  <td className="px-4 py-2.5 text-muted-foreground">{relativeTime(inv.invited_at)}</td>
+                  <td className="px-4 py-2.5 text-muted-foreground">{inv.inviter ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function OrgMembersPage() {
   const params = useParams<{ login: string }>()
@@ -77,7 +308,7 @@ export default function OrgMembersPage() {
 
         <div className="card lg:col-span-2">
           <div className="px-4 py-3 border-b border-border">
-            <span className="section-title">Invitations</span>
+            <span className="section-title">Clevis workspace invitations</span>
           </div>
           {isLoading ? (
             <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
@@ -122,6 +353,10 @@ export default function OrgMembersPage() {
             </div>
           )}
         </div>
+      </div>
+
+      <div className="mt-4">
+        <GithubRoster orgLogin={orgLogin} />
       </div>
     </>
   )

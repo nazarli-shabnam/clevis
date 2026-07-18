@@ -5,6 +5,10 @@ import type {
   CacheClearResponse,
   CacheListResponse,
   CheckValue,
+  GithubMembershipStatus,
+  GithubOrgInvitationsResponse,
+  GithubOrgMembersResponse,
+  GithubOutsideCollaboratorsResponse,
   InstallationLookup,
   InstallationMeta,
   InvitationCreateResponse,
@@ -246,6 +250,22 @@ export const api = {
       post<InvitationOut>(`/orgs/${encodeURIComponent(orgLogin)}/invitations/${invitationId}/revoke`, {}),
     preview: (token: string) => get<InvitationPreview>(`/invitations/${encodeURIComponent(token)}`),
     accept: (token: string) => post<{ org_login: string; role: string }>(`/invitations/${encodeURIComponent(token)}/accept`, {}),
+  },
+  collab: {
+    members: (orgLogin: string, role: "all" | "member" | "admin" = "all") =>
+      get<GithubOrgMembersResponse>(
+        `/github/orgs/${encodeURIComponent(orgLogin)}/members?role=${role}`,
+      ),
+    outsideCollaborators: (orgLogin: string) =>
+      get<GithubOutsideCollaboratorsResponse>(
+        `/github/orgs/${encodeURIComponent(orgLogin)}/outside_collaborators`,
+      ),
+    invitations: (orgLogin: string) =>
+      get<GithubOrgInvitationsResponse>(`/github/orgs/${encodeURIComponent(orgLogin)}/invitations`),
+    membership: (orgLogin: string, username: string) =>
+      get<GithubMembershipStatus>(
+        `/github/orgs/${encodeURIComponent(orgLogin)}/members/${encodeURIComponent(username)}/membership`,
+      ),
   },
   tokens: {
     list: () => get<SavedTokenMeta[]>("/tokens"),

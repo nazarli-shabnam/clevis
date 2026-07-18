@@ -224,3 +224,48 @@ export interface InvitationPreview {
   org_login: string
   status: "pending" | "accepted" | "revoked"
 }
+
+export interface GithubOrgMember {
+  login: string
+  avatar_url: string
+  role: "member" | "admin"
+  site_admin: boolean
+  two_factor_enabled: boolean | null
+}
+
+export interface GithubOrgMembersResponse {
+  org: string
+  members: GithubOrgMember[]
+  two_factor_overlay_available: boolean
+}
+
+export interface GithubOutsideCollaborator {
+  login: string
+  avatar_url: string
+  repos: string[]
+}
+
+export interface GithubOutsideCollaboratorsResponse {
+  org: string
+  collaborators: GithubOutsideCollaborator[]
+  repos_scanned: number
+  repos_total: number
+}
+
+export interface GithubOrgInvitation {
+  login: string | null
+  email: string | null
+  role: string
+  invited_at: string
+  inviter: string | null
+}
+
+export interface GithubOrgInvitationsResponse {
+  org: string
+  invitations: GithubOrgInvitation[]
+}
+
+export interface GithubMembershipStatus {
+  state: "active" | "pending"
+  role: "member" | "admin"
+}
