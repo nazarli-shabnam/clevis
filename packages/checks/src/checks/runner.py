@@ -1,6 +1,14 @@
 import logging
 
-from checks.github_checks import BranchProtectionEnabled, OrgMFARequired, SecretScanningEnabled, _get_all_pages
+from checks.github_checks import (
+    BranchProtectionEnabled,
+    CodeScanningCheck,
+    DefaultBranchNoForcePushCheck,
+    DependabotAlertsCheck,
+    OrgMFARequired,
+    SecretScanningEnabled,
+    _get_all_pages,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -8,7 +16,14 @@ logger = logging.getLogger(__name__)
 def run_all_checks(owner: str, token: str, base_url: str = "https://api.github.com") -> dict:
     repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
 
-    checks = [OrgMFARequired(), BranchProtectionEnabled(), SecretScanningEnabled()]
+    checks = [
+        OrgMFARequired(),
+        BranchProtectionEnabled(),
+        SecretScanningEnabled(),
+        DependabotAlertsCheck(),
+        CodeScanningCheck(),
+        DefaultBranchNoForcePushCheck(),
+    ]
     results = []
     for check in checks:
         try:
