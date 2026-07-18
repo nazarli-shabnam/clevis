@@ -202,4 +202,34 @@ describe("SecurityPage", () => {
     await waitFor(() => expect(screen.queryByText("Passing check")).not.toBeInTheDocument());
     expect(screen.getByText("Failing check")).toBeInTheDocument();
   });
+
+  it("narrows to a single severity via the By Severity tab's inline select", async () => {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme",
+      score: 50,
+      total_checks: 2,
+      failed_checks: 2,
+      repo_count: 1,
+      checks: [
+        { id: "check-a", title: "High severity check", severity: "high", remediation: "n/a", status: "fail", value: null },
+        { id: "check-b", title: "Low severity check", severity: "low", remediation: "n/a", status: "fail", value: null },
+      ],
+    });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+
+    await waitFor(() => expect(screen.getByText("High severity check")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "By Severity" }));
+    const severitySelect = await screen.findByDisplayValue("All severities");
+    fireEvent.change(severitySelect, { target: { value: "high" } });
+
+    await waitFor(() => expect(screen.queryByText("Low severity check")).not.toBeInTheDocument());
+    expect(screen.getByText("High severity check")).toBeInTheDocument();
+  });
 });
