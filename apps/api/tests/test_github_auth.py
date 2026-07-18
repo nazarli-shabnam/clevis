@@ -1,6 +1,7 @@
 """Tests for the GitHub OAuth router + find-or-create (DB-backed)."""
 
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi import FastAPI
@@ -9,7 +10,7 @@ from pydantic import SecretStr
 
 from src.core.config import settings
 from src.core.db import User, get_db
-from src.routers.github_auth import find_or_create_user
+from src.routers.github_auth import EmailAlreadyRegistered, find_or_create_user
 from src.routers.github_auth import router as gh_router
 from src.services.github_oauth import GitHubIdentity
 
@@ -24,7 +25,10 @@ def gh_app(db):
 
 @pytest.fixture()
 def gh_client(gh_app):
-    return TestClient(gh_app)
+    # https base_url so Secure-flagged cookies (session + OAuth state, both set with
+    # secure=settings.session_cookie_secure which defaults True) actually round-trip
+    # through the client's cookie jar across requests, matching real browser behavior.
+    return TestClient(gh_app, base_url="https://testserver")
 
 
 @pytest.fixture()
@@ -54,15 +58,33 @@ def test_second_user_is_member(db):
     assert second.is_workspace_admin is False
 
 
-def test_links_existing_email_user_and_keeps_role(db):
+def test_refuses_to_auto_link_an_existing_email_registered_account(db):
+    # Regression test for the account-takeover fix: self-registration has no email
+    # verification anywhere in this app, so silently linking a GitHub identity onto an
+    # existing account by email match alone would let an attacker who pre-registered a
+    # victim's email inherit the victim's real GitHub identity. Must raise, not link.
     existing = User(email="owner@example.com", name="Owner", password_hash="x", is_workspace_admin=True)
     db.add(existing)
     db.commit()
     db.refresh(existing)
-    linked = find_or_create_user(db, _identity(github_user_id=555, email="owner@example.com"))
-    assert linked.id == existing.id
-    assert linked.github_user_id == 555
-    assert linked.is_workspace_admin is True
+
+    with pytest.raises(EmailAlreadyRegistered):
+        find_or_create_user(db, _identity(github_user_id=555, email="owner@example.com"))
+
+    db.refresh(existing)
+    assert existing.github_user_id is None
+    assert db.query(User).count() == 1
+
+
+def test_unrelated_email_still_creates_a_new_user(db):
+    existing = User(email="owner@example.com", name="Owner", password_hash="x", is_workspace_admin=True)
+    db.add(existing)
+    db.commit()
+
+    created = find_or_create_user(db, _identity(github_user_id=555, email="someone-else@example.com"))
+    assert created.id != existing.id
+    assert created.github_user_id == 555
+    assert db.query(User).count() == 2
 
 
 def test_idempotent_by_github_id(db):
@@ -78,6 +100,7 @@ def test_login_redirects_to_github(gh_client, oauth_configured):
     resp = gh_client.get("/auth/github/login", follow_redirects=False)
     assert resp.status_code == 307
     assert resp.headers["location"].startswith("https://github.com/login/oauth/authorize")
+    assert "clevis_oauth_state" in resp.headers.get("set-cookie", "")
 
 
 def test_login_unconfigured_redirects_to_ui_with_error(gh_client, monkeypatch):
@@ -109,6 +132,23 @@ def test_callback_rejects_bad_state(gh_client):
     assert resp.headers["location"].endswith("/login?error=github_invalid_state")
 
 
+def test_callback_redirects_with_error_when_email_already_registered(gh_client, db):
+    existing = User(email="octo@example.com", name="Owner", password_hash="x", is_workspace_admin=True)
+    db.add(existing)
+    db.commit()
+
+    with (
+        patch("src.routers.github_auth.github_oauth.verify_state", return_value=True),
+        patch("src.routers.github_auth.github_oauth.exchange_code_for_token", return_value="gho_x"),
+        patch("src.routers.github_auth.github_oauth.fetch_identity", return_value=_identity()),
+    ):
+        resp = gh_client.get("/auth/github/callback?code=c&state=s", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"].endswith("/login?error=github_email_registered")
+    db.refresh(existing)
+    assert existing.github_user_id is None
+
+
 def test_callback_redirects_to_ui_on_oauth_error(gh_client):
     from src.services.github_oauth import GitHubOAuthError
 
@@ -119,3 +159,56 @@ def test_callback_redirects_to_ui_on_oauth_error(gh_client):
         resp = gh_client.get("/auth/github/callback?code=c&state=s", follow_redirects=False)
     assert resp.status_code == 303
     assert resp.headers["location"].endswith("/login?error=github_oauth_failed")
+
+
+# ── state cookie binding (regression tests for the OAuth login-CSRF fix) ────────
+
+def _extract_state(login_resp) -> str:
+    return parse_qs(urlparse(login_resp.headers["location"]).query)["state"][0]
+
+
+def test_full_flow_succeeds_when_the_state_cookie_matches(gh_client, db, oauth_configured):
+    login_resp = gh_client.get("/auth/github/login", follow_redirects=False)
+    state = _extract_state(login_resp)
+
+    with (
+        patch("src.routers.github_auth.github_oauth.exchange_code_for_token", return_value="gho_x"),
+        patch("src.routers.github_auth.github_oauth.fetch_identity", return_value=_identity()),
+        patch("src.routers.github_auth.org_provisioning.sync_org_admin_memberships", return_value=None),
+    ):
+        # Same client/cookie jar as /login -- the browser that started the flow.
+        resp = gh_client.get(f"/auth/github/callback?code=c&state={state}", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "clevis_session" in resp.headers.get("set-cookie", "")
+
+
+def test_replaying_a_captured_state_from_a_different_browser_is_rejected(gh_client, db, oauth_configured):
+    # Simulates the attack this fix closes: an attacker captures a valid (code, state)
+    # pair from their own OAuth flow and gets a victim to open the callback URL. The
+    # victim's browser never had the matching clevis_oauth_state cookie set.
+    login_resp = gh_client.get("/auth/github/login", follow_redirects=False)
+    state = _extract_state(login_resp)
+    gh_client.cookies.delete("clevis_oauth_state")
+
+    resp = gh_client.get(f"/auth/github/callback?code=c&state={state}", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"].endswith("/login?error=github_invalid_state")
+    assert db.query(User).count() == 0
+
+
+def test_callback_clears_the_state_cookie_on_success(gh_client, db, oauth_configured):
+    login_resp = gh_client.get("/auth/github/login", follow_redirects=False)
+    state = _extract_state(login_resp)
+
+    with (
+        patch("src.routers.github_auth.github_oauth.exchange_code_for_token", return_value="gho_x"),
+        patch("src.routers.github_auth.github_oauth.fetch_identity", return_value=_identity()),
+        patch("src.routers.github_auth.org_provisioning.sync_org_admin_memberships", return_value=None),
+    ):
+        resp = gh_client.get(f"/auth/github/callback?code=c&state={state}", follow_redirects=False)
+    # There are two Set-Cookie headers on this response (session + state-cookie-clear) --
+    # use get_list so the second one isn't dropped by a naive single-value lookup.
+    set_cookies = resp.headers.get_list("set-cookie")
+    state_cookie_headers = [c for c in set_cookies if c.startswith("clevis_oauth_state=")]
+    assert len(state_cookie_headers) == 1
+    assert "Max-Age=0" in state_cookie_headers[0]

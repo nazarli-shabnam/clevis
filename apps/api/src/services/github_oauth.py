@@ -2,7 +2,13 @@
 
 Stateless pieces of the OAuth web flow:
   - `sign_state` / `verify_state` — a short-lived CSRF state token (HS256 with AUTH_SECRET), so we
-    don't need server-side session storage between the redirect and the callback.
+    don't need server-side session storage between the redirect and the callback. The state JWT
+    embeds a random nonce that the router also stores in a short-lived cookie on the browser
+    (see `src.routers.github_auth`); `verify_state` requires both to match, which binds the state
+    to the browser that started the flow -- without this, any validly-signed state token could be
+    replayed from a different browser (login-CSRF: an attacker completes their own OAuth flow,
+    then gets a victim to open the resulting callback URL, logging the victim into the attacker's
+    account).
   - `build_authorize_url` — where we send the browser to start the flow.
   - `exchange_code_for_token` — swap the callback `code` for a GitHub *user* access token.
   - `fetch_identity` — read the user's profile + primary verified email.
@@ -13,6 +19,8 @@ GITHUB_APP_CLIENT_ID / GITHUB_APP_CLIENT_SECRET (see `src.core.config.Settings`)
 
 from __future__ import annotations
 
+import hmac
+import secrets
 import time
 from dataclasses import dataclass
 from urllib.parse import urlencode
@@ -26,6 +34,11 @@ _OAUTH_SCOPE = "read:user user:email read:org"
 _STATE_TTL_SECONDS = 600  # 10 minutes between /login and /callback
 _STATE_ALG = "HS256"
 _STATE_PURPOSE = "github_oauth"
+
+# Cookie carrying the per-flow nonce that binds `state` to the browser that started it.
+# Exported so the router can use the same name for both setting and reading the cookie.
+STATE_COOKIE_NAME = "clevis_oauth_state"
+STATE_COOKIE_MAX_AGE_SECONDS = _STATE_TTL_SECONDS
 
 
 class GitHubOAuthNotConfigured(RuntimeError):
@@ -56,18 +69,27 @@ def _web_base() -> str:
     return base
 
 
-def sign_state(*, now: int | None = None) -> str:
+def sign_state(*, now: int | None = None) -> tuple[str, str]:
+    """Returns (state, nonce). Callers must also set `nonce` as the STATE_COOKIE_NAME
+    cookie value on the browser and pass it back into verify_state() as cookie_nonce."""
     issued = int(now if now is not None else time.time())
-    payload = {"iat": issued, "exp": issued + _STATE_TTL_SECONDS, "purpose": _STATE_PURPOSE}
-    return jwt.encode(payload, settings.auth_secret.get_secret_value(), algorithm=_STATE_ALG)
+    nonce = secrets.token_urlsafe(24)
+    payload = {"iat": issued, "exp": issued + _STATE_TTL_SECONDS, "purpose": _STATE_PURPOSE, "nonce": nonce}
+    state = jwt.encode(payload, settings.auth_secret.get_secret_value(), algorithm=_STATE_ALG)
+    return state, nonce
 
 
-def verify_state(state: str) -> bool:
+def verify_state(state: str, *, cookie_nonce: str | None = None) -> bool:
     try:
         payload = jwt.decode(state, settings.auth_secret.get_secret_value(), algorithms=[_STATE_ALG])
     except jwt.InvalidTokenError:
         return False
-    return payload.get("purpose") == _STATE_PURPOSE
+    if payload.get("purpose") != _STATE_PURPOSE:
+        return False
+    token_nonce = payload.get("nonce")
+    if not token_nonce or not cookie_nonce or not hmac.compare_digest(token_nonce, cookie_nonce):
+        return False
+    return True
 
 
 def build_authorize_url(*, state: str, redirect_uri: str) -> str:
