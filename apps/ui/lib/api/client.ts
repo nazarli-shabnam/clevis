@@ -246,5 +246,6 @@ export const api = {
       }>("/auth/register", { email, password, name }),
     patchMe: (name: string) =>
       patch<{ id: number; email: string; name: string | null; is_workspace_admin: boolean }>("/auth/me", { name }),
+    revokeSessions: () => post<{ ok: boolean }>("/auth/me/revoke-sessions", {}),
   },
 }

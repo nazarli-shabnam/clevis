@@ -7,6 +7,7 @@ const installationsListMock = vi.fn();
 const tokensListMock = vi.fn();
 const configGetAllMock = vi.fn();
 const patchMeMock = vi.fn();
+const revokeSessionsMock = vi.fn();
 const configUpdateMock = vi.fn();
 const routerReplace = vi.fn();
 let searchParams = new URLSearchParams();
@@ -25,7 +26,10 @@ vi.mock("@/lib/api/client", () => ({
       getAll: (...args: unknown[]) => configGetAllMock(...args),
       update: (...args: unknown[]) => configUpdateMock(...args),
     },
-    auth: { patchMe: (...args: unknown[]) => patchMeMock(...args) },
+    auth: {
+      patchMe: (...args: unknown[]) => patchMeMock(...args),
+      revokeSessions: (...args: unknown[]) => revokeSessionsMock(...args),
+    },
   },
 }));
 
@@ -81,6 +85,7 @@ describe("SettingsPage", () => {
     tokensListMock.mockReset();
     configGetAllMock.mockReset();
     patchMeMock.mockReset();
+    revokeSessionsMock.mockReset();
     configUpdateMock.mockReset();
     routerReplace.mockClear();
     searchParams = new URLSearchParams();
@@ -184,5 +189,26 @@ describe("SettingsPage", () => {
       expect(screen.getByText("GitHub App installation connected.")).toBeInTheDocument();
     });
     expect(routerReplace).toHaveBeenCalledWith("/settings");
+  });
+
+  it("requires a second click to confirm revoking all sessions, then calls the endpoint", async () => {
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([]);
+    configGetAllMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true" });
+    revokeSessionsMock.mockResolvedValue({ ok: true });
+
+    renderPage();
+
+    const revokeButton = await screen.findByRole("button", { name: /sign out of all devices/i });
+    fireEvent.click(revokeButton);
+    expect(revokeSessionsMock).not.toHaveBeenCalled();
+    expect(await screen.findByRole("button", { name: /click again to confirm/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /click again to confirm/i }));
+
+    await waitFor(() => expect(revokeSessionsMock).toHaveBeenCalledTimes(1));
+    // logout() clears the token, which removes the authenticated Settings page entirely.
+    await waitFor(() => expect(localStorage.getItem(TOKEN_KEY)).toBeNull());
   });
 });

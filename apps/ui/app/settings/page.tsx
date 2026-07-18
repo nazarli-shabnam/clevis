@@ -17,11 +17,27 @@ import type { InstallationMeta, MyOrgMembership, SavedTokenMeta } from "@/lib/ap
 // ── Profile section ──────────────────────────────────────────────────────────
 
 function ProfileSection() {
-  const { user, updateUser } = useAuth()
+  const { user, updateUser, logout } = useAuth()
   const [name, setName] = useState(user?.name || "")
   const [org, setOrg] = useState("")
   const [saved, setSaved] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [revokeArmed, setRevokeArmed] = useState(false)
+
+  const revokeSessions = useMutation({
+    mutationFn: () => api.auth.revokeSessions(),
+    // Bumping token_version invalidates this device's own token too, so finish by
+    // logging out locally rather than leaving the UI in a now-unauthenticated state.
+    onSuccess: () => logout(),
+  })
+
+  // Auto-disarm if the user doesn't confirm within a few seconds, matching the
+  // cache-clear confirm pattern (components/repo/cache-panel.tsx).
+  useEffect(() => {
+    if (!revokeArmed) return
+    const timer = setTimeout(() => setRevokeArmed(false), 4000)
+    return () => clearTimeout(timer)
+  }, [revokeArmed])
 
   useEffect(() => {
     setName(user?.name || "")
@@ -82,6 +98,32 @@ function ProfileSection() {
         </div>
         <Button onClick={save} disabled={isSaving} className="mt-1 w-fit">
           {buttonContent}
+        </Button>
+      </div>
+      <div className="px-4 py-3 border-t border-border flex flex-col gap-2 items-start">
+        <p className="text-xs text-muted-foreground max-w-sm">
+          Invalidates every session on every device, including this one — signs you out
+          everywhere. Use this if a device was lost or a session token may have leaked.
+        </p>
+        <Button
+          variant="destructive"
+          onClick={() => {
+            if (revokeArmed) {
+              setRevokeArmed(false)
+              revokeSessions.mutate()
+            } else {
+              setRevokeArmed(true)
+            }
+          }}
+          disabled={revokeSessions.isPending}
+        >
+          {revokeSessions.isPending ? (
+            <><CircleNotch className="size-3.5 animate-spin" />Signing out…</>
+          ) : revokeArmed ? (
+            "Click again to confirm"
+          ) : (
+            "Sign out of all devices"
+          )}
         </Button>
       </div>
     </div>
