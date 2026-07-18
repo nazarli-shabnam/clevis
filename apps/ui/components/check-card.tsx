@@ -26,6 +26,32 @@ function CheckValueDisplay({ value }: { value: CheckValue }) {
     )
   }
 
+  if (value.type === "severity_counts") {
+    const buckets: { key: keyof typeof value; label: string; className: string }[] = [
+      { key: "critical", label: "critical", className: "text-red-400 border-red-500/30" },
+      { key: "high", label: "high", className: "text-orange-400 border-orange-500/30" },
+      { key: "medium", label: "medium", className: "text-yellow-400 border-yellow-500/30" },
+      { key: "low", label: "low", className: "text-blue-400 border-blue-500/30" },
+    ]
+    const nonZero = buckets.filter((b) => (value[b.key] as number) > 0)
+    if (nonZero.length === 0) {
+      return (
+        <div className="border-t border-border/40 mt-2 pt-2">
+          <span className="text-xs text-green-400 font-mono">✓ No open alerts</span>
+        </div>
+      )
+    }
+    return (
+      <div className="border-t border-border/40 mt-2 pt-2 flex flex-wrap gap-1.5">
+        {nonZero.map((b) => (
+          <span key={b.key} className={`stat-chip ${b.className}`}>
+            {value[b.key] as number} {b.label}
+          </span>
+        ))}
+      </div>
+    )
+  }
+
   if (value.type === "ratio") {
     const { numerator, denominator } = value
     const pct = denominator === 0 ? 0 : Math.round((numerator / denominator) * 100)

@@ -9,7 +9,15 @@ export interface RatioCheckValue {
   denominator: number
 }
 
-export type CheckValue = MFACheckValue | RatioCheckValue | null
+export interface SeverityCountsValue {
+  type: "severity_counts"
+  critical: number
+  high: number
+  medium: number
+  low: number
+}
+
+export type CheckValue = MFACheckValue | RatioCheckValue | SeverityCountsValue | null
 
 export interface CheckResult {
   id: string
@@ -28,6 +36,17 @@ export interface AnalyticsOverviewResponse {
   repo_count: number
   checks: CheckResult[]
 }
+
+export interface ScanHistoryEntry {
+  id: number
+  owner: string
+  score: number
+  total_checks: number
+  failed_checks: number
+  created_at: string
+}
+
+export type AnalyticsHistoryResponse = ScanHistoryEntry[]
 
 export interface CacheEntry {
   id: number

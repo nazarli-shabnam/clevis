@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { CheckCard } from "@/components/check-card"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -12,7 +12,16 @@ import { Warning, Key } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { shouldApplyResolvedToken } from "@/lib/token-resolve"
 import { DonutChart } from "@/components/charts/donut-chart"
+import { AreaTimeChart } from "@/components/charts/area-time-chart"
 import type { CheckResult } from "@/lib/api/types"
+
+const TABS = [
+  { id: "all", label: "All" },
+  { id: "fail", label: "Failed" },
+  { id: "severity", label: "By Severity" },
+] as const
+
+type TabId = (typeof TABS)[number]["id"]
 
 function ScoreGauge({ score, failed, total }: { score: number; failed: number; total: number }) {
   const r = 38
@@ -63,15 +72,17 @@ function sortChecks(checks: CheckResult[]): CheckResult[] {
 export default function SecurityPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const queryClient = useQueryClient()
 
   const [owner, setOwner] = useState("")
   const [token, setToken] = useState("")
   const [tokenSaved, setTokenSaved] = useState(false)
 
-  const statusFilter   = (searchParams.get("status")   ?? "all") as "all" | "pass" | "fail"
+  const tab = (searchParams.get("tab") ?? "all") as TabId
   const severityFilter = (searchParams.get("severity") ?? "all") as "all" | "high" | "medium" | "low"
+  const statusFilter = tab === "fail" ? "fail" : "all"
 
-  function setFilter(key: "status" | "severity", value: string) {
+  function setFilter(key: "tab" | "severity", value: string) {
     const params = new URLSearchParams(searchParams.toString())
     if (value === "all") params.delete(key)
     else params.set(key, value)
@@ -106,15 +117,32 @@ export default function SecurityPage() {
     onSuccess: () => setTokenSaved(true),
   })
 
+  const historyQuery = useQuery({
+    queryKey: ["analytics.history", owner],
+    queryFn: () => api.analytics.history(owner),
+    enabled: owner.trim().length > 2,
+  })
+
   const scan = useMutation({
     mutationFn: () => api.analytics.overview(owner, token),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["analytics.history", owner] })
+    },
   })
+
+  const trendData = (historyQuery.data ?? [])
+    .slice(0, 10)
+    .reverse()
+    .map((h) => ({
+      week: new Date(h.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+      value: h.score,
+    }))
 
   const filteredChecks = scan.data
     ? sortChecks(
         scan.data.checks.filter((c) => {
-          if (statusFilter   !== "all" && c.status   !== statusFilter)   return false
-          if (severityFilter !== "all" && c.severity !== severityFilter) return false
+          if (statusFilter !== "all" && c.status !== statusFilter) return false
+          if (tab === "severity" && severityFilter !== "all" && c.severity !== severityFilter) return false
           return true
         }),
       )
@@ -201,50 +229,74 @@ export default function SecurityPage() {
         {(scan.data || scan.isPending) && (
           <div className="bg-card border border-border lg:col-span-2">
             {scan.data && (
-              <>
-                <div className="px-4 py-3 border-b border-border">
-                  <span className="section-title">Results — {scan.data.owner}</span>
-                </div>
+              <div className="px-4 py-3 border-b border-border">
+                <span className="section-title">Results — {scan.data.owner}</span>
+              </div>
+            )}
+
+            {/* Gauge + donut side-by-side */}
+            {scan.data && (
+              <div className="grid sm:grid-cols-2 border-b border-border">
                 <ScoreGauge
                   score={scan.data.score}
                   failed={scan.data.failed_checks}
                   total={scan.data.total_checks}
                 />
-              </>
-            )}
-
-            {/* Filter bar */}
-            {scan.data && (
-              <div className="px-4 py-2.5 border-b border-border flex items-center gap-3">
-                <select
-                  value={statusFilter}
-                  onChange={(e) => setFilter("status", e.target.value)}
-                  className="text-xs bg-card border border-border text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
-                >
-                  <option value="all">All statuses</option>
-                  <option value="fail">Failed only</option>
-                  <option value="pass">Passed only</option>
-                </select>
-                <select
-                  value={severityFilter}
-                  onChange={(e) => setFilter("severity", e.target.value)}
-                  className="text-xs bg-card border border-border text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
-                >
-                  <option value="all">All severities</option>
-                  <option value="high">High</option>
-                  <option value="medium">Medium</option>
-                  <option value="low">Low</option>
-                </select>
-                <span className="text-xs text-muted-foreground ml-auto">
-                  {filteredChecks.length} of {scan.data.checks.length}
-                </span>
+                {statusBreakdown.length > 0 && (
+                  <div className="px-4 py-4 sm:border-l border-border">
+                    <DonutChart data={statusBreakdown} label="checks" height={180} />
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Pass/fail breakdown */}
-            {scan.data && statusBreakdown.length > 0 && (
+            {/* Score trend */}
+            {trendData.length > 1 && (
               <div className="px-4 py-4 border-b border-border">
-                <DonutChart data={statusBreakdown} label="checks" height={180} />
+                <span className="text-xs font-medium text-muted-foreground block mb-2">
+                  Score trend (last {trendData.length} scans)
+                </span>
+                <AreaTimeChart data={trendData} label="score" height={140} />
+              </div>
+            )}
+
+            {/* Tabs */}
+            {scan.data && (
+              <div className="px-4 py-2.5 border-b border-border flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-1.5">
+                  {TABS.map((t) => {
+                    const active = tab === t.id
+                    return (
+                      <button
+                        key={t.id}
+                        onClick={() => setFilter("tab", t.id)}
+                        aria-pressed={active}
+                        className={`text-xs font-mono px-2 py-1 border transition-colors ${
+                          active
+                            ? "border-primary bg-primary/10 text-foreground"
+                            : "border-border text-muted-foreground hover:bg-elevated"
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    )
+                  })}
+                </div>
+                {tab === "severity" && (
+                  <select
+                    value={severityFilter}
+                    onChange={(e) => setFilter("severity", e.target.value)}
+                    className="text-xs bg-card border border-border text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
+                  >
+                    <option value="all">All severities</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                )}
+                <span className="text-xs text-muted-foreground ml-auto">
+                  {filteredChecks.length} of {scan.data.checks.length}
+                </span>
               </div>
             )}
 

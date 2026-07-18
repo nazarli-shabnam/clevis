@@ -58,6 +58,37 @@ describe("CheckCard", () => {
     expect(card?.className).not.toContain("border-accent");
   });
 
+  it("renders non-zero severity buckets as chips for a severity_counts value", () => {
+    render(
+      <CheckCard
+        check={{
+          ...baseCheck,
+          status: "fail",
+          value: { type: "severity_counts", critical: 2, high: 0, medium: 1, low: 0 },
+        }}
+      />,
+    );
+
+    expect(screen.getByText(/2 critical/)).toBeInTheDocument();
+    expect(screen.getByText(/1 medium/)).toBeInTheDocument();
+    expect(screen.queryByText(/\d+ high/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\d+ low/)).not.toBeInTheDocument();
+  });
+
+  it("shows a clean-state message when all severity buckets are zero", () => {
+    render(
+      <CheckCard
+        check={{
+          ...baseCheck,
+          status: "pass",
+          value: { type: "severity_counts", critical: 0, high: 0, medium: 0, low: 0 },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("✓ No open alerts")).toBeInTheDocument();
+  });
+
   it("falls back to the neutral color for a severity not present in the label map", () => {
     render(
       <CheckCard

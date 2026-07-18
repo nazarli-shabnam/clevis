@@ -1,4 +1,5 @@
 import type {
+  AnalyticsHistoryResponse,
   AnalyticsOverviewResponse,
   AuditLogOut,
   CacheClearResponse,
@@ -124,6 +125,16 @@ function normalizeCheckValue(id: string, raw: unknown): CheckValue {
   if (id === "organization_members_mfa_required") {
     return { type: "boolean", enabled: Boolean(raw) }
   }
+  if (id === "repository_dependabot_alerts_clear" && typeof raw === "object" && raw !== null) {
+    const r = raw as Record<string, unknown>
+    return {
+      type: "severity_counts",
+      critical: Number(r.critical ?? 0),
+      high: Number(r.high ?? 0),
+      medium: Number(r.medium ?? 0),
+      low: Number(r.low ?? 0),
+    }
+  }
   if (typeof raw === "object" && raw !== null) {
     const r = raw as Record<string, unknown>
     if ("checked" in r && "protected" in r) {
@@ -131,6 +142,14 @@ function normalizeCheckValue(id: string, raw: unknown): CheckValue {
     }
     if ("enabled" in r && "total" in r) {
       return { type: "ratio", numerator: Number(r.enabled), denominator: Number(r.total) }
+    }
+    if ("open" in r && "repos_with_alerts" in r && "total_repos" in r) {
+      const total = Number(r.total_repos)
+      return { type: "ratio", numerator: total - Number(r.repos_with_alerts), denominator: total }
+    }
+    if ("repos_checked" in r && "force_push_allowed" in r) {
+      const total = Number(r.repos_checked)
+      return { type: "ratio", numerator: total - Number(r.force_push_allowed), denominator: total }
     }
   }
   return null
@@ -149,6 +168,8 @@ export const api = {
         checks: data.checks.map((c) => ({ ...c, value: normalizeCheckValue(c.id, c.value) })),
       }
     },
+    history: (owner: string) =>
+      get<AnalyticsHistoryResponse>(`/me/analytics/history?owner=${encodeURIComponent(owner)}`),
   },
   cache: {
     list: (owner: string, repo: string, token: string) =>

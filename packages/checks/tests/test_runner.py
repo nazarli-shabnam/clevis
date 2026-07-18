@@ -20,11 +20,16 @@ def test_run_all_checks_fetches_repos_once():
         patch("checks.runner._get_all_pages", return_value=FAKE_REPOS) as mock_pages,
         patch("checks.github_checks._get") as mock_get,
     ):
-        # _get is called for: org detail (MFA) + N branch details (BranchProtection)
-        mock_get.side_effect = lambda url, token: (
-            FAKE_ORG if "/orgs/" in url and "/repos" not in url and "/branches" not in url
-            else FAKE_BRANCH
-        )
+        # _get is called for: org detail (MFA), N branch details (BranchProtection +
+        # DefaultBranchNoForcePushCheck), and N dependabot/code-scanning alert lists.
+        def fake_get(url, token):
+            if "/orgs/" in url and "/repos" not in url:
+                return FAKE_ORG
+            if "/branches/" in url:
+                return FAKE_BRANCH
+            return []  # dependabot/code-scanning alert lists
+
+        mock_get.side_effect = fake_get
 
         result = run_all_checks(owner="acme", token="tok")
 
@@ -33,12 +38,15 @@ def test_run_all_checks_fetches_repos_once():
         "https://api.github.com", "/orgs/acme/repos", "tok"
     )
 
-    # Sanity: all 3 checks returned results
-    assert len(result["checks"]) == 3
+    # Sanity: all 6 checks returned results
+    assert len(result["checks"]) == 6
     check_ids = {c["id"] for c in result["checks"]}
     assert "organization_members_mfa_required" in check_ids
     assert "repository_default_branch_protection_enabled" in check_ids
     assert "repository_secret_scanning_enabled" in check_ids
+    assert "repository_dependabot_alerts_clear" in check_ids
+    assert "repository_code_scanning_alerts_clear" in check_ids
+    assert "repository_default_branch_no_force_push" in check_ids
 
     # repo_count is surfaced so callers (e.g. the analytics overview) don't have
     # to re-fetch the org's repo list just to get a count.

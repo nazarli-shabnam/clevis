@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, SecretStr
 
 
@@ -15,3 +17,12 @@ class AnalyticsResponse(BaseModel):
     failed_checks: int
     repo_count: int
     checks: list[dict]
+
+
+class ScanHistoryEntry(BaseModel):
+    id: int
+    owner: str
+    score: int
+    total_checks: int
+    failed_checks: int
+    created_at: datetime
