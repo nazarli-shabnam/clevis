@@ -32,6 +32,7 @@ const GITHUB_ERROR_MESSAGES: Record<string, string> = {
   github_not_configured: "GitHub sign-in isn't set up on this server yet. Use email and password, or ask an admin to configure it.",
   github_invalid_state: "Your GitHub sign-in attempt expired or was invalid. Please try again.",
   github_oauth_failed: "GitHub sign-in failed. Please try again.",
+  github_email_registered: "An account already exists with this email. Sign in with your password below.",
 }
 
 function githubErrorMessage(code: string | null): string {

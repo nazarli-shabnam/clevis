@@ -15,6 +15,7 @@ _DEFAULT_WINDOW_SECONDS = 60
 
 _lock = Lock()
 _buckets: dict[str, tuple[int, float]] = {}
+_account_buckets: dict[str, tuple[int, float]] = {}
 
 
 def _client_key(request: Request) -> str:
@@ -41,3 +42,24 @@ def rate_limit(max_requests: int = _DEFAULT_MAX_REQUESTS, window_seconds: int = 
             )
 
     return _dependency
+
+
+def check_account_rate_limit(
+    key: str, *, max_requests: int = _DEFAULT_MAX_REQUESTS, window_seconds: int = _DEFAULT_WINDOW_SECONDS
+) -> None:
+    """Same fixed-window limiter as rate_limit(), but keyed by a caller-supplied identifier
+    (e.g. the submitted login email, lowercased) instead of client IP. Closes the gap where
+    an attacker spread across many source IPs could brute-force a single account without
+    ever tripping the per-IP bucket. Same in-memory/per-process limitation as rate_limit()."""
+    now = time.monotonic()
+    with _lock:
+        count, window_start = _account_buckets.get(key, (0, now))
+        if now - window_start >= window_seconds:
+            count, window_start = 0, now
+        count += 1
+        _account_buckets[key] = (count, window_start)
+    if count > max_requests:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests, please try again later",
+        )

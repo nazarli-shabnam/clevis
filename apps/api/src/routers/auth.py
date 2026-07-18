@@ -10,8 +10,9 @@ Endpoints:
   POST /auth/me/revoke-sessions Invalidates all previously issued JWTs for the caller
   GET  /auth/setup-required Returns { setup_required: bool } for the UI routing decision
 
-/auth/login and /auth/register are rate-limited per client IP (see src.core.rate_limit)
-to blunt credential-stuffing / registration-spam attempts.
+/auth/login and /auth/register are rate-limited per client IP (see src.core.rate_limit);
+/auth/login is additionally rate-limited per submitted email, so an attacker spread across
+many source IPs can't bypass the IP-keyed limit by targeting one account.
 """
 
 from datetime import datetime
@@ -25,13 +26,19 @@ from sqlalchemy.orm import Session
 from src.core.app_config import get_config
 from src.core.auth import UserOut, clear_session_cookie, create_access_token, require_auth
 from src.core.db import Org, User, get_db
-from src.core.rate_limit import rate_limit
+from src.core.rate_limit import check_account_rate_limit, rate_limit
 from src.repositories import invitation_repo
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _MIN_PASSWORD_LEN = 12
+
+# Fixed hash checked when no real user/password_hash exists, so a login attempt for a
+# nonexistent email still pays the same bcrypt cost as a real one -- otherwise response
+# timing alone (short-circuit vs. a real ~100-300ms bcrypt check) reveals whether an
+# email is registered.
+_DUMMY_PASSWORD_HASH = bcrypt.hashpw(b"clevis-timing-safety-dummy", bcrypt.gensalt()).decode()
 
 
 def _hash_password(password: str) -> str:
@@ -40,6 +47,7 @@ def _hash_password(password: str) -> str:
 
 def _verify_password(password: str, password_hash: str | None) -> bool:
     if not password_hash:
+        bcrypt.checkpw(password.encode(), _DUMMY_PASSWORD_HASH.encode())
         return False
     return bcrypt.checkpw(password.encode(), password_hash.encode())
 
@@ -188,8 +196,15 @@ def logout(response: Response):
 @router.post("/login", response_model=TokenResponse, dependencies=[Depends(rate_limit())])
 def login(body: LoginRequest, db: Session = Depends(get_db)):
     """Returns a JWT on valid credentials. Always returns 401 on failure (no field leaking)."""
+    # Per-account limit, in addition to the per-IP one above -- an attacker spread across
+    # many source IPs targeting one victim's password wouldn't otherwise trip anything.
+    check_account_rate_limit(f"login:{body.email.lower()}")
     user = db.query(User).filter(User.email == body.email).first()
-    if not user or not _verify_password(body.password, user.password_hash):
+    # Call _verify_password unconditionally (not "not user or not _verify_password(...)")
+    # -- that would short-circuit on a nonexistent user and skip bcrypt entirely, which is
+    # exactly the timing side-channel _verify_password's dummy-hash path exists to close.
+    password_ok = _verify_password(body.password, user.password_hash if user else None)
+    if not user or not password_ok:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name, user.token_version)
     return {

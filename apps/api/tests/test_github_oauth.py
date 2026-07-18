@@ -1,8 +1,10 @@
 """Unit tests for the GitHub OAuth helpers (no DB, httpx mocked)."""
 
+import time
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
+import jwt
 import pytest
 from pydantic import SecretStr
 
@@ -21,15 +23,39 @@ def oauth_configured(monkeypatch):
 
 
 def test_state_roundtrip():
-    state = github_oauth.sign_state()
-    assert github_oauth.verify_state(state) is True
+    state, nonce = github_oauth.sign_state()
+    assert github_oauth.verify_state(state, cookie_nonce=nonce) is True
 
 
 def test_state_rejects_tampered_and_expired():
-    assert github_oauth.verify_state("not-a-token") is False
+    assert github_oauth.verify_state("not-a-token", cookie_nonce="whatever") is False
     # exp in the past -> invalid
-    expired = github_oauth.sign_state(now=1_000_000)
-    assert github_oauth.verify_state(expired) is False
+    expired, nonce = github_oauth.sign_state(now=1_000_000)
+    assert github_oauth.verify_state(expired, cookie_nonce=nonce) is False
+
+
+def test_state_rejects_wrong_purpose():
+    # A token signed with our own secret but for a different purpose (or forged with a
+    # mismatched purpose claim) must not validate as an OAuth state.
+    now = int(time.time())
+    other_purpose_token = jwt.encode(
+        {"iat": now, "exp": now + 600, "purpose": "not-github-oauth", "nonce": "n"},
+        settings.auth_secret.get_secret_value(),
+        algorithm="HS256",
+    )
+    assert github_oauth.verify_state(other_purpose_token, cookie_nonce="n") is False
+
+
+def test_state_rejects_missing_or_mismatched_cookie_nonce():
+    # Regression test for the OAuth login-CSRF gap: a validly-signed, unexpired state
+    # must still be rejected if it isn't paired with the browser's own nonce cookie.
+    state, nonce = github_oauth.sign_state()
+    assert github_oauth.verify_state(state, cookie_nonce=None) is False
+    assert github_oauth.verify_state(state, cookie_nonce="some-other-nonce") is False
+    # A state token minted for a *different* flow (different nonce) must not validate
+    # against this browser's cookie either.
+    other_state, _ = github_oauth.sign_state()
+    assert github_oauth.verify_state(other_state, cookie_nonce=nonce) is False
 
 
 def test_build_authorize_url(oauth_configured):
