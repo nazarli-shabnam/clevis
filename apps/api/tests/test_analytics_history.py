@@ -64,9 +64,13 @@ def test_personal_history_requires_auth(db):
     assert resp.status_code == 401
 
 
-def test_personal_history_returns_seeded_rows_newest_first(http, db):
-    scan_results_repo.insert(db, owner="acme", score=60, total_checks=3, failed_checks=1, checks=[])
-    scan_results_repo.insert(db, owner="acme", score=80, total_checks=3, failed_checks=0, checks=[])
+def test_personal_history_returns_seeded_rows_newest_first(http, db, mock_user):
+    scan_results_repo.insert(
+        db, owner="acme", score=60, total_checks=3, failed_checks=1, checks=[], scanned_by_user_id=mock_user.id
+    )
+    scan_results_repo.insert(
+        db, owner="acme", score=80, total_checks=3, failed_checks=0, checks=[], scanned_by_user_id=mock_user.id
+    )
     resp = http.get("/me/analytics/history?owner=acme")
     assert resp.status_code == 200
     body = resp.json()
@@ -75,14 +79,36 @@ def test_personal_history_returns_seeded_rows_newest_first(http, db):
     assert body[1]["score"] == 60
 
 
-def test_personal_history_only_returns_matching_owner(http, db):
-    scan_results_repo.insert(db, owner="acme", score=80, total_checks=3, failed_checks=0, checks=[])
-    scan_results_repo.insert(db, owner="other-org", score=50, total_checks=3, failed_checks=1, checks=[])
+def test_personal_history_only_returns_matching_owner(http, db, mock_user):
+    scan_results_repo.insert(
+        db, owner="acme", score=80, total_checks=3, failed_checks=0, checks=[], scanned_by_user_id=mock_user.id
+    )
+    scan_results_repo.insert(
+        db, owner="other-org", score=50, total_checks=3, failed_checks=1, checks=[], scanned_by_user_id=mock_user.id
+    )
     resp = http.get("/me/analytics/history?owner=acme")
     assert resp.status_code == 200
     body = resp.json()
     assert len(body) == 1
     assert body[0]["owner"] == "acme"
+
+
+def test_personal_history_forbidden_when_user_has_no_relationship_to_owner(http, db):
+    # No Org membership, no installation, and no prior scan by this user for
+    # "acme" -- reading its history must be denied, even though rows exist
+    # (seeded here by a different, unrelated persisted scan).
+    scan_results_repo.insert(db, owner="acme", score=80, total_checks=3, failed_checks=0, checks=[])
+    resp = http.get("/me/analytics/history?owner=acme")
+    assert resp.status_code == 403
+
+
+def test_personal_history_allowed_via_org_membership_even_without_own_scan(http, db, mock_user):
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
+    scan_results_repo.insert(db, owner="acme", score=80, total_checks=3, failed_checks=0, checks=[])
+    resp = http.get("/me/analytics/history?owner=acme")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1
 
 
 def test_scan_results_repo_list_recent_respects_limit(db):
@@ -163,5 +189,7 @@ def test_overview_error_does_not_persist_a_history_row(http):
         resp = http.post("/me/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
     assert resp.status_code == 400
 
+    # No row was persisted (the scan errored before _persist_scan), and this user
+    # has no other relationship to "acme" -- history access is correctly denied.
     history = http.get("/me/analytics/history?owner=acme")
-    assert history.json() == []
+    assert history.status_code == 403

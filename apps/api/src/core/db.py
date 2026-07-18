@@ -165,6 +165,11 @@ class ScanResult(Base):
     total_checks: Mapped[int] = mapped_column(Integer, nullable=False)
     failed_checks: Mapped[int] = mapped_column(Integer, nullable=False)
     checks_json: Mapped[str] = mapped_column(Text, nullable=False)
+    # Set for personal-endpoint scans only -- lets GET /me/analytics/history gate
+    # access to owners with no workspace Org/membership to check instead (see
+    # migration 0016). Org-scoped scans leave this null; that read path is gated
+    # by org membership, not this column.
+    scanned_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

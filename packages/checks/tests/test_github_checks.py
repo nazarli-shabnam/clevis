@@ -173,6 +173,40 @@ def test_dependabot_disabled_repo_404_counts_as_zero_alerts():
     assert result["value"] == {"critical": 0, "high": 0, "medium": 0, "low": 0}
 
 
+def test_dependabot_all_repos_forbidden_returns_error_not_false_pass():
+    # A token lacking the security-events scope gets a 403 (not 404) from every
+    # repo -- that must surface as "unknown", not silently render as "clear".
+    check = DependabotAlertsCheck()
+    repos = [{"name": "api"}, {"name": "ui"}]
+
+    def fake_get(url, token):
+        response = httpx.Response(403, request=httpx.Request("GET", url))
+        raise httpx.HTTPStatusError("forbidden", request=response.request, response=response)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        result = check.run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "error"
+
+
+def test_dependabot_mixed_403_and_clean_repos_still_passes():
+    # Only some repos are forbidden -- the rest were genuinely evaluated as clear,
+    # so this should NOT be forced to "error".
+    check = DependabotAlertsCheck()
+    repos = [{"name": "forbidden"}, {"name": "clean"}]
+
+    def fake_get(url, token):
+        if "/forbidden/" in url:
+            response = httpx.Response(403, request=httpx.Request("GET", url))
+            raise httpx.HTTPStatusError("forbidden", request=response.request, response=response)
+        return []
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        result = check.run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "pass"
+
+
 def test_dependabot_non_404_403_error_propagates():
     check = DependabotAlertsCheck()
     repos = [{"name": "api"}]
@@ -226,6 +260,20 @@ def test_code_scanning_disabled_repo_404_counts_as_zero_alerts():
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "pass"
     assert result["value"] == {"open": 0, "repos_with_alerts": 0, "total_repos": 1}
+
+
+def test_code_scanning_all_repos_forbidden_returns_error_not_false_pass():
+    check = CodeScanningCheck()
+    repos = [{"name": "api"}]
+
+    def fake_get(url, token):
+        response = httpx.Response(403, request=httpx.Request("GET", url))
+        raise httpx.HTTPStatusError("forbidden", request=response.request, response=response)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        result = check.run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "error"
 
 
 # ── DefaultBranchNoForcePushCheck ────────────────────────────────────────────

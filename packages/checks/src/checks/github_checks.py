@@ -183,22 +183,29 @@ class DependabotAlertsCheck(Check):
         if len(repos) == 0:
             return {"status": "not_applicable", "value": {"critical": 0, "high": 0, "medium": 0, "low": 0}}
         counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        forbidden = 0
         for repo in repos:
             try:
                 alerts = _get(
                     f"{base_url}/repos/{owner}/{repo['name']}/dependabot/alerts?state=open", token
                 )
             except httpx.HTTPStatusError as exc:
-                # Dependabot alerts disabled/inaccessible for this repo (404) or the
-                # token lacks the security-events scope for it (403) — treat as no
-                # alerts for that repo rather than failing the whole check.
-                if exc.response.status_code in (403, 404):
+                # 404 means Dependabot alerts are genuinely disabled for this repo --
+                # a real "no alerts" answer. 403 means the token lacks the
+                # security-events scope for it -- the alert count for that repo is
+                # unknown, not zero, so it must not silently count toward "clear".
+                if exc.response.status_code == 404:
+                    continue
+                if exc.response.status_code == 403:
+                    forbidden += 1
                     continue
                 raise
             for alert in alerts:
                 severity = (alert.get("security_advisory") or {}).get("severity")
                 if severity in counts:
                     counts[severity] += 1
+        if forbidden == len(repos):
+            return {"status": "error", "value": counts}
         compliant = counts["critical"] == 0 and counts["high"] == 0
         return {"status": "pass" if compliant else "fail", "value": counts}
 
@@ -225,21 +232,28 @@ class CodeScanningCheck(Check):
             return {"status": "not_applicable", "value": {"open": 0, "repos_with_alerts": 0, "total_repos": 0}}
         open_count = 0
         repos_with_alerts = 0
+        forbidden = 0
         for repo in repos:
             try:
                 alerts = _get(
                     f"{base_url}/repos/{owner}/{repo['name']}/code-scanning/alerts?state=open", token
                 )
             except httpx.HTTPStatusError as exc:
-                # Code scanning not enabled for this repo (404) or no access (403) —
-                # treat as no alerts for that repo rather than failing the whole check.
-                if exc.response.status_code in (403, 404):
+                # 404 means code scanning is genuinely not enabled for this repo -- a
+                # real "no alerts" answer. 403 means no access -- that repo's alert
+                # count is unknown, not zero, so it must not silently count as clear.
+                if exc.response.status_code == 404:
+                    continue
+                if exc.response.status_code == 403:
+                    forbidden += 1
                     continue
                 raise
             if alerts:
                 repos_with_alerts += 1
                 open_count += len(alerts)
         value = {"open": open_count, "repos_with_alerts": repos_with_alerts, "total_repos": total_repos}
+        if forbidden == total_repos:
+            return {"status": "error", "value": value}
         return {"status": "pass" if open_count == 0 else "fail", "value": value}
 
 
