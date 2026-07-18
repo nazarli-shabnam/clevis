@@ -53,8 +53,8 @@ export function EventFeed({ events, isLoading }: EventFeedProps) {
             <div key={i} className="px-4 py-3 flex items-center gap-3 animate-pulse">
               <div className="h-6 w-6 bg-muted rounded-full shrink-0" />
               <div className="flex flex-col gap-1.5 flex-1">
-                <div className="h-3 w-56 bg-muted rounded-none" />
-                <div className="h-2.5 w-28 bg-muted/60 rounded-none" />
+                <div className="h-3 w-56 bg-muted rounded-md" />
+                <div className="h-2.5 w-28 bg-muted/60 rounded-md" />
               </div>
             </div>
           ))}

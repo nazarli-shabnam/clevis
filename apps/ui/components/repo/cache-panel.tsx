@@ -118,7 +118,7 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
     <>
     <div className="grid gap-4 lg:grid-cols-3">
       {/* Config panel */}
-      <div className="bg-card border border-border">
+      <div className="card">
         <div className="px-4 py-3 border-b border-border">
           <span className="section-label">Configuration</span>
         </div>
@@ -226,7 +226,7 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
       </div>
 
       {/* Cache entries table */}
-      <div className="bg-card border border-border lg:col-span-2">
+      <div className="card lg:col-span-2">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <span className="section-label">Cache entries</span>
           <div className="flex items-center gap-2">
@@ -326,7 +326,7 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
 
     {/* Clear result card */}
     {clearMutation.data && (
-      <div className="bg-card border border-border mt-4">
+      <div className="card mt-4">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <span className="section-label">Result</span>
           {clearMutation.data.dry_run && (
@@ -351,7 +351,7 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
               </Link>
             </div>
           ) : (
-            <pre className="font-mono text-xs text-muted-foreground leading-relaxed overflow-auto bg-muted/30 rounded-none p-3 border border-border/50">
+            <pre className="font-mono text-xs text-muted-foreground leading-relaxed overflow-auto bg-muted/30 rounded-md p-3 border border-border/50">
               {JSON.stringify(clearMutation.data, null, 2)}
             </pre>
           )}

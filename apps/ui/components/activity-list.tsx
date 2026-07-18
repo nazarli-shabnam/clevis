@@ -24,10 +24,10 @@ export function ActivityList({ jobs, isLoading, limit }: ActivityListProps) {
         {Array.from({ length: 3 }).map((_, i) => (
           <div key={i} className="px-4 py-3 flex items-center justify-between gap-4 animate-pulse">
             <div className="flex flex-col gap-1.5">
-              <div className="h-3 w-40 bg-muted rounded-none" />
-              <div className="h-2.5 w-24 bg-muted/60 rounded-none" />
+              <div className="h-3 w-40 bg-muted rounded-md" />
+              <div className="h-2.5 w-24 bg-muted/60 rounded-md" />
             </div>
-            <div className="h-2.5 w-14 bg-muted/60 rounded-none" />
+            <div className="h-2.5 w-14 bg-muted/60 rounded-md" />
           </div>
         ))}
       </div>
