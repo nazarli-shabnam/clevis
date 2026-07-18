@@ -118,6 +118,21 @@ export interface RepoSecurityResponse {
   secret_scanning: "enabled" | "disabled" | "unknown"
 }
 
+export interface OrgEvent {
+  id: string
+  type: string
+  actor: string
+  actor_avatar: string
+  repo: string
+  summary: string
+  created_at: string
+}
+
+export interface OrgEventsResponse {
+  org: string
+  events: OrgEvent[]
+}
+
 export interface JobOut {
   id: number
   job_type: string
