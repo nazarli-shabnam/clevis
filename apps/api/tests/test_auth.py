@@ -2,12 +2,14 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
+import bcrypt
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.core.auth import UserOut, require_auth, require_workspace_admin
 from src.core.db import get_db
+from src.core.rate_limit import _account_buckets as _account_rate_limit_buckets
 from src.core.rate_limit import _buckets as _rate_limit_buckets
 from src.repositories import invitation_repo, org_repo
 from src.routers.auth import router as auth_router
@@ -18,12 +20,15 @@ from src.routers.config import router as config_router
 
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter():
-    """/auth/login and /auth/register are rate-limited per client IP via a module-level
-    in-memory bucket that persists across tests in the same process — reset it so one
-    test's request volume can't tip a later, unrelated test over the threshold."""
+    """/auth/login and /auth/register are rate-limited per client IP, and /auth/login is
+    additionally rate-limited per submitted email, both via module-level in-memory buckets
+    that persist across tests in the same process — reset both so one test's request
+    volume can't tip a later, unrelated test over the threshold."""
     _rate_limit_buckets.clear()
+    _account_rate_limit_buckets.clear()
     yield
     _rate_limit_buckets.clear()
+    _account_rate_limit_buckets.clear()
 
 
 @pytest.fixture()
@@ -153,6 +158,27 @@ def test_login_unknown_email(auth_client):
         "/auth/login", json={"email": "nobody@example.com", "password": "supersecret1234"}
     )
     assert resp.status_code == 401
+
+
+def test_login_unknown_email_still_pays_the_bcrypt_cost(auth_client):
+    # Regression test: a nonexistent email used to short-circuit before bcrypt ran, so
+    # response timing alone revealed whether an email was registered. Must now always
+    # run one bcrypt check, same as the real-account path.
+    with patch("src.routers.auth.bcrypt.checkpw", wraps=bcrypt.checkpw) as mock_checkpw:
+        resp = auth_client.post(
+            "/auth/login", json={"email": "nobody@example.com", "password": "supersecret1234"}
+        )
+    assert resp.status_code == 401
+    mock_checkpw.assert_called_once()
+
+
+def test_login_applies_a_per_account_rate_limit(auth_client):
+    with patch("src.routers.auth.check_account_rate_limit") as mock_limit:
+        auth_client.post(
+            "/auth/login", json={"email": "Someone@Example.com", "password": "supersecret1234"}
+        )
+    # Lowercased so "Someone@Example.com" and "someone@example.com" share a bucket.
+    mock_limit.assert_called_once_with("login:someone@example.com")
 
 
 def test_login_github_only_user_returns_401(auth_client, db):

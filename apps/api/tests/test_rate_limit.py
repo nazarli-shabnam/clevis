@@ -1,9 +1,10 @@
 """Tests for the in-memory fixed-window rate limiter."""
 
-from fastapi import Depends, FastAPI
+import pytest
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from src.core.rate_limit import rate_limit
+from src.core.rate_limit import check_account_rate_limit, rate_limit
 
 
 def _app(path: str, max_requests: int, window_seconds: int = 60) -> FastAPI:
@@ -48,3 +49,26 @@ def test_rate_limit_scoped_per_path():
     assert client.get("/a").status_code == 200
     assert client.get("/b").status_code == 200
     assert client.get("/a").status_code == 429
+
+
+# ── check_account_rate_limit ─────────────────────────────────────────────────
+
+def test_check_account_rate_limit_allows_up_to_max_requests():
+    check_account_rate_limit("acct-allow", max_requests=2)
+    check_account_rate_limit("acct-allow", max_requests=2)
+
+
+def test_check_account_rate_limit_blocks_after_max_requests():
+    check_account_rate_limit("acct-block", max_requests=2)
+    check_account_rate_limit("acct-block", max_requests=2)
+    with pytest.raises(HTTPException) as exc_info:
+        check_account_rate_limit("acct-block", max_requests=2)
+    assert exc_info.value.status_code == 429
+
+
+def test_check_account_rate_limit_scoped_per_key():
+    """Two independently-limited keys don't share a bucket."""
+    check_account_rate_limit("acct-a", max_requests=1)
+    check_account_rate_limit("acct-b", max_requests=1)
+    with pytest.raises(HTTPException):
+        check_account_rate_limit("acct-a", max_requests=1)
