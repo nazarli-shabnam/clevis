@@ -46,7 +46,7 @@ export default function OrgMembersPage() {
       <PageHeader title="Members" description={`Manage who can access ${orgLogin} in Clevis.`} />
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <div className="bg-card border border-border">
+        <div className="card">
           <div className="px-4 py-3 border-b border-border">
             <span className="section-title">Invite a member</span>
           </div>
@@ -75,7 +75,7 @@ export default function OrgMembersPage() {
           </div>
         </div>
 
-        <div className="bg-card border border-border lg:col-span-2">
+        <div className="card lg:col-span-2">
           <div className="px-4 py-3 border-b border-border">
             <span className="section-title">Invitations</span>
           </div>
@@ -85,7 +85,7 @@ export default function OrgMembersPage() {
             </div>
           ) : invitations.length === 0 ? (
             <div className="px-4 py-8">
-              <p className="text-sm text-muted-foreground font-mono">— no invitations yet</p>
+              <p className="text-sm text-muted-foreground">No invitations yet</p>
             </div>
           ) : (
             <div className="overflow-x-auto">

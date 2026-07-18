@@ -241,7 +241,7 @@ export default function ReposPage() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Config panel */}
-        <div className="bg-card border border-border">
+        <div className="card">
           <div className="px-4 py-3 border-b border-border">
             <span className="section-title">Organization</span>
           </div>
@@ -308,7 +308,7 @@ export default function ReposPage() {
 
         {/* Repo table */}
         {(listMutation.data || listMutation.isPending) && (
-          <div className="bg-card border border-border lg:col-span-2">
+          <div className="card lg:col-span-2">
             <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
               <span className="section-title">Repositories</span>
               <div className="flex items-center gap-2">
@@ -323,7 +323,7 @@ export default function ReposPage() {
                     <select
                       value={sort}
                       onChange={(e) => setSort(e.target.value as SortKey)}
-                      className="text-xs bg-card border border-border text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
+                      className="text-xs card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
                     >
                       <option value="pushed">Sort: Pushed</option>
                       <option value="stars">Sort: Stars</option>
@@ -356,8 +356,8 @@ export default function ReposPage() {
               </div>
             ) : repos.length === 0 ? (
               <div className="px-4 py-8">
-                <p className="text-sm text-muted-foreground font-mono">
-                  — no repositories match{search ? " your filter" : ""}
+                <p className="text-sm text-muted-foreground">
+                  No repositories match{search ? " your filter" : ""}
                 </p>
               </div>
             ) : (

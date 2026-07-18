@@ -67,7 +67,7 @@ function ProfileSection() {
   }
 
   return (
-    <div className="bg-card border border-border">
+    <div className="card">
       <div className="px-4 py-3 border-b border-border">
         <span className="section-label">Profile</span>
       </div>
@@ -136,7 +136,7 @@ function AppearanceSection() {
   const { theme, setTheme } = useTheme()
 
   return (
-    <div className="bg-card border border-border">
+    <div className="card">
       <div className="px-4 py-3 border-b border-border">
         <span className="section-label">Appearance</span>
         <p className="text-xs text-muted-foreground mt-0.5">Theme is saved to this browser.</p>
@@ -156,7 +156,7 @@ function AppearanceSection() {
             >
               <span
                 data-theme={t.name}
-                className="flex shrink-0 overflow-hidden rounded-none border border-border/60"
+                className="flex shrink-0 overflow-hidden rounded-md border border-border/60"
               >
                 <span className="size-3.5 bg-background" />
                 <span className="size-3.5 bg-card" />
@@ -196,7 +196,7 @@ function OrgMembershipsSection() {
   })
 
   return (
-    <div className="bg-card border border-border">
+    <div className="card">
       <div className="px-4 py-3 border-b border-border flex items-center justify-between">
         <span className="section-label">Your organizations</span>
         {memberships.length > 0 && <span className="stat-chip">{memberships.length}</span>}
@@ -265,7 +265,7 @@ function ConnectedOrgsSection() {
   const installUrl = slug ? `https://github.com/apps/${slug}/installations/new` : null
 
   return (
-    <div className="bg-card border border-border">
+    <div className="card">
       <div className="px-4 py-3 border-b border-border flex items-center justify-between">
         <span className="section-label">Personal GitHub installs</span>
         {installs.length > 0 && <span className="stat-chip">{installs.length} connected</span>}
@@ -358,7 +358,7 @@ function SavedTokensSection() {
   const canAdd = addOrg.trim().length > 0 && addToken.trim().length > 0
 
   return (
-    <div className="bg-card border border-border">
+    <div className="card">
       <div className="px-4 py-3 border-b border-border">
         <div className="flex items-center justify-between">
           <span className="section-label">Personal access tokens (legacy)</span>
@@ -503,14 +503,14 @@ function InstanceConfigSection() {
 
   if (isLoading) {
     return (
-      <div className="bg-card border border-border px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
+      <div className="card px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
         <CircleNotch className="size-3.5 animate-spin" /> Loading config…
       </div>
     )
   }
 
   return (
-    <div className="bg-card border border-border">
+    <div className="card">
       <div className="px-4 py-3 border-b border-border">
         <span className="section-label">Instance configuration</span>
         <p className="text-xs text-muted-foreground mt-0.5">Visible to instance owner only.</p>

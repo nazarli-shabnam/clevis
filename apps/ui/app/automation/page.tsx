@@ -10,7 +10,7 @@ export default function AutomationPage() {
         title="Automation"
         description="Manage workflows and automated actions."
       />
-      <div className="bg-card border border-border">
+      <div className="card">
         <EmptyState
           title="Automation coming soon"
           description="Trigger GitHub Actions workflows, dispatch events, and automate repo hygiene tasks — all from one place."

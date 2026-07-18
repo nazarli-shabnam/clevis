@@ -31,7 +31,7 @@ export default function CollaboratorsPage() {
           title="Collaborators"
           description="Manage your organization's team and invitations."
         />
-        <div className="bg-card border border-border">
+        <div className="card">
           <EmptyState title="Redirecting…" description="Taking you to member management." />
         </div>
       </>
@@ -44,7 +44,7 @@ export default function CollaboratorsPage() {
         title="Collaborators"
         description="Manage your organization's team and invitations."
       />
-      <div className="bg-card border border-border">
+      <div className="card">
         {isError ? (
           <EmptyState
             title="Couldn't load your organizations"

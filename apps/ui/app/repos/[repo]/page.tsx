@@ -136,7 +136,7 @@ export default function RepoDetailPage() {
     return (
       <>
         <PageHeader title="Repository" description="Invalid repository route." />
-        <div className="bg-card border border-border px-4 py-6 text-sm text-muted-foreground">
+        <div className="card px-4 py-6 text-sm text-muted-foreground">
           Expected URL format: <span className="font-mono">/repos/owner~repo</span>
         </div>
       </>
@@ -197,7 +197,7 @@ export default function RepoDetailPage() {
         aria-labelledby={tabButtonId("overview")}
         tabIndex={0}
       >
-        <div className="bg-card border border-border lg:col-span-2">
+        <div className="card lg:col-span-2">
           <div className="px-4 py-3 border-b border-border">
             <span className="section-label">Repository</span>
           </div>
@@ -237,7 +237,7 @@ export default function RepoDetailPage() {
           </div>
         </div>
 
-        <div className="bg-card border border-border lg:col-span-2">
+        <div className="card lg:col-span-2">
           <div className="px-4 py-3 border-b border-border">
             <span className="section-label">Commit activity — 52 weeks</span>
           </div>
@@ -254,7 +254,7 @@ export default function RepoDetailPage() {
           </div>
         </div>
 
-        <div className="bg-card border border-border">
+        <div className="card">
           <div className="px-4 py-3 border-b border-border">
             <span className="section-label">Activity calendar</span>
           </div>
@@ -262,14 +262,14 @@ export default function RepoDetailPage() {
             {statsQuery.isLoading ? (
               <Skeleton className="h-24 w-full" />
             ) : heatmapData.length === 0 ? (
-              <p className="text-sm text-muted-foreground font-mono">— no data yet</p>
+              <p className="text-sm text-muted-foreground">No data yet</p>
             ) : (
               <HeatmapCalendar data={heatmapData} colorScale={HEATMAP_SCALE} />
             )}
           </div>
         </div>
 
-        <div className="bg-card border border-border">
+        <div className="card">
           <div className="px-4 py-3 border-b border-border">
             <span className="section-label">Top contributors</span>
           </div>
@@ -277,7 +277,7 @@ export default function RepoDetailPage() {
             {statsQuery.isLoading ? (
               <Skeleton className="h-24 w-full" />
             ) : topContributors.length === 0 ? (
-              <p className="text-sm text-muted-foreground font-mono">— no contributor data yet</p>
+              <p className="text-sm text-muted-foreground">No contributor data yet</p>
             ) : (
               <BarGroupChart
                 data={topContributors}
@@ -304,7 +304,7 @@ export default function RepoDetailPage() {
       </div>
 
       <div
-        className={cn("bg-card border border-border", tab !== "security" && "hidden")}
+        className={cn("card", tab !== "security" && "hidden")}
         role="tabpanel"
         id={tabPanelId("security")}
         aria-labelledby={tabButtonId("security")}

@@ -39,7 +39,7 @@ export default function JobsPage() {
     <>
       <PageHeader title="Job Queue" description="Background job status and history." />
 
-      <div className="bg-card border border-border">
+      <div className="card">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <span className="section-label">Jobs</span>
           {!isLoading && (
@@ -49,7 +49,7 @@ export default function JobsPage() {
 
         {isLoading ? (
           <div className="px-4 py-8">
-            <p className="text-sm text-muted-foreground font-mono animate-pulse">loading…</p>
+            <p className="text-sm text-muted-foreground animate-pulse">Loading…</p>
           </div>
         ) : jobs.length === 0 ? (
           <EmptyStateInline noun="jobs" />
