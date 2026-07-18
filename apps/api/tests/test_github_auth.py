@@ -12,6 +12,7 @@ from src.core.config import settings
 from src.core.db import User, get_db
 from src.routers.github_auth import EmailAlreadyRegistered, find_or_create_user
 from src.routers.github_auth import router as gh_router
+from src.services import github_oauth
 from src.services.github_oauth import GitHubIdentity
 
 
@@ -147,6 +148,20 @@ def test_callback_redirects_with_error_when_email_already_registered(gh_client, 
     assert resp.headers["location"].endswith("/login?error=github_email_registered")
     db.refresh(existing)
     assert existing.github_user_id is None
+
+
+def test_callback_redirects_to_ui_when_oauth_becomes_unconfigured_mid_flow(gh_client):
+    # e.g. an admin cleared GITHUB_APP_CLIENT_ID/SECRET between /login and /callback.
+    with (
+        patch("src.routers.github_auth.github_oauth.verify_state", return_value=True),
+        patch(
+            "src.routers.github_auth.github_oauth.exchange_code_for_token",
+            side_effect=github_oauth.GitHubOAuthNotConfigured("not configured"),
+        ),
+    ):
+        resp = gh_client.get("/auth/github/callback?code=c&state=s", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"].endswith("/login?error=github_not_configured")
 
 
 def test_callback_redirects_to_ui_on_oauth_error(gh_client):

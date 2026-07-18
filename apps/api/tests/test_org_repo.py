@@ -1,5 +1,9 @@
 """Tests for src.repositories.org_repo.get_or_create."""
 
+from unittest.mock import patch
+
+from sqlalchemy.orm import Query
+
 from src.repositories import org_repo
 
 
@@ -35,6 +39,33 @@ def test_org_rename_resolves_by_github_org_id_instead_of_crashing(db):
     assert renamed.github_login == "new-name"
     assert org_repo.get_by_login(db, "old-name") is None
     assert org_repo.get_by_login(db, "new-name").id == original.id
+
+
+def test_get_or_create_falls_back_to_org_id_lookup_on_concurrent_insert_race(db):
+    # Simulates two near-simultaneous get_or_create calls with the same github_org_id: this
+    # call's initial get_by_org_id lookup misses (the other request hasn't committed yet
+    # from this call's point of view), so it attempts an insert -- which collides on the
+    # real unique constraint once the other request's row is actually there. The except
+    # block's get_by_login also misses (different login than what's stored), so it must
+    # fall back to get_by_org_id to find the row, not raise.
+    existing = org_repo.get_or_create(db, github_login="old-name", github_org_id=7)
+
+    original_first = Query.first
+    calls = {"n": 0}
+
+    def racy_first(self):
+        calls["n"] += 1
+        # The 1st call is get_by_login (real miss, different login) -- let it through.
+        # The 2nd call is get_by_org_id in the pre-insert check -- fake a miss to force
+        # the insert attempt into a real collision.
+        if calls["n"] == 2:
+            return None
+        return original_first(self)
+
+    with patch.object(Query, "first", racy_first):
+        result = org_repo.get_or_create(db, github_login="new-name-2", github_org_id=7)
+
+    assert result.id == existing.id
 
 
 def test_different_orgs_stay_separate(db):

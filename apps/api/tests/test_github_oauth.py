@@ -1,8 +1,10 @@
 """Unit tests for the GitHub OAuth helpers (no DB, httpx mocked)."""
 
+import time
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
+import jwt
 import pytest
 from pydantic import SecretStr
 
@@ -30,6 +32,18 @@ def test_state_rejects_tampered_and_expired():
     # exp in the past -> invalid
     expired, nonce = github_oauth.sign_state(now=1_000_000)
     assert github_oauth.verify_state(expired, cookie_nonce=nonce) is False
+
+
+def test_state_rejects_wrong_purpose():
+    # A token signed with our own secret but for a different purpose (or forged with a
+    # mismatched purpose claim) must not validate as an OAuth state.
+    now = int(time.time())
+    other_purpose_token = jwt.encode(
+        {"iat": now, "exp": now + 600, "purpose": "not-github-oauth", "nonce": "n"},
+        settings.auth_secret.get_secret_value(),
+        algorithm="HS256",
+    )
+    assert github_oauth.verify_state(other_purpose_token, cookie_nonce="n") is False
 
 
 def test_state_rejects_missing_or_mismatched_cookie_nonce():
