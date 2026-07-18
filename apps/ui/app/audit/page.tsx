@@ -28,7 +28,7 @@ export default function AuditPage() {
             <select
               value={actionFilter}
               onChange={(e) => setActionFilter(e.target.value)}
-              className="bg-elevated border border-border text-xs text-muted-foreground font-mono px-2 py-1 focus:outline-none focus:border-primary"
+              className="bg-elevated border border-border rounded-md text-xs text-muted-foreground font-mono px-2 py-1 focus:outline-none focus:border-primary"
             >
               <option value="">all actions</option>
               {ACTION_TYPES.filter(Boolean).map((a) => (

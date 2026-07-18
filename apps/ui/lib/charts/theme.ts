@@ -6,7 +6,7 @@ export const CHART_COLORS = {
   primary: "#3b82f6", // matches --primary
   grid: "#2a2a2c", // matches --border
   axis: "#8f8f93", // matches --muted-foreground
-  series: ["#3b82f6", "#22c55e", "#fbbf24", "#f87171", "#a78bfa", "#38bdf8"],
+  series: ["#3b82f6", "#22c55e", "#38bdf8", "#f87171", "#a78bfa", "#fbbf24"], // chart-1..5 order, amber appended last
 } as const
 
 // Shared Recharts <Tooltip> contentStyle so line/bar charts render identical,

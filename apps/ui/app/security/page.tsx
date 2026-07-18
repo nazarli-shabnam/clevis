@@ -306,7 +306,7 @@ export default function SecurityPage() {
                 Array.from({ length: 3 }).map((_, i) => (
                   <div
                     key={i}
-                    className="card/40 p-3.5 flex items-start gap-3 animate-pulse"
+                    className="bg-card border border-border/40 rounded-md p-3.5 flex items-start gap-3 animate-pulse"
                   >
                     <Skeleton className="size-4 shrink-0 mt-0.5 rounded-full" />
                     <div className="flex-1 space-y-2">

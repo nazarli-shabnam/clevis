@@ -366,19 +366,6 @@
     text-wrap: balance;
   }
 
-  /*
-   * Blueprint grid — razor-thin 1px dividers via grid gap + contrasting bg.
-   * Children sit on --card; the gap reveals --border. (brutalist grid determinism)
-   */
-  .grid-hairline {
-    display: grid;
-    gap: 1px;
-    background-color: var(--border);
-  }
-  .grid-hairline > * {
-    background-color: var(--card);
-  }
-
   /* Press feedback — subtle scale, instant-feeling release (emil-design-eng). */
   .press {
     transition: transform 160ms var(--ease-out);

@@ -74,7 +74,7 @@ export default function ActivityPage() {
       />
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2 bg-card border border-border">
+        <div className="lg:col-span-2 card">
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
             <span className="section-label">Activity Feed</span>
             {configured && <RefreshCountdown resetKey={lastAttemptAt} seconds={EVENTS_REFRESH_SECONDS} />}
@@ -93,7 +93,7 @@ export default function ActivityPage() {
           )}
         </div>
 
-        <div className="lg:col-span-1 bg-card border border-border">
+        <div className="lg:col-span-1 card">
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
             <span className="section-label">Jobs</span>
             <span className="stat-chip">auto-refreshes every 15s</span>
