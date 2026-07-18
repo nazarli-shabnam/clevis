@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
 from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role
-from src.schemas.analytics import AnalyticsInput, AnalyticsResponse
+from src.repositories import scan_results_repo
+from src.schemas.analytics import AnalyticsInput, AnalyticsResponse, ScanHistoryEntry
 from src.services.analytics_service import get_account_type, get_overview
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token, resolve_personal_token
 
@@ -52,7 +53,16 @@ async def org_analytics_overview(
         )
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return await _run_overview(payload.owner, token)
+    result = await _run_overview(payload.owner, token)
+    scan_results_repo.insert(
+        db,
+        owner=result["owner"],
+        score=result["score"],
+        total_checks=result["total_checks"],
+        failed_checks=result["failed_checks"],
+        checks=result["checks"],
+    )
+    return result
 
 
 @router.post("/me/analytics/overview", response_model=AnalyticsResponse)
@@ -76,4 +86,30 @@ async def personal_analytics_overview(
             status_code=422,
             detail="Personal GitHub accounts aren't supported for security scanning yet. Connect a GitHub organization instead.",
         )
-    return await _run_overview(payload.owner, token)
+    result = await _run_overview(payload.owner, token)
+    scan_results_repo.insert(
+        db,
+        owner=result["owner"],
+        score=result["score"],
+        total_checks=result["total_checks"],
+        failed_checks=result["failed_checks"],
+        checks=result["checks"],
+    )
+    return result
+
+
+@router.get("/orgs/{org_login}/analytics/history", response_model=list[ScanHistoryEntry])
+def org_analytics_history(
+    ctx: OrgContext = Depends(require_org_role(min_role="member")),
+    db: Session = Depends(get_db),
+):
+    return scan_results_repo.list_recent(db, owner=ctx.org.github_login, limit=30)
+
+
+@router.get("/me/analytics/history", response_model=list[ScanHistoryEntry])
+def personal_analytics_history(
+    owner: str,
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    return scan_results_repo.list_recent(db, owner=owner, limit=30)

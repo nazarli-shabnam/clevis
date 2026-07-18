@@ -155,6 +155,19 @@ class Invitation(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ScanResult(Base):
+    __tablename__ = "scan_results"
+    __table_args__ = (Index("ix_scan_results_owner_created_at", "owner", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner: Mapped[str] = mapped_column(String, nullable=False)
+    score: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_checks: Mapped[int] = mapped_column(Integer, nullable=False)
+    failed_checks: Mapped[int] = mapped_column(Integer, nullable=False)
+    checks_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class AppConfig(Base):
     __tablename__ = "app_config"
 
