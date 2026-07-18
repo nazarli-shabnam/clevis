@@ -204,7 +204,7 @@ describe("ReposPage", () => {
     fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
     fireEvent.click(screen.getByRole("button", { name: /load repositories/i }));
 
-    await waitFor(() => expect(screen.getByText("— no repositories match")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("No repositories match")).toBeInTheDocument());
   });
 
   it("auto-applies a resolved saved token and hides the save-token button", async () => {

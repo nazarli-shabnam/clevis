@@ -16,7 +16,7 @@ export default function CachePage() {
     return (
       <>
         <PageHeader title="Actions Cache" description="Invalid repository route." />
-        <div className="bg-card border border-border px-4 py-6 text-sm text-muted-foreground">
+        <div className="card px-4 py-6 text-sm text-muted-foreground">
           Expected URL format: <span className="font-mono">/repos/owner~repo/cache</span>
         </div>
       </>

@@ -13,8 +13,8 @@ interface EmptyStateInlineProps {
 export function EmptyStateInline({ noun, qualifier }: EmptyStateInlineProps) {
   return (
     <div className="px-4 py-8 border-t border-border/60">
-      <p className="text-sm text-muted-foreground font-mono">
-        — no {noun}{qualifier ? ` matching "${qualifier}"` : ""}
+      <p className="text-sm text-muted-foreground">
+        No {noun}{qualifier ? ` matching "${qualifier}"` : ""}
       </p>
     </div>
   )
@@ -27,8 +27,8 @@ interface EmptyStatePageProps {
 
 export function EmptyStatePage({ message, action }: EmptyStatePageProps) {
   return (
-    <div className="border border-dashed border-border px-6 py-12">
-      <p className="text-sm text-muted-foreground font-mono">
+    <div className="border border-dashed border-border rounded-md px-6 py-12">
+      <p className="text-sm text-muted-foreground">
         {message}
         {action && (
           <>

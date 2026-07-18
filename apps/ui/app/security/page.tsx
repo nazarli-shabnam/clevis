@@ -34,7 +34,7 @@ function ScoreGauge({ score, failed, total }: { score: number; failed: number; t
     <div className="flex items-center gap-5 px-4 py-4 border-b border-border">
       <div className="relative shrink-0">
         <svg width="96" height="96" className="-rotate-90" aria-label={`Security score: ${score} out of 100`}>
-          <circle cx="48" cy="48" r={r} fill="none" stroke="#1c1c1c" strokeWidth="7" />
+          <circle cx="48" cy="48" r={r} fill="none" stroke="var(--border)" strokeWidth="7" />
           <circle
             cx="48" cy="48" r={r} fill="none"
             stroke={color} strokeWidth="7"
@@ -164,7 +164,7 @@ export default function SecurityPage() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Config */}
-        <div className="bg-card border border-border">
+        <div className="card">
           <div className="px-4 py-3 border-b border-border">
             <span className="section-title">Scan configuration</span>
           </div>
@@ -227,7 +227,7 @@ export default function SecurityPage() {
 
         {/* Results */}
         {(scan.data || scan.isPending) && (
-          <div className="bg-card border border-border lg:col-span-2">
+          <div className="card lg:col-span-2">
             {scan.data && (
               <div className="px-4 py-3 border-b border-border">
                 <span className="section-title">Results — {scan.data.owner}</span>
@@ -271,10 +271,10 @@ export default function SecurityPage() {
                         key={t.id}
                         onClick={() => setFilter("tab", t.id)}
                         aria-pressed={active}
-                        className={`text-xs font-mono px-2 py-1 border transition-colors ${
+                        className={`text-xs font-medium px-2.5 py-1 rounded-md border transition-colors ${
                           active
-                            ? "border-primary bg-primary/10 text-foreground"
-                            : "border-border text-muted-foreground hover:bg-elevated"
+                            ? "border-border bg-elevated text-foreground"
+                            : "border-transparent text-muted-foreground hover:bg-elevated"
                         }`}
                       >
                         {t.label}
@@ -286,7 +286,7 @@ export default function SecurityPage() {
                   <select
                     value={severityFilter}
                     onChange={(e) => setFilter("severity", e.target.value)}
-                    className="text-xs bg-card border border-border text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
+                    className="text-xs card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
                   >
                     <option value="all">All severities</option>
                     <option value="high">High</option>
@@ -306,7 +306,7 @@ export default function SecurityPage() {
                 Array.from({ length: 3 }).map((_, i) => (
                   <div
                     key={i}
-                    className="bg-card border border-border/40 p-3.5 flex items-start gap-3 animate-pulse"
+                    className="bg-card border border-border/40 rounded-md p-3.5 flex items-start gap-3 animate-pulse"
                   >
                     <Skeleton className="size-4 shrink-0 mt-0.5 rounded-full" />
                     <div className="flex-1 space-y-2">
@@ -317,8 +317,8 @@ export default function SecurityPage() {
                   </div>
                 ))
               ) : filteredChecks.length === 0 ? (
-                <p className="text-sm text-muted-foreground font-mono sm:col-span-2">
-                  — no checks match the current filter
+                <p className="text-sm text-muted-foreground sm:col-span-2">
+                  No checks match the current filter
                 </p>
               ) : (
                 filteredChecks.map((c: CheckResult) => (

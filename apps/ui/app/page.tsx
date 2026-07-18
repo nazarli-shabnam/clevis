@@ -23,11 +23,11 @@ function LiveStatCard({ label, loading, configured, value }: {
 }) {
   if (!configured) {
     return (
-      <Link href="/security" className="bg-card border border-border px-4 py-4 block hover:bg-elevated transition-colors">
-        <p className="text-[0.6875rem] font-medium font-mono text-muted-foreground uppercase tracking-[0.1em] mb-3">
+      <Link href="/security" className="card px-4 py-4 block hover:bg-elevated transition-colors">
+        <p className="telemetry-label mb-2 block">
           {label}
         </p>
-        <p className="text-lg font-semibold font-mono text-foreground leading-none">
+        <p className="text-lg font-semibold text-foreground leading-none">
           Configure →
         </p>
       </Link>
@@ -87,14 +87,14 @@ export default function OverviewPage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2 bg-card border border-border">
+        <div className="lg:col-span-2 card">
           <div className="px-4 py-3 border-b border-border">
             <span className="section-label">Recent Activity</span>
           </div>
           <ActivityList jobs={jobs} isLoading={isLoading} limit={5} />
         </div>
 
-        <div className="bg-card border border-border">
+        <div className="card">
           <div className="px-4 py-3 border-b border-border">
             <span className="section-label">Quick Actions</span>
           </div>

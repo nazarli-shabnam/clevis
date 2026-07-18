@@ -21,14 +21,14 @@ export default function AuditPage() {
     <>
       <PageHeader title="Audit Log" description="Immutable record of all significant actions." />
 
-      <div className="bg-card border border-border">
+      <div className="card">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-4">
           <span className="section-label">Events</span>
           <div className="flex items-center gap-3">
             <select
               value={actionFilter}
               onChange={(e) => setActionFilter(e.target.value)}
-              className="bg-elevated border border-border text-xs text-muted-foreground font-mono px-2 py-1 focus:outline-none focus:border-primary"
+              className="bg-elevated border border-border rounded-md text-xs text-muted-foreground font-mono px-2 py-1 focus:outline-none focus:border-primary"
             >
               <option value="">all actions</option>
               {ACTION_TYPES.filter(Boolean).map((a) => (
@@ -41,7 +41,7 @@ export default function AuditPage() {
 
         {isLoading ? (
           <div className="px-4 py-8">
-            <p className="text-sm text-muted-foreground font-mono animate-pulse">loading…</p>
+            <p className="text-sm text-muted-foreground animate-pulse">Loading…</p>
           </div>
         ) : logs.length === 0 ? (
           <EmptyStateInline noun="audit events" qualifier={actionFilter || undefined} />

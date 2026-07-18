@@ -85,7 +85,7 @@ export function CheckCard({ check }: CheckCardProps) {
   const notApplicable = check.status === "not_applicable"
   return (
     <div
-      className={`bg-card border p-3.5 flex items-start gap-3 transition-colors duration-200 ease-(--ease-out) ${
+      className={`bg-card border rounded-md p-3.5 flex items-start gap-3 transition-colors duration-200 ease-(--ease-out) ${
         notApplicable
           ? "border-border/40 hover:border-border/60"
           : pass

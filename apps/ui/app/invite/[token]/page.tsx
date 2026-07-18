@@ -28,7 +28,7 @@ export default function InviteAcceptPage() {
     <div className="max-w-md mx-auto mt-16">
       <PageHeader title="Org invitation" description="Accept an invitation to join an organization on Clevis." />
 
-      <div className="bg-card border border-border">
+      <div className="card">
         <div className="p-4 flex flex-col gap-3">
           {isLoading || authLoading ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">

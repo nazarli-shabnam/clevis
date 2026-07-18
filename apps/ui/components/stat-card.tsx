@@ -5,21 +5,20 @@ interface StatCardProps {
 }
 
 /**
- * Instrument-panel stat card. No icon container — just the number.
- * Value in IBM Plex Mono for that data-dense engineering feel.
- * Optional delta shows ↑/↓ trend vs last period.
+ * Compact stat card — label, a large tabular-nums value, and an optional
+ * delta showing ↑/↓ trend vs last period.
  */
 export function StatCard({ label, value, delta }: StatCardProps) {
   return (
-    <div className="bg-card border border-border px-4 py-4">
-      <p className="telemetry-label bracket mb-3 block">
+    <div className="bg-card border border-border rounded-md px-4 py-4">
+      <p className="telemetry-label mb-2 block">
         {label}
       </p>
-      <p className="text-3xl font-semibold font-mono tabular-nums text-foreground leading-none data-value">
+      <p className="text-3xl font-semibold tabular-nums text-foreground leading-none data-value">
         {value}
       </p>
       {delta !== undefined && (
-        <p className={`text-xs mt-2 font-mono ${delta >= 0 ? "text-accent" : "text-destructive"}`}>
+        <p className={`text-xs mt-2 ${delta >= 0 ? "text-accent" : "text-destructive"}`}>
           {delta >= 0 ? "↑" : "↓"} {Math.abs(delta)}% vs last week
         </p>
       )}

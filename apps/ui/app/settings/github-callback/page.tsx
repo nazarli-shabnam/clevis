@@ -61,7 +61,7 @@ export default function GithubInstallCallbackPage() {
   return (
     <div className="max-w-md mx-auto mt-16">
       <PageHeader title="Connecting GitHub App" description="Finishing up your GitHub App installation." />
-      <div className="bg-card border border-border">
+      <div className="card">
         <div className="p-4 flex flex-col gap-3">
           {status === "working" && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
