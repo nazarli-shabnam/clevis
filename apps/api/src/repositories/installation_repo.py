@@ -1,3 +1,4 @@
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.db import GitHubInstallation
@@ -42,7 +43,22 @@ def upsert(
         owner_user_id=owner_user_id,
     )
     db.add(row)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Lost a race with a concurrent sync for the same org/account (unique constraint) --
+        # fall back to updating the row the other request just inserted.
+        db.rollback()
+        existing = query.first()
+        if existing is None:
+            raise
+        existing.account_type = account_type
+        existing.auth_mode = auth_mode
+        existing.installation_id = installation_id
+        existing.token_ref = token_ref
+        db.commit()
+        db.refresh(existing)
+        return existing
     db.refresh(row)
     return row
 
