@@ -11,6 +11,7 @@ import type {
   InvitationPreview,
   JobOut,
   MyOrgMembership,
+  OrgEventsResponse,
   PendingInvitationSummary,
   RepoListResponse,
   RepoPullsResponse,
@@ -186,6 +187,13 @@ export const api = {
   },
   jobs: {
     list: () => get<JobOut[]>("/jobs"),
+  },
+  github: {
+    events: (org: string, token: string, perPage = 30) =>
+      post<OrgEventsResponse>(`/github/orgs/${encodeURIComponent(org)}/events`, {
+        token: token || undefined,
+        per_page: perPage,
+      }),
   },
   audit: {
     list: (action?: string) =>
