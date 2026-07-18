@@ -60,61 +60,61 @@
 }
 
 :root {
-  /* Surfaces — 4-stop depth system */
-  --background:  #090909;   /* page bg — true near-black */
-  --card:        #111111;   /* primary card surface */
-  --elevated:    #171717;   /* inputs, hover states */
-  --overlay:     #1e1e1e;   /* modals, dropdowns */
+  /* Surfaces — 4-stop depth system, graphite base (Vercel-graphite direction) */
+  --background:  #0d0d0e;   /* page bg */
+  --card:        #161617;   /* primary card surface */
+  --elevated:    #1d1d1f;   /* inputs, hover states */
+  --overlay:     #232326;   /* modals, dropdowns */
 
   /* Text */
-  --foreground:         #f5f5f5;
-  --muted-foreground:   #737373;
-  --subtle-foreground:  #404040;
+  --foreground:         #f2f2f3;
+  --muted-foreground:   #8f8f93;
+  --subtle-foreground:  #55555a;
 
   /* Borders */
-  --border:       #1c1c1c;
-  --border-muted: #141414;
+  --border:       #2a2a2c;
+  --border-muted: #1f1f21;
 
-  /* Brand accent — clean blue */
-  --primary:            #60a5fa;
-  --primary-foreground: #030712;
-  --ring:               #60a5fa;
+  /* Brand accent — electric blue, used for primary actions + active states */
+  --primary:            #3b82f6;
+  --primary-foreground: #ffffff;
+  --ring:               #3b82f6;
 
-  /* Semantic */
+  /* Semantic — separate from the brand accent above */
   --accent:             #22c55e;
-  --accent-foreground:  #0a0a0a;
-  --destructive:        #e61919;   /* aviation / hazard red — critical + alert accent */
+  --accent-foreground:  #052e12;
+  --destructive:        #ef4444;
   --warning:            #f59e0b;
-  --alert:              var(--destructive);   /* structural critical accent (dividers, failed status) */
+  --alert:              var(--destructive);
 
   /* Sidebar */
-  --sidebar:                    #060606;
-  --sidebar-foreground:         #f5f5f5;
-  --sidebar-primary:            #60a5fa;
-  --sidebar-primary-foreground: #030712;
-  --sidebar-accent:             #141414;
-  --sidebar-accent-foreground:  #f5f5f5;
-  --sidebar-border:             #1a1a1a;
-  --sidebar-ring:               #60a5fa;
+  --sidebar:                    #0a0a0b;
+  --sidebar-foreground:         #f2f2f3;
+  --sidebar-primary:            #3b82f6;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent:             #1a1a1c;
+  --sidebar-accent-foreground:  #f2f2f3;
+  --sidebar-border:             #232325;
+  --sidebar-ring:               #3b82f6;
 
   /* Popover / card foreground */
-  --card-foreground:      #f5f5f5;
-  --popover:              #111111;
-  --popover-foreground:   #f5f5f5;
-  --secondary:            #1c1c1c;
-  --secondary-foreground: #f5f5f5;
-  --muted:                #1c1c1c;
-  --input:                #111111;
+  --card-foreground:      #f2f2f3;
+  --popover:              #161617;
+  --popover-foreground:   #f2f2f3;
+  --secondary:            #1d1d1f;
+  --secondary-foreground: #f2f2f3;
+  --muted:                #1d1d1f;
+  --input:                #161617;
 
   /* Charts */
-  --chart-1: #60a5fa;   /* blue   — primary data */
+  --chart-1: #3b82f6;   /* blue   — primary data */
   --chart-2: #22c55e;   /* green  — positive */
   --chart-3: #38bdf8;   /* sky    — secondary */
-  --chart-4: #ef4444;   /* red    — negative */
+  --chart-4: #f87171;   /* red    — negative */
   --chart-5: #a78bfa;   /* violet — tertiary (charts only, not UI) */
 
-  /* Square corners — tactical-telemetry surfaces reject border-radius */
-  --radius: 0;
+  /* Soft radius — one scale for the whole app (cards, buttons, inputs alike) */
+  --radius: 0.375rem;
 
   /* Motion — strong custom easing curves (emil-design-eng / impeccable: exponential ease-out) */
   --ease-out:    cubic-bezier(0.23, 1, 0.32, 1);     /* enter/exit, press release */
@@ -291,7 +291,6 @@
   }
   body {
     @apply bg-background text-foreground;
-    /* No decorative glow — clean engineering tool aesthetic */
     background-image: none;
     font-feature-settings: "kern" 1, "liga" 1;
     -webkit-font-smoothing: antialiased;
@@ -302,7 +301,7 @@
 
   /*
    * Reduced motion is not optional (emil-design-eng / impeccable / redesign skills).
-   * Suppress movement + analog texture; keep opacity/content legible.
+   * Suppress movement; keep opacity/content legible.
    */
   @media (prefers-reduced-motion: reduce) {
     *,
@@ -312,10 +311,6 @@
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
       scroll-behavior: auto !important;
-    }
-    .scanlines::after,
-    .noise-overlay {
-      display: none !important;
     }
   }
 }
@@ -335,62 +330,40 @@
   }
 
   /*
-   * Section label — uppercase monospace treatment for card headers and group titles.
-   * Replaces the old .section-title. Used across Linear, Vercel, Raycast.
-   * Reads "engineering dashboard", not "generic page".
+   * Section label — quiet card/section header. Sentence case, sans, no
+   * mono/uppercase telemetry treatment. Used across dashboard cards.
    */
-  /* .section-title kept as an alias during the transition */
   .section-label,
   .section-title {
-    font-size: 0.6875rem;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: var(--muted-foreground);
-    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--foreground);
+    font-family: var(--font-sans);
   }
 
   .card {
-    @apply bg-card border border-border;
+    @apply bg-card border border-border rounded-md;
   }
 
   .stat-chip {
-    @apply inline-flex items-center gap-1 text-xs border border-border px-1.5 py-0.5 text-muted-foreground font-mono;
+    @apply inline-flex items-center gap-1 rounded-md text-xs border border-border px-1.5 py-0.5 text-muted-foreground font-mono;
   }
 
-  /*
-   * Telemetry label — monospace uppercase metadata (unit IDs, coordinates, field
-   * labels). The brutalist micro-typography register.
-   */
+  /* Muted caption label — used on stat cards below the section-label register. */
   .telemetry-label {
-    font-family: var(--font-mono);
-    font-size: 0.6875rem;
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
     font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
     color: var(--muted-foreground);
   }
 
-  /*
-   * Macro heading — heavy neo-grotesque (Archivo) at structural scale, tight
-   * tracking, compressed leading. The "telemetry header" moment on page headers.
-   */
+  /* Page-title register — a distinct heading face at a calm scale, not massive/uppercase. */
   .macro-heading {
     font-family: var(--font-heading);
-    font-weight: 800;
-    letter-spacing: -0.03em;
-    line-height: 0.95;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
     text-wrap: balance;
-  }
-
-  /* ASCII data framing — [ LABEL ]. Decorative; purely cosmetic brackets. */
-  .bracket::before {
-    content: "[ ";
-    color: var(--subtle-foreground);
-  }
-  .bracket::after {
-    content: " ]";
-    color: var(--subtle-foreground);
   }
 
   /*
@@ -442,40 +415,5 @@
       opacity: 1;
       transform: none;
     }
-  }
-
-  /*
-   * CRT scanlines — applied to specific terminal panels only (Job Queue / Activity),
-   * never global scroll containers. Suppressed under reduced motion (see base layer).
-   */
-  .scanlines {
-    position: relative;
-  }
-  .scanlines::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background: repeating-linear-gradient(
-      0deg,
-      transparent,
-      transparent 2px,
-      color-mix(in srgb, var(--foreground) 3%, transparent) 2px,
-      color-mix(in srgb, var(--foreground) 3%, transparent) 4px
-    );
-    z-index: 1;
-  }
-
-  /*
-   * Global mechanical noise — single fixed, pointer-events-none grain overlay
-   * rendered once in layout.tsx. Low opacity to break digital flatness.
-   */
-  .noise-overlay {
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: 40;
-    opacity: 0.025;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
 }
