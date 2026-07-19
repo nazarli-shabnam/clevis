@@ -43,6 +43,9 @@ vi.mock("@/lib/api/client", () => ({
       invitations: (...args: unknown[]) => pendingInvitationsMock(...args),
       membership: vi.fn(),
     },
+    tokens: {
+      resolve: vi.fn().mockRejectedValue(new Error("no saved token")),
+    },
   },
 }));
 

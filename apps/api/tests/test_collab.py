@@ -166,7 +166,10 @@ def test_members_2fa_overlay_degrades_gracefully_on_404(collab_client):
     assert resp.json()["two_factor_overlay_available"] is False
 
 
-def test_members_2fa_overlay_reraises_non_scope_errors(collab_client):
+def test_members_2fa_overlay_degrades_gracefully_on_other_http_errors(collab_client):
+    # The overlay is optional context on top of member data that already succeeded --
+    # any error fetching it (not just a 403/404 scope issue) should degrade rather
+    # than fail the whole response.
     with patch("src.routers.collab.resolve_org_token", return_value="ghp_test"), patch(
         "src.routers.collab.GitHubClient"
     ) as mock_client:
@@ -176,7 +179,34 @@ def test_members_2fa_overlay_reraises_non_scope_errors(collab_client):
             _SERVER_ERROR,
         ]
         resp = collab_client.get("/github/orgs/acme/members")
-    assert resp.status_code == 400
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["two_factor_overlay_available"] is False
+    assert body["members"][0]["two_factor_enabled"] is None
+
+
+def test_members_2fa_overlay_degrades_gracefully_on_network_error(collab_client):
+    with patch("src.routers.collab.resolve_org_token", return_value="ghp_test"), patch(
+        "src.routers.collab.GitHubClient"
+    ) as mock_client:
+        mock_client.return_value.request_paginated.side_effect = [
+            [_ALICE],
+            [_ALICE],
+            httpx.RequestError("boom"),
+        ]
+        resp = collab_client.get("/github/orgs/acme/members")
+    assert resp.status_code == 200
+    assert resp.json()["two_factor_overlay_available"] is False
+
+
+def test_members_falls_back_to_client_supplied_token_header_when_no_installation(collab_client):
+    with patch("src.routers.collab.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.side_effect = [[_ALICE], [_ALICE], []]
+        resp = collab_client.get(
+            "/github/orgs/acme/members", headers={"X-GitHub-Token": "ghp_client_supplied"}
+        )
+    assert resp.status_code == 200
+    mock_client.assert_called_once_with("ghp_client_supplied")
 
 
 def test_members_maps_github_request_error_to_503(collab_client):
@@ -211,15 +241,23 @@ def test_members_non_member_forbidden(db):
 
 
 def test_outside_collaborators_maps_repos_per_login(collab_client):
+    # The per-repo collaborator fan-out runs concurrently (ThreadPoolExecutor), so
+    # results must be keyed by request path rather than assumed call order.
+    def fake_request_paginated(path, params=None):
+        if path == "/orgs/acme/outside_collaborators":
+            return [_CAROL]
+        if path == "/orgs/acme/repos":
+            return [{"name": "api"}, {"name": "worker"}]
+        if path == "/repos/acme/api/collaborators":
+            return [{"login": "carol", "avatar_url": "https://avatars/carol.png"}]
+        if path == "/repos/acme/worker/collaborators":
+            return []
+        raise AssertionError(f"unexpected path {path}")
+
     with patch("src.routers.collab.resolve_org_token", return_value="ghp_test"), patch(
         "src.routers.collab.GitHubClient"
     ) as mock_client:
-        mock_client.return_value.request_paginated.side_effect = [
-            [_CAROL],  # outside_collaborators
-            [{"name": "api"}, {"name": "worker"}],  # repos
-            [{"login": "carol", "avatar_url": "https://avatars/carol.png"}],  # collaborators of api
-            [],  # collaborators of worker
-        ]
+        mock_client.return_value.request_paginated.side_effect = fake_request_paginated
         resp = collab_client.get("/github/orgs/acme/outside_collaborators")
     assert resp.status_code == 200
     body = resp.json()
@@ -231,13 +269,18 @@ def test_outside_collaborators_maps_repos_per_login(collab_client):
 
 def test_outside_collaborators_caps_repo_scan_and_reports_totals(collab_client):
     many_repos = [{"name": f"repo-{i}"} for i in range(60)]
+
+    def fake_request_paginated(path, params=None):
+        if path == "/orgs/acme/outside_collaborators":
+            return [_CAROL]
+        if path == "/orgs/acme/repos":
+            return many_repos
+        return []
+
     with patch("src.routers.collab.resolve_org_token", return_value="ghp_test"), patch(
         "src.routers.collab.GitHubClient"
     ) as mock_client:
-        mock_client.return_value.request_paginated.side_effect = [
-            [_CAROL],
-            many_repos,
-        ] + [[] for _ in range(50)]
+        mock_client.return_value.request_paginated.side_effect = fake_request_paginated
         resp = collab_client.get("/github/orgs/acme/outside_collaborators")
     assert resp.status_code == 200
     body = resp.json()
@@ -307,6 +350,22 @@ def test_invitations_maps_fields_including_email_only_invites(collab_client):
     assert invitations[0]["inviter"] == "alice"
     assert invitations[1]["login"] is None
     assert invitations[1]["email"] == "eve@example.com"
+
+
+def test_invitations_skips_malformed_entries_missing_created_at(collab_client):
+    raw = [
+        {"login": "dave", "email": None, "role": "direct_member", "created_at": "2026-07-10T00:00:00Z", "inviter": None},
+        {"login": "malformed", "email": None, "role": "direct_member", "inviter": None},
+    ]
+    with patch("src.routers.collab.resolve_org_token", return_value="ghp_test"), patch(
+        "src.routers.collab.GitHubClient"
+    ) as mock_client:
+        mock_client.return_value.request_paginated.return_value = raw
+        resp = collab_client.get("/github/orgs/acme/invitations")
+    assert resp.status_code == 200
+    invitations = resp.json()["invitations"]
+    assert len(invitations) == 1
+    assert invitations[0]["login"] == "dave"
 
 
 def test_invitations_maps_github_error(collab_client):

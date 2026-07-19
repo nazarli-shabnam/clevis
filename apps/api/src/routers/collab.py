@@ -5,13 +5,19 @@ endpoints. No mutation routes here — invite/revoke actions are a later phase.
 
 Mounted with the full "/github/orgs/{org_login}/..." path on the router itself
 (no `prefix=` passed to include_router in main.py), matching github.py's
-convention for GitHub-proxy routers. Always resolves the org's installation
-token server-side via resolve_org_token (no client-supplied PAT override) —
-these are plain GETs, so there's nowhere to safely carry a body-level token.
+convention for GitHub-proxy routers. Resolves a token via resolve_org_token,
+preferring a GitHub App installation but falling back to a client-supplied PAT
+carried in the `X-GitHub-Token` request header -- these are plain GETs, so a
+PAT can't travel in the body the way every other GitHub-proxy POST route does;
+a header (never a query string, which would leak into logs/browser history) is
+the safe equivalent, matching the "PAT is optional if the App is connected"
+pattern used everywhere else in this codebase.
 """
 
+from concurrent.futures import ThreadPoolExecutor
+
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 from typing import Literal
 
@@ -37,9 +43,9 @@ router = APIRouter()
 _MAX_REPOS_SCANNED = 50
 
 
-def _resolve_token(db: Session, ctx: OrgContext, org_login: str) -> str:
+def _resolve_token(db: Session, ctx: OrgContext, org_login: str, client_token: str | None) -> str:
     try:
-        return resolve_org_token(db, org_id=ctx.org.id, account_login=org_login, client_token=None)
+        return resolve_org_token(db, org_id=ctx.org.id, account_login=org_login, client_token=client_token)
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -50,8 +56,9 @@ def list_members(
     role: Literal["all", "member", "admin"] = "all",
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     db: Session = Depends(get_db),
+    x_github_token: str | None = Header(default=None),
 ):
-    token = _resolve_token(db, ctx, org_login)
+    token = _resolve_token(db, ctx, org_login, x_github_token)
     client = GitHubClient(token)
     try:
         admins_raw = client.request_paginated(f"/orgs/{org_login}/members", params={"role": "admin"})
@@ -72,19 +79,18 @@ def list_members(
         for m in target_raw
     ]
 
+    # Best-effort: the 2FA overlay is optional context on top of the member list
+    # that already succeeded above, so any failure here (missing owner scope, or
+    # a transient network/upstream error) degrades to "unavailable" rather than
+    # failing the whole response -- the member/role data is still useful without it.
     two_factor_overlay_available = True
     try:
         no_2fa_raw = client.request_paginated(f"/orgs/{org_login}/members", params={"filter": "2fa_disabled"})
         no_2fa_logins = {m["login"] for m in no_2fa_raw}
         for member in members:
             member.two_factor_enabled = member.login not in no_2fa_logins
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code in (403, 404):
-            two_factor_overlay_available = False
-        else:
-            raise _github_error(exc) from exc
-    except httpx.RequestError as exc:
-        raise _github_error(exc) from exc
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        two_factor_overlay_available = False
 
     return OrgMembersResponse(org=org_login, members=members, two_factor_overlay_available=two_factor_overlay_available)
 
@@ -94,11 +100,15 @@ def list_outside_collaborators(
     org_login: str,
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     db: Session = Depends(get_db),
+    x_github_token: str | None = Header(default=None),
 ):
-    token = _resolve_token(db, ctx, org_login)
+    token = _resolve_token(db, ctx, org_login, x_github_token)
     client = GitHubClient(token)
     try:
         outside_raw = client.request_paginated(f"/orgs/{org_login}/outside_collaborators")
+        # Fetches the full repo list (not just the first _MAX_REPOS_SCANNED) so
+        # repos_total below is an exact count, not an estimate -- the UI's
+        # "scanned X of Y" note depends on Y being accurate.
         repos_raw = client.request_paginated(f"/orgs/{org_login}/repos", params={"type": "all", "sort": "pushed"})
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise _github_error(exc) from exc
@@ -109,14 +119,19 @@ def list_outside_collaborators(
 
     repos_by_login: dict[str, list[str]] = {c["login"]: [] for c in outside_raw}
     try:
-        for repo in scanned_repos:
-            repo_name = repo["name"]
-            collabs = client.request_paginated(
-                f"/repos/{org_login}/{repo_name}/collaborators", params={"affiliation": "outside"}
-            )
-            for collab in collabs:
-                if collab["login"] in repos_by_login:
-                    repos_by_login[collab["login"]].append(f"{org_login}/{repo_name}")
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            futures = {
+                pool.submit(
+                    client.request_paginated,
+                    f"/repos/{org_login}/{repo['name']}/collaborators",
+                    params={"affiliation": "outside"},
+                ): repo["name"]
+                for repo in scanned_repos
+            }
+            for future, repo_name in futures.items():
+                for collab in future.result():
+                    if collab["login"] in repos_by_login:
+                        repos_by_login[collab["login"]].append(f"{org_login}/{repo_name}")
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise _github_error(exc) from exc
 
@@ -139,8 +154,9 @@ def list_github_invitations(
     org_login: str,
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     db: Session = Depends(get_db),
+    x_github_token: str | None = Header(default=None),
 ):
-    token = _resolve_token(db, ctx, org_login)
+    token = _resolve_token(db, ctx, org_login, x_github_token)
     client = GitHubClient(token)
     try:
         raw = client.request_paginated(f"/orgs/{org_login}/invitations")
@@ -156,6 +172,9 @@ def list_github_invitations(
             inviter=(i.get("inviter") or {}).get("login"),
         )
         for i in raw
+        # created_at is expected on every GitHub invitation object, but skip
+        # rather than 500 the whole list if a malformed entry is ever missing it.
+        if "created_at" in i
     ]
     return OrgInvitationsResponse(org=org_login, invitations=invitations)
 
@@ -166,8 +185,9 @@ def get_membership(
     username: str,
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     db: Session = Depends(get_db),
+    x_github_token: str | None = Header(default=None),
 ):
-    token = _resolve_token(db, ctx, org_login)
+    token = _resolve_token(db, ctx, org_login, x_github_token)
     client = GitHubClient(token)
     try:
         raw = client.request("GET", f"/orgs/{org_login}/members/{username}/membership")

@@ -24,6 +24,9 @@ vi.mock("@/lib/api/client", () => ({
       invitations: vi.fn().mockResolvedValue({ org: "acme", invitations: [] }),
       membership: vi.fn(),
     },
+    tokens: {
+      resolve: vi.fn().mockRejectedValue(new Error("no saved token")),
+    },
   },
 }));
 

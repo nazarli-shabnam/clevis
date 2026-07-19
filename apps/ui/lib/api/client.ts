@@ -83,9 +83,15 @@ async function post<T>(path: string, body: unknown, extraHeaders?: Record<string
   return handleResponse<T>(res)
 }
 
-async function get<T>(path: string): Promise<T> {
+// Carries an optional client-supplied PAT to the collab.* GET endpoints via a
+// header (never a query string, which would leak into logs/browser history).
+function githubTokenHeader(token?: string): Record<string, string> | undefined {
+  return token ? { "X-GitHub-Token": token } : undefined
+}
+
+async function get<T>(path: string, extraHeaders?: Record<string, string>): Promise<T> {
   const res = await fetchWithTimeout(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders(), ...extraHeaders },
   })
   return handleResponse<T>(res)
 }
@@ -252,19 +258,27 @@ export const api = {
     accept: (token: string) => post<{ org_login: string; role: string }>(`/invitations/${encodeURIComponent(token)}/accept`, {}),
   },
   collab: {
-    members: (orgLogin: string, role: "all" | "member" | "admin" = "all") =>
+    // token is optional — the API falls back to a connected GitHub App installation
+    // token when one exists for this org; only orgs without one need it supplied.
+    members: (orgLogin: string, role: "all" | "member" | "admin" = "all", token?: string) =>
       get<GithubOrgMembersResponse>(
         `/github/orgs/${encodeURIComponent(orgLogin)}/members?role=${role}`,
+        githubTokenHeader(token),
       ),
-    outsideCollaborators: (orgLogin: string) =>
+    outsideCollaborators: (orgLogin: string, token?: string) =>
       get<GithubOutsideCollaboratorsResponse>(
         `/github/orgs/${encodeURIComponent(orgLogin)}/outside_collaborators`,
+        githubTokenHeader(token),
       ),
-    invitations: (orgLogin: string) =>
-      get<GithubOrgInvitationsResponse>(`/github/orgs/${encodeURIComponent(orgLogin)}/invitations`),
-    membership: (orgLogin: string, username: string) =>
+    invitations: (orgLogin: string, token?: string) =>
+      get<GithubOrgInvitationsResponse>(
+        `/github/orgs/${encodeURIComponent(orgLogin)}/invitations`,
+        githubTokenHeader(token),
+      ),
+    membership: (orgLogin: string, username: string, token?: string) =>
       get<GithubMembershipStatus>(
         `/github/orgs/${encodeURIComponent(orgLogin)}/members/${encodeURIComponent(username)}/membership`,
+        githubTokenHeader(token),
       ),
   },
   tokens: {
