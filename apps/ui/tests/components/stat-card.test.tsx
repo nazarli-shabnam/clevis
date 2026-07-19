@@ -23,4 +23,18 @@ describe("StatCard", () => {
 
     expect(screen.getByText("↓ 3% vs last week")).toBeInTheDocument();
   });
+
+  it("renders a sparkline when trend data has more than one point", () => {
+    const { container } = render(<StatCard label="Score" value={87} trend={[70, 80, 87]} />);
+
+    expect(container.querySelector(".recharts-responsive-container")).toBeInTheDocument();
+  });
+
+  it("omits the sparkline when trend has 0 or 1 points", () => {
+    const { container: zero } = render(<StatCard label="Score" value={87} trend={[]} />);
+    expect(zero.querySelector(".recharts-responsive-container")).not.toBeInTheDocument();
+
+    const { container: one } = render(<StatCard label="Score" value={87} trend={[87]} />);
+    expect(one.querySelector(".recharts-responsive-container")).not.toBeInTheDocument();
+  });
 });

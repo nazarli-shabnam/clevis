@@ -5,6 +5,7 @@ import type {
   CacheClearResponse,
   CacheListResponse,
   CheckValue,
+  CockpitResponse,
   InstallationLookup,
   InstallationMeta,
   InvitationCreateResponse,
@@ -79,9 +80,15 @@ async function post<T>(path: string, body: unknown, extraHeaders?: Record<string
   return handleResponse<T>(res)
 }
 
-async function get<T>(path: string): Promise<T> {
+// Carries an optional client-supplied PAT to GET endpoints via a header (never
+// a query string, which would leak into logs/browser history).
+function githubTokenHeader(token?: string): Record<string, string> | undefined {
+  return token ? { "X-GitHub-Token": token } : undefined
+}
+
+async function get<T>(path: string, extraHeaders?: Record<string, string>): Promise<T> {
   const res = await fetchWithTimeout(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders(), ...extraHeaders },
   })
   return handleResponse<T>(res)
 }
@@ -170,6 +177,10 @@ export const api = {
     },
     history: (owner: string) =>
       get<AnalyticsHistoryResponse>(`/me/analytics/history?owner=${encodeURIComponent(owner)}`),
+    // token is optional — same App-or-PAT fallback as the rest of this namespace,
+    // carried via header since this is a GET (see githubTokenHeader).
+    cockpit: (owner: string, token?: string) =>
+      get<CockpitResponse>(`/me/analytics/cockpit/${encodeURIComponent(owner)}`, githubTokenHeader(token)),
   },
   cache: {
     list: (owner: string, repo: string, token: string) =>

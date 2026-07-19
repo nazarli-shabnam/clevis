@@ -58,6 +58,11 @@ function renderSidebar() {
 
 // Mutable per-test fixture for the /me/orgs response; reset in beforeEach.
 let orgMemberships: { org_login: string; role: "admin" | "member" }[] = [];
+// Mutable per-test fixture for the cockpit response driving the health dot/badge.
+let cockpitResponse: {
+  latest_score: number | null;
+  recent_events: { id: string; type: string; actor: string; actor_avatar: string; repo: string; summary: string; created_at: string }[];
+} = { latest_score: null, recent_events: [] };
 
 describe("AppSidebar Invite members button", () => {
   beforeEach(() => {
@@ -65,6 +70,7 @@ describe("AppSidebar Invite members button", () => {
     replace.mockClear();
     localStorage.setItem(TOKEN_KEY, makeJwt());
     orgMemberships = [];
+    cockpitResponse = { latest_score: null, recent_events: [] };
 
     vi.stubGlobal(
       "matchMedia",
@@ -91,6 +97,25 @@ describe("AppSidebar Invite members button", () => {
         }
         if (url.endsWith("/me/orgs")) {
           return Promise.resolve(jsonResponse(orgMemberships));
+        }
+        if (url.endsWith("/tokens/resolve")) {
+          return Promise.resolve(jsonResponse({ detail: "No saved token for this org" }, 404));
+        }
+        if (url.includes("/me/analytics/cockpit/")) {
+          return Promise.resolve(
+            jsonResponse({
+              repo_count: 0,
+              member_count: 0,
+              latest_score: cockpitResponse.latest_score,
+              score_trend: [],
+              recent_events: cockpitResponse.recent_events,
+              open_pr_count: 0,
+              pr_merge_rate_4w: [],
+              commit_activity_4w: [],
+              total_cache_size_bytes: 0,
+              cache_job_success_rate: 0,
+            }),
+          );
         }
         return Promise.reject(new Error(`Unexpected fetch: ${url}`));
       }),
@@ -147,5 +172,131 @@ describe("AppSidebar Invite members button", () => {
 
     const link = await screen.findByRole("link", { name: /invite members/i });
     await waitFor(() => expect(link).toHaveAttribute("href", "/settings"));
+  });
+});
+
+describe("AppSidebar health dot and unread badge", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    replace.mockClear();
+    localStorage.setItem(TOKEN_KEY, makeJwt());
+    localStorage.setItem("default_org", "acme");
+    orgMemberships = [{ org_login: "acme", role: "admin" }];
+    cockpitResponse = { latest_score: null, recent_events: [] };
+
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    );
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/me")) {
+          return Promise.resolve(
+            jsonResponse({ id: 1, email: "user@example.com", name: "User", is_workspace_admin: false }),
+          );
+        }
+        if (url.endsWith("/me/orgs")) {
+          return Promise.resolve(jsonResponse(orgMemberships));
+        }
+        if (url.endsWith("/tokens/resolve")) {
+          return Promise.resolve(jsonResponse({ detail: "No saved token for this org" }, 404));
+        }
+        if (url.includes("/me/analytics/cockpit/")) {
+          return Promise.resolve(
+            jsonResponse({
+              repo_count: 0,
+              member_count: 0,
+              latest_score: cockpitResponse.latest_score,
+              score_trend: [],
+              recent_events: cockpitResponse.recent_events,
+              open_pr_count: 0,
+              pr_merge_rate_4w: [],
+              commit_activity_4w: [],
+              total_cache_size_bytes: 0,
+              cache_job_success_rate: 0,
+            }),
+          );
+        }
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("shows no dot when there's no score yet", async () => {
+    renderSidebar();
+    const link = await screen.findByRole("link", { name: "Health & Security" });
+    expect(link.querySelector(".bg-green-400, .bg-yellow-400, .bg-red-400")).toBeNull();
+  });
+
+  it("shows a green dot for a high score", async () => {
+    cockpitResponse = { latest_score: 90, recent_events: [] };
+    renderSidebar();
+
+    const link = await screen.findByRole("link", { name: "Health & Security" });
+    await waitFor(() => expect(link.querySelector(".bg-green-400")).not.toBeNull());
+  });
+
+  it("shows a yellow dot for a mid score", async () => {
+    cockpitResponse = { latest_score: 60, recent_events: [] };
+    renderSidebar();
+
+    const link = await screen.findByRole("link", { name: "Health & Security" });
+    await waitFor(() => expect(link.querySelector(".bg-yellow-400")).not.toBeNull());
+  });
+
+  it("shows a red dot for a low score", async () => {
+    cockpitResponse = { latest_score: 20, recent_events: [] };
+    renderSidebar();
+
+    const link = await screen.findByRole("link", { name: "Health & Security" });
+    await waitFor(() => expect(link.querySelector(".bg-red-400")).not.toBeNull());
+  });
+
+  it("shows an unread badge counting events newer than the last-seen timestamp", async () => {
+    localStorage.setItem("activity_last_seen_at", "2026-07-01T00:00:00Z");
+    cockpitResponse = {
+      latest_score: null,
+      recent_events: [
+        { id: "1", type: "PushEvent", actor: "alice", actor_avatar: "", repo: "acme/api", summary: "pushed", created_at: "2026-07-15T00:00:00Z" },
+        { id: "2", type: "PushEvent", actor: "bob", actor_avatar: "", repo: "acme/api", summary: "pushed", created_at: "2026-06-01T00:00:00Z" },
+      ],
+    };
+    renderSidebar();
+
+    const link = await screen.findByRole("link", { name: /Activity/ });
+    await waitFor(() => expect(link).toHaveTextContent("1"));
+  });
+
+  it("shows no unread badge when there are no events newer than last-seen", async () => {
+    localStorage.setItem("activity_last_seen_at", "2026-07-20T00:00:00Z");
+    cockpitResponse = {
+      latest_score: null,
+      recent_events: [
+        { id: "1", type: "PushEvent", actor: "alice", actor_avatar: "", repo: "acme/api", summary: "pushed", created_at: "2026-07-15T00:00:00Z" },
+      ],
+    };
+    renderSidebar();
+
+    await screen.findByRole("link", { name: /Activity/ });
+    const link = screen.getByRole("link", { name: /Activity/ });
+    await waitFor(() => expect(link.querySelector(".bg-primary\\/20")).toBeNull());
   });
 });
