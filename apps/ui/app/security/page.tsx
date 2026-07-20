@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { CheckCard } from "@/components/check-card"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -11,7 +11,16 @@ import { Button } from "@/components/ui/button"
 import { Warning } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { DonutChart } from "@/components/charts/donut-chart"
+import { AreaTimeChart } from "@/components/charts/area-time-chart"
 import type { CheckResult } from "@/lib/api/types"
+
+const TABS = [
+  { id: "all", label: "All" },
+  { id: "fail", label: "Failed" },
+  { id: "severity", label: "By Severity" },
+] as const
+
+type TabId = (typeof TABS)[number]["id"]
 
 function ScoreGauge({ score, failed, total }: { score: number; failed: number; total: number }) {
   const r = 38
@@ -24,7 +33,7 @@ function ScoreGauge({ score, failed, total }: { score: number; failed: number; t
     <div className="flex items-center gap-5 px-4 py-4 border-b border-border">
       <div className="relative shrink-0">
         <svg width="96" height="96" className="-rotate-90" aria-label={`Security score: ${score} out of 100`}>
-          <circle cx="48" cy="48" r={r} fill="none" stroke="#1c1c1c" strokeWidth="7" />
+          <circle cx="48" cy="48" r={r} fill="none" stroke="var(--border)" strokeWidth="7" />
           <circle
             cx="48" cy="48" r={r} fill="none"
             stroke={color} strokeWidth="7"
@@ -62,13 +71,15 @@ function sortChecks(checks: CheckResult[]): CheckResult[] {
 export default function SecurityPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const queryClient = useQueryClient()
 
   const [owner, setOwner] = useState("")
 
-  const statusFilter   = (searchParams.get("status")   ?? "all") as "all" | "pass" | "fail"
+  const tab = (searchParams.get("tab") ?? "all") as TabId
   const severityFilter = (searchParams.get("severity") ?? "all") as "all" | "high" | "medium" | "low"
+  const statusFilter = tab === "fail" ? "fail" : "all"
 
-  function setFilter(key: "status" | "severity", value: string) {
+  function setFilter(key: "tab" | "severity", value: string) {
     const params = new URLSearchParams(searchParams.toString())
     if (value === "all") params.delete(key)
     else params.set(key, value)
@@ -80,17 +91,34 @@ export default function SecurityPage() {
     if (defaultOrg) setOwner(defaultOrg)
   }, [])
 
+  const historyQuery = useQuery({
+    queryKey: ["analytics.history", owner],
+    queryFn: () => api.analytics.history(owner),
+    enabled: owner.trim().length > 2,
+  })
+
   // Token is omitted — the API mints a GitHub App installation token when the
   // org is connected (see token_resolution.resolve_org_token / resolve_personal_token).
   const scan = useMutation({
     mutationFn: () => api.analytics.overview(owner),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["analytics.history", owner] })
+    },
   })
+
+  const trendData = (historyQuery.data ?? [])
+    .slice(0, 10)
+    .reverse()
+    .map((h) => ({
+      week: new Date(h.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+      value: h.score,
+    }))
 
   const filteredChecks = scan.data
     ? sortChecks(
         scan.data.checks.filter((c) => {
-          if (statusFilter   !== "all" && c.status   !== statusFilter)   return false
-          if (severityFilter !== "all" && c.severity !== severityFilter) return false
+          if (statusFilter !== "all" && c.status !== statusFilter) return false
+          if (tab === "severity" && severityFilter !== "all" && c.severity !== severityFilter) return false
           return true
         }),
       )
@@ -112,7 +140,7 @@ export default function SecurityPage() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Config */}
-        <div className="bg-card border border-border">
+        <div className="card">
           <div className="px-4 py-3 border-b border-border">
             <span className="section-title">Scan configuration</span>
           </div>
@@ -147,52 +175,76 @@ export default function SecurityPage() {
 
         {/* Results */}
         {(scan.data || scan.isPending) && (
-          <div className="bg-card border border-border lg:col-span-2">
+          <div className="card lg:col-span-2">
             {scan.data && (
-              <>
-                <div className="px-4 py-3 border-b border-border">
-                  <span className="section-title">Results — {scan.data.owner}</span>
-                </div>
+              <div className="px-4 py-3 border-b border-border">
+                <span className="section-title">Results — {scan.data.owner}</span>
+              </div>
+            )}
+
+            {/* Gauge + donut side-by-side */}
+            {scan.data && (
+              <div className="grid sm:grid-cols-2 border-b border-border">
                 <ScoreGauge
                   score={scan.data.score}
                   failed={scan.data.failed_checks}
                   total={scan.data.total_checks}
                 />
-              </>
-            )}
-
-            {/* Filter bar */}
-            {scan.data && (
-              <div className="px-4 py-2.5 border-b border-border flex items-center gap-3">
-                <select
-                  value={statusFilter}
-                  onChange={(e) => setFilter("status", e.target.value)}
-                  className="text-xs bg-card border border-border text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
-                >
-                  <option value="all">All statuses</option>
-                  <option value="fail">Failed only</option>
-                  <option value="pass">Passed only</option>
-                </select>
-                <select
-                  value={severityFilter}
-                  onChange={(e) => setFilter("severity", e.target.value)}
-                  className="text-xs bg-card border border-border text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
-                >
-                  <option value="all">All severities</option>
-                  <option value="high">High</option>
-                  <option value="medium">Medium</option>
-                  <option value="low">Low</option>
-                </select>
-                <span className="text-xs text-muted-foreground ml-auto">
-                  {filteredChecks.length} of {scan.data.checks.length}
-                </span>
+                {statusBreakdown.length > 0 && (
+                  <div className="px-4 py-4 sm:border-l border-border">
+                    <DonutChart data={statusBreakdown} label="checks" height={180} />
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Pass/fail breakdown */}
-            {scan.data && statusBreakdown.length > 0 && (
+            {/* Score trend */}
+            {trendData.length > 1 && (
               <div className="px-4 py-4 border-b border-border">
-                <DonutChart data={statusBreakdown} label="checks" height={180} />
+                <span className="text-xs font-medium text-muted-foreground block mb-2">
+                  Score trend (last {trendData.length} scans)
+                </span>
+                <AreaTimeChart data={trendData} label="score" height={140} />
+              </div>
+            )}
+
+            {/* Tabs */}
+            {scan.data && (
+              <div className="px-4 py-2.5 border-b border-border flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-1.5">
+                  {TABS.map((t) => {
+                    const active = tab === t.id
+                    return (
+                      <button
+                        key={t.id}
+                        onClick={() => setFilter("tab", t.id)}
+                        aria-pressed={active}
+                        className={`text-xs font-medium px-2.5 py-1 rounded-md border transition-colors ${
+                          active
+                            ? "border-border bg-elevated text-foreground"
+                            : "border-transparent text-muted-foreground hover:bg-elevated"
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    )
+                  })}
+                </div>
+                {tab === "severity" && (
+                  <select
+                    value={severityFilter}
+                    onChange={(e) => setFilter("severity", e.target.value)}
+                    className="text-xs card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
+                  >
+                    <option value="all">All severities</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                )}
+                <span className="text-xs text-muted-foreground ml-auto">
+                  {filteredChecks.length} of {scan.data.checks.length}
+                </span>
               </div>
             )}
 
@@ -202,7 +254,7 @@ export default function SecurityPage() {
                 Array.from({ length: 3 }).map((_, i) => (
                   <div
                     key={i}
-                    className="bg-card border border-border/40 p-3.5 flex items-start gap-3 animate-pulse"
+                    className="bg-card border border-border/40 rounded-md p-3.5 flex items-start gap-3 animate-pulse"
                   >
                     <Skeleton className="size-4 shrink-0 mt-0.5 rounded-full" />
                     <div className="flex-1 space-y-2">
@@ -213,8 +265,8 @@ export default function SecurityPage() {
                   </div>
                 ))
               ) : filteredChecks.length === 0 ? (
-                <p className="text-sm text-muted-foreground font-mono sm:col-span-2">
-                  — no checks match the current filter
+                <p className="text-sm text-muted-foreground sm:col-span-2">
+                  No checks match the current filter
                 </p>
               ) : (
                 filteredChecks.map((c: CheckResult) => (

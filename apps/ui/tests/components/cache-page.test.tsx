@@ -205,6 +205,26 @@ describe("CachePage", () => {
     await screen.findByRole("button", { name: /confirm clear/i });
   });
 
+  it("shows an error message when loading caches fails", async () => {
+    cacheListMock.mockRejectedValue(new Error("GitHub API unreachable"));
+
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /load caches/i }));
+
+    expect(await screen.findByText(/github api unreachable/i)).toBeInTheDocument();
+  });
+
+  it("shows an error message when a clear request fails", async () => {
+    cacheClearMock.mockRejectedValue(new Error("Could not clear caches"));
+
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("actor"), { target: { value: "me@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: /^clear$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /confirm clear/i }));
+
+    expect(await screen.findByText(/could not clear caches/i)).toBeInTheDocument();
+  });
+
   it("clears the stale cache table and clear result when navigating to a different repo under the same owner", async () => {
     cacheListMock.mockResolvedValue({
       actions_caches: [

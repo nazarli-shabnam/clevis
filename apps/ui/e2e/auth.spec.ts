@@ -2,19 +2,12 @@ import { expect, test } from "@playwright/test"
 
 import { E2E_API_BASE } from "../playwright.config"
 import { E2E_ADMIN_EMAIL, E2E_ADMIN_PASSWORD } from "./constants"
-
-async function login(page: import("@playwright/test").Page) {
-  await page.goto("/login")
-  await page.getByPlaceholder("you@example.com").fill(E2E_ADMIN_EMAIL)
-  await page.getByPlaceholder("Password").fill(E2E_ADMIN_PASSWORD)
-  await page.getByRole("button", { name: "Sign in", exact: true }).click()
-}
+import { loginAsAdmin } from "./helpers"
 
 test.describe("Login", () => {
   test("valid credentials redirect to the app", async ({ page }) => {
-    await login(page)
+    await loginAsAdmin(page)
 
-    await expect(page).toHaveURL((url) => !url.pathname.startsWith("/login"))
     await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible()
   })
 
@@ -41,7 +34,7 @@ test.describe("GitHub OAuth error redirect", () => {
 
 test.describe("Logout", () => {
   test("manual sign-out clears the session and returns to /login", async ({ page }) => {
-    await login(page)
+    await loginAsAdmin(page)
     await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible()
 
     // Sidebar header button shows the user's name (see components/app-sidebar.tsx);
@@ -60,7 +53,7 @@ test.describe("Logout", () => {
 
 test.describe("Mid-session 401", () => {
   test("a 401 from the API redirects to /login without a loop", async ({ page }) => {
-    await login(page)
+    await loginAsAdmin(page)
     await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible()
 
     // Force the next API call to look like an expired/revoked session. /jobs auto-fetches

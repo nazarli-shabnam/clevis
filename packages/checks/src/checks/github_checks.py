@@ -1,6 +1,26 @@
+import time
+
 import httpx
 
 from checks.base import Check, CheckMetadata
+
+
+def _get_with_retry(client: httpx.Client, url: str, headers: dict) -> httpx.Response:
+    # Same retry/backoff contract as GitHubClient.request (apps/api/src/services/github_client.py):
+    # 3 attempts, exponential backoff on connection errors or a 429.
+    for attempt in range(3):
+        try:
+            r = client.get(url, headers=headers)
+        except httpx.RequestError:
+            if attempt < 2:
+                time.sleep(2**attempt)
+                continue
+            raise
+        if r.status_code == 429 and attempt < 2:
+            time.sleep(2**attempt)
+            continue
+        return r
+    raise RuntimeError("request loop exhausted without returning")
 
 
 def _get(url: str, token: str) -> dict | list:
@@ -10,7 +30,7 @@ def _get(url: str, token: str) -> dict | list:
         "X-GitHub-Api-Version": "2022-11-28",
     }
     with httpx.Client(timeout=20) as client:
-        r = client.get(url, headers=headers)
+        r = _get_with_retry(client, url, headers)
     r.raise_for_status()
     return r.json()
 
@@ -25,7 +45,7 @@ def _get_all_pages(base_url: str, path: str, token: str) -> list:
     url: str | None = f"{base_url}{path}?per_page=100"
     with httpx.Client(timeout=20) as client:
         while url:
-            r = client.get(url, headers=headers)
+            r = _get_with_retry(client, url, headers)
             r.raise_for_status()
             results.extend(r.json())
             url = None
@@ -141,3 +161,142 @@ class SecretScanningEnabled(Check):
                 enabled += 1
         compliant = enabled == total
         return {"status": "pass" if compliant else "fail", "value": {"enabled": enabled, "total": total}}
+
+
+class DependabotAlertsCheck(Check):
+    metadata = CheckMetadata(
+        check_id="repository_dependabot_alerts_clear",
+        title="No open critical/high Dependabot alerts",
+        severity="high",
+        remediation="Resolve or dismiss open Dependabot alerts, prioritizing critical and high severity.",
+    )
+
+    def run(
+        self,
+        owner: str,
+        token: str,
+        base_url: str = "https://api.github.com",
+        repos: list | None = None,
+    ) -> dict:
+        if repos is None:
+            repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
+        if len(repos) == 0:
+            return {"status": "not_applicable", "value": {"critical": 0, "high": 0, "medium": 0, "low": 0}}
+        counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        forbidden = 0
+        for repo in repos:
+            try:
+                alerts = _get(
+                    f"{base_url}/repos/{owner}/{repo['name']}/dependabot/alerts?state=open", token
+                )
+            except httpx.HTTPStatusError as exc:
+                # 404 means Dependabot alerts are genuinely disabled for this repo --
+                # a real "no alerts" answer. 403 means the token lacks the
+                # security-events scope for it -- the alert count for that repo is
+                # unknown, not zero, so it must not silently count toward "clear".
+                if exc.response.status_code == 404:
+                    continue
+                if exc.response.status_code == 403:
+                    forbidden += 1
+                    continue
+                raise
+            for alert in alerts:
+                severity = (alert.get("security_advisory") or {}).get("severity")
+                if severity in counts:
+                    counts[severity] += 1
+        if forbidden == len(repos):
+            return {"status": "error", "value": counts}
+        compliant = counts["critical"] == 0 and counts["high"] == 0
+        return {"status": "pass" if compliant else "fail", "value": counts}
+
+
+class CodeScanningCheck(Check):
+    metadata = CheckMetadata(
+        check_id="repository_code_scanning_alerts_clear",
+        title="No open code scanning alerts",
+        severity="medium",
+        remediation="Resolve open code scanning alerts surfaced by CodeQL or a connected SAST tool.",
+    )
+
+    def run(
+        self,
+        owner: str,
+        token: str,
+        base_url: str = "https://api.github.com",
+        repos: list | None = None,
+    ) -> dict:
+        if repos is None:
+            repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
+        total_repos = len(repos)
+        if total_repos == 0:
+            return {"status": "not_applicable", "value": {"open": 0, "repos_with_alerts": 0, "total_repos": 0}}
+        open_count = 0
+        repos_with_alerts = 0
+        forbidden = 0
+        for repo in repos:
+            try:
+                alerts = _get(
+                    f"{base_url}/repos/{owner}/{repo['name']}/code-scanning/alerts?state=open", token
+                )
+            except httpx.HTTPStatusError as exc:
+                # 404 means code scanning is genuinely not enabled for this repo -- a
+                # real "no alerts" answer. 403 means no access -- that repo's alert
+                # count is unknown, not zero, so it must not silently count as clear.
+                if exc.response.status_code == 404:
+                    continue
+                if exc.response.status_code == 403:
+                    forbidden += 1
+                    continue
+                raise
+            if alerts:
+                repos_with_alerts += 1
+                open_count += len(alerts)
+        value = {"open": open_count, "repos_with_alerts": repos_with_alerts, "total_repos": total_repos}
+        if forbidden == total_repos:
+            return {"status": "error", "value": value}
+        return {"status": "pass" if open_count == 0 else "fail", "value": value}
+
+
+class DefaultBranchNoForcePushCheck(Check):
+    metadata = CheckMetadata(
+        check_id="repository_default_branch_no_force_push",
+        title="Default branch disallows force pushes",
+        severity="high",
+        remediation="Disable 'Allow force pushes' in the default branch's protection rules.",
+    )
+
+    def run(
+        self,
+        owner: str,
+        token: str,
+        base_url: str = "https://api.github.com",
+        repos: list | None = None,
+    ) -> dict:
+        if repos is None:
+            repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
+        if len(repos) == 0:
+            return {"status": "not_applicable", "value": {"repos_checked": 0, "force_push_allowed": 0}}
+        checked = 0
+        force_push_allowed = 0
+        unknown = 0
+        for repo in repos:
+            branch = repo.get("default_branch")
+            try:
+                details = _get(f"{base_url}/repos/{owner}/{repo['name']}/branches/{branch}", token)
+            except httpx.HTTPError:
+                # Unprotected (404), rate-limited/no-access (403/429), or a network
+                # error — force-push status can't be evaluated, so exclude the repo
+                # from the denominator rather than counting it as compliant.
+                unknown += 1
+                continue
+            checked += 1
+            protection = details.get("protection") or {}
+            allow_force_pushes = (protection.get("allow_force_pushes") or {}).get("enabled")
+            if allow_force_pushes:
+                force_push_allowed += 1
+        if checked == 0:
+            return {"status": "error", "value": {"repos_checked": checked, "force_push_allowed": force_push_allowed}}
+        return {
+            "status": "pass" if force_push_allowed == 0 else "fail",
+            "value": {"repos_checked": checked, "force_push_allowed": force_push_allowed},
+        }

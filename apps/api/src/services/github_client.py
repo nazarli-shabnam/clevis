@@ -1,7 +1,18 @@
 import time
 import httpx
+from fastapi import HTTPException
 
 from src.core.config import settings
+
+
+def github_error(exc: Exception) -> HTTPException:
+    """Map an httpx exception raised by GitHubClient into the HTTPException every
+    GitHub-proxying router returns to its caller."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return HTTPException(status_code=400, detail=f"GitHub API error: {exc.response.status_code}")
+    if isinstance(exc, httpx.RequestError):
+        return HTTPException(status_code=503, detail="GitHub API unreachable")
+    raise exc
 
 
 class GitHubClient:
@@ -30,3 +41,34 @@ class GitHubClient:
                 resp.raise_for_status()
                 return resp.json() if resp.text else {}
         raise RuntimeError("request loop exhausted without returning")
+
+    def request_paginated(self, path: str, params: dict | None = None) -> list:
+        """GET every page of a list endpoint, following the `Link: rel="next"` header."""
+        results: list = []
+        url: str | None = f"{self.base}{path}"
+        next_params = dict(params or {})
+        next_params.setdefault("per_page", 100)
+        with httpx.Client(timeout=20) as client:
+            while url:
+                resp = None
+                for attempt in range(3):
+                    try:
+                        resp = client.get(url, headers=self.headers, params=next_params)
+                    except httpx.RequestError:
+                        if attempt < 2:
+                            time.sleep(2 ** attempt)
+                            continue
+                        raise
+                    if resp.status_code == 429 and attempt < 2:
+                        time.sleep(2 ** attempt)
+                        continue
+                    resp.raise_for_status()
+                    break
+                results.extend(resp.json())
+                next_params = {}
+                url = None
+                for part in resp.headers.get("Link", "").split(","):
+                    part = part.strip()
+                    if 'rel="next"' in part:
+                        url = part.split(";")[0].strip().strip("<>")
+        return results

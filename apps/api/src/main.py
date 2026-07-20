@@ -12,12 +12,14 @@ from src.routers import (
     audit,
     auth,
     config,
+    github,
     github_auth,
     health,
     installations,
     invitations,
     jobs,
     orgs,
+    repos,
     tokens,
     webhooks,
 )
@@ -62,6 +64,8 @@ app.include_router(orgs.router, tags=["orgs"])
 app.include_router(invitations.router, tags=["invitations"])
 app.include_router(analytics.router, tags=["analytics"])
 app.include_router(actions_cache.router, tags=["actions-cache"])
+app.include_router(repos.router, tags=["repos"])
+app.include_router(github.router, tags=["github"])
 app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 app.include_router(audit.router, prefix="/audit", tags=["audit"])
 app.include_router(tokens.router, prefix="/tokens", tags=["tokens"])

@@ -53,8 +53,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body className="min-h-screen bg-background">
-        {/* Mechanical grain — single fixed overlay; suppressed under reduced motion */}
-        <div className="noise-overlay" aria-hidden="true" />
         <QueryProvider>
           <TooltipProvider>
             <IconProvider>

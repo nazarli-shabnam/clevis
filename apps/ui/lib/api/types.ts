@@ -9,7 +9,15 @@ export interface RatioCheckValue {
   denominator: number
 }
 
-export type CheckValue = MFACheckValue | RatioCheckValue | null
+export interface SeverityCountsValue {
+  type: "severity_counts"
+  critical: number
+  high: number
+  medium: number
+  low: number
+}
+
+export type CheckValue = MFACheckValue | RatioCheckValue | SeverityCountsValue | null
 
 export interface CheckResult {
   id: string
@@ -28,6 +36,17 @@ export interface AnalyticsOverviewResponse {
   repo_count: number
   checks: CheckResult[]
 }
+
+export interface ScanHistoryEntry {
+  id: number
+  owner: string
+  score: number
+  total_checks: number
+  failed_checks: number
+  created_at: string
+}
+
+export type AnalyticsHistoryResponse = ScanHistoryEntry[]
 
 export interface CacheEntry {
   id: number
@@ -50,6 +69,87 @@ export interface CacheClearResponse {
   dry_run?: boolean | null
   job_id?: number | null
   message?: string | null
+}
+
+export interface RepoSummary {
+  name: string
+  full_name: string
+  private: boolean
+  description: string | null
+  language: string | null
+  stargazers_count: number
+  forks_count: number
+  watchers_count: number
+  open_issues_count: number
+  pushed_at: string | null
+  default_branch: string
+  html_url: string
+}
+
+export interface RepoListResponse {
+  org: string
+  total: number
+  repos: RepoSummary[]
+}
+
+export interface CommitActivityWeek {
+  week: number
+  total: number
+  days: number[]
+}
+
+export interface LatestRelease {
+  tag_name: string
+  published_at: string | null
+  html_url: string
+}
+
+export interface RepoStatsResponse {
+  repository: string
+  commit_activity: CommitActivityWeek[]
+  participation: { all?: number[]; owner?: number[] }
+  contributors: { author?: { login?: string }; total: number }[]
+  stargazers_count: number
+  forks_count: number
+  watchers_count: number
+  open_issues_count: number
+  default_branch: string
+  latest_release: LatestRelease | null
+}
+
+export interface PullSummary {
+  number: number
+  title: string
+  user: string | null
+  created_at: string
+  html_url: string
+}
+
+export interface RepoPullsResponse {
+  repository: string
+  total: number
+  pulls: PullSummary[]
+}
+
+export interface RepoSecurityResponse {
+  repository: string
+  branch_protection: "protected" | "unprotected" | "unknown"
+  secret_scanning: "enabled" | "disabled" | "unknown"
+}
+
+export interface OrgEvent {
+  id: string
+  type: string
+  actor: string
+  actor_avatar: string
+  repo: string
+  summary: string
+  created_at: string
+}
+
+export interface OrgEventsResponse {
+  org: string
+  events: OrgEvent[]
 }
 
 export interface JobOut {

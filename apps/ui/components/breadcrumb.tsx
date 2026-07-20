@@ -40,7 +40,7 @@ export function Breadcrumb() {
 
   return (
     <nav aria-label="breadcrumb">
-      <ol className="flex items-center gap-1.5 font-mono text-[0.6875rem] text-muted-foreground">
+      <ol className="flex items-center gap-1.5 text-[0.75rem] text-muted-foreground">
         <li className="text-subtle-foreground">clevis</li>
         {segments.map((seg, i) => (
           <li key={i} className="flex items-center gap-1.5">

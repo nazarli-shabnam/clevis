@@ -45,7 +45,7 @@ Clevis is three independently deployable services around one shared check librar
 | **`apps/ui`** | Next.js 15 · React 19 · TanStack Query | The dashboard — dense, dark, keyboard-friendly. |
 | **`packages/checks`** | `clevis-checks` (Python) | The security-check engine (MFA, branch protection, secret scanning) with built-in GitHub pagination. |
 
-**Security model:** RBAC is enforced per route (`viewer` / `analyst` / `admin`). GitHub tokens are **never stored persistently** — they are Fernet-encrypted when a job is enqueued and decrypted only at processing time. Every request carries a propagated `X-Request-ID` for traceability.
+**Security model:** Access is enforced per route with JWT auth dependencies (`require_auth`, `require_workspace_admin`) and org-scoped roles (`require_org_role("member"|"admin")`). GitHub credentials may be stored as Fernet-encrypted rows in `saved_tokens` (legacy PAT path); job payloads are also Fernet-encrypted at enqueue time and decrypted only when the worker processes them. Prefer a connected GitHub App installation so the API can mint short-lived installation tokens instead. Every request carries a propagated `X-Request-ID` for traceability.
 
 ---
 

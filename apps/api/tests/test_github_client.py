@@ -13,11 +13,12 @@ def client():
     yield GitHubClient(token="ghp_test", base_url="https://api.github.com")
 
 
-def _make_response(status_code: int, json_body: dict | list | None = None, text: str = "{}"):
+def _make_response(status_code: int, json_body: dict | list | None = None, text: str = "{}", link: str = ""):
     resp = MagicMock(spec=httpx.Response)
     resp.status_code = status_code
     resp.text = text if json_body is None else str(json_body)
     resp.json.return_value = json_body if json_body is not None else {}
+    resp.headers = {"Link": link} if link else {}
     resp.raise_for_status = MagicMock()
     if status_code >= 400:
         resp.raise_for_status.side_effect = httpx.HTTPStatusError(
@@ -101,3 +102,67 @@ class TestExhaustedRetries:
             result = client.request("GET", "/test")
 
         assert result == {"data": "hello"}
+
+
+class TestRequestPaginated:
+    def test_follows_link_header_across_pages(self, client):
+        page1 = _make_response(
+            200, [{"id": 1}], link='<https://api.github.com/repos/acme/x?page=2>; rel="next"'
+        )
+        page2 = _make_response(200, [{"id": 2}])
+
+        with patch("src.services.github_client.httpx.Client") as mock_client_cls:
+            mock_ctx = MagicMock()
+            mock_ctx.__enter__ = MagicMock(return_value=mock_ctx)
+            mock_ctx.__exit__ = MagicMock(return_value=False)
+            mock_ctx.get.side_effect = [page1, page2]
+            mock_client_cls.return_value = mock_ctx
+
+            result = client.request_paginated("/repos/acme/x")
+
+        assert result == [{"id": 1}, {"id": 2}]
+        assert mock_ctx.get.call_count == 2
+
+    def test_retries_on_429_then_succeeds(self, client):
+        resp_429 = _make_response(429)
+        resp_429.raise_for_status = MagicMock()
+        ok_resp = _make_response(200, [{"id": 1}])
+
+        with (
+            patch("src.services.github_client.httpx.Client") as mock_client_cls,
+            patch("src.services.github_client.time.sleep"),
+        ):
+            mock_ctx = MagicMock()
+            mock_ctx.__enter__ = MagicMock(return_value=mock_ctx)
+            mock_ctx.__exit__ = MagicMock(return_value=False)
+            mock_ctx.get.side_effect = [resp_429, ok_resp]
+            mock_client_cls.return_value = mock_ctx
+
+            result = client.request_paginated("/repos/acme/x")
+
+        assert result == [{"id": 1}]
+
+    def test_raises_after_exhausted_retries_on_request_error(self, client):
+        with (
+            patch("src.services.github_client.httpx.Client") as mock_client_cls,
+            patch("src.services.github_client.time.sleep"),
+        ):
+            mock_ctx = MagicMock()
+            mock_ctx.__enter__ = MagicMock(return_value=mock_ctx)
+            mock_ctx.__exit__ = MagicMock(return_value=False)
+            mock_ctx.get.side_effect = httpx.RequestError("connection failed")
+            mock_client_cls.return_value = mock_ctx
+
+            with pytest.raises(httpx.RequestError):
+                client.request_paginated("/repos/acme/x")
+
+    def test_raises_on_http_status_error(self, client):
+        with patch("src.services.github_client.httpx.Client") as mock_client_cls:
+            mock_ctx = MagicMock()
+            mock_ctx.__enter__ = MagicMock(return_value=mock_ctx)
+            mock_ctx.__exit__ = MagicMock(return_value=False)
+            mock_ctx.get.return_value = _make_response(404)
+            mock_client_cls.return_value = mock_ctx
+
+            with pytest.raises(httpx.HTTPStatusError):
+                client.request_paginated("/repos/acme/x")

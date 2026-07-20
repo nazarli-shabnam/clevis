@@ -26,11 +26,16 @@ Three tables managed by Alembic — no runtime DDL:
 
 ### RBAC
 
-Role passed via `X-Role` HTTP header (`viewer` / `analyst` / `admin`). Defaults to `settings.default_rbac_role`. Enforced via `require_role()` FastAPI dependency (`src/services/rbac.py`). Only the cache-clear endpoint requires `admin`; all other routes are unrestricted. There is no session or JWT — the header is trusted to come from an auth proxy.
+Access is enforced with JWT session auth, not an `X-Role` header:
 
-### Token encryption
+- `require_auth` / `require_workspace_admin` — `apps/api/src/core/auth.py` (any signed-in user vs instance workspace admin).
+- `require_org_role("member"|"admin")` — `apps/api/src/core/rbac.py` (org-scoped membership lookup in the DB).
 
-Tokens are never stored persistently. When a job is enqueued the API encrypts the token with Fernet (key derived via SHA-256 of `JOB_SECRET_KEY`, base64-encoded). The worker decrypts it at processing time. Both sides duplicate the same `_crypto.py` logic.
+The old `viewer` / `analyst` / `admin` header model was removed in Phase 5.
+
+### Token encryption / storage
+
+GitHub credentials may be stored as Fernet-encrypted rows in `saved_tokens` (legacy PAT path). Separately, when a job is enqueued the API Fernet-encrypts the token for the worker payload (key derived via SHA-256 of `JOB_SECRET_KEY`, base64-encoded); the worker decrypts at processing time. Prefer a connected GitHub App installation so the API can mint short-lived installation tokens via `token_resolution` instead of a browser-pasted PAT. Shared crypto lives in `packages/checks` (`checks.crypto`); thin wrappers remain in api/worker `_crypto.py`.
 
 ### Database URL dialect
 
@@ -46,7 +51,7 @@ The API uses `postgresql+psycopg://` (SQLAlchemy dialect). The worker strips the
 
 ### UI routing
 
-Owner and repo are joined with `~` in URL dynamic segments (e.g., `/repos/octocat~hello-world/cache`). The API client lives in `apps/ui/lib/api/client.ts`; it centralises JSON serialisation, error parsing, and `X-Role` header injection.
+Owner and repo are joined with `~` in URL dynamic segments (e.g., `/repos/octocat~hello-world/cache`). The API client lives in `apps/ui/lib/api/client.ts`; it centralises JSON serialisation, error parsing, and Bearer JWT injection from the session token.
 
 ## Development setup
 
@@ -156,12 +161,12 @@ Verify before asserting. Read the actual file or grep the repo before claiming a
 
 This repo has sharp edges worth double-checking rather than assuming:
 - 6 required env vars have no defaults — the app hard-fails without them (see Development setup above).
-- The `X-Role` RBAC header is trusted, not verified — there is no JWT/session validating it.
-- Fernet token-encryption logic (`_crypto.py`) is duplicated between `apps/api` and `apps/worker` and must be kept in sync manually.
+- Org admin actions use `require_org_role("admin")` (DB membership), not a client-supplied role header.
+- Job-token Fernet helpers should stay in sync via `checks.crypto` (api/worker `_crypto.py` are thin wrappers).
 
 ### 3. Other irreversible actions require explicit confirmation
 
-No `git push --force`. No dropping or truncating tables. No bypassing `require_role("admin")` on the cache-clear endpoint. No committing `.env` or real tokens/secrets.
+No dropping or truncating tables. No bypassing `require_org_role("admin")` on privileged org actions (e.g. cache clear). No committing `.env` or real tokens/secrets. Avoid `git push --force` to shared branches unless a maintainer explicitly asks for a history rewrite on a feature branch.
 
 ### 4. Don't scope-creep
 
