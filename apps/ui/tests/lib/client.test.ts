@@ -232,6 +232,54 @@ describe("api.repos", () => {
   });
 });
 
+describe("api.collab", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function stubOkJson(body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))),
+    );
+  }
+
+  it("GETs /github/orgs/{org}/members with the role query param and an X-GitHub-Token header when supplied", async () => {
+    stubOkJson({ org: "acme", members: [], two_factor_overlay_available: true });
+    await api.collab.members("acme", "admin", "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/github/orgs/acme/members?role=admin");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
+  });
+
+  it("GETs /github/orgs/{org}/outside_collaborators with no token header when omitted", async () => {
+    stubOkJson({ org: "acme", collaborators: [], repos_scanned: 0, repos_total: 0 });
+    await api.collab.outsideCollaborators("acme");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/github/orgs/acme/outside_collaborators");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBeUndefined();
+  });
+
+  it("GETs /github/orgs/{org}/invitations", async () => {
+    stubOkJson({ org: "acme", invitations: [] });
+    const result = await api.collab.invitations("acme", "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/github/orgs/acme/invitations");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
+    expect(result).toEqual({ org: "acme", invitations: [] });
+  });
+
+  it("GETs /github/orgs/{org}/members/{username}/membership", async () => {
+    stubOkJson({ state: "active", role: "member" });
+    const result = await api.collab.membership("acme", "alice", "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/github/orgs/acme/members/alice/membership");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
+    expect(result).toEqual({ state: "active", role: "member" });
+  });
+});
+
 describe("installations.lookup / installations.sync", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

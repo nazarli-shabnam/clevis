@@ -6,6 +6,10 @@ import type {
   CacheListResponse,
   CheckValue,
   CockpitResponse,
+  GithubMembershipStatus,
+  GithubOrgInvitationsResponse,
+  GithubOrgMembersResponse,
+  GithubOutsideCollaboratorsResponse,
   InstallationLookup,
   InstallationMeta,
   InvitationCreateResponse,
@@ -257,6 +261,30 @@ export const api = {
       post<InvitationOut>(`/orgs/${encodeURIComponent(orgLogin)}/invitations/${invitationId}/revoke`, {}),
     preview: (token: string) => get<InvitationPreview>(`/invitations/${encodeURIComponent(token)}`),
     accept: (token: string) => post<{ org_login: string; role: string }>(`/invitations/${encodeURIComponent(token)}/accept`, {}),
+  },
+  collab: {
+    // token is optional — the API falls back to a connected GitHub App installation
+    // token when one exists for this org; only orgs without one need it supplied.
+    members: (orgLogin: string, role: "all" | "member" | "admin" = "all", token?: string) =>
+      get<GithubOrgMembersResponse>(
+        `/github/orgs/${encodeURIComponent(orgLogin)}/members?role=${role}`,
+        githubTokenHeader(token),
+      ),
+    outsideCollaborators: (orgLogin: string, token?: string) =>
+      get<GithubOutsideCollaboratorsResponse>(
+        `/github/orgs/${encodeURIComponent(orgLogin)}/outside_collaborators`,
+        githubTokenHeader(token),
+      ),
+    invitations: (orgLogin: string, token?: string) =>
+      get<GithubOrgInvitationsResponse>(
+        `/github/orgs/${encodeURIComponent(orgLogin)}/invitations`,
+        githubTokenHeader(token),
+      ),
+    membership: (orgLogin: string, username: string, token?: string) =>
+      get<GithubMembershipStatus>(
+        `/github/orgs/${encodeURIComponent(orgLogin)}/members/${encodeURIComponent(username)}/membership`,
+        githubTokenHeader(token),
+      ),
   },
   tokens: {
     list: () => get<SavedTokenMeta[]>("/tokens"),

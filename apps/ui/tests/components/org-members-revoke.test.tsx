@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ login: "acme" }),
+  useRouter: () => ({ replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 const listMock = vi.fn();
@@ -15,6 +17,15 @@ vi.mock("@/lib/api/client", () => ({
       list: (...args: unknown[]) => listMock(...args),
       revoke: (...args: unknown[]) => revokeMock(...args),
       create: vi.fn(),
+    },
+    collab: {
+      members: vi.fn().mockResolvedValue({ org: "acme", members: [], two_factor_overlay_available: true }),
+      outsideCollaborators: vi.fn().mockResolvedValue({ org: "acme", collaborators: [], repos_scanned: 0, repos_total: 0 }),
+      invitations: vi.fn().mockResolvedValue({ org: "acme", invitations: [] }),
+      membership: vi.fn(),
+    },
+    tokens: {
+      resolve: vi.fn().mockRejectedValue(new Error("no saved token")),
     },
   },
 }));
