@@ -30,6 +30,12 @@ function RefreshCountdown({ resetKey, seconds }: { resetKey: number; seconds: nu
 }
 
 export default function ActivityPage() {
+  // Marks all cockpit-sourced events as read so the sidebar's unread badge
+  // clears once the user has actually looked at this page.
+  useEffect(() => {
+    localStorage.setItem("activity_last_seen_at", new Date().toISOString())
+  }, [])
+
   const { data: jobs = [], isLoading: jobsLoading } = useQuery({
     queryKey: ["jobs"],
     queryFn: api.jobs.list,

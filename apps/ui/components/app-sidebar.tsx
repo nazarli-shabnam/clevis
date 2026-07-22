@@ -20,17 +20,26 @@ import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
 import type { MyOrgMembership } from "@/lib/api/types"
 
+const ACTIVITY_LAST_SEEN_KEY = "activity_last_seen_at"
+
+function healthDotColor(score: number | null | undefined): string | null {
+  if (score == null) return null
+  if (score >= 80) return "bg-green-400"
+  if (score >= 50) return "bg-yellow-400"
+  return "bg-red-400"
+}
+
 // Settings is no longer in the sidebar nav — it lives inside the profile dropdown.
 const groups = [
   [
     { title: "Overview",         href: "/" },
-    { title: "Activity",         href: "/activity" },
+    { title: "Activity",         href: "/activity", showUnreadBadge: true },
     { title: "Pull Requests",    href: "/pulls" },
     { title: "Releases",         href: "/releases" },
   ],
   [
     { title: "Repositories",     href: "/repos" },
-    { title: "Health & Security",href: "/security" },
+    { title: "Health & Security",href: "/security", showHealthDot: true },
   ],
   [
     { title: "Collaborators",    href: "/collaborators" },
@@ -167,6 +176,31 @@ export function AppSidebar() {
     ? `/settings/org/${encodeURIComponent(inviteTarget.org_login)}/members`
     : "/settings"
 
+  // Same resolve-then-use pattern as the Overview page — falls back to a saved
+  // PAT for orgs without a GitHub App installation.
+  const tokenQuery = useQuery({
+    queryKey: ["tokens.resolve", defaultOrg],
+    queryFn: () => api.tokens.resolve(defaultOrg),
+    enabled: defaultOrg.trim().length > 2,
+    retry: false,
+  })
+
+  // Same query key as the Overview page's cockpit query so TanStack Query dedupes
+  // the request when both are mounted (same dedup pattern as ["my-orgs"] above).
+  const { data: cockpit } = useQuery({
+    queryKey: ["analytics.cockpit", defaultOrg],
+    queryFn: () => api.analytics.cockpit(defaultOrg, tokenQuery.data?.token),
+    enabled: defaultOrg.trim().length > 2 && !tokenQuery.isLoading,
+    retry: false,
+    refetchInterval: 30_000,
+  })
+
+  const healthDot = healthDotColor(cockpit?.latest_score)
+  const lastSeenAt = typeof window !== "undefined" ? localStorage.getItem(ACTIVITY_LAST_SEEN_KEY) : null
+  const unreadCount = (cockpit?.recent_events ?? []).filter(
+    (e) => !lastSeenAt || e.created_at > lastSeenAt,
+  ).length
+
   // Close on click outside
   useEffect(() => {
     if (!open) return
@@ -240,6 +274,14 @@ export function AppSidebar() {
                           render={<Link href={item.href} />}
                         >
                           <span>{item.title}</span>
+                          {"showHealthDot" in item && item.showHealthDot && healthDot && (
+                            <span className={`ml-auto size-1.5 rounded-full ${healthDot}`} />
+                          )}
+                          {"showUnreadBadge" in item && item.showUnreadBadge && unreadCount > 0 && (
+                            <span className="ml-auto text-[0.625rem] font-medium bg-primary/20 text-primary rounded-full px-1.5 py-0.5 tabular-nums">
+                              {unreadCount}
+                            </span>
+                          )}
                         </SidebarMenuButton>
                       </SidebarMenuItem>
                     )

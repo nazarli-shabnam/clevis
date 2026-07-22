@@ -269,3 +269,22 @@ export interface GithubMembershipStatus {
   state: "active" | "pending"
   role: "member" | "admin"
 }
+
+export interface PrWeekBucket {
+  week: string
+  opened: number
+  merged: number
+}
+
+export interface CockpitResponse {
+  repo_count: number
+  member_count: number
+  latest_score: number | null
+  score_trend: number[]
+  recent_events: OrgEvent[]
+  open_pr_count: number
+  pr_merge_rate_4w: PrWeekBucket[]
+  commit_activity_4w: number[]
+  total_cache_size_bytes: number
+  cache_job_success_rate: number
+}

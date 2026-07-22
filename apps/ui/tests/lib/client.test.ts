@@ -158,6 +158,30 @@ describe("api.analytics value normalization", () => {
     expect(result.checks[0].value).toEqual({ type: "ratio", numerator: 1, denominator: 2 });
   });
 
+  it("GETs /me/analytics/cockpit/{owner} with no body and no token header when omitted", async () => {
+    stubOkJson({
+      repo_count: 1, member_count: 2, latest_score: 90, score_trend: [90],
+      recent_events: [], open_pr_count: 0, pr_merge_rate_4w: [], commit_activity_4w: [],
+      total_cache_size_bytes: 0, cache_job_success_rate: 0,
+    });
+    await api.analytics.cockpit("acme");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/analytics/cockpit/acme");
+    expect(init.method).toBeUndefined();
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBeUndefined();
+  });
+
+  it("sends the token as an X-GitHub-Token header when supplied", async () => {
+    stubOkJson({
+      repo_count: 1, member_count: 2, latest_score: 90, score_trend: [90],
+      recent_events: [], open_pr_count: 0, pr_merge_rate_4w: [], commit_activity_4w: [],
+      total_cache_size_bytes: 0, cache_job_success_rate: 0,
+    });
+    await api.analytics.cockpit("acme", "ghp_test");
+    const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
+  });
+
   it("GETs /me/analytics/history?owner=... and returns the raw scan history", async () => {
     stubOkJson([{ id: 1, owner: "acme", score: 80, total_checks: 3, failed_checks: 0, created_at: "2026-07-17T00:00:00Z" }]);
     const result = await api.analytics.history("acme");
