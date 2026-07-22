@@ -288,3 +288,52 @@ export interface CockpitResponse {
   total_cache_size_bytes: number
   cache_job_success_rate: number
 }
+
+export interface RepoSecurityRow {
+  repo: string
+  branch_protection: boolean
+  secret_scanning: boolean
+  dependabot_enabled: boolean
+  dependabot_critical_count: number
+  dependabot_high_count: number
+  code_scanning: boolean
+  force_push_allowed: boolean
+  score: number
+}
+
+export interface VulnCounts {
+  critical: number
+  high: number
+  medium: number
+  low: number
+}
+
+export interface MatrixSummary {
+  fully_compliant_count: number
+  critical_risk_count: number
+  secret_hits_count: number
+  vuln_by_severity: VulnCounts
+}
+
+export interface SecurityMatrixResponse {
+  owner: string
+  repos: RepoSecurityRow[]
+  summary: MatrixSummary
+}
+
+export interface SecretAlert {
+  number: number
+  state: string
+  secret_type: string
+  secret_type_display: string
+  resolved_reason: string | null
+  created_at: string
+  resolved_at: string | null
+  repo: string
+  url: string
+}
+
+export interface SecretScanningResponse {
+  repository: string
+  alerts: SecretAlert[]
+}

@@ -24,6 +24,8 @@ import type {
   RepoSecurityResponse,
   RepoStatsResponse,
   SavedTokenMeta,
+  SecretScanningResponse,
+  SecurityMatrixResponse,
   SyncInstallationsResponse,
 } from "./types"
 
@@ -185,6 +187,18 @@ export const api = {
     // carried via header since this is a GET (see githubTokenHeader).
     cockpit: (owner: string, token?: string) =>
       get<CockpitResponse>(`/me/analytics/cockpit/${encodeURIComponent(owner)}`, githubTokenHeader(token)),
+  },
+  security: {
+    matrix: (owner: string, token?: string) =>
+      get<SecurityMatrixResponse>(
+        `/me/analytics/security-matrix/${encodeURIComponent(owner)}`,
+        githubTokenHeader(token),
+      ),
+    secretScanning: (owner: string, repo: string, token?: string) =>
+      get<SecretScanningResponse>(
+        `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/secret-scanning`,
+        githubTokenHeader(token),
+      ),
   },
   cache: {
     list: (owner: string, repo: string, token: string) =>

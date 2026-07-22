@@ -7,6 +7,8 @@ const tokensResolveMock = vi.fn();
 const tokensUpsertMock = vi.fn();
 const analyticsOverviewMock = vi.fn();
 const analyticsHistoryMock = vi.fn();
+const securityMatrixMock = vi.fn();
+const secretScanningMock = vi.fn();
 
 // A minimal reactive store standing in for Next's router-driven searchParams so a
 // tab click's router.replace(...) actually triggers a re-render in the test, the
@@ -40,6 +42,10 @@ vi.mock("@/lib/api/client", () => ({
       overview: (...args: unknown[]) => analyticsOverviewMock(...args),
       history: (...args: unknown[]) => analyticsHistoryMock(...args),
     },
+    security: {
+      matrix: (...args: unknown[]) => securityMatrixMock(...args),
+      secretScanning: (...args: unknown[]) => secretScanningMock(...args),
+    },
   },
 }));
 
@@ -62,9 +68,17 @@ describe("SecurityPage", () => {
     tokensUpsertMock.mockReset();
     analyticsOverviewMock.mockReset();
     analyticsHistoryMock.mockReset();
+    securityMatrixMock.mockReset();
+    secretScanningMock.mockReset();
     routerReplaceMock.mockClear();
     tokensResolveMock.mockRejectedValue(new Error("no saved token"));
     analyticsHistoryMock.mockResolvedValue([]);
+    securityMatrixMock.mockResolvedValue({
+      owner: "acme",
+      repos: [],
+      summary: { fully_compliant_count: 0, critical_risk_count: 0, secret_hits_count: 0, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } },
+    });
+    secretScanningMock.mockResolvedValue({ repository: "acme/demo", alerts: [] });
     mockSearchParams = new URLSearchParams();
     localStorage.clear();
   });
@@ -231,5 +245,75 @@ describe("SecurityPage", () => {
 
     await waitFor(() => expect(screen.queryByText("Low severity check")).not.toBeInTheDocument());
     expect(screen.getByText("High severity check")).toBeInTheDocument();
+  });
+
+  it("loads the compliance matrix alongside a scan and renders repo rows", async () => {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [],
+    });
+    securityMatrixMock.mockResolvedValue({
+      owner: "acme",
+      repos: [
+        {
+          repo: "api",
+          branch_protection: true,
+          secret_scanning: true,
+          dependabot_enabled: true,
+          dependabot_critical_count: 1,
+          dependabot_high_count: 0,
+          code_scanning: true,
+          force_push_allowed: false,
+          score: 80,
+        },
+      ],
+      summary: { fully_compliant_count: 0, critical_risk_count: 1, secret_hits_count: 0, vuln_by_severity: { critical: 1, high: 0, medium: 0, low: 0 } },
+    });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /run scan/i }));
+
+    await waitFor(() => expect(securityMatrixMock).toHaveBeenCalledWith("acme", ""));
+    await waitFor(() => expect(screen.getByText("Compliance Matrix")).toBeInTheDocument());
+    expect(screen.getAllByText("api").length).toBeGreaterThan(0);
+    expect(secretScanningMock).toHaveBeenCalledWith("acme", "api", "");
+  });
+
+  it("never renders a raw secret value in the alerts list", async () => {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [],
+    });
+    securityMatrixMock.mockResolvedValue({
+      owner: "acme",
+      repos: [
+        { repo: "api", branch_protection: true, secret_scanning: false, dependabot_enabled: true, dependabot_critical_count: 0, dependabot_high_count: 0, code_scanning: true, force_push_allowed: false, score: 80 },
+      ],
+      summary: { fully_compliant_count: 0, critical_risk_count: 0, secret_hits_count: 1, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } },
+    });
+    secretScanningMock.mockResolvedValue({
+      repository: "acme/api",
+      alerts: [
+        {
+          number: 1,
+          state: "open",
+          secret_type: "github_personal_access_token",
+          secret_type_display: "GitHub Personal Access Token",
+          resolved_reason: null,
+          created_at: "2026-07-01T00:00:00Z",
+          resolved_at: null,
+          repo: "acme/api",
+          url: "https://github.com/acme/api/security/secret-scanning/1",
+        },
+      ],
+    });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /run scan/i }));
+
+    await waitFor(() => expect(screen.getByText("GitHub Personal Access Token")).toBeInTheDocument());
+    expect(screen.getByText("Secret values are never shown here — metadata only.")).toBeInTheDocument();
   });
 });
