@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, SecretStr
 
@@ -44,6 +45,27 @@ class PrWeekBucket(BaseModel):
     merged: int
 
 
+class AtRiskRepo(BaseModel):
+    repo: str
+    reasons: list[str]
+    severity: Literal["warning", "critical"]
+
+
+class MilestoneSummary(BaseModel):
+    repo: str
+    title: str
+    due_on: datetime | None
+    open_issues: int
+    closed_issues: int
+    progress_pct: float
+    state: Literal["on_track", "at_risk", "overdue"]
+
+
+class PrCycleTimeWeek(BaseModel):
+    week: str
+    avg_days: float
+
+
 class CockpitResponse(BaseModel):
     repo_count: int
     member_count: int
@@ -55,3 +77,40 @@ class CockpitResponse(BaseModel):
     commit_activity_4w: list[int]
     total_cache_size_bytes: int
     cache_job_success_rate: float
+    at_risk_repos: list[AtRiskRepo] = []
+    milestones: list[MilestoneSummary] = []
+    pr_cycle_time_8w: list[PrCycleTimeWeek] = []
+    release_cadence_4w: list[int] = []
+
+
+class PRSummary(BaseModel):
+    number: int
+    title: str
+    repository: str
+    html_url: str
+    updated_at: datetime
+
+
+class IssueSummary(BaseModel):
+    number: int
+    title: str
+    repository: str
+    html_url: str
+    updated_at: datetime
+
+
+class RunSummaryLite(BaseModel):
+    repository: str
+    id: int
+    name: str | None
+    status: str
+    conclusion: str | None
+    html_url: str
+    created_at: datetime
+
+
+class MyViewResponse(BaseModel):
+    my_open_prs: list[PRSummary] = []
+    review_requests: list[PRSummary] = []
+    assigned_issues: list[IssueSummary] = []
+    my_recent_runs: list[RunSummaryLite] = []
