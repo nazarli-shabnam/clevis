@@ -343,10 +343,13 @@ def _week_pr_cycle_time(client: GitHubClient, owner: str, start: date) -> PrCycl
     # closed_at approximates merge time for a merged PR (search API's issues endpoint
     # doesn't expose merged_at directly) -- an approximation, same spirit as Phase 18's
     # documented "last activity" sampling elsewhere in this codebase.
+    # GitHub's search API date qualifiers are inclusive on both ends at day granularity,
+    # so the window end is `+6 days` (a 7-day span) not `+7` -- otherwise a PR merged
+    # exactly on a week-boundary day would double-count into both adjacent weeks.
     result = client.request(
         "GET",
         "/search/issues",
-        params={"q": f"org:{owner} type:pr merged:{start}..{start + timedelta(days=7)}", "per_page": 30},
+        params={"q": f"org:{owner} type:pr merged:{start}..{start + timedelta(days=6)}", "per_page": 30},
     )
     items = result.get("items", []) if isinstance(result, dict) else []
     days: list[float] = []
