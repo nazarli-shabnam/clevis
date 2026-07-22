@@ -173,6 +173,44 @@ describe("GithubRoster (Collaborators page)", () => {
     });
   });
 
+  it("filters the visible members by the search input", async () => {
+    membersMock.mockResolvedValue({
+      org: "acme",
+      members: [
+        { login: "alice", avatar_url: "", role: "admin", site_admin: false, two_factor_enabled: true },
+        { login: "bob", avatar_url: "", role: "member", site_admin: false, two_factor_enabled: false },
+      ],
+      two_factor_overlay_available: true,
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("alice")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("Search by login…"), { target: { value: "ali" } });
+
+    expect(screen.getByText("alice")).toBeInTheDocument();
+    expect(screen.queryByText("bob")).not.toBeInTheDocument();
+  });
+
+  it("refetches members with the selected role filter", async () => {
+    membersMock.mockResolvedValue({ org: "acme", members: [], two_factor_overlay_available: true });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(membersMock).toHaveBeenCalledWith("acme", "all", undefined);
+    });
+
+    fireEvent.change(screen.getByDisplayValue("All roles"), { target: { value: "admin" } });
+
+    await waitFor(() => {
+      expect(membersMock).toHaveBeenCalledWith("acme", "admin", undefined);
+    });
+  });
+
   it("surfaces an error message when the members query fails", async () => {
     membersMock.mockRejectedValue(new Error("No GitHub App installation found"));
 
