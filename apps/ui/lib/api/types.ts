@@ -288,3 +288,38 @@ export interface CockpitResponse {
   total_cache_size_bytes: number
   cache_job_success_rate: number
 }
+
+export interface WorkflowSummary {
+  id: number
+  name: string
+  path: string
+  state: string
+  last_run_status: string | null
+  last_run_conclusion: string | null
+  last_run_at: string | null
+}
+
+export interface WorkflowsResponse {
+  repository: string
+  workflows: WorkflowSummary[]
+}
+
+export interface RunSummary {
+  id: number
+  name: string | null
+  status: string
+  conclusion: string | null
+  head_branch: string
+  created_at: string
+  duration_ms: number | null
+}
+
+export interface RunsResponse {
+  repository: string
+  runs: RunSummary[]
+}
+
+export interface DispatchResponse {
+  dispatched: boolean
+  message: string | null
+}
