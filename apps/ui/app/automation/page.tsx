@@ -56,7 +56,8 @@ export default function AutomationPage() {
   useEffect(() => {
     setToken("")
     setTokenSaved(false)
-    if (owner.trim().length > 2) resolveMutation.mutate(owner.trim())
+    // > 0, not > 2 -- valid GitHub org logins can be 1-2 characters (see activity/page.tsx).
+    if (owner.trim().length > 0) resolveMutation.mutate(owner.trim())
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner])
 
