@@ -30,6 +30,17 @@ def list_jobs(db: Session, limit: int = 50) -> list[dict]:
     ]
 
 
+def list_recent_by_type(db: Session, job_type: str, limit: int = 20) -> list[dict]:
+    rows = (
+        db.query(Job)
+        .filter(Job.job_type == job_type)
+        .order_by(Job.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [{"id": r.id, "status": r.status} for r in rows]
+
+
 def mark_done(db: Session, job_id: int, result: str) -> None:
     db.query(Job).filter(Job.id == job_id).update(
         {"status": "done", "result": result, "updated_at": func.now()}
