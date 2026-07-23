@@ -12,8 +12,11 @@ from src.repositories import org_membership_repo, org_repo
 from src.routers.invitations import router as invitations_router
 
 
-def _make_user(db, email: str) -> UserOut:
-    user = User(email=email, name=None, password_hash=None, is_workspace_admin=False)
+def _make_user(db, email: str, email_verified: bool = True) -> UserOut:
+    # Verified by default so the existing email-match tests below aren't also implicitly
+    # testing the (separately covered) email-verification requirement -- see
+    # test_accept_invitation_unverified_email_forbidden for that.
+    user = User(email=email, name=None, password_hash=None, is_workspace_admin=False, email_verified=email_verified)
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -96,6 +99,35 @@ def test_accept_invitation_ok(db, acme_org):
     # Accepting again fails — invitation is no longer pending.
     resp = _client(db, acme_org["invitee"]).post(f"/invitations/{token}/accept")
     assert resp.status_code == 409
+
+
+def test_accept_invitation_unverified_email_forbidden(db, acme_org):
+    # Regression test for issue #217: email match alone must not be enough for a
+    # self-registered account that hasn't proven it controls the invited inbox.
+    unverified = _make_user(db, "dave@acme.com", email_verified=False)
+    created = _client(db, acme_org["admin"]).post("/orgs/acme/invitations", json={"email": "dave@acme.com"}).json()
+    token = created["invite_link"].rsplit("/", 1)[-1]
+
+    resp = _client(db, unverified).post(f"/invitations/{token}/accept")
+    assert resp.status_code == 403
+    assert "verify" in resp.json()["detail"].lower()
+
+
+def test_accept_invitation_succeeds_once_verified(db, acme_org):
+    unverified = _make_user(db, "erin@acme.com", email_verified=False)
+    created = _client(db, acme_org["admin"]).post("/orgs/acme/invitations", json={"email": "erin@acme.com"}).json()
+    token = created["invite_link"].rsplit("/", 1)[-1]
+
+    resp = _client(db, unverified).post(f"/invitations/{token}/accept")
+    assert resp.status_code == 403
+
+    user_row = db.query(User).filter(User.id == unverified.id).first()
+    user_row.email_verified = True
+    db.commit()
+
+    resp = _client(db, unverified).post(f"/invitations/{token}/accept")
+    assert resp.status_code == 200
+    assert resp.json() == {"org_login": "acme", "role": "member"}
 
 
 def test_accept_invitation_case_insensitive_email_match(db, acme_org):

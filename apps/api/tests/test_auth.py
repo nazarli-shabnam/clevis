@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Query
 
 from src.core.auth import UserOut, require_auth, require_workspace_admin
-from src.core.db import get_db
+from src.core.db import User, get_db
 from src.core.rate_limit import _account_buckets as _account_rate_limit_buckets
 from src.core.rate_limit import _buckets as _rate_limit_buckets
 from src.repositories import invitation_repo, org_repo
@@ -209,6 +209,126 @@ def test_register_disabled_returns_403(auth_client):
             "/auth/register", json={"email": "blocked@example.com", "password": "supersecret1234"}
         )
     assert resp.status_code == 403
+
+
+# email verification (issue #217)
+
+def test_setup_creates_a_verified_admin(auth_client, db):
+    _setup_owner(auth_client, email="owner@example.com")
+    user = db.query(User).filter(User.email == "owner@example.com").first()
+    assert user.email_verified is True
+    assert user.email_verify_token is None
+
+
+def test_register_creates_an_unverified_user_with_a_pending_token(auth_client, db):
+    _setup_owner(auth_client)
+    resp = auth_client.post(
+        "/auth/register", json={"email": "member@example.com", "password": "supersecret1234"}
+    )
+    assert resp.status_code == 201
+    user = db.query(User).filter(User.email == "member@example.com").first()
+    assert user.email_verified is False
+    assert user.email_verify_token is not None
+    assert user.email_verify_token_expires_at is not None
+
+
+def test_register_still_succeeds_when_smtp_is_not_configured(auth_client):
+    # Default test settings have no SMTP configured -- registration must succeed
+    # regardless (account creation must never depend on email sending working).
+    _setup_owner(auth_client)
+    resp = auth_client.post(
+        "/auth/register", json={"email": "member@example.com", "password": "supersecret1234"}
+    )
+    assert resp.status_code == 201
+
+
+def test_register_logs_a_warning_but_does_not_fail_when_email_sending_raises(auth_client):
+    _setup_owner(auth_client)
+    with patch("src.routers.auth.send_verification_email", side_effect=RuntimeError("smtp exploded")):
+        resp = auth_client.post(
+            "/auth/register", json={"email": "member@example.com", "password": "supersecret1234"}
+        )
+    assert resp.status_code == 201
+
+
+def test_register_still_succeeds_when_cors_origins_is_misconfigured_empty(auth_client):
+    # Regression test: verify_url construction (f"{settings.cors_origins[0]}/...") used to
+    # sit outside the try/except in _send_verification_email_best_effort, so an operator
+    # misconfiguring CORS_ORIGINS=[] would raise an uncaught IndexError there and break
+    # registration itself, not just the email send.
+    from src.core.config import settings
+
+    _setup_owner(auth_client)
+    with patch.object(settings, "cors_origins", []):
+        resp = auth_client.post(
+            "/auth/register", json={"email": "member@example.com", "password": "supersecret1234"}
+        )
+    assert resp.status_code == 201
+
+
+def test_verify_email_marks_the_account_verified_and_clears_the_token(auth_client, db):
+    _setup_owner(auth_client)
+    auth_client.post("/auth/register", json={"email": "member@example.com", "password": "supersecret1234"})
+    user = db.query(User).filter(User.email == "member@example.com").first()
+    token = user.email_verify_token
+
+    resp = auth_client.post("/auth/verify-email", json={"token": token})
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+
+    db.refresh(user)
+    assert user.email_verified is True
+    assert user.email_verify_token is None
+    assert user.email_verify_token_expires_at is None
+
+
+def test_verify_email_rejects_an_unknown_token(auth_client):
+    resp = auth_client.post("/auth/verify-email", json={"token": "not-a-real-token"})
+    assert resp.status_code == 400
+
+
+def test_verify_email_rejects_an_expired_token(auth_client, db):
+    _setup_owner(auth_client)
+    auth_client.post("/auth/register", json={"email": "member@example.com", "password": "supersecret1234"})
+    user = db.query(User).filter(User.email == "member@example.com").first()
+    user.email_verify_token_expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    db.commit()
+
+    resp = auth_client.post("/auth/verify-email", json={"token": user.email_verify_token})
+    assert resp.status_code == 400
+    db.refresh(user)
+    assert user.email_verified is False
+
+
+def test_resend_verification_regenerates_the_token(auth_client, db):
+    _setup_owner(auth_client)
+    register_resp = auth_client.post(
+        "/auth/register", json={"email": "member@example.com", "password": "supersecret1234"}
+    )
+    token = register_resp.json()["access_token"]
+    user = db.query(User).filter(User.email == "member@example.com").first()
+    original_token = user.email_verify_token
+
+    resp = auth_client.post("/auth/resend-verification", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "already_verified": False}
+
+    db.refresh(user)
+    assert user.email_verify_token is not None
+    assert user.email_verify_token != original_token
+
+
+def test_resend_verification_is_a_noop_for_an_already_verified_account(auth_client):
+    token = _setup_owner(auth_client, email="owner@example.com")["access_token"]
+
+    resp = auth_client.post("/auth/resend-verification", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "already_verified": True}
+
+
+def test_resend_verification_requires_auth(auth_client):
+    resp = auth_client.post("/auth/resend-verification")
+    assert resp.status_code == 401
 
 
 # login

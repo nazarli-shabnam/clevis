@@ -4,6 +4,8 @@ Auth router — /auth/*
 Endpoints:
   POST /auth/setup          First-run only; creates the owner account (409 if users exist)
   POST /auth/register       Creates a non-owner account; 403 if registration_enabled=false
+  POST /auth/verify-email   Marks the account owning the given token as email-verified
+  POST /auth/resend-verification Resends the verification email to the caller, if unverified
   POST /auth/login          Returns a JWT on valid credentials
   GET  /auth/me             Returns the current authenticated user
   PATCH /auth/me            Updates the current user's display name
@@ -13,10 +15,18 @@ Endpoints:
 /auth/login and /auth/register are rate-limited per client IP (see src.core.rate_limit);
 /auth/login is additionally rate-limited per submitted email, so an attacker spread across
 many source IPs can't bypass the IP-keyed limit by targeting one account.
+
+Email verification (issue #217): register() creates accounts with email_verified=False
+and emails a verification link; setup() and GitHub-OAuth-linked accounts (see
+src.routers.github_auth) are verified immediately since their email is already trusted
+(the deploying operator, or GitHub itself). Unverified accounts work normally everywhere
+except accepting an org invitation (src.routers.invitations), which requires proof the
+account actually controls the invited inbox.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import logging
+import secrets
 
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -27,14 +37,35 @@ from sqlalchemy.orm import Session
 
 from src.core.app_config import get_config
 from src.core.auth import UserOut, clear_session_cookie, create_access_token, require_auth
+from src.core.config import settings
 from src.core.db import Org, User, get_db
 from src.core.rate_limit import check_account_rate_limit, rate_limit
 from src.repositories import invitation_repo
+from src.services.email import EmailNotConfigured, send_verification_email
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _MIN_PASSWORD_LEN = 12
+_VERIFY_TOKEN_TTL = timedelta(hours=24)
+
+
+def _send_verification_email_best_effort(user: User) -> None:
+    """Generates a fresh verification token/expiry on `user`, then tries to email it.
+    Caller is responsible for db.commit(). Never raises -- registration/resend must
+    succeed regardless of whether SMTP is configured or the send itself fails."""
+    user.email_verify_token = secrets.token_urlsafe(32)
+    user.email_verify_token_expires_at = datetime.now(timezone.utc) + _VERIFY_TOKEN_TTL
+    try:
+        verify_url = f"{settings.cors_origins[0]}/verify-email?token={user.email_verify_token}"
+        send_verification_email(user.email, verify_url)
+    except EmailNotConfigured:
+        logger.warning("SMTP not configured -- skipping verification email for %s", user.email)
+    except Exception:
+        # Covers both a send failure and a misconfigured empty CORS_ORIGINS (cors_origins[0]
+        # would otherwise raise IndexError here, uncaught, breaking registration itself --
+        # this function must never raise regardless of the cause.
+        logger.exception("failed to send verification email to %s", user.email)
 
 # Arbitrary constant identifying the /auth/setup critical section for pg_advisory_xact_lock
 # (see setup()). Any int works; this one has no other significance.
@@ -78,12 +109,14 @@ class LoginRequest(BaseModel):
 
 
 class PendingInvitationSummary(BaseModel):
-    # Deliberately excludes the invitation token: registration has no email-verification
-    # step anywhere in this app, so "an account with email X" is not proof of controlling
-    # inbox X. Handing back the accept-capability token here would let anyone who merely
-    # knows a victim's email address (self-asserted at register, never verified) claim
-    # their pending org invitation without ever seeing the real invite link — this must
-    # stay informational only ("an invite exists"), never a shortcut to accepting it.
+    # Deliberately excludes the invitation token: the email isn't verified yet at
+    # register()/login() time (verification is async, via the emailed link -- see
+    # accept_invitation's email_verified check in src.routers.invitations), so "an
+    # account with email X" is still not immediate proof of controlling inbox X. Handing
+    # back the accept-capability token here would let anyone who merely knows a victim's
+    # email address (self-asserted at register, not yet verified) claim their pending org
+    # invitation without ever seeing the real invite link — this must stay informational
+    # only ("an invite exists"), never a shortcut to accepting it.
     org_login: str
     expires_at: datetime
 
@@ -102,6 +135,7 @@ class MeResponse(BaseModel):
     email: str
     name: str | None
     is_workspace_admin: bool
+    email_verified: bool
     created_at: datetime
 
 
@@ -111,6 +145,19 @@ class PatchMeRequest(BaseModel):
 
 class SetupRequiredResponse(BaseModel):
     setup_required: bool
+
+
+class VerifyEmailRequest(BaseModel):
+    token: str
+
+
+class VerifyEmailResponse(BaseModel):
+    ok: bool
+
+
+class ResendVerificationResponse(BaseModel):
+    ok: bool
+    already_verified: bool = False
 
 
 def _pending_invitations_for(db: Session, email: str) -> list[PendingInvitationSummary]:
@@ -159,6 +206,9 @@ def setup(body: SetupRequest, db: Session = Depends(get_db)):
         name=body.name,
         password_hash=_hash_password(body.password),
         is_workspace_admin=True,
+        # The deploying operator's own account -- implicitly trusted, same reasoning as
+        # is_workspace_admin=True here (no one else could have run first-boot setup).
+        email_verified=True,
     )
     db.add(user)
     try:
@@ -190,26 +240,65 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
         name=body.name,
         password_hash=_hash_password(body.password),
         is_workspace_admin=False,
+        email_verified=False,
     )
     db.add(user)
     try:
-        db.commit()
+        # flush (not commit) so user.id is assigned in time for the verification token
+        # below -- this is also where a race with a concurrent /auth/register for the same
+        # email actually surfaces: both passed the existence check above before either
+        # flushed, and users.email is unique, so the second flush raises here instead of
+        # racing to a raw 500 at commit time.
+        db.flush()
     except IntegrityError:
-        # Lost a race with a concurrent /auth/register for the same email -- both passed
-        # the existence check above before either committed. users.email is unique, so the
-        # second commit raises here instead of racing to a raw 500.
         db.rollback()
         raise HTTPException(status_code=409, detail="An account with this email already exists") from None
+    _send_verification_email_best_effort(user)
+    db.commit()
     db.refresh(user)
     token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name, user.token_version)
     return {
         "access_token": token,
         "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin),
-        # Never populated here: register has no email-verification step, so a self-asserted
-        # email is not proof of inbox control — looking this up would let an attacker learn
-        # whether/where a victim's email has a pending invite just by registering with it.
+        # Never populated here: the email isn't verified yet at this point (verification is
+        # async, via the emailed link), so a self-asserted email is still not proof of inbox
+        # control -- looking this up would let an attacker learn whether/where a victim's
+        # email has a pending invite just by registering with it.
         "pending_invitations": [],
     }
+
+
+@router.post("/verify-email", response_model=VerifyEmailResponse, dependencies=[Depends(rate_limit())])
+def verify_email(body: VerifyEmailRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email_verify_token == body.token).first()
+    if user is None:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification link")
+    if (
+        user.email_verify_token_expires_at is None
+        or user.email_verify_token_expires_at < datetime.now(timezone.utc)
+    ):
+        raise HTTPException(status_code=400, detail="Invalid or expired verification link")
+    user.email_verified = True
+    user.email_verify_token = None
+    user.email_verify_token_expires_at = None
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/resend-verification", response_model=ResendVerificationResponse, dependencies=[Depends(rate_limit())])
+def resend_verification(
+    current_user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == current_user.id).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.email_verified:
+        return {"ok": True, "already_verified": True}
+    check_account_rate_limit(f"resend-verification:{user.email.lower()}")
+    _send_verification_email_best_effort(user)
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/logout")

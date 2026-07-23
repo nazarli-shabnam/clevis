@@ -383,5 +383,8 @@ export const api = {
     patchMe: (name: string) =>
       patch<{ id: number; email: string; name: string | null; is_workspace_admin: boolean }>("/auth/me", { name }),
     revokeSessions: () => post<{ ok: boolean }>("/auth/me/revoke-sessions", {}),
+    verifyEmail: (token: string) => post<{ ok: boolean }>("/auth/verify-email", { token }),
+    resendVerification: () =>
+      post<{ ok: boolean; already_verified: boolean }>("/auth/resend-verification", {}),
   },
 }

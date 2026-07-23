@@ -106,6 +106,14 @@ def test_idempotent_by_github_id(db):
     assert db.query(User).count() == 1
 
 
+def test_new_github_user_is_created_already_verified(db):
+    # Regression test for issue #217: GitHub already vouches for the identity's email
+    # (fetch_identity only ever returns a GitHub-verified address), so a GitHub-created
+    # account shouldn't need to click an emailed verification link too.
+    user = find_or_create_user(db, _identity())
+    assert user.email_verified is True
+
+
 # ── endpoints ─────────────────────────────────────────────────────────────────
 
 def test_login_redirects_to_github(gh_client, oauth_configured):
