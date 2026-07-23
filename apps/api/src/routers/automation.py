@@ -16,7 +16,7 @@ there's a record even if GitHub rejects or times out the dispatch.
 from datetime import datetime
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
@@ -154,7 +154,7 @@ def org_list_runs(
     org_login: str,
     owner: str,
     repo: str,
-    per_page: int = 10,
+    per_page: int = Query(default=10, ge=1, le=100),
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),
@@ -208,7 +208,7 @@ def personal_list_workflows(
 def personal_list_runs(
     owner: str,
     repo: str,
-    per_page: int = 10,
+    per_page: int = Query(default=10, ge=1, le=100),
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),

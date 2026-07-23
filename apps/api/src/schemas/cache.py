@@ -1,4 +1,4 @@
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, Field, SecretStr
 
 
 class CacheListInput(BaseModel):
@@ -9,8 +9,11 @@ class CacheListInput(BaseModel):
 
 class CacheClearInput(BaseModel):
     token: SecretStr | None = None
-    key: str | None = None
-    ref: str | None = None
+    # Bounded so a caller can't bloat the jobs/audit_logs payload columns (both
+    # unbounded Text) with an arbitrarily large value. 512 matches GitHub's own Actions
+    # cache key limit; 255 is a generous cap for a git ref name.
+    key: str | None = Field(default=None, max_length=512)
+    ref: str | None = Field(default=None, max_length=255)
     dry_run: bool = True
 
 

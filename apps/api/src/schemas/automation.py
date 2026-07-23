@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, Field, SecretStr
 
 
 class WorkflowSummary(BaseModel):
@@ -42,8 +43,12 @@ class DispatchInput(BaseModel):
     # Optional: falls back to a GitHub App installation token when one is connected
     # for this owner (see src.services.token_resolution).
     token: SecretStr | None = None
-    ref: str
-    inputs: dict[str, str] | None = None
+    # Bounded so a caller can't bloat the jobs/audit_logs payload columns (both
+    # unbounded Text) with an arbitrarily large value. 255 is a generous cap for a git
+    # ref name. GitHub's workflow_dispatch API documents a hard limit of 10 input keys;
+    # 1024 chars per value isn't a documented GitHub limit, just a generous defensive cap.
+    ref: str = Field(max_length=255)
+    inputs: dict[str, Annotated[str, Field(max_length=1024)]] | None = Field(default=None, max_length=10)
 
 
 class DispatchResponse(BaseModel):

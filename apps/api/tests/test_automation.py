@@ -151,6 +151,48 @@ def test_personal_list_runs_no_token_returns_400(automation_client):
     assert resp.status_code == 400
 
 
+def test_personal_list_runs_rejects_out_of_range_per_page(automation_client):
+    # Regression test for issue #224 item 2: per_page had no Query(le=...) bound, so an
+    # arbitrary/negative value produced an opaque upstream GitHub 400 instead of a clean
+    # 422 at the boundary, unlike audit.py's equivalent limit param.
+    resp = automation_client.get(
+        "/me/repos/acme/demo/actions/runs",
+        params={"per_page": 1000},
+        headers={"X-GitHub-Token": "ghp_testtoken123456789012345678901234"},
+    )
+    assert resp.status_code == 422
+
+    resp = automation_client.get(
+        "/me/repos/acme/demo/actions/runs",
+        params={"per_page": 0},
+        headers={"X-GitHub-Token": "ghp_testtoken123456789012345678901234"},
+    )
+    assert resp.status_code == 422
+
+
+def test_personal_dispatch_rejects_oversized_ref(automation_client):
+    # Regression test for issue #224 item 3: DispatchInput.ref/inputs had no max_length,
+    # letting a caller bloat the jobs/audit_logs payload columns with an arbitrarily large
+    # value via a legitimate authenticated endpoint.
+    resp = automation_client.post(
+        "/me/repos/acme/demo/workflows/1/dispatch",
+        json={"token": "ghp_testtoken123456789012345678901234", "ref": "x" * 300},
+    )
+    assert resp.status_code == 422
+
+
+def test_personal_dispatch_rejects_too_many_inputs(automation_client):
+    resp = automation_client.post(
+        "/me/repos/acme/demo/workflows/1/dispatch",
+        json={
+            "token": "ghp_testtoken123456789012345678901234",
+            "ref": "main",
+            "inputs": {f"key{i}": "v" for i in range(11)},
+        },
+    )
+    assert resp.status_code == 422
+
+
 def test_personal_dispatch_writes_audit_log_before_github_call(automation_client, db):
     db.add(User(id=_USER.id, email=_USER.email, name=None, password_hash=None, is_workspace_admin=False))
     db.commit()

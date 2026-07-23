@@ -14,8 +14,6 @@ logger = logging.getLogger(__name__)
 
 
 def run_all_checks(owner: str, token: str, base_url: str = "https://api.github.com") -> dict:
-    repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
-
     checks = [
         OrgMFARequired(),
         BranchProtectionEnabled(),
@@ -24,6 +22,27 @@ def run_all_checks(owner: str, token: str, base_url: str = "https://api.github.c
         CodeScanningCheck(),
         DefaultBranchNoForcePushCheck(),
     ]
+
+    # Every individual check.run() below is hardened to degrade to a per-check "error"
+    # result on failure -- this prefetch feeds all of them, so an unguarded failure here
+    # would raise out of run_all_checks entirely instead of degrading the same way.
+    try:
+        repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
+    except Exception:
+        logger.exception("failed to fetch repo list for %s", owner)
+        results = [
+            {
+                "id": check.metadata.check_id,
+                "title": check.metadata.title,
+                "severity": check.metadata.severity,
+                "remediation": check.metadata.remediation,
+                "status": "error",
+                "value": "Check failed: could not fetch repository list",
+            }
+            for check in checks
+        ]
+        return {"checks": results, "repo_count": 0}
+
     results = []
     for check in checks:
         try:
