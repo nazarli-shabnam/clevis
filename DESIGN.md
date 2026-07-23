@@ -110,12 +110,12 @@ Prefer `gap-3` (12px) within components and `gap-4` (16px) between top-level pan
 
 ### Sidebar (`components/app-sidebar.tsx`)
 
-- Two section groups: **Analytics** (Overview, Activity, Repositories, Health & Security) and **Management** (Collaborators, Automation).
-- Group labels: `text-[0.6875rem] uppercase tracking-widest text-sidebar-foreground/30`.
-- **Active item**: `bg-sidebar-accent text-sidebar-primary` + a 2px left bar via `before:` pseudo-element (`before:w-0.5 before:bg-sidebar-primary`).
-- **Inactive item**: `text-sidebar-foreground/45`, hover `text-sidebar-foreground bg-sidebar-accent/50`.
-- Logo mark: small rounded square with `bg-sidebar-primary/20` fill and a `size-2` purple dot inside. Not an image.
-- Footer: `GitBranch` icon + org name at `text-sidebar-foreground/30`. One line, no status dot.
+- **Profile widget lives at the top** (`SidebarHeader`), not a footer — a `size-7` initials avatar (`bg-primary/15` fill, `border-primary/25`) + name/org two-liner + a `GearSix` icon, opening a `ProfileDropdown` on click. Settings is not a nav item; it lives inside this dropdown.
+- Four unlabeled section groups (separated by a `SidebarSeparator`, no group-label text): Overview/Activity/Pull Requests/Releases · Repositories/Health & Security · Collaborators/Automation/Audit Log/Job Queue · My PRs/My Reviews/My Issues.
+- Not-yet-shipped items (Pull Requests, Releases, the whole "My…" group) carry `comingSoon: true` and render a pill: `text-[0.625rem] font-medium text-sidebar-foreground/40 border border-sidebar-border/60 rounded-full px-1.5 py-0.5` reading "Soon".
+- Activity carries an unread-count badge when `showUnreadBadge` and count > 0: `bg-primary/20 text-primary rounded-full px-1.5 py-0.5 text-[0.625rem] tabular-nums`. Health & Security carries a `showHealthDot` status dot instead, when set.
+- **Active item**: `bg-sidebar-accent text-sidebar-foreground font-medium`.
+- **Inactive item**: `text-sidebar-foreground/50`, hover `text-sidebar-foreground bg-sidebar-accent/60`.
 
 ### Page Header (`components/page-header.tsx`)
 
