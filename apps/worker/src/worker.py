@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+from pathlib import Path
 
 import httpx
 import psycopg
@@ -15,6 +16,12 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
 )
 log = logging.getLogger(__name__)
+
+# Touched once per poll loop iteration so the docker-compose healthcheck can tell a hung
+# worker (process alive but stuck, e.g. blocked on a network call with no timeout) apart
+# from a genuinely healthy one -- `restart: unless-stopped` only fires on a hard crash,
+# not a hang, so without this a stuck worker container would never be restarted.
+HEARTBEAT_FILE = Path("/tmp/worker_heartbeat")
 
 # psycopg.connect() expects plain postgresql://, not the SQLAlchemy +psycopg dialect prefix
 _DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg://", "postgresql://")
@@ -207,10 +214,20 @@ def _reclaim_stale_jobs(conn: psycopg.Connection) -> None:
         log.warning("reclaimed stale job %d -> %s", job_id, status)
 
 
+def _touch_heartbeat() -> None:
+    try:
+        HEARTBEAT_FILE.write_text(str(time.time()))
+    except OSError as exc:
+        # Non-fatal -- the heartbeat is only a liveness signal for the healthcheck, not
+        # required for job processing itself.
+        log.warning("could not write heartbeat file %s: %s", HEARTBEAT_FILE, exc)
+
+
 def run() -> None:
     poll_seconds = _read_poll_seconds()
     log.info("worker started, polling every %ds", poll_seconds)
     while True:
+        _touch_heartbeat()
         # Re-read poll interval each cycle so changes in settings take effect without restart
         poll_seconds = _read_poll_seconds()
         try:

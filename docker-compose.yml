@@ -8,9 +8,16 @@ name: clevis
 #            docker compose up --build       → full stack
 
 services:
+  # mem_limit values below are tuned for a 4GB host, leaving headroom for the OS and
+  # Traefik -- without a per-container cap, one service creeping up in RSS (e.g. the
+  # unbounded-pagination OOM risk fixed in issue #214) has nothing stopping it from
+  # starving the others, and the kernel OOM-killer's victim selection isn't necessarily
+  # the actual offender, so failures present as an unrelated service crashing. Revisit
+  # these if the host's RAM budget changes.
   db:
     container_name: db
     image: postgres:17
+    mem_limit: 1g
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -32,6 +39,7 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+    mem_limit: 768m
     env_file:
       - .env
     expose:
@@ -54,6 +62,7 @@ services:
     build:
       context: .
       dockerfile: apps/worker/Dockerfile
+    mem_limit: 512m
     env_file:
       - .env
     depends_on:
@@ -62,6 +71,15 @@ services:
       api:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      # worker.py touches HEARTBEAT_FILE once per poll loop iteration -- a hung-but-alive
+      # process (e.g. blocked on a network call) stops updating it, so this catches hangs
+      # that `restart: unless-stopped` alone wouldn't (that only fires on a hard crash).
+      test: ["CMD", "python", "-c", "import time,sys; sys.exit(0 if time.time() - __import__('os').path.getmtime('/tmp/worker_heartbeat') < 60 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks:
       - clevis
 
@@ -73,6 +91,7 @@ services:
         # NEXT_PUBLIC_* vars must be available at build time
         NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE}
         NEXT_PUBLIC_GITHUB_APP_SLUG: ${NEXT_PUBLIC_GITHUB_APP_SLUG:-}
+    mem_limit: 512m
     env_file:
       - .env
     expose:
@@ -82,6 +101,14 @@ services:
         condition: service_healthy
         required: false
     restart: unless-stopped
+    healthcheck:
+      # node, not curl -- the ui image's runner stage is node:22-alpine, which has no
+      # curl/wget by default.
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks:
       - clevis
 
