@@ -142,8 +142,10 @@ def setup(body: SetupRequest, db: Session = Depends(get_db)):
     # count()==0 check before either commits -- unlike /auth/register's email race, there's
     # no unique-constraint collision to catch this (the two rows don't share a column
     # value), so it would otherwise silently create two workspace admins. The advisory
-    # lock serializes the whole check-then-insert critical section; it's released
-    # automatically when this transaction commits or rolls back.
+    # lock serializes the whole check-then-insert critical section; it's transaction-scoped,
+    # so it's released whenever this transaction ends -- an explicit commit/rollback below,
+    # or (on the early-409 path, which does neither) get_db()'s finally: db.close(), which
+    # implicitly rolls back and returns the connection to the pool at the end of the request.
     db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _SETUP_LOCK_KEY})
     if db.query(User).count() > 0:
         raise HTTPException(status_code=409, detail="Setup already complete")
