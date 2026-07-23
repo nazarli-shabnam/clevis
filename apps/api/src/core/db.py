@@ -85,6 +85,13 @@ class Job(Base):
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    # Touched by the worker every ~10s while a job handler is actually running (see
+    # apps/worker/src/worker.py's _heartbeat_while_running). Lets _reclaim_stale_jobs tell
+    # a genuinely slow-but-alive job apart from one whose worker crashed -- updated_at alone
+    # can't, since it's only set at claim time and doesn't change again until the job
+    # finishes. Null for a job that was claimed before this column existed, or hasn't had
+    # its first heartbeat tick yet.
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class SavedToken(Base):

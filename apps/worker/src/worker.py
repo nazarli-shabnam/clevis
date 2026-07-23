@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 import time
 from pathlib import Path
 
@@ -39,8 +40,14 @@ _DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg:/
 # the job 'failed' once exceeded, so a job can't retry forever regardless of cause.
 MAX_RETRIES = 5
 # A job left in 'processing' longer than this almost certainly had its worker crash or
-# get killed mid-job (see _reclaim_stale_jobs) rather than still being genuinely in flight.
+# get killed mid-job (see _reclaim_stale_jobs) rather than still being genuinely in flight
+# -- unless its heartbeat_at is still fresh (see _JobHeartbeat / _reclaim_stale_jobs).
 RECLAIM_TIMEOUT_MINUTES = 30
+
+# How often _JobHeartbeat touches jobs.heartbeat_at while a handler is running. Comfortably
+# below RECLAIM_TIMEOUT_MINUTES so a genuinely slow-but-alive job's heartbeat always stays
+# fresh well ahead of the reclaim sweep's staleness check.
+_JOB_HEARTBEAT_INTERVAL_SECONDS = 10
 
 
 def _read_app_config(key: str, default: str) -> str:
@@ -199,7 +206,14 @@ def _reclaim_stale_jobs(conn: psycopg.Connection) -> None:
     poll query only ever selects 'queued' rows, so without this such a job is stuck
     forever. Shares retry_count/MAX_RETRIES with process_job's transient-failure retry so
     a job that repeatedly crashes its worker eventually gets marked 'failed' instead of
-    looping indefinitely."""
+    looping indefinitely.
+
+    Only reclaims a job whose heartbeat_at is ALSO stale (or null, for a job claimed before
+    this column existed / before its handler's first heartbeat tick) -- updated_at alone is
+    set once at claim time and never again until the job finishes, so on its own it can't
+    tell a legitimately slow job from a crashed one. heartbeat_at is touched every
+    _JOB_HEARTBEAT_INTERVAL_SECONDS by _JobHeartbeat while a handler is actually running
+    (see issue #215), so a still-alive job's heartbeat stays fresh well past 30 minutes."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -210,6 +224,7 @@ def _reclaim_stale_jobs(conn: psycopg.Connection) -> None:
                 updated_at = NOW()
             WHERE status = 'processing'
               AND updated_at < NOW() - make_interval(mins => %(timeout_minutes)s)
+              AND (heartbeat_at IS NULL OR heartbeat_at < NOW() - make_interval(mins => %(timeout_minutes)s))
             RETURNING id, status
             """,
             {
@@ -222,6 +237,47 @@ def _reclaim_stale_jobs(conn: psycopg.Connection) -> None:
     conn.commit()
     for job_id, status in reclaimed:
         log.warning("reclaimed stale job %d -> %s", job_id, status)
+
+
+def _touch_job_heartbeat(job_id: int) -> None:
+    """Runs on its own DB connection, separate from the one process_job uses on the main
+    thread -- psycopg connections aren't safe to share across threads."""
+    try:
+        with psycopg.connect(_DB_URL) as hb_conn:
+            with hb_conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE jobs SET heartbeat_at = NOW() WHERE id = %s AND status = 'processing'",
+                    (job_id,),
+                )
+            hb_conn.commit()
+    except Exception as exc:
+        # Non-fatal -- worst case the reclaim sweep sees a stale heartbeat and reclaims a
+        # job that's actually still running, the same failure mode as before this existed.
+        log.warning("could not touch heartbeat for job %d: %s", job_id, exc)
+
+
+class _JobHeartbeat:
+    """Context manager: touches jobs.heartbeat_at for `job_id` every
+    _JOB_HEARTBEAT_INTERVAL_SECONDS on a background thread for as long as the `with` block
+    runs, so _reclaim_stale_jobs can tell this job apart from a crashed one. See issue #215."""
+
+    def __init__(self, job_id: int):
+        self._job_id = job_id
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self) -> None:
+        while not self._stop.wait(_JOB_HEARTBEAT_INTERVAL_SECONDS):
+            _touch_job_heartbeat(self._job_id)
+
+    def __enter__(self) -> "_JobHeartbeat":
+        _touch_job_heartbeat(self._job_id)  # immediate first tick, don't wait a full interval
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._stop.set()
+        self._thread.join(timeout=_JOB_HEARTBEAT_INTERVAL_SECONDS)
 
 
 def _touch_heartbeat() -> None:
@@ -260,7 +316,8 @@ def run() -> None:
 
                 if row:
                     conn.commit()
-                    process_job(conn, *row)
+                    with _JobHeartbeat(row[0]):
+                        process_job(conn, *row)
         except psycopg.OperationalError:
             log.error("database connection failed, retrying in %ds", poll_seconds)
         except Exception as error:
