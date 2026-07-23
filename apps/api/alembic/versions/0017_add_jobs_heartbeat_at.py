@@ -9,7 +9,7 @@ duplicate its external side effect, and depending on timing the job can end
 up mislabeled 'failed' even though the original attempt actually succeeded.
 
 heartbeat_at is touched by the worker every ~10s while a job handler is
-actually running (apps/worker/src/worker.py's _heartbeat_while_running), so
+actually running (apps/worker/src/worker.py's _JobHeartbeat / _touch_job_heartbeat), so
 _reclaim_stale_jobs can check it instead of/alongside updated_at and leave a
 genuinely-still-running job alone past 30 minutes.
 

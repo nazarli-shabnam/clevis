@@ -254,6 +254,12 @@ def _touch_job_heartbeat(job_id: int) -> None:
         # Non-fatal -- worst case the reclaim sweep sees a stale heartbeat and reclaims a
         # job that's actually still running, the same failure mode as before this existed.
         log.warning("could not touch heartbeat for job %d: %s", job_id, exc)
+    # Also refresh the container-level file heartbeat (see _touch_heartbeat/HEARTBEAT_FILE):
+    # run()'s loop only touches it once per poll iteration, before a job is even claimed, so
+    # without this a job handler running past the healthcheck's 60s staleness threshold would
+    # get the worker marked unhealthy mid-job -- exactly during the long-running handlers this
+    # DB heartbeat was added to support.
+    _touch_heartbeat()
 
 
 class _JobHeartbeat:

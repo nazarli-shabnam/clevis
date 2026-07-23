@@ -51,6 +51,20 @@ def test_touch_job_heartbeat_is_a_noop_for_a_job_that_is_no_longer_processing(wo
     assert _heartbeat_at(conn, job_id) is None
 
 
+def test_touch_job_heartbeat_also_refreshes_the_container_heartbeat_file(worker_db, tmp_path, monkeypatch):
+    # Regression test: run()'s poll loop only touches HEARTBEAT_FILE once per iteration,
+    # before a job is even claimed -- without this, a job handler running past the
+    # healthcheck's 60s staleness threshold gets the worker marked unhealthy mid-job.
+    heartbeat_file = tmp_path / "worker_heartbeat"
+    monkeypatch.setattr(worker, "HEARTBEAT_FILE", heartbeat_file)
+    conn, created_ids = worker_db
+    job_id = _insert_processing_job(conn, created_ids)
+
+    _touch_job_heartbeat(job_id)
+
+    assert heartbeat_file.exists()
+
+
 def test_job_heartbeat_ticks_repeatedly_while_the_context_is_open(worker_db, monkeypatch):
     # Short interval so the test doesn't take _JOB_HEARTBEAT_INTERVAL_SECONDS' real 10s.
     monkeypatch.setattr(worker, "_JOB_HEARTBEAT_INTERVAL_SECONDS", 0.05)
