@@ -50,6 +50,21 @@ export default function CollaboratorsPage() {
             title="Couldn't load your organizations"
             description="Something went wrong checking your organization memberships. Try refreshing the page."
           />
+        ) : memberships.length > 0 ? (
+          <div className="border border-dashed border-border rounded-md px-6 py-12">
+            <p className="text-sm text-muted-foreground">
+              Member management is only available for organizations where you&rsquo;re an admin. You&rsquo;re a
+              member (not admin) of:
+            </p>
+            <ul className="mt-2 text-sm text-foreground list-disc list-inside">
+              {memberships.map((m) => (
+                <li key={m.org_login}>{m.org_login}</li>
+              ))}
+            </ul>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Ask an admin of one of these organizations to grant you admin access.
+            </p>
+          </div>
         ) : (
           <EmptyState
             title="No organization to manage"

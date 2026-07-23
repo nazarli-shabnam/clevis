@@ -81,8 +81,22 @@ describe("CollaboratorsPage", () => {
     );
   });
 
-  it("shows a message instead of redirecting when the user has no admin org", async () => {
-    orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "member" }]);
+  it("lists the user's non-admin memberships instead of a bare empty state", async () => {
+    orgsMineMock.mockResolvedValue([
+      { org_login: "acme", role: "member" },
+      { org_login: "widgets", role: "member" },
+    ]);
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText("acme")).toBeInTheDocument());
+    expect(screen.getByText("widgets")).toBeInTheDocument();
+    expect(screen.getByText(/member \(not admin\) of/i)).toBeInTheDocument();
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("shows the generic empty state when the user has no org memberships at all", async () => {
+    orgsMineMock.mockResolvedValue([]);
 
     renderPage();
 

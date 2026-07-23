@@ -127,6 +127,46 @@ describe("GithubRoster (Collaborators page)", () => {
     expect(screen.queryByText(/Members without 2FA/)).not.toBeInTheDocument();
   });
 
+  it("recomputes the 'Members without 2FA' count from the search-filtered members, not the full roster", async () => {
+    membersMock.mockResolvedValue({
+      org: "acme",
+      members: [
+        { login: "alice", avatar_url: "", role: "member", site_admin: false, two_factor_enabled: false },
+        { login: "bob", avatar_url: "", role: "member", site_admin: false, two_factor_enabled: false },
+      ],
+      two_factor_overlay_available: true,
+    });
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText("Members without 2FA: 2")).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText("Search by login…"), { target: { value: "alice" } });
+
+    await waitFor(() => expect(screen.getByText("Members without 2FA: 1")).toBeInTheDocument());
+    expect(screen.queryByText("bob")).not.toBeInTheDocument();
+  });
+
+  it("shows an 'Updating…' indicator while a role-filter change refetches, distinct from client-side search", async () => {
+    let resolveRefetch: (v: unknown) => void = () => {};
+    membersMock
+      .mockResolvedValueOnce({ org: "acme", members: [], two_factor_overlay_available: true })
+      .mockReturnValueOnce(new Promise((resolve) => { resolveRefetch = resolve }));
+
+    renderPage();
+    await waitFor(() => expect(membersMock).toHaveBeenCalledWith("acme", "all", undefined));
+    await waitFor(() => expect(screen.getByText("No members found")).toBeInTheDocument());
+
+    expect(screen.queryByText(/Updating…/)).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByDisplayValue("All roles"), { target: { value: "admin" } });
+
+    await waitFor(() => expect(screen.getByText(/Updating…/)).toBeInTheDocument());
+
+    resolveRefetch({ org: "acme", members: [], two_factor_overlay_available: true });
+    await waitFor(() => expect(screen.queryByText(/Updating…/)).not.toBeInTheDocument());
+  });
+
   it("only fetches the active tab's data, gating other tabs", async () => {
     membersMock.mockResolvedValue({ org: "acme", members: [], two_factor_overlay_available: true });
 

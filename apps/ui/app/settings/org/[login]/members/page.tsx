@@ -2,7 +2,7 @@
 
 import { useParams, useRouter, useSearchParams } from "next/navigation"
 import { useState } from "react"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -55,6 +55,10 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
     queryKey: ["collab", "members", orgLogin, roleFilter],
     queryFn: () => api.collab.members(orgLogin, roleFilter, token),
     enabled: tab === "members" && tokenSettled,
+    // Keeps the previous role filter's rows on screen (with isFetching still true) while
+    // the new one loads, instead of flashing an empty table -- a role change now looks
+    // like a background refetch rather than a full reload, distinct from client-side search.
+    placeholderData: keepPreviousData,
   })
   const outsideQuery = useQuery({
     queryKey: ["collab", "outside", orgLogin],
@@ -97,7 +101,13 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
   const filteredMembers = (membersQuery.data?.members ?? []).filter((m) =>
     m.login.toLowerCase().includes(search.toLowerCase()),
   )
-  const membersWithout2fa = (membersQuery.data?.members ?? []).filter((m) => m.two_factor_enabled === false).length
+  // Derived from filteredMembers (not the unfiltered roster) so this count always matches
+  // what's actually visible in the table below it -- a stale org-wide total next to a
+  // filtered table reads as a data-integrity bug, especially for a 2FA-compliance number.
+  const membersWithout2fa = filteredMembers.filter((m) => m.two_factor_enabled === false).length
+  // roleFilter is part of membersQuery's queryKey (server-side refetch), while `search` is
+  // client-side -- distinguish the two so a role change doesn't look identical to typing.
+  const isRefetchingByRole = membersQuery.isFetching && !membersQuery.isLoading
 
   return (
     <div className="card">
@@ -142,6 +152,11 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
               <option value="member">Member</option>
               <option value="admin">Admin</option>
             </select>
+            {isRefetchingByRole && (
+              <span className="text-xs text-muted-foreground flex items-center gap-1">
+                <CircleNotch className="size-3 animate-spin" /> Updating…
+              </span>
+            )}
           </>
         )}
       </div>
