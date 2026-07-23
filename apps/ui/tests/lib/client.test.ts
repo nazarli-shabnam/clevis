@@ -287,6 +287,37 @@ describe("api.collab", () => {
     expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
     expect(result).toEqual({ state: "active", role: "member" });
   });
+
+  it("GETs /github/orgs/{org}/permission-audit with an X-GitHub-Token header when supplied", async () => {
+    const body = {
+      generated_at: "2026-07-20T00:00:00Z",
+      repos_scanned: 1,
+      repos_total: 1,
+      repos: [],
+      risk_summary: { outside_with_write_or_admin: 0, members_with_admin: 0, total_outside_collaborators: 0 },
+    };
+    stubOkJson(body);
+    const result = await api.collab.permissionAudit("acme", "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/github/orgs/acme/permission-audit");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
+    expect(result).toEqual(body);
+  });
+
+  it("GETs /github/orgs/{org}/inactive-members with a default days window and no token header when omitted", async () => {
+    stubOkJson({ org: "acme", inactive_members: [], sampled_repos: [] });
+    await api.collab.inactiveMembers("acme");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/github/orgs/acme/inactive-members?days=30");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBeUndefined();
+  });
+
+  it("GETs /github/orgs/{org}/inactive-members with a custom days window", async () => {
+    stubOkJson({ org: "acme", inactive_members: [], sampled_repos: [] });
+    await api.collab.inactiveMembers("acme", 60, "ghp_test");
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("days=60");
+  });
 });
 
 describe("api.automation", () => {

@@ -49,3 +49,47 @@ class OrgInvitationsResponse(BaseModel):
 class MembershipStatus(BaseModel):
     state: Literal["active", "pending"]
     role: Literal["member", "admin"]
+
+
+class CollaboratorPermission(BaseModel):
+    login: str
+    avatar_url: str
+    permission: Literal["read", "triage", "write", "maintain", "admin"]
+    affiliation: Literal["direct", "outside"]
+    is_outside_collaborator: bool
+
+
+class RepoPermissions(BaseModel):
+    repo: str
+    collaborators: list[CollaboratorPermission]
+
+
+class PermissionRiskSummary(BaseModel):
+    outside_with_write_or_admin: int
+    members_with_admin: int
+    total_outside_collaborators: int
+
+
+class PermissionAuditResponse(BaseModel):
+    generated_at: datetime
+    repos_scanned: int
+    repos_total: int
+    repos: list[RepoPermissions]
+    risk_summary: PermissionRiskSummary
+
+
+class InactiveMember(BaseModel):
+    login: str
+    avatar_url: str
+    role: Literal["member", "admin"]
+    last_commit_repo: str | None
+    last_commit_days_ago: int | None
+
+
+class InactiveMembersResponse(BaseModel):
+    org: str
+    # Honest-approximation note surfaced to the UI: GitHub has no "last activity"
+    # API, so this samples commit authorship across a bounded set of repos rather
+    # than being an exact answer.
+    sampled_repos: list[str]
+    members: list[InactiveMember]

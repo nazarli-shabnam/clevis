@@ -11,6 +11,7 @@ import type {
   GithubOrgInvitationsResponse,
   GithubOrgMembersResponse,
   GithubOutsideCollaboratorsResponse,
+  InactiveMembersResponse,
   InstallationLookup,
   InstallationMeta,
   InvitationCreateResponse,
@@ -21,6 +22,7 @@ import type {
   MyViewResponse,
   OrgEventsResponse,
   PendingInvitationSummary,
+  PermissionAuditResponse,
   RepoListResponse,
   RepoPullsResponse,
   RepoSecurityResponse,
@@ -313,6 +315,16 @@ export const api = {
     membership: (orgLogin: string, username: string, token?: string) =>
       get<GithubMembershipStatus>(
         `/github/orgs/${encodeURIComponent(orgLogin)}/members/${encodeURIComponent(username)}/membership`,
+        githubTokenHeader(token),
+      ),
+    permissionAudit: (orgLogin: string, token?: string) =>
+      get<PermissionAuditResponse>(
+        `/github/orgs/${encodeURIComponent(orgLogin)}/permission-audit`,
+        githubTokenHeader(token),
+      ),
+    inactiveMembers: (orgLogin: string, days = 30, token?: string) =>
+      get<InactiveMembersResponse>(
+        `/github/orgs/${encodeURIComponent(orgLogin)}/inactive-members?days=${days}`,
         githubTokenHeader(token),
       ),
   },
