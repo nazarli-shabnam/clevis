@@ -45,7 +45,8 @@ class DispatchInput(BaseModel):
     token: SecretStr | None = None
     # Bounded so a caller can't bloat the jobs/audit_logs payload columns (both
     # unbounded Text) with an arbitrarily large value. 255 is a generous cap for a git
-    # ref name; GitHub's own workflow_dispatch API caps inputs at 10 keys, values 1024 chars.
+    # ref name. GitHub's workflow_dispatch API documents a hard limit of 10 input keys;
+    # 1024 chars per value isn't a documented GitHub limit, just a generous defensive cap.
     ref: str = Field(max_length=255)
     inputs: dict[str, Annotated[str, Field(max_length=1024)]] | None = Field(default=None, max_length=10)
 
