@@ -170,6 +170,44 @@ def test_list_user_org_memberships_follows_pagination():
     assert [(m.login, m.role) for m in memberships] == [("acme", "admin"), ("other-org", "member")]
 
 
+# ── next-path threading (invite-link OAuth fix) ─────────────────────────────────
+
+def test_safe_next_path_accepts_relative_paths():
+    assert github_oauth.safe_next_path("/invite/abc123") == "/invite/abc123"
+    assert github_oauth.safe_next_path("/") == "/"
+
+
+def test_safe_next_path_rejects_unsafe_values():
+    assert github_oauth.safe_next_path(None) is None
+    assert github_oauth.safe_next_path("") is None
+    assert github_oauth.safe_next_path("relative") is None
+    assert github_oauth.safe_next_path("//evil.com") is None
+    assert github_oauth.safe_next_path("/\\evil.com") is None
+    assert github_oauth.safe_next_path("/x\x00y") is None
+
+
+def test_sign_state_embeds_valid_next():
+    state, nonce = github_oauth.sign_state(next="/invite/abc123")
+    assert github_oauth.verify_state(state, cookie_nonce=nonce) is True
+    assert github_oauth.decode_state_next(state) == "/invite/abc123"
+
+
+def test_sign_state_drops_unsafe_next():
+    state, nonce = github_oauth.sign_state(next="//evil.com")
+    assert github_oauth.verify_state(state, cookie_nonce=nonce) is True
+    assert github_oauth.decode_state_next(state) is None
+
+
+def test_sign_state_without_next_has_no_next_claim():
+    state, nonce = github_oauth.sign_state()
+    assert github_oauth.verify_state(state, cookie_nonce=nonce) is True
+    assert github_oauth.decode_state_next(state) is None
+
+
+def test_decode_state_next_rejects_garbage():
+    assert github_oauth.decode_state_next("not-a-token") is None
+
+
 def test_not_configured_raises(monkeypatch):
     # Force unconfigured regardless of the ambient .env (a real App may be configured locally).
     monkeypatch.setattr(settings, "github_app_client_id", None)

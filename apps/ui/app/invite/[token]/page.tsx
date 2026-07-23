@@ -57,7 +57,7 @@ export default function InviteAcceptPage() {
                   >
                     Sign in
                   </a>
-                  {" "}(GitHub sign-in returns you to the dashboard instead — just revisit this link afterward).
+                  , with either your password or GitHub.
                 </p>
               ) : accept.isSuccess ? (
                 <p className="text-sm text-primary flex items-center gap-1.5">

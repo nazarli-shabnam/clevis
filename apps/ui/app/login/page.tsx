@@ -159,7 +159,10 @@ export default function LoginPage() {
           type="button"
           variant="outline"
           className="w-full"
-          onClick={() => { window.location.href = `${API_BASE}/auth/github/login` }}
+          onClick={() => {
+            const qs = next !== "/" ? `?next=${encodeURIComponent(next)}` : ""
+            window.location.href = `${API_BASE}/auth/github/login${qs}`
+          }}
         >
           <GithubMark />
           Sign in with GitHub

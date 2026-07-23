@@ -10,10 +10,21 @@ from pydantic import SecretStr
 
 from src.core.config import settings
 from src.core.db import User, get_db
+from src.core.rate_limit import _buckets as _rate_limit_buckets
 from src.routers.github_auth import EmailAlreadyRegistered, find_or_create_user
 from src.routers.github_auth import router as gh_router
 from src.services import github_oauth
 from src.services.github_oauth import GitHubIdentity
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """/auth/github/callback is rate-limited per client IP via a module-level in-memory
+    bucket that persists across tests in the same process -- reset it so one test's request
+    volume can't tip a later, unrelated test over the threshold (same pattern as test_auth.py)."""
+    _rate_limit_buckets.clear()
+    yield
+    _rate_limit_buckets.clear()
 
 
 @pytest.fixture()
@@ -209,6 +220,62 @@ def test_replaying_a_captured_state_from_a_different_browser_is_rejected(gh_clie
     assert resp.status_code == 303
     assert resp.headers["location"].endswith("/login?error=github_invalid_state")
     assert db.query(User).count() == 0
+
+
+# ── next-path threading (invite-link OAuth fix) ─────────────────────────────────
+
+def test_login_embeds_next_into_state(gh_client, oauth_configured):
+    login_resp = gh_client.get("/auth/github/login?next=/invite/abc123", follow_redirects=False)
+    state = _extract_state(login_resp)
+    assert github_oauth.decode_state_next(state) == "/invite/abc123"
+
+
+def test_login_drops_unsafe_next(gh_client, oauth_configured):
+    login_resp = gh_client.get("/auth/github/login?next=//evil.com", follow_redirects=False)
+    state = _extract_state(login_resp)
+    assert github_oauth.decode_state_next(state) is None
+
+
+def test_callback_redirects_to_next_path_from_invite_link(gh_client, db, oauth_configured):
+    login_resp = gh_client.get("/auth/github/login?next=/invite/abc123", follow_redirects=False)
+    state = _extract_state(login_resp)
+
+    with (
+        patch("src.routers.github_auth.github_oauth.exchange_code_for_token", return_value="gho_x"),
+        patch("src.routers.github_auth.github_oauth.fetch_identity", return_value=_identity()),
+        patch("src.routers.github_auth.org_provisioning.sync_org_admin_memberships", return_value=None),
+    ):
+        resp = gh_client.get(f"/auth/github/callback?code=c&state={state}", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "http://localhost:3000/invite/abc123"
+
+
+def test_callback_redirects_to_root_when_no_next_was_requested(gh_client, db, oauth_configured):
+    login_resp = gh_client.get("/auth/github/login", follow_redirects=False)
+    state = _extract_state(login_resp)
+
+    with (
+        patch("src.routers.github_auth.github_oauth.exchange_code_for_token", return_value="gho_x"),
+        patch("src.routers.github_auth.github_oauth.fetch_identity", return_value=_identity()),
+        patch("src.routers.github_auth.org_provisioning.sync_org_admin_memberships", return_value=None),
+    ):
+        resp = gh_client.get(f"/auth/github/callback?code=c&state={state}", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "http://localhost:3000"
+
+
+def test_callback_ignores_unsafe_next_and_redirects_to_root(gh_client, db, oauth_configured):
+    login_resp = gh_client.get("/auth/github/login?next=//evil.com", follow_redirects=False)
+    state = _extract_state(login_resp)
+
+    with (
+        patch("src.routers.github_auth.github_oauth.exchange_code_for_token", return_value="gho_x"),
+        patch("src.routers.github_auth.github_oauth.fetch_identity", return_value=_identity()),
+        patch("src.routers.github_auth.org_provisioning.sync_org_admin_memberships", return_value=None),
+    ):
+        resp = gh_client.get(f"/auth/github/callback?code=c&state={state}", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "http://localhost:3000"
 
 
 def test_callback_clears_the_state_cookie_on_success(gh_client, db, oauth_configured):

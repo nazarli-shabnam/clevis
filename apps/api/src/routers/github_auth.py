@@ -89,9 +89,9 @@ def _clear_state_cookie(response: Response) -> None:
 
 
 @router.get("/login")
-def github_login(request: Request):
+def github_login(request: Request, next: str | None = None):
     try:
-        state, nonce = github_oauth.sign_state()
+        state, nonce = github_oauth.sign_state(next=next)
         url = github_oauth.build_authorize_url(state=state, redirect_uri=_callback_url(request))
     except github_oauth.GitHubOAuthNotConfigured:
         return _ui_login_error_redirect("github_not_configured")
@@ -124,6 +124,7 @@ def github_callback(
         error_response = _ui_login_error_redirect("github_invalid_state")
         _clear_state_cookie(error_response)
         return error_response
+    next_path = github_oauth.decode_state_next(state)
     try:
         user_token = github_oauth.exchange_code_for_token(code, redirect_uri=_callback_url(request))
         identity = github_oauth.fetch_identity(user_token)
@@ -144,7 +145,8 @@ def github_callback(
         return error_response
     org_provisioning.sync_org_admin_memberships(db, user, user_token)
     token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name, user.token_version)
-    response = RedirectResponse(_ui_redirect_target(), status_code=303)
+    redirect_target = f"{_ui_redirect_target()}{next_path}" if next_path else _ui_redirect_target()
+    response = RedirectResponse(redirect_target, status_code=303)
     set_session_cookie(response, token)
     _clear_state_cookie(response)
     return response
