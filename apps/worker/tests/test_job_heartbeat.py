@@ -3,6 +3,7 @@
 import time
 from datetime import datetime, timedelta, timezone
 
+import psycopg
 import worker
 from worker import _JobHeartbeat, _touch_job_heartbeat
 
@@ -49,6 +50,23 @@ def test_touch_job_heartbeat_is_a_noop_for_a_job_that_is_no_longer_processing(wo
     _touch_job_heartbeat(job_id)
 
     assert _heartbeat_at(conn, job_id) is None
+
+
+def test_touch_job_heartbeat_swallows_a_db_connection_failure(monkeypatch, tmp_path):
+    # The DB heartbeat write is non-fatal by design (see the comment in
+    # _touch_job_heartbeat) -- a DB hiccup mid-job must not crash the job handler. Also
+    # verifies the container-level file heartbeat still gets touched even when the DB
+    # write fails, since it sits outside the try/except.
+    def boom(*args, **kwargs):
+        raise psycopg.OperationalError("connection refused")
+
+    monkeypatch.setattr(psycopg, "connect", boom)
+    heartbeat_file = tmp_path / "worker_heartbeat"
+    monkeypatch.setattr(worker, "HEARTBEAT_FILE", heartbeat_file)
+
+    _touch_job_heartbeat(999)  # must not raise
+
+    assert heartbeat_file.exists()
 
 
 def test_touch_job_heartbeat_also_refreshes_the_container_heartbeat_file(worker_db, tmp_path, monkeypatch):
