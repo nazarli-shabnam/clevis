@@ -8,9 +8,40 @@ import { StatCard } from "@/components/stat-card"
 import { EventActivityList } from "@/components/event-activity-list"
 import { AreaTimeChart } from "@/components/charts/area-time-chart"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
-import { ArrowRight } from "@phosphor-icons/react"
+import { ArrowRight, Warning } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { CHART_COLORS } from "@/lib/charts/theme"
+import { relativeTime } from "@/lib/format"
+import type { MyViewIssueSummary, MyViewPRSummary } from "@/lib/api/types"
+
+const MY_VIEW_TABS = [
+  { id: "prs", label: "My PRs" },
+  { id: "reviews", label: "Review Queue" },
+  { id: "issues", label: "Assigned Issues" },
+] as const
+
+type MyViewTabId = (typeof MY_VIEW_TABS)[number]["id"]
+
+function MyViewRow({ item }: { item: MyViewPRSummary | MyViewIssueSummary }) {
+  return (
+    <a
+      href={item.html_url}
+      target="_blank"
+      rel="noreferrer"
+      className="flex items-center justify-between px-3 py-2 text-sm hover:bg-elevated transition-colors"
+    >
+      <span className="flex flex-col min-w-0">
+        <span className="text-foreground/90 truncate">{item.title}</span>
+        <span className="text-[0.6875rem] text-muted-foreground font-mono">
+          {item.repository} #{item.number}
+        </span>
+      </span>
+      <span className="text-[0.6875rem] text-muted-foreground whitespace-nowrap shrink-0 ml-3">
+        {relativeTime(item.updated_at)}
+      </span>
+    </a>
+  )
+}
 
 const quickActions = [
   { label: "Run Security Scan",  href: "/security" },
@@ -72,6 +103,15 @@ export default function OverviewPage() {
   })
   const cockpit = cockpitQuery.data
 
+  const [myViewTab, setMyViewTab] = useState<MyViewTabId>("prs")
+  const myViewQuery = useQuery({
+    queryKey: ["analytics.my-view", org],
+    queryFn: () => api.analytics.myView(org, resolveQuery.data?.token),
+    enabled: org.trim().length > 2 && !resolveQuery.isLoading,
+    retry: false,
+  })
+  const myView = myViewQuery.data
+
   const commitActivityData = (cockpit?.commit_activity_4w ?? []).map((value, i) => ({
     week: `W${i + 1}`,
     value,
@@ -85,6 +125,18 @@ export default function OverviewPage() {
     opened: b.opened,
     merged: b.merged,
   }))
+  const cycleTimeData = (cockpit?.pr_cycle_time_8w ?? []).map((b, i) => ({
+    week: `W${i + 1}`,
+    value: b.avg_days,
+  }))
+  const releaseCadenceData = (cockpit?.release_cadence_4w ?? []).map((count, i) => ({
+    name: `W${i + 1}`,
+    releases: count,
+  }))
+  const atRiskRepos = cockpit?.at_risk_repos ?? []
+  const milestones = cockpit?.milestones ?? []
+  const myViewItems: (MyViewPRSummary | MyViewIssueSummary)[] =
+    myViewTab === "prs" ? myView?.my_open_prs ?? [] : myViewTab === "reviews" ? myView?.review_requests ?? [] : myView?.assigned_issues ?? []
 
   return (
     <>
@@ -174,6 +226,134 @@ export default function OverviewPage() {
             isLoading={cockpitQuery.isLoading}
             limit={5}
           />
+        </div>
+      </div>
+
+      {atRiskRepos.length > 0 && (
+        <div className="card mb-6">
+          <div className="px-4 py-3 border-b border-border">
+            <span className="section-label">Needs Attention</span>
+          </div>
+          <div className="divide-y divide-border">
+            {atRiskRepos.map((r) => (
+              <div
+                key={r.repo}
+                className={`px-4 py-3 border-l-2 ${r.severity === "critical" ? "border-red-500" : "border-yellow-500"}`}
+              >
+                <div className="flex items-center gap-2">
+                  <Warning className={`size-3.5 shrink-0 ${r.severity === "critical" ? "text-red-400" : "text-yellow-400"}`} />
+                  <span className="text-sm font-mono text-foreground/90">{r.repo}</span>
+                </div>
+                <ul className="mt-1 ml-5 text-xs text-muted-foreground list-disc">
+                  {r.reasons.map((reason) => <li key={reason}>{reason}</li>)}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="grid gap-4 lg:grid-cols-2 mb-6">
+        <div className="card">
+          <div className="px-4 py-3 border-b border-border">
+            <span className="section-label">Milestone Burndown</span>
+          </div>
+          {milestones.length === 0 ? (
+            <p className="p-4 text-sm text-muted-foreground">No open milestones</p>
+          ) : (
+            <div className="divide-y divide-border">
+              {milestones.map((m) => (
+                <div key={`${m.repo}-${m.title}`} className="px-4 py-3">
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <span className="text-sm text-foreground/90 truncate">
+                      <span className="font-mono text-muted-foreground">{m.repo}</span> · {m.title}
+                    </span>
+                    <span
+                      className={`stat-chip shrink-0 ${
+                        m.state === "overdue"
+                          ? "text-red-400 border-red-500/30"
+                          : m.state === "at_risk"
+                            ? "text-yellow-400 border-yellow-500/30"
+                            : ""
+                      }`}
+                    >
+                      {m.state.replace("_", " ")}
+                    </span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-elevated overflow-hidden">
+                    <div
+                      className="h-full bg-primary"
+                      style={{ width: `${Math.min(100, m.progress_pct)}%` }}
+                    />
+                  </div>
+                  <p className="text-[0.6875rem] text-muted-foreground mt-1">
+                    {m.closed_issues}/{m.open_issues + m.closed_issues} closed
+                    {m.due_on && <> · due {relativeTime(m.due_on)}</>}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="card">
+          <div className="px-4 py-3 border-b border-border flex items-center gap-1.5">
+            {MY_VIEW_TABS.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setMyViewTab(t.id)}
+                aria-pressed={myViewTab === t.id}
+                className={`text-xs font-medium px-2.5 py-1 rounded-md border transition-colors ${
+                  myViewTab === t.id
+                    ? "border-border bg-elevated text-foreground"
+                    : "border-transparent text-muted-foreground hover:bg-elevated"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          {myViewQuery.isLoading ? (
+            <p className="p-4 text-sm text-muted-foreground">Loading…</p>
+          ) : myViewItems.length === 0 ? (
+            <p className="p-4 text-sm text-muted-foreground">Nothing here right now</p>
+          ) : (
+            <div className="divide-y divide-border">
+              {myViewItems.map((item) => <MyViewRow key={`${item.repository}-${item.number}`} item={item} />)}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2 mb-6">
+        <div className="card">
+          <div className="px-4 py-3 border-b border-border">
+            <span className="section-label">Release Cadence (4w)</span>
+          </div>
+          <div className="p-4">
+            {releaseCadenceData.some((d) => d.releases > 0) ? (
+              <BarGroupChart
+                data={releaseCadenceData}
+                bars={[{ key: "releases", color: CHART_COLORS.series[1] }]}
+                height={160}
+              />
+            ) : (
+              <p className="text-sm text-muted-foreground">No releases in the last 4 weeks</p>
+            )}
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="px-4 py-3 border-b border-border">
+            <span className="section-label">PR Cycle Time (8w, avg days)</span>
+          </div>
+          <div className="p-4">
+            {cycleTimeData.some((d) => d.value > 0) ? (
+              <AreaTimeChart data={cycleTimeData} label="days" color={CHART_COLORS.series[2]} height={160} />
+            ) : (
+              <p className="text-sm text-muted-foreground">No merged pull requests yet</p>
+            )}
+          </div>
         </div>
       </div>
 

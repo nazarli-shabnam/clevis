@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import anyio
 import httpx
@@ -16,9 +16,16 @@ from src.routers.github import _cached_events
 from src.schemas.analytics import (
     AnalyticsInput,
     AnalyticsResponse,
+    AtRiskRepo,
     CockpitResponse,
+    IssueSummary,
+    MilestoneSummary,
+    MyViewResponse,
     OrgEventSummary,
+    PRSummary,
+    PrCycleTimeWeek,
     PrWeekBucket,
+    RunSummaryLite,
     ScanHistoryEntry,
 )
 from src.services.analytics_service import get_account_type, get_overview
@@ -259,6 +266,150 @@ def _safe_total_cache_bytes(owner: str, token: str, repo_names: list[str]) -> in
         return 0
 
 
+def _milestone_state(due_on: str | None, progress_pct: float) -> str:
+    if not due_on:
+        return "on_track"
+    try:
+        due = datetime.fromisoformat(due_on.replace("Z", "+00:00"))
+    except ValueError:
+        return "on_track"
+    now = datetime.now(timezone.utc)
+    if due < now:
+        return "overdue"
+    if due - now < timedelta(days=7) and progress_pct < 70:
+        return "at_risk"
+    return "on_track"
+
+
+def _safe_milestones(owner: str, token: str, repo_names: list[str]) -> tuple[list[MilestoneSummary], list[AtRiskRepo]]:
+    """Fetches each repo's open milestones, best-effort per repo (one slow/broken repo
+    doesn't blank out every other repo's milestones, unlike _safe_commit_activity_4w's
+    all-or-nothing contract -- milestone data is naturally per-repo and independent)."""
+    client = GitHubClient(token)
+    milestones: list[MilestoneSummary] = []
+
+    def _fetch(repo: str) -> list[dict]:
+        try:
+            return client.request("GET", f"/repos/{owner}/{repo}/milestones", params={"state": "open"})
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            return []
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        futures = {pool.submit(_fetch, repo): repo for repo in repo_names[:_MAX_REPOS_FOR_AGGREGATES]}
+        for future, repo in futures.items():
+            for m in future.result():
+                open_issues = m.get("open_issues", 0)
+                closed_issues = m.get("closed_issues", 0)
+                total = open_issues + closed_issues
+                progress_pct = round((closed_issues / total) * 100, 1) if total else 0.0
+                due_on = m.get("due_on")
+                milestones.append(
+                    MilestoneSummary(
+                        repo=repo,
+                        title=m.get("title", ""),
+                        due_on=due_on,
+                        open_issues=open_issues,
+                        closed_issues=closed_issues,
+                        progress_pct=progress_pct,
+                        state=_milestone_state(due_on, progress_pct),
+                    )
+                )
+
+    milestones.sort(key=lambda m: (m.due_on is None, m.due_on))
+
+    at_risk_by_repo: dict[str, AtRiskRepo] = {}
+    for m in milestones:
+        if m.state == "on_track":
+            continue
+        severity = "critical" if m.state == "overdue" else "warning"
+        reason = (
+            f"Milestone '{m.title}' overdue"
+            if m.state == "overdue"
+            else f"Milestone '{m.title}' due soon at {m.progress_pct:.0f}% complete"
+        )
+        existing = at_risk_by_repo.get(m.repo)
+        if existing is None:
+            at_risk_by_repo[m.repo] = AtRiskRepo(repo=m.repo, reasons=[reason], severity=severity)
+        else:
+            existing.reasons.append(reason)
+            if severity == "critical":
+                existing.severity = "critical"
+
+    at_risk_repos = sorted(at_risk_by_repo.values(), key=lambda r: r.severity != "critical")
+    return milestones[:10], at_risk_repos[:10]
+
+
+def _week_pr_cycle_time(client: GitHubClient, owner: str, start: date) -> PrCycleTimeWeek:
+    # closed_at approximates merge time for a merged PR (search API's issues endpoint
+    # doesn't expose merged_at directly) -- an approximation, same spirit as Phase 18's
+    # documented "last activity" sampling elsewhere in this codebase.
+    # GitHub's search API date qualifiers are inclusive on both ends at day granularity,
+    # so the window end is `+6 days` (a 7-day span) not `+7` -- otherwise a PR merged
+    # exactly on a week-boundary day would double-count into both adjacent weeks.
+    result = client.request(
+        "GET",
+        "/search/issues",
+        params={"q": f"org:{owner} type:pr merged:{start}..{start + timedelta(days=6)}", "per_page": 30},
+    )
+    items = result.get("items", []) if isinstance(result, dict) else []
+    days: list[float] = []
+    for item in items:
+        try:
+            created = datetime.fromisoformat(item["created_at"].replace("Z", "+00:00"))
+            closed = datetime.fromisoformat(item["closed_at"].replace("Z", "+00:00"))
+        except (KeyError, TypeError, ValueError):
+            continue
+        days.append((closed - created).total_seconds() / 86400)
+    avg_days = round(sum(days) / len(days), 1) if days else 0.0
+    return PrCycleTimeWeek(week=start.isoformat(), avg_days=avg_days)
+
+
+def _safe_pr_cycle_time_8w(owner: str, token: str) -> list[PrCycleTimeWeek]:
+    try:
+        client = GitHubClient(token)
+        week_starts = [_week_start(weeks_ago) for weeks_ago in range(7, -1, -1)]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = [pool.submit(_week_pr_cycle_time, client, owner, start) for start in week_starts]
+            return [f.result() for f in futures]
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        return []
+
+
+def _safe_release_cadence_4w(owner: str, token: str, repo_names: list[str]) -> list[int]:
+    """Weekly release counts across the org's repos for the last 4 weeks -- a coarse
+    KPI signal for the CEO cockpit, distinct in shape/purpose from the full per-release
+    timeline docs/plan.md Phase 17 adds separately."""
+    week_starts = [_week_start(weeks_ago) for weeks_ago in range(3, -1, -1)]
+    totals = [0, 0, 0, 0]
+
+    def _fetch(repo: str) -> list[dict]:
+        try:
+            client = GitHubClient(token)
+            return client.request("GET", f"/repos/{owner}/{repo}/releases", params={"per_page": 20})
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            return []
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        futures = [pool.submit(_fetch, repo) for repo in repo_names[:_MAX_REPOS_FOR_AGGREGATES]]
+        for future in futures:
+            releases = future.result()
+            if not isinstance(releases, list):
+                continue
+            for r in releases:
+                published_at = r.get("published_at")
+                if not published_at:
+                    continue
+                try:
+                    published = datetime.fromisoformat(published_at.replace("Z", "+00:00")).date()
+                except ValueError:
+                    continue
+                for i, start in enumerate(week_starts):
+                    if start <= published < start + timedelta(days=7):
+                        totals[i] += 1
+                        break
+    return totals
+
+
 def _cache_job_success_rate(db: Session) -> float:
     jobs = job_repo.list_recent_by_type(db, job_type=_CACHE_JOB_TYPE, limit=20)
     done = sum(1 for j in jobs if j["status"] == "done")
@@ -300,6 +451,9 @@ async def personal_analytics_cockpit(
         pr_merge_rate_4w,
         commit_activity_4w,
         total_cache_size_bytes,
+        (milestones, at_risk_repos),
+        pr_cycle_time_8w,
+        release_cadence_4w,
     ) = await asyncio.gather(
         anyio.to_thread.run_sync(lambda: _safe_member_count(owner, token)),
         anyio.to_thread.run_sync(lambda: _safe_recent_events(owner, token)),
@@ -307,6 +461,9 @@ async def personal_analytics_cockpit(
         anyio.to_thread.run_sync(lambda: _safe_pr_merge_rate_4w(owner, token)),
         anyio.to_thread.run_sync(lambda: _safe_commit_activity_4w(owner, token, repo_names)),
         anyio.to_thread.run_sync(lambda: _safe_total_cache_bytes(owner, token, repo_names)),
+        anyio.to_thread.run_sync(lambda: _safe_milestones(owner, token, repo_names)),
+        anyio.to_thread.run_sync(lambda: _safe_pr_cycle_time_8w(owner, token)),
+        anyio.to_thread.run_sync(lambda: _safe_release_cadence_4w(owner, token, repo_names)),
     )
 
     return CockpitResponse(
@@ -320,4 +477,135 @@ async def personal_analytics_cockpit(
         commit_activity_4w=commit_activity_4w,
         total_cache_size_bytes=total_cache_size_bytes,
         cache_job_success_rate=cache_job_success_rate,
+        at_risk_repos=at_risk_repos,
+        milestones=milestones,
+        pr_cycle_time_8w=pr_cycle_time_8w,
+        release_cadence_4w=release_cadence_4w,
+    )
+
+
+# ---------------------------------------------------------------------------
+# My View (docs/plan.md Phase 14) -- a single GitHub-scoped account's own open PRs,
+# review queue, assigned issues, and recent workflow runs, resolved via the same
+# per-owner token as the cockpit. GitHub's search API works across every repo the
+# token can see (not just `owner`'s), so my_open_prs/review_requests/assigned_issues
+# aren't scoped to `owner` -- only the token-resolution step is.
+# ---------------------------------------------------------------------------
+
+_MAX_REPOS_FOR_RUN_LOOKUP = 15
+
+
+def _my_login(client: GitHubClient) -> str | None:
+    try:
+        data = client.request("GET", "/user")
+        return data.get("login") if isinstance(data, dict) else None
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        # Installation (App) tokens aren't user-to-server tokens and can't call /user --
+        # degrade to an empty MyViewResponse rather than 500 the whole page.
+        return None
+
+
+def _search_items(client: GitHubClient, query: str, per_page: int = 10) -> list[dict]:
+    try:
+        result = client.request("GET", "/search/issues", params={"q": query, "per_page": per_page})
+        return result.get("items", []) if isinstance(result, dict) else []
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        return []
+
+
+def _pr_summaries(items: list[dict]) -> list[PRSummary]:
+    return [
+        PRSummary(
+            number=i["number"],
+            title=i.get("title", ""),
+            repository=i.get("repository_url", "").split("/repos/")[-1],
+            html_url=i.get("html_url", ""),
+            updated_at=i["updated_at"],
+        )
+        for i in items
+        if "number" in i and "updated_at" in i
+    ]
+
+
+def _issue_summaries(items: list[dict]) -> list[IssueSummary]:
+    return [
+        IssueSummary(
+            number=i["number"],
+            title=i.get("title", ""),
+            repository=i.get("repository_url", "").split("/repos/")[-1],
+            html_url=i.get("html_url", ""),
+            updated_at=i["updated_at"],
+        )
+        for i in items
+        if "number" in i and "updated_at" in i
+    ]
+
+
+def _safe_my_recent_runs(client: GitHubClient, owner: str, login: str, repo_names: list[str]) -> list[RunSummaryLite]:
+    def _fetch(repo: str) -> list[dict]:
+        try:
+            data = client.request(
+                "GET", f"/repos/{owner}/{repo}/actions/runs", params={"actor": login, "per_page": 5}
+            )
+            return data.get("workflow_runs", []) if isinstance(data, dict) else []
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            return []
+
+    runs: list[RunSummaryLite] = []
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        futures = {pool.submit(_fetch, repo): repo for repo in repo_names[:_MAX_REPOS_FOR_RUN_LOOKUP]}
+        for future, repo in futures.items():
+            for r in future.result():
+                runs.append(
+                    RunSummaryLite(
+                        repository=f"{owner}/{repo}",
+                        id=r["id"],
+                        name=r.get("name"),
+                        status=r["status"],
+                        conclusion=r.get("conclusion"),
+                        html_url=r.get("html_url", ""),
+                        created_at=r["created_at"],
+                    )
+                )
+    runs.sort(key=lambda r: r.created_at, reverse=True)
+    return runs[:10]
+
+
+@router.get("/me/github/my-view", response_model=MyViewResponse)
+async def my_view(
+    owner: str,
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+    x_github_token: str | None = Header(default=None),
+):
+    try:
+        token = await anyio.to_thread.run_sync(
+            lambda: resolve_personal_token(db, owner_user_id=user.id, account_login=owner, client_token=x_github_token)
+        )
+    except NoGitHubTokenAvailable as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    client = GitHubClient(token)
+    login = await anyio.to_thread.run_sync(lambda: _my_login(client))
+    if login is None:
+        return MyViewResponse()
+
+    try:
+        repos = await anyio.to_thread.run_sync(lambda: _safe_list_repos(owner, token))
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        repos = []
+    repo_names = [r["name"] for r in repos]
+
+    (my_open_prs_raw, review_requests_raw, assigned_issues_raw, my_recent_runs) = await asyncio.gather(
+        anyio.to_thread.run_sync(lambda: _search_items(client, f"is:pr is:open author:{login}")),
+        anyio.to_thread.run_sync(lambda: _search_items(client, f"is:pr is:open review-requested:{login}")),
+        anyio.to_thread.run_sync(lambda: _search_items(client, f"is:issue is:open assignee:{login}")),
+        anyio.to_thread.run_sync(lambda: _safe_my_recent_runs(client, owner, login, repo_names)),
+    )
+
+    return MyViewResponse(
+        my_open_prs=_pr_summaries(my_open_prs_raw),
+        review_requests=_pr_summaries(review_requests_raw),
+        assigned_issues=_issue_summaries(assigned_issues_raw),
+        my_recent_runs=my_recent_runs,
     )

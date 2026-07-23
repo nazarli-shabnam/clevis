@@ -18,6 +18,7 @@ import type {
   InvitationPreview,
   JobOut,
   MyOrgMembership,
+  MyViewResponse,
   OrgEventsResponse,
   PendingInvitationSummary,
   RepoListResponse,
@@ -188,6 +189,8 @@ export const api = {
     // carried via header since this is a GET (see githubTokenHeader).
     cockpit: (owner: string, token?: string) =>
       get<CockpitResponse>(`/me/analytics/cockpit/${encodeURIComponent(owner)}`, githubTokenHeader(token)),
+    myView: (owner: string, token?: string) =>
+      get<MyViewResponse>(`/me/github/my-view?owner=${encodeURIComponent(owner)}`, githubTokenHeader(token)),
   },
   cache: {
     list: (owner: string, repo: string, token: string) =>
