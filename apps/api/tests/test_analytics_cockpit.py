@@ -54,6 +54,7 @@ _DEFAULT_SAFE_MOCKS = {
     "src.routers.analytics._safe_pr_merge_rate_4w": {"return_value": []},
     "src.routers.analytics._safe_commit_activity_4w": {"return_value": [1, 2, 3, 4]},
     "src.routers.analytics._safe_total_cache_bytes": {"return_value": 123456},
+    "src.routers.analytics._safe_commit_heatmap_52w": {"return_value": [0] * 52},
 }
 
 
@@ -261,6 +262,26 @@ def test_safe_commit_activity_4w_sums_last_four_weeks_across_repos():
         mock_client.return_value.request.side_effect = [weeks_a, weeks_b]
         totals = _safe_commit_activity_4w("acme", "ghp_test", ["repo-a", "repo-b"])
     assert totals == [49, 50, 51, 52]
+
+
+def test_safe_commit_heatmap_52w_returns_zeros_on_error():
+    from src.routers.analytics import _safe_commit_heatmap_52w
+
+    with patch("src.routers.analytics.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = httpx.RequestError("boom")
+        assert _safe_commit_heatmap_52w("acme", "ghp_test", ["repo-a"]) == [0] * 52
+
+
+def test_safe_commit_heatmap_52w_sums_across_repos():
+    from src.routers.analytics import _safe_commit_heatmap_52w
+
+    weeks_a = [{"total": 1} for _ in range(52)]
+    weeks_b = [{"total": 2} for _ in range(52)]
+    with patch("src.routers.analytics.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = [weeks_a, weeks_b]
+        totals = _safe_commit_heatmap_52w("acme", "ghp_test", ["repo-a", "repo-b"])
+    assert len(totals) == 52
+    assert all(t == 3 for t in totals)
 
 
 def test_safe_total_cache_bytes_returns_zero_on_error():

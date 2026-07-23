@@ -241,6 +241,28 @@ def _safe_commit_activity_4w(owner: str, token: str, repo_names: list[str]) -> l
         return [0, 0, 0, 0]
 
 
+def _safe_commit_heatmap_52w(owner: str, token: str, repo_names: list[str]) -> list[int]:
+    # Same all-or-nothing best-effort contract as _safe_commit_activity_4w, just
+    # summed across the full 52-week window GitHub's commit_activity stats return
+    # instead of the last 4 -- reuses the same call, no extra GitHub requests.
+    try:
+        client = GitHubClient(token)
+        totals = [0] * 52
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            futures = [
+                pool.submit(client.request, "GET", f"/repos/{owner}/{repo}/stats/commit_activity")
+                for repo in repo_names[:_MAX_REPOS_FOR_AGGREGATES]
+            ]
+            for future in futures:
+                weeks = future.result()
+                if isinstance(weeks, list) and len(weeks) >= 52:
+                    for i, week in enumerate(weeks[-52:]):
+                        totals[i] += week.get("total", 0)
+        return totals
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        return [0] * 52
+
+
 def _safe_total_cache_bytes(owner: str, token: str, repo_names: list[str]) -> int:
     try:
         client = GitHubClient(token)
@@ -300,6 +322,7 @@ async def personal_analytics_cockpit(
         pr_merge_rate_4w,
         commit_activity_4w,
         total_cache_size_bytes,
+        commit_heatmap_52w,
     ) = await asyncio.gather(
         anyio.to_thread.run_sync(lambda: _safe_member_count(owner, token)),
         anyio.to_thread.run_sync(lambda: _safe_recent_events(owner, token)),
@@ -307,6 +330,7 @@ async def personal_analytics_cockpit(
         anyio.to_thread.run_sync(lambda: _safe_pr_merge_rate_4w(owner, token)),
         anyio.to_thread.run_sync(lambda: _safe_commit_activity_4w(owner, token, repo_names)),
         anyio.to_thread.run_sync(lambda: _safe_total_cache_bytes(owner, token, repo_names)),
+        anyio.to_thread.run_sync(lambda: _safe_commit_heatmap_52w(owner, token, repo_names)),
     )
 
     return CockpitResponse(
@@ -318,6 +342,7 @@ async def personal_analytics_cockpit(
         open_pr_count=open_pr_count,
         pr_merge_rate_4w=pr_merge_rate_4w,
         commit_activity_4w=commit_activity_4w,
+        commit_heatmap_52w=commit_heatmap_52w,
         total_cache_size_bytes=total_cache_size_bytes,
         cache_job_success_rate=cache_job_success_rate,
     )

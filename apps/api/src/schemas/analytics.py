@@ -55,3 +55,4 @@ class CockpitResponse(BaseModel):
     commit_activity_4w: list[int]
     total_cache_size_bytes: int
     cache_job_success_rate: float
+    commit_heatmap_52w: list[int] = []
