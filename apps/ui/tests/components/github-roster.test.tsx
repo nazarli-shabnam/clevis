@@ -184,6 +184,22 @@ describe("GithubRoster (Collaborators page)", () => {
     });
   });
 
+  it("shows an empty state under Pending GitHub invitations when there are none", async () => {
+    membersMock.mockResolvedValue({ org: "acme", members: [], two_factor_overlay_available: true });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Clevis workspace invitations")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Pending GitHub invitations" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("No pending GitHub invitations")).toBeInTheDocument();
+    });
+  });
+
   it("filters the visible members by the search input", async () => {
     membersMock.mockResolvedValue({
       org: "acme",
@@ -278,5 +294,71 @@ describe("GithubRoster (Collaborators page)", () => {
     });
     expect(await screen.findByText("dave")).toBeInTheDocument();
     expect(screen.getByText(/approximation, not exact/)).toBeInTheDocument();
+  });
+
+  it("shows the partial-scan note when the permission audit didn't scan every repo", async () => {
+    membersMock.mockResolvedValue({ org: "acme", members: [], two_factor_overlay_available: true });
+    permissionAuditMock.mockResolvedValue({
+      generated_at: new Date().toISOString(),
+      repos_scanned: 5,
+      repos_total: 12,
+      repos: [],
+      risk_summary: { outside_with_write_or_admin: 0, members_with_admin: 0, total_outside_collaborators: 0 },
+    });
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Audit" }));
+
+    await waitFor(() => {
+      expect(permissionAuditMock).toHaveBeenCalled();
+    });
+    expect(await screen.findByText(/scanned 5 of 12 repos/)).toBeInTheDocument();
+  });
+
+  it("shows a loading indicator for inactive members while the query is pending", async () => {
+    membersMock.mockResolvedValue({ org: "acme", members: [], two_factor_overlay_available: true });
+    inactiveMembersMock.mockImplementation(() => new Promise(() => {}));
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Audit" }));
+
+    await waitFor(() => {
+      expect(inactiveMembersMock).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Loading…")).toBeInTheDocument();
+    });
+  });
+
+  it("shows an error instead of a false-clean empty state when inactive members fails", async () => {
+    membersMock.mockResolvedValue({ org: "acme", members: [], two_factor_overlay_available: true });
+    inactiveMembersMock.mockRejectedValue(new Error("GitHub API unreachable"));
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Audit" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("GitHub API unreachable")).toBeInTheDocument();
+    });
+  });
+
+  it("shows how long ago an inactive member's last commit was", async () => {
+    membersMock.mockResolvedValue({ org: "acme", members: [], two_factor_overlay_available: true });
+    inactiveMembersMock.mockResolvedValue({
+      org: "acme",
+      sampled_repos: ["acme/api"],
+      members: [{ login: "erin", avatar_url: "", role: "member", last_commit_repo: "acme/api", last_commit_days_ago: 45 }],
+    });
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Audit" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/last commit 45d ago in acme\/api/)).toBeInTheDocument();
+    });
   });
 });

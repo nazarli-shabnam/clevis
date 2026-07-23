@@ -252,8 +252,7 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
             )}
           </>
         )
-      ) : tab === "pending" ? (
-        (pendingQuery.data?.invitations.length ?? 0) === 0 ? (
+      ) : tab === "pending" ? ((pendingQuery.data?.invitations.length ?? 0) === 0 ? (
           <div className="px-4 py-8">
             <p className="text-sm text-muted-foreground">No pending GitHub invitations</p>
           </div>
@@ -270,12 +269,7 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
               </thead>
               <tbody className="divide-y divide-border">
                 {pendingQuery.data!.invitations.map((inv, i) => (
-                  <tr key={i}>
-                    <td className="px-4 py-2.5 text-foreground/80">{inv.login ?? inv.email}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground capitalize">{inv.role}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground">{relativeTime(inv.invited_at)}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground">{inv.inviter ?? "—"}</td>
-                  </tr>
+                  <tr key={i}><td className="px-4 py-2.5 text-foreground/80">{inv.login ?? inv.email}</td><td className="px-4 py-2.5 text-muted-foreground capitalize">{inv.role}</td><td className="px-4 py-2.5 text-muted-foreground">{relativeTime(inv.invited_at)}</td><td className="px-4 py-2.5 text-muted-foreground">{inv.inviter ?? "—"}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -285,10 +279,7 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
         <>
           {outsideWithElevatedRepos.size > 0 && (
             <div className="px-4 py-3 border-b border-border bg-yellow-500/5">
-              <p className="text-xs font-medium text-yellow-400 flex items-center gap-1.5 mb-1.5">
-                <Warning className="size-3.5" />
-                Access Risk: {outsideWithElevatedRepos.size} outside collaborator{outsideWithElevatedRepos.size === 1 ? "" : "s"} with write/admin access
-              </p>
+              <p className="text-xs font-medium text-yellow-400 flex items-center gap-1.5 mb-1.5"><Warning className="size-3.5" /> Access Risk: {outsideWithElevatedRepos.size} outside collaborator{outsideWithElevatedRepos.size === 1 ? "" : "s"} with write/admin access</p>
               <ul className="text-xs text-muted-foreground flex flex-col gap-0.5">
                 {[...outsideWithElevatedRepos.entries()].map(([login, repos]) => (
                   <li key={login}>{login} · {repos.join(", ")}</li>
@@ -319,10 +310,7 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
               <tbody className="divide-y divide-border">
                 {(permissionAuditQuery.data?.repos ?? []).flatMap((repo) =>
                   repo.collaborators.map((c) => (
-                    <tr
-                      key={`${repo.repo}-${c.login}`}
-                      className={c.is_outside_collaborator && (c.permission === "write" || c.permission === "maintain" || c.permission === "admin") ? "bg-yellow-500/5" : ""}
-                    >
+                    <tr key={`${repo.repo}-${c.login}`} className={c.is_outside_collaborator && (c.permission === "write" || c.permission === "maintain" || c.permission === "admin") ? "bg-yellow-500/5" : ""}>
                       <td className="px-4 py-2 font-mono text-muted-foreground truncate max-w-[10rem]">{repo.repo}</td>
                       <td className="px-4 py-2 text-foreground/80">{c.login}</td>
                       <td className="px-4 py-2 text-muted-foreground">{c.affiliation}</td>
