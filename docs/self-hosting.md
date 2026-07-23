@@ -28,7 +28,9 @@ This is the infrastructure/ops guide — getting the Clevis stack itself running
 
    **If you already registered the App before this change:** open the App's settings, go to the "Post installation" section, and add the Setup URL above — existing installs don't need to be redone, only new/updated ones will hit the new callback page.
 
-4. Start the stack:
+4. (Optional) Configure SMTP so self-registered accounts can verify their email: set `SMTP_HOST`, `SMTP_PORT` (default `587`), `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` in `.env`. Without these, registration still works — accounts are created immediately — but they stay unverified and can't accept an org invitation until either SMTP is configured and the user clicks the emailed link, or they link a GitHub account instead (GitHub-verified emails are trusted immediately). Accounts created via first-run `/auth/setup` or "Sign in with GitHub" are always verified, regardless of SMTP.
+
+5. Start the stack:
 
    ```bash
    docker compose up --build -d
@@ -42,7 +44,7 @@ This is the infrastructure/ops guide — getting the Clevis stack itself running
    ghcr.io/<owner>/clevis-ui
    ```
 
-5. Verify it's up:
+6. Verify it's up:
 
    ```bash
    curl http://localhost:8080/healthz   # -> {"status": "ok"}

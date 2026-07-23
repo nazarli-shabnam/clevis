@@ -6,17 +6,23 @@ This is the shared, tool-agnostic guide for working in this repository — for a
 
 Clevis is a GitHub analytics dashboard with three independently deployable services and one shared Python library:
 
-- **`apps/api`** — FastAPI REST backend (Python). Handles auth, analytics, RBAC, and job enqueueing. Uses SQLAlchemy 2 + Alembic against PostgreSQL.
-- **`apps/worker`** — Standalone Python process. Polls the `jobs` table using `SELECT … FOR UPDATE SKIP LOCKED` and calls the GitHub API to execute background tasks (currently: clearing Actions cache). Uses raw psycopg3, not SQLAlchemy.
+- **`apps/api`** — FastAPI REST backend (Python). Handles auth (password + GitHub OAuth), org/membership management, analytics, RBAC, and job enqueueing. Uses SQLAlchemy 2 + Alembic against PostgreSQL.
+- **`apps/worker`** — Standalone Python process. Polls the `jobs` table using `SELECT … FOR UPDATE SKIP LOCKED` and calls the GitHub API to execute background tasks (currently: clearing Actions cache). Uses raw psycopg3, not SQLAlchemy. A background thread (`_JobHeartbeat`) touches `jobs.heartbeat_at` every ~10s while a handler runs, so `_reclaim_stale_jobs` can tell a slow-but-alive job apart from a crashed one.
 - **`apps/ui`** — Next.js 15 / React 19 frontend. Uses TanStack Query for data fetching, Tailwind v4, Base UI primitives, shadcn components.
-- **`packages/checks`** — `clevis-checks` Python package. Defines `Check` base class and GitHub security checks (MFA, branch protection, secret scanning). Must be installed editable for `import checks` to work.
+- **`packages/checks`** — `clevis-checks` Python package. Defines `Check` base class and six GitHub security checks (org MFA enforcement, branch protection, secret scanning, Dependabot alerts, code scanning alerts, default-branch force-push protection). Must be installed editable for `import checks` to work.
 
 ### Database models (`apps/api/src/core/db.py`)
 
-Three tables managed by Alembic — no runtime DDL:
-- **`github_installations`** — account login, installation ID, auth mode, and `token_ref` (a symbolic reference like `tok_acme`, not the actual token).
+Nine tables managed by Alembic — no runtime DDL:
+- **`users`** — email/password or GitHub-OAuth-linked accounts. `is_workspace_admin` (instance-level, set once at first-run `/auth/setup`), `token_version` (bumped to invalidate all issued JWTs), `email_verified` / `email_verify_token` / `email_verify_token_expires_at` (issue #217 — self-registered accounts start unverified and can't accept org invites until they click the emailed link; GitHub-linked and first-run-setup accounts are verified immediately since their email is already trusted).
+- **`orgs`** / **`org_memberships`** — a GitHub org becomes a Clevis `Org` row once someone connects it; `org_memberships` is the `(org_id, user_id) -> role ("member"|"admin")` join table `require_org_role` checks against.
+- **`invitations`** — pending org invites by email; `accept_invitation` requires the accepting user's email to match and (per #217) `email_verified=True`.
+- **`github_installations`** — account login, installation ID, auth mode, and `token_ref` (a symbolic reference like `tok_acme`, not the actual token). Exactly one of `org_id` / `owner_user_id` is set (org-connected vs. personal installs).
+- **`saved_tokens`** — legacy Fernet-encrypted PAT-per-org fallback, used when no GitHub App installation covers that org.
 - **`audit_logs`** — immutable audit trail; every significant action (cache clear, dry-run, etc.) writes here with actor, action, target, and payload JSON.
-- **`jobs`** — job queue; composite index on `(status, job_type)` for efficient worker polling. Status lifecycle: `queued → processing → done/failed`. The `result` column stores JSON on success or a raw exception string on failure.
+- **`jobs`** — job queue; composite index on `(status, job_type)` for efficient worker polling. Status lifecycle: `queued → processing → done/failed`. The `result` column stores JSON on success or a raw exception string on failure. `retry_count` caps both reclaim-after-crash and transient-failure retries at `MAX_RETRIES`; `heartbeat_at` (issue #215) lets a long-running-but-alive job survive the reclaim sweep past `RECLAIM_TIMEOUT_MINUTES`.
+- **`scan_results`** — historical security-scan snapshots (score, checks JSON) powering the score-trend chart; `scanned_by_user_id` scopes personal-endpoint scan history when there's no org membership to gate on.
+- **`app_config`** — DB-backed, Settings-page-editable runtime config (currently just `worker_poll_seconds`; see Development setup below).
 
 ### Job queue flow
 
@@ -29,9 +35,13 @@ Three tables managed by Alembic — no runtime DDL:
 Access is enforced with JWT session auth, not an `X-Role` header:
 
 - `require_auth` / `require_workspace_admin` — `apps/api/src/core/auth.py` (any signed-in user vs instance workspace admin).
-- `require_org_role("member"|"admin")` — `apps/api/src/core/rbac.py` (org-scoped membership lookup in the DB).
+- `require_org_role("member"|"admin")` — `apps/api/src/core/rbac.py` (org-scoped membership lookup in the DB, against `org_memberships`).
 
 The old `viewer` / `analyst` / `admin` header model was removed in Phase 5.
+
+### Auth & GitHub App
+
+Two sign-in paths, both issuing the same JWT session: password (`/auth/setup` for the first-run admin, `/auth/register` + `/auth/login` after that) and "Sign in with GitHub" OAuth (`apps/api/src/routers/github_auth.py`). Separately, a **GitHub App installation** (`apps/api/src/routers/installations.py`, `apps/api/src/routers/webhooks.py`) is how an org actually grants Clevis API access — installing lets the API mint short-lived per-installation tokens instead of relying on a browser-pasted PAT. `POST /webhooks/github` (HMAC-signature-verified) keeps `github_installations` in sync on install/uninstall lifecycle events; it does not do full webhook-driven event ingestion.
 
 ### Token encryption / storage
 
@@ -43,7 +53,7 @@ The API uses `postgresql+psycopg://` (SQLAlchemy dialect). The worker strips the
 
 ### Analytics & checks integration
 
-`analytics_service.py` calls `checks.runner.run_all_checks(owner, token, base_url)`, which instantiates and runs the three `Check` subclasses in `packages/checks`. Score is computed as `100 - (failed_count / total_count * 100)`. Each check returns `{"status": "pass"|"fail", "value": <object>}`. The checks package handles GitHub API pagination internally via Link header parsing — callers receive complete results.
+`analytics_service.py` calls `checks.runner.run_all_checks(owner, token, base_url)`, which instantiates and runs the six `Check` subclasses in `packages/checks/src/checks/github_checks.py` (`OrgMFARequired`, `BranchProtectionEnabled`, `SecretScanningEnabled`, `DependabotAlertsCheck`, `CodeScanningCheck`, `DefaultBranchNoForcePushCheck`). Score is computed as `100 - (failed_count / total_count * 100)`. Each check returns `{"status": "pass"|"fail", "value": <object>}`. The checks package handles GitHub API pagination internally via Link header parsing, and retries GitHub's primary (429) and secondary (403 + rate-limit headers) rate limits — callers receive complete results. Each scan is also persisted to `scan_results` for the score-trend chart.
 
 ### Request ID propagation
 
@@ -64,7 +74,7 @@ pip install -e packages/checks
 cd apps/ui && bun install
 ```
 
-**Required env vars (6 total):** `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JOB_SECRET_KEY`, `AUTH_SECRET`, `NEXT_PUBLIC_API_BASE`. Two more deploy-time vars are optional (safe defaults in code): `CORS_ORIGINS`, `GITHUB_API_BASE`. Everything else lives in the `app_config` DB table (configured via Settings page).
+**Required env vars (6 total):** `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JOB_SECRET_KEY`, `AUTH_SECRET`, `NEXT_PUBLIC_API_BASE`. Everything else is optional with a safe default in code (`CORS_ORIGINS`, `GITHUB_API_BASE`, the `GITHUB_APP_*` block for GitHub App auth/OAuth, the `SMTP_*` block for verification emails — see `.env.example`). Everything else lives in the `app_config` DB table (configured via Settings page).
 
 Key variables:
 - `DB_USER`, `DB_PASSWORD`, `DB_NAME` — Postgres credentials. Docker Compose maps these to `POSTGRES_USER/PASSWORD/DB` for the db container; entrypoints construct `DATABASE_URL` from them (host = `db`).
@@ -77,6 +87,8 @@ Key variables:
 **Deploy-time config (env vars, safe defaults in code):**
 - `CORS_ORIGINS` — JSON array of allowed origins; default `["http://localhost:3000"]`. Read once at API startup (a security boundary), so a change requires an API restart. Set your real UI domain in production.
 - `GITHUB_API_BASE` — default `https://api.github.com`; set for GitHub Enterprise (e.g. `https://github.yourco.com/api/v3`). Used by both the API and the worker. Not runtime-editable because it's where GitHub tokens are sent.
+- `GITHUB_APP_ID` / `GITHUB_APP_CLIENT_ID` / `GITHUB_APP_CLIENT_SECRET` / `GITHUB_APP_PRIVATE_KEY` / `GITHUB_APP_WEBHOOK_SECRET` / `NEXT_PUBLIC_GITHUB_APP_SLUG` — unset by default (all `None`); "Sign in with GitHub" and the "Install GitHub App" button raise a clear "not configured" error until these are set. See `docs/self-hosting.md` for how to register the App.
+- `SMTP_HOST` / `SMTP_PORT` (default `587`) / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` — unset by default. Issue #217: without these, self-registered accounts are still created successfully but stay `email_verified=False` and can't accept org invitations until an operator configures SMTP (or the user later verifies via GitHub OAuth linking, which verifies immediately).
 
 **DB-backed config (editable in Settings → Instance Configuration):**
 - `worker_poll_seconds` — default `5`, clamped to `[1, 30]`; the worker re-reads it each loop, so changes take effect live without a restart. The upper clamp keeps the worker's heartbeat healthcheck in `docker-compose.yml` meaningful (see `apps/worker/src/worker.py`'s `_MAX_POLL_SECONDS`).
@@ -154,6 +166,7 @@ This is the highest-priority guardrail in this file.
 - Never run `alembic downgrade` against a real environment without explicit user confirmation.
 - Never hand-edit a migration file that has already been applied anywhere (including a teammate's local environment) — write a new migration instead.
 - If a migration touches a column with existing data (type change, `NOT NULL`, drop), state the data-loss/backfill risk explicitly before running it, even if not asked.
+- Before opening a PR with a new migration, check `apps/api/alembic/versions/` against latest `main` (not just your branch) for a numbering collision — two PRs developed in parallel can both claim the same next number. If `alembic upgrade head` reports multiple heads after merging main in, renumber your migration (new revision id + `down_revision` pointing at the real new head) rather than leaving the collision for whoever merges second to discover.
 
 ### 2. Don't fabricate facts
 
