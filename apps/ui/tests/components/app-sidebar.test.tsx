@@ -300,3 +300,86 @@ describe("AppSidebar health dot and unread badge", () => {
     await waitFor(() => expect(link.querySelector(".bg-primary\\/20")).toBeNull());
   });
 });
+
+describe("AppSidebar coming-soon badges", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    replace.mockClear();
+    localStorage.setItem(TOKEN_KEY, makeJwt());
+    orgMemberships = [];
+    cockpitResponse = { latest_score: null, recent_events: [] };
+
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    );
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/me")) {
+          return Promise.resolve(
+            jsonResponse({ id: 1, email: "user@example.com", name: "User", is_workspace_admin: false }),
+          );
+        }
+        if (url.endsWith("/me/orgs")) {
+          return Promise.resolve(jsonResponse(orgMemberships));
+        }
+        if (url.endsWith("/tokens/resolve")) {
+          return Promise.resolve(jsonResponse({ detail: "No saved token for this org" }, 404));
+        }
+        if (url.includes("/me/analytics/cockpit/")) {
+          return Promise.resolve(
+            jsonResponse({
+              repo_count: 0,
+              member_count: 0,
+              latest_score: cockpitResponse.latest_score,
+              score_trend: [],
+              recent_events: cockpitResponse.recent_events,
+              open_pr_count: 0,
+              pr_merge_rate_4w: [],
+              commit_activity_4w: [],
+              total_cache_size_bytes: 0,
+              cache_job_success_rate: 0,
+            }),
+          );
+        }
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it.each(["Pull Requests", "Releases", "My PRs", "My Reviews", "My Issues"])(
+    "shows a 'Soon' badge on the unshipped '%s' nav item",
+    async (title) => {
+      renderSidebar();
+      const link = await screen.findByRole("link", { name: new RegExp(title) });
+      expect(link).toHaveTextContent("Soon");
+    },
+  );
+
+  it.each(["Overview", "Activity", "Repositories", "Health & Security", "Collaborators", "Automation", "Audit Log", "Job Queue"])(
+    "shows no 'Soon' badge on the shipped '%s' nav item",
+    async (title) => {
+      renderSidebar();
+      const link = await screen.findByRole("link", { name: new RegExp(title) });
+      expect(link).not.toHaveTextContent("Soon");
+    },
+  );
+});
