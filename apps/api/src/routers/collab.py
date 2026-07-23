@@ -237,8 +237,10 @@ def permission_audit(
     token = _resolve_token(db, ctx, org_login, x_github_token)
     client = GitHubClient(token)
     try:
-        member_logins = {m["login"] for m in client.request_paginated(f"/orgs/{org_login}/members")}
-        outside_logins = {c["login"] for c in client.request_paginated(f"/orgs/{org_login}/outside_collaborators")}
+        member_logins = {m["login"] for m in client.request_paginated(f"/orgs/{org_login}/members") if "login" in m}
+        outside_logins = {
+            c["login"] for c in client.request_paginated(f"/orgs/{org_login}/outside_collaborators") if "login" in c
+        }
         repos_raw = client.request_paginated(f"/orgs/{org_login}/repos", params={"type": "all", "sort": "pushed"})
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise _github_error(exc) from exc
@@ -268,6 +270,11 @@ def permission_audit(
     for repo_name, raw_collabs in raw_by_repo.items():
         collaborators = []
         for c in raw_collabs:
+            # A malformed collaborator entry missing `login` shouldn't 500 the whole
+            # repo's row -- skip just that entry, matching the invitations
+            # missing-created_at defensive pattern elsewhere in this file.
+            if "login" not in c:
+                continue
             login = c["login"]
             is_outside = login not in member_logins or login in outside_logins
             permission = _collaborator_permission(c)
@@ -301,17 +308,22 @@ def permission_audit(
     )
 
 
-def _last_commit_for_author(client: GitHubClient, org_login: str, repo_name: str, login: str) -> str | None:
+def _last_commit_for_author(client: GitHubClient, org_login: str, repo_name: str, login: str) -> tuple[str | None, bool]:
+    """Returns (last_commit_date, checked). `checked=False` means the GitHub call
+    itself failed (rate limit, network error, no repo visibility) -- that's an
+    unknown answer, not evidence the member has zero commits, and must not be
+    conflated with a real "checked, found nothing" result the way it silently was
+    before (a transient error could wrongly mark an active member as inactive)."""
     try:
         commits = client.request(
             "GET", f"/repos/{org_login}/{repo_name}/commits", params={"author": login, "per_page": 1}
         )
     except (httpx.HTTPStatusError, httpx.RequestError):
-        return None
+        return None, False
     if not isinstance(commits, list) or not commits:
-        return None
+        return None, True
     date = ((commits[0].get("commit") or {}).get("author") or {}).get("date")
-    return date
+    return date, True
 
 
 @router.get("/github/orgs/{org_login}/inactive-members", response_model=InactiveMembersResponse)
@@ -331,23 +343,37 @@ def inactive_members(
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise _github_error(exc) from exc
 
-    admin_logins = {m["login"] for m in admins_raw}
+    admin_logins = {m["login"] for m in admins_raw if "login" in m}
     sampled_repos = [r["name"] for r in repos_raw[:_MAX_REPOS_SAMPLED_FOR_ACTIVITY]]
     now = datetime.now(timezone.utc)
 
-    def _member_last_activity(member: dict) -> tuple[str | None, str | None]:
-        login = member["login"]
+    def _member_last_activity(member: dict) -> tuple[str | None, str | None, bool]:
+        login = member.get("login")
+        if not login:
+            return None, None, False
+        verified = False
         for repo_name in sampled_repos:
-            date = _last_commit_for_author(client, org_login, repo_name, login)
+            date, checked = _last_commit_for_author(client, org_login, repo_name, login)
+            if checked:
+                verified = True
             if date:
-                return repo_name, date
-        return None, None
+                return repo_name, date, True
+        # verified=True here means every sampled repo was successfully queried and
+        # genuinely had no commits from this member -- a real "no activity found"
+        # answer. verified=False means at least one lookup failed outright, so this
+        # member's activity is unknown rather than confirmed absent.
+        return None, None, verified
 
     with ThreadPoolExecutor(max_workers=10) as pool:
         results = list(pool.map(_member_last_activity, members_raw))
 
     inactive: list[InactiveMember] = []
-    for member, (repo_name, date) in zip(members_raw, results):
+    for member, (repo_name, date, verified) in zip(members_raw, results):
+        login = member.get("login")
+        if not login or not verified:
+            # Can't confirm this member's activity (missing login, or every sampled
+            # repo's commits call failed) -- don't claim inactivity we can't back up.
+            continue
         days_ago = None
         if date:
             try:
@@ -358,9 +384,9 @@ def inactive_members(
         if days_ago is None or days_ago >= days:
             inactive.append(
                 InactiveMember(
-                    login=member["login"],
+                    login=login,
                     avatar_url=member.get("avatar_url", ""),
-                    role="admin" if member["login"] in admin_logins else "member",
+                    role="admin" if login in admin_logins else "member",
                     last_commit_repo=f"{org_login}/{repo_name}" if repo_name else None,
                     last_commit_days_ago=days_ago,
                 )

@@ -96,6 +96,31 @@ def test_permission_audit_one_bad_repo_does_not_blank_others(client):
     assert len(repos_by_name["repo-good"]["collaborators"]) == 1
 
 
+def test_permission_audit_skips_collaborator_entries_missing_login(client):
+    def _paginated_side_effect(path, params=None):
+        if path == "/orgs/acme/members":
+            return [{"login": "alice"}]
+        if path == "/orgs/acme/outside_collaborators":
+            return []
+        if path == "/orgs/acme/repos":
+            return [{"name": "api"}]
+        if path == "/repos/acme/api/collaborators":
+            return [
+                {"permissions": {"pull": True}},  # malformed: no "login"
+                {"login": "alice", "avatar_url": "", "permissions": {"pull": True}},
+            ]
+        return []
+
+    with patch("src.routers.collab.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.side_effect = _paginated_side_effect
+        resp = client.get("/github/orgs/acme/permission-audit", headers={"X-GitHub-Token": "ghp_test"})
+
+    assert resp.status_code == 200
+    collaborators = resp.json()["repos"][0]["collaborators"]
+    assert len(collaborators) == 1
+    assert collaborators[0]["login"] == "alice"
+
+
 def test_permission_audit_outsider_forbidden(db):
     org_repo.get_or_create(db, github_login="acme")
     app = FastAPI()
@@ -151,6 +176,28 @@ def test_inactive_members_excludes_recently_active_member(client):
     with patch("src.routers.collab.GitHubClient") as mock_client:
         mock_client.return_value.request_paginated.side_effect = _paginated_side_effect
         mock_client.return_value.request.return_value = [{"commit": {"author": {"date": recent}}}]
+        resp = client.get("/github/orgs/acme/inactive-members?days=30", headers={"X-GitHub-Token": "ghp_test"})
+
+    assert resp.status_code == 200
+    assert resp.json()["members"] == []
+
+
+def test_inactive_members_does_not_flag_a_member_whose_activity_could_not_be_verified(client):
+    """A transient API failure on every sampled repo must not be conflated with a
+    genuine 'zero commits found' answer -- an unverifiable member is excluded
+    entirely rather than wrongly flagged inactive (a false access-risk signal)."""
+    def _paginated_side_effect(path, params=None):
+        if path == "/orgs/acme/members" and params == {"role": "admin"}:
+            return []
+        if path == "/orgs/acme/members":
+            return [{"login": "alice", "avatar_url": ""}]
+        if path == "/orgs/acme/repos":
+            return [{"name": "api"}]
+        return []
+
+    with patch("src.routers.collab.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.side_effect = _paginated_side_effect
+        mock_client.return_value.request.side_effect = httpx.RequestError("boom")
         resp = client.get("/github/orgs/acme/inactive-members?days=30", headers={"X-GitHub-Token": "ghp_test"})
 
     assert resp.status_code == 200

@@ -346,6 +346,13 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
             <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
               <CircleNotch className="size-3.5 animate-spin" /> Loading…
             </div>
+          ) : inactiveMembersQuery.error ? (
+            // Distinct from the "no inactive members" empty state below -- an error here
+            // must not silently read as "org is clean," which would be a false-negative
+            // access-risk signal.
+            <div className="px-4 py-6">
+              <p className="text-xs text-destructive">{inactiveMembersQuery.error.message}</p>
+            </div>
           ) : (inactiveMembersQuery.data?.members.length ?? 0) === 0 ? (
             <div className="px-4 py-6">
               <p className="text-sm text-muted-foreground">No inactive members found (within the sampled repos)</p>
