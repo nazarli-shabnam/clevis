@@ -12,6 +12,7 @@ import { ArrowRight, Warning } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { CHART_COLORS } from "@/lib/charts/theme"
 import { relativeTime } from "@/lib/format"
+import { SectionError } from "@/components/section-error"
 import type { MyViewIssueSummary, MyViewPRSummary } from "@/lib/api/types"
 
 const MY_VIEW_TABS = [
@@ -74,8 +75,10 @@ function LiveStatCard({ label, loading, configured, value, trend }: {
 
 export default function OverviewPage() {
   const [org, setOrg] = useState("")
+  const [orgChecked, setOrgChecked] = useState(false)
   useEffect(() => {
     setOrg(localStorage.getItem("default_org") || "")
+    setOrgChecked(true)
   }, [])
 
   // Not chained to the cockpit query below — both fire on mount. This one only
@@ -138,9 +141,33 @@ export default function OverviewPage() {
   const myViewItems: (MyViewPRSummary | MyViewIssueSummary)[] =
     myViewTab === "prs" ? myView?.my_open_prs ?? [] : myViewTab === "reviews" ? myView?.review_requests ?? [] : myView?.assigned_issues ?? []
 
+  const orgQueryError = cockpitQuery.error ?? myViewQuery.error
+  const orgQueryIsError = cockpitQuery.isError || myViewQuery.isError
+  const orgQueryIsFetching = cockpitQuery.isFetching || myViewQuery.isFetching
+
   return (
     <>
       <PageHeader title="Overview" description="Your GitHub organization at a glance." />
+
+      {orgChecked && !org && (
+        <div className="card mb-6">
+          <p className="px-4 py-6 text-sm text-muted-foreground">
+            No default organization selected yet — this page has nothing to query. Set one in{" "}
+            <Link href="/settings" className="text-primary hover:underline">Settings</Link>, or connect a GitHub
+            org there first if you haven&rsquo;t already.
+          </p>
+        </div>
+      )}
+
+      {org && orgQueryIsError && (
+        <div className="card mb-6">
+          <SectionError
+            message={orgQueryError instanceof Error ? orgQueryError.message : "Failed to load data for this organization."}
+            onRetry={() => { cockpitQuery.refetch(); myViewQuery.refetch() }}
+            retrying={orgQueryIsFetching}
+          />
+        </div>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-px mb-6 border border-border bg-border">
         <LiveStatCard

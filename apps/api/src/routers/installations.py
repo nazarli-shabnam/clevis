@@ -1,13 +1,18 @@
 """GitHub App installation router.
 
   GET  /orgs/{org_login}/installations       member: list installations connected to this org
-  POST /orgs/{org_login}/installations/sync  admin: re-sync installation metadata for an
-                                              *existing* org. A brand-new org's first
-                                              installation is only created via the
-                                              auto-provisioning flow (src.services.org_provisioning,
-                                              run at OAuth login) — this endpoint can't bootstrap a
-                                              brand-new Org row since it has no way to verify the
-                                              caller is a real GitHub org admin.
+  POST /orgs/{org_login}/installations/sync  admin: re-sync installation metadata for this org.
+                                              If the caller isn't already a known Clevis org
+                                              admin (e.g. this is the org's first-ever
+                                              installation, or their Clevis membership is stale),
+                                              this bootstraps the Org/OrgMembership rows itself by
+                                              live-checking the caller's GitHub org role via the
+                                              installation's own token -- see
+                                              _bootstrap_org_admin_from_installation below. This
+                                              doesn't need the caller's OAuth user token (Clevis
+                                              never persists it -- see src.services.org_provisioning)
+                                              because the just-installed App can check org
+                                              membership on its own behalf.
   GET  /me/installations                     list the current user's personal installations
   POST /me/installations/sync                connect a personal (User-type) GitHub installation
   GET  /me/installations/lookup/{id}          resolve an installation_id to the account it belongs
@@ -21,9 +26,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
-from src.core.db import User, get_db
-from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role
-from src.repositories import installation_repo
+from src.core.db import Org, OrgMembership, User, get_db
+from src.core.rbac import OrgContext, require_org_role
+from src.repositories import installation_repo, org_membership_repo, org_repo
 from src.schemas.installation import (
     InstallationLookupOut,
     InstallationOut,
@@ -95,21 +100,73 @@ def list_org_installations(
     return installation_repo.list_for_org(db, org_id=ctx.org.id)
 
 
+def _bootstrap_org_admin_from_installation(db: Session, db_user: User, org_login: str, installation_id: int) -> Org:
+    """No Clevis Org exists for org_login yet, or the caller isn't a known admin of it --
+    live-verify the caller is actually a GitHub admin of this org right now, using the
+    just-installed App's own installation token (never the caller's unverified say-so),
+    then get-or-create the Org/OrgMembership rows. Callers must already have confirmed
+    db_user.github_login is set and installation_id is not None. Raises HTTPException on
+    any failure to verify (GitHub API error, or the live check saying the caller isn't an
+    admin)."""
+    try:
+        installation_token = github_app.get_installation_token(installation_id)
+        role = github_app.get_org_membership_role(installation_token, org_login, db_user.github_login)
+    except github_app.GitHubAppNotConfigured:
+        raise HTTPException(status_code=503, detail="GitHub App is not configured")
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=400, detail=f"GitHub API error: {exc.response.status_code}")
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail="GitHub API unreachable")
+    if role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You must be an admin of this GitHub organization to connect it",
+        )
+    org = org_repo.get_or_create(db, github_login=org_login)
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=db_user.id, role="admin")
+    return org
+
+
 @router.post("/orgs/{org_login}/installations/sync", response_model=SyncInstallationsResponse)
 def sync_org_installation(
+    org_login: str,
     payload: SyncInstallationsInput,
-    ctx: OrgContext = Depends(require_org_role(min_role="admin")),
+    user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
-    assert_owner_matches_org(payload.account_login, ctx)
+    if payload.account_login.lower() != org_login.lower():
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="owner must match the org in the URL")
+
+    org: Org | None = org_repo.get_by_login(db, org_login)
+    membership: OrgMembership | None = org_membership_repo.get(db, org.id, user.id) if org else None
+    is_known_admin = org is not None and membership is not None and membership.role == "admin"
+
+    # Only a caller who ISN'T already a confirmed local admin needs the extra checks below
+    # (linked GitHub account, installation_id present) -- resolved before any GitHub call
+    # so an unauthorized request fails fast instead of paying for a network round-trip.
+    db_user: User | None = None
+    if not is_known_admin:
+        db_user = db.query(User).filter(User.id == user.id).first()
+        if not db_user or not db_user.github_login:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Link your GitHub account (sign in with GitHub) before connecting an organization",
+            )
+        if payload.installation_id is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
+
     _verify_installation(payload.installation_id, payload.account_login, payload.account_type)
+
+    if not is_known_admin:
+        org = _bootstrap_org_admin_from_installation(db, db_user, org_login, payload.installation_id)
+
     row = installation_repo.create(
         db,
         account_login=payload.account_login,
         account_type=payload.account_type,
         auth_mode=payload.auth_mode,
         installation_id=payload.installation_id,
-        org_id=ctx.org.id,
+        org_id=org.id,
     )
     return {"synced": True, "token_ref": row.token_ref}
 

@@ -228,6 +228,73 @@ def test_sync_org_installation_returns_503_on_github_network_error(db, acme_org)
     assert installation_repo.list_for_org(db, org_id=acme_org["org"].id) == []
 
 
+def test_sync_org_installation_bootstraps_new_org_for_live_github_admin(db):
+    """No Clevis Org/OrgMembership exists yet for 'acme' -- this is the org's first-ever
+    connection. The caller has a linked GitHub account and the App's installation
+    reports them as a live GitHub org admin, so the sync should create the Org +
+    admin OrgMembership itself instead of 404ing."""
+    me = _make_user(db, "founder@e.com", github_login="founder")
+    with (
+        _mock_installation("acme", "Organization"),
+        patch("src.routers.installations.github_app.get_installation_token", return_value="itok"),
+        patch("src.routers.installations.github_app.get_org_membership_role", return_value="admin") as mock_role,
+    ):
+        resp = _client(db, me).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["synced"] is True
+    mock_role.assert_called_once_with("itok", "acme", "founder")
+    org = org_repo.get_by_login(db, "acme")
+    assert org is not None
+    membership = org_membership_repo.get(db, org.id, me.id)
+    assert membership is not None
+    assert membership.role == "admin"
+
+
+def test_sync_org_installation_rejects_live_non_admin(db):
+    """The org already exists in Clevis (someone else connected it), the caller has no
+    local membership, and the live GitHub check says they're a "member" not "admin" --
+    must not bootstrap an admin membership for them."""
+    org_repo.get_or_create(db, github_login="acme")
+    me = _make_user(db, "regular@e.com", github_login="regular")
+    with (
+        _mock_installation("acme", "Organization"),
+        patch("src.routers.installations.github_app.get_installation_token", return_value="itok"),
+        patch("src.routers.installations.github_app.get_org_membership_role", return_value="member"),
+    ):
+        resp = _client(db, me).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 403
+    org = org_repo.get_by_login(db, "acme")
+    assert org_membership_repo.get(db, org.id, me.id) is None
+
+
+def test_sync_org_installation_requires_installation_id_to_bootstrap(db):
+    me = _make_user(db, "founder@e.com", github_login="founder")
+    resp = _client(db, me).post(
+        "/orgs/acme/installations/sync",
+        json={"account_login": "acme", "account_type": "Organization"},
+    )
+    assert resp.status_code == 404
+    assert org_repo.get_by_login(db, "acme") is None
+
+
+def test_sync_org_installation_requires_admin_unlinked_github_account_no_network_call(db, acme_org):
+    """A non-admin member with no linked GitHub account can't be live-verified at all --
+    must fail fast with 403 and never attempt a GitHub call."""
+    with patch("src.routers.installations.github_app.get_installation_token") as mock_token:
+        resp = _client(db, acme_org["member"]).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 403
+    mock_token.assert_not_called()
+
+
 def test_sync_org_installation_skips_verification_when_installation_id_omitted(db, acme_org):
     with patch("src.routers.installations.github_app.get_installation") as mock_get:
         resp = _client(db, acme_org["admin"]).post(
