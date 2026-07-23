@@ -79,7 +79,7 @@ Key variables:
 - `GITHUB_API_BASE` — default `https://api.github.com`; set for GitHub Enterprise (e.g. `https://github.yourco.com/api/v3`). Used by both the API and the worker. Not runtime-editable because it's where GitHub tokens are sent.
 
 **DB-backed config (editable in Settings → Instance Configuration):**
-- `worker_poll_seconds` — default `5`; the worker re-reads it each loop, so changes take effect live without a restart
+- `worker_poll_seconds` — default `5`, clamped to `[1, 30]`; the worker re-reads it each loop, so changes take effect live without a restart. The upper clamp keeps the worker's heartbeat healthcheck in `docker-compose.yml` meaningful (see `apps/worker/src/worker.py`'s `_MAX_POLL_SECONDS`).
 
 ## Running locally
 
