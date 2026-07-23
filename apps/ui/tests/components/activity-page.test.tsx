@@ -201,4 +201,42 @@ describe("ActivityPage", () => {
     expect(await screen.findByText("alice")).toBeInTheDocument();
     expect(screen.getByText("#5 Fix bug")).toBeInTheDocument();
   });
+
+  it("shows an empty state under the PR Board tab when there are no open pull requests", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+    githubEventsMock.mockResolvedValue({ org: "acme", events: [] });
+    reposListMock.mockResolvedValue({ org: "acme", total: 1, repos: [{ name: "api" }] });
+    reposPullsMock.mockResolvedValue({ repository: "acme/api", total: 0, pulls: [] });
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "PR Board" }));
+
+    await waitFor(() => expect(reposPullsMock).toHaveBeenCalledWith("acme", "acme", "api", "ghp_test"));
+    expect(await screen.findByText("No open pull requests")).toBeInTheDocument();
+  });
+
+  it("marks a pre-release in the release timeline", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+    githubEventsMock.mockResolvedValue({ org: "acme", events: [] });
+    githubReleaseTimelineMock.mockResolvedValue({
+      org: "acme",
+      releases: [
+        {
+          repo: "acme/api",
+          name: "v2.0.0-beta",
+          is_prerelease: true,
+          body_preview: "Beta release",
+          url: "https://github.com/acme/api/releases/v2.0.0-beta",
+          published_at: new Date().toISOString(),
+        },
+      ],
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("pre-release")).toBeInTheDocument();
+  });
 });

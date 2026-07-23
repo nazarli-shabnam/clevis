@@ -280,6 +280,37 @@ describe("api.collab", () => {
   });
 });
 
+describe("api.github", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function stubOkJson(body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))),
+    );
+  }
+
+  it("POSTs to /github/orgs/{org}/failed-runs with token: undefined and a default limit", async () => {
+    stubOkJson({ org: "acme", failed_runs: [] });
+    const result = await api.github.failedRuns("acme", "");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/github/orgs/acme/failed-runs");
+    expect(JSON.parse(init.body as string)).toEqual({ token: undefined, limit: 20 });
+    expect(result).toEqual({ org: "acme", failed_runs: [] });
+  });
+
+  it("POSTs to /github/orgs/{org}/release-timeline with a custom days window", async () => {
+    stubOkJson({ org: "acme", releases: [] });
+    await api.github.releaseTimeline("acme", "ghp_test", 30);
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/github/orgs/acme/release-timeline");
+    expect(JSON.parse(init.body as string)).toEqual({ token: "ghp_test", days: 30 });
+  });
+});
+
 describe("installations.lookup / installations.sync", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
