@@ -302,10 +302,72 @@ export interface GithubMembershipStatus {
   role: "member" | "admin"
 }
 
+export interface CollaboratorPermission {
+  login: string
+  avatar_url: string
+  permission: "read" | "triage" | "write" | "maintain" | "admin"
+  affiliation: "direct" | "outside"
+  is_outside_collaborator: boolean
+}
+
+export interface RepoPermissions {
+  repo: string
+  collaborators: CollaboratorPermission[]
+}
+
+export interface PermissionRiskSummary {
+  outside_with_write_or_admin: number
+  members_with_admin: number
+  total_outside_collaborators: number
+}
+
+export interface PermissionAuditResponse {
+  generated_at: string
+  repos_scanned: number
+  repos_total: number
+  repos: RepoPermissions[]
+  risk_summary: PermissionRiskSummary
+}
+
+export interface InactiveMember {
+  login: string
+  avatar_url: string
+  role: "member" | "admin"
+  last_commit_repo: string | null
+  last_commit_days_ago: number | null
+}
+
+export interface InactiveMembersResponse {
+  org: string
+  sampled_repos: string[]
+  members: InactiveMember[]
+}
+
 export interface PrWeekBucket {
   week: string
   opened: number
   merged: number
+}
+
+export interface AtRiskRepo {
+  repo: string
+  reasons: string[]
+  severity: "warning" | "critical"
+}
+
+export interface MilestoneSummary {
+  repo: string
+  title: string
+  due_on: string | null
+  open_issues: number
+  closed_issues: number
+  progress_pct: number
+  state: "on_track" | "at_risk" | "overdue"
+}
+
+export interface PrCycleTimeWeek {
+  week: string
+  avg_days: number
 }
 
 export interface CockpitResponse {
@@ -320,4 +382,128 @@ export interface CockpitResponse {
   total_cache_size_bytes: number
   cache_job_success_rate: number
   commit_heatmap_52w: number[]
+  at_risk_repos: AtRiskRepo[]
+  milestones: MilestoneSummary[]
+  pr_cycle_time_8w: PrCycleTimeWeek[]
+  release_cadence_4w: number[]
+}
+
+export interface MyViewPRSummary {
+  number: number
+  title: string
+  repository: string
+  html_url: string
+  updated_at: string
+}
+
+export interface MyViewIssueSummary {
+  number: number
+  title: string
+  repository: string
+  html_url: string
+  updated_at: string
+}
+
+export interface MyViewRunSummary {
+  repository: string
+  id: number
+  name: string | null
+  status: string
+  conclusion: string | null
+  html_url: string
+  created_at: string
+}
+
+export interface MyViewResponse {
+  my_open_prs: MyViewPRSummary[]
+  review_requests: MyViewPRSummary[]
+  assigned_issues: MyViewIssueSummary[]
+  my_recent_runs: MyViewRunSummary[]
+}
+
+export interface WorkflowSummary {
+  id: number
+  name: string
+  path: string
+  state: string
+  last_run_status: string | null
+  last_run_conclusion: string | null
+  last_run_at: string | null
+}
+
+export interface WorkflowsResponse {
+  repository: string
+  workflows: WorkflowSummary[]
+}
+
+export interface RunSummary {
+  id: number
+  name: string | null
+  status: string
+  conclusion: string | null
+  head_branch: string
+  created_at: string
+  duration_ms: number | null
+}
+
+export interface RunsResponse {
+  repository: string
+  runs: RunSummary[]
+}
+
+export interface DispatchResponse {
+  dispatched: boolean
+  message: string | null
+}
+
+export interface RepoSecurityRow {
+  repo: string
+  branch_protection: boolean
+  secret_scanning: boolean
+  dependabot_enabled: boolean
+  dependabot_critical_count: number
+  dependabot_high_count: number
+  code_scanning: boolean
+  force_push_allowed: boolean
+  score: number
+  // Dimension names the token couldn't evaluate (403/429/network error) -- excluded
+  // from `score`. Distinct from a genuine 404 "this is off" answer, which isn't unknown.
+  unknown_dimensions: string[]
+}
+
+export interface VulnCounts {
+  critical: number
+  high: number
+  medium: number
+  low: number
+}
+
+export interface MatrixSummary {
+  fully_compliant_count: number
+  critical_risk_count: number
+  secret_hits_count: number
+  vuln_by_severity: VulnCounts
+}
+
+export interface SecurityMatrixResponse {
+  owner: string
+  repos: RepoSecurityRow[]
+  summary: MatrixSummary
+}
+
+export interface SecretAlert {
+  number: number
+  state: string
+  secret_type: string
+  secret_type_display: string
+  resolved_reason: string | null
+  created_at: string
+  resolved_at: string | null
+  repo: string
+  url: string
+}
+
+export interface SecretScanningResponse {
+  repository: string
+  alerts: SecretAlert[]
 }

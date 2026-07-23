@@ -8,11 +8,14 @@ import { CheckCard } from "@/components/check-card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Warning, Key } from "@phosphor-icons/react"
+import { Warning, Key, ShieldWarning } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { shouldApplyResolvedToken } from "@/lib/token-resolve"
 import { DonutChart } from "@/components/charts/donut-chart"
 import { AreaTimeChart } from "@/components/charts/area-time-chart"
+import { BarGroupChart } from "@/components/charts/bar-group-chart"
+import { CHART_COLORS } from "@/lib/charts/theme"
+import { relativeTime } from "@/lib/format"
 import type { CheckResult } from "@/lib/api/types"
 
 const TABS = [
@@ -130,6 +133,18 @@ export default function SecurityPage() {
     },
   })
 
+  const [selectedRepo, setSelectedRepo] = useState("")
+  const matrixMutation = useMutation({
+    mutationFn: () => api.security.matrix(owner, token),
+    onSuccess: (data) => setSelectedRepo(data.repos[0]?.repo ?? ""),
+  })
+
+  const secretScanning = useQuery({
+    queryKey: ["security.secret-scanning", owner, selectedRepo],
+    queryFn: () => api.security.secretScanning(owner, selectedRepo, token),
+    enabled: !!selectedRepo && !!matrixMutation.data,
+  })
+
   const trendData = (historyQuery.data ?? [])
     .slice(0, 10)
     .reverse()
@@ -137,6 +152,30 @@ export default function SecurityPage() {
       week: new Date(h.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
       value: h.score,
     }))
+
+  // "Remediation trend": how many of a scan's checks were passing at the time, over
+  // the last N scans -- an approximation of dependabot/code-scanning remediation
+  // progress using the data already captured per historical scan (ScanHistoryEntry
+  // doesn't expose the full checks_json breakdown via this endpoint), rather than a
+  // literal sum of historical dependabot critical+high counts.
+  const remediationTrendData = (historyQuery.data ?? [])
+    .slice(0, 10)
+    .reverse()
+    .map((h) => ({
+      week: new Date(h.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+      value: h.total_checks - h.failed_checks,
+    }))
+
+  const vulnByRepoData = (matrixMutation.data?.repos ?? []).map((r) => ({
+    name: r.repo,
+    critical: r.dependabot_critical_count,
+    high: r.dependabot_high_count,
+  }))
+
+  function runScan() {
+    scan.mutate()
+    matrixMutation.mutate()
+  }
 
   const filteredChecks = scan.data
     ? sortChecks(
@@ -175,7 +214,7 @@ export default function SecurityPage() {
                 placeholder="e.g. octocat"
                 value={owner}
                 onChange={(e) => setOwner(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && owner && !scan.isPending && scan.mutate()}
+                onKeyDown={(e) => e.key === "Enter" && owner && !scan.isPending && runScan()}
               />
             </div>
             <div>
@@ -196,11 +235,11 @@ export default function SecurityPage() {
                 value={token}
                 onChange={(e) => { setToken(e.target.value); setTokenSaved(false) }}
                 className="font-mono"
-                onKeyDown={(e) => e.key === "Enter" && owner && !scan.isPending && scan.mutate()}
+                onKeyDown={(e) => e.key === "Enter" && owner && !scan.isPending && runScan()}
               />
             </div>
             <Button
-              onClick={() => scan.mutate()}
+              onClick={() => runScan()}
               disabled={scan.isPending || !owner}
               className="mt-1"
             >
@@ -217,7 +256,7 @@ export default function SecurityPage() {
               </Button>
             )}
             {scan.isError && (
-              <div className="flex items-start gap-2 text-xs text-destructive">
+              <div data-testid="scan-error" className="flex items-start gap-2 text-xs text-destructive">
                 <Warning className="size-3.5 mt-0.5 shrink-0" />
                 {scan.error.message}
               </div>
@@ -329,6 +368,150 @@ export default function SecurityPage() {
           </div>
         )}
       </div>
+
+      {(matrixMutation.data || matrixMutation.isPending || matrixMutation.error) && (
+        <div className="grid gap-4 lg:grid-cols-2 mt-6">
+          <div className="card">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+              <span className="section-title">Compliance Matrix</span>
+              {matrixMutation.data && (
+                <span className="stat-chip">{matrixMutation.data.summary.fully_compliant_count} fully compliant</span>
+              )}
+            </div>
+            {matrixMutation.isPending ? (
+              <div className="p-4"><Skeleton className="h-32 w-full" /></div>
+            ) : matrixMutation.error ? (
+              <p className="p-4 text-sm text-destructive">Compliance matrix unavailable: {matrixMutation.error.message}</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left text-muted-foreground font-medium px-4 py-2">Repo</th>
+                      <th className="text-center text-muted-foreground font-medium px-2 py-2">Branch</th>
+                      <th className="text-center text-muted-foreground font-medium px-2 py-2">Secrets</th>
+                      <th className="text-center text-muted-foreground font-medium px-2 py-2">Dependabot</th>
+                      <th className="text-center text-muted-foreground font-medium px-2 py-2">Code scan</th>
+                      <th className="text-center text-muted-foreground font-medium px-2 py-2">Force-push</th>
+                      <th className="text-right text-muted-foreground font-medium px-4 py-2">Score</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {(matrixMutation.data?.repos ?? []).map((r) => (
+                      <tr
+                        key={r.repo}
+                        className={`hover:bg-elevated transition-colors cursor-pointer ${selectedRepo === r.repo ? "bg-elevated" : ""}`}
+                        onClick={() => setSelectedRepo(r.repo)}
+                      >
+                        <td className="px-4 py-2 font-mono text-foreground/90 truncate max-w-[10rem]">{r.repo}</td>
+                        <td className="text-center px-2 py-2" title={r.unknown_dimensions.includes("branch_protection") ? "unknown — token can't see this" : undefined}>
+                          {r.unknown_dimensions.includes("branch_protection") ? "?" : r.branch_protection ? "✓" : "—"}
+                        </td>
+                        <td className="text-center px-2 py-2">{r.secret_scanning ? "✓" : "—"}</td>
+                        <td className="text-center px-2 py-2" title={r.unknown_dimensions.includes("dependabot") ? "unknown — token can't see this" : undefined}>
+                          {r.unknown_dimensions.includes("dependabot") ? (
+                            "?"
+                          ) : r.dependabot_critical_count + r.dependabot_high_count > 0 ? (
+                            <span className="text-red-400">{r.dependabot_critical_count + r.dependabot_high_count}</span>
+                          ) : "✓"}
+                        </td>
+                        <td className="text-center px-2 py-2" title={r.unknown_dimensions.includes("code_scanning") ? "unknown — token can't see this" : undefined}>
+                          {r.unknown_dimensions.includes("code_scanning") ? "?" : r.code_scanning ? "✓" : "—"}
+                        </td>
+                        <td className="text-center px-2 py-2" title={r.unknown_dimensions.includes("force_push") ? "unknown — token can't see this" : undefined}>
+                          {r.unknown_dimensions.includes("force_push") ? "?" : r.force_push_allowed ? "✗" : "✓"}
+                        </td>
+                        <td className="text-right px-4 py-2 tabular-nums">{r.score}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="card">
+            <div className="px-4 py-3 border-b border-border">
+              <span className="section-title">Vulnerabilities by Repo</span>
+            </div>
+            <div className="p-4">
+              {vulnByRepoData.some((d) => d.critical + d.high > 0) ? (
+                <BarGroupChart
+                  data={vulnByRepoData}
+                  bars={[
+                    { key: "critical", color: "#f87171" },
+                    { key: "high", color: CHART_COLORS.series[5] },
+                  ]}
+                  height={200}
+                />
+              ) : (
+                <p className="text-sm text-muted-foreground">No open critical/high Dependabot alerts</p>
+              )}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
+              <span className="section-title">Secret Scanning Alerts</span>
+              {matrixMutation.data && matrixMutation.data.repos.length > 0 && (
+                <select
+                  value={selectedRepo}
+                  onChange={(e) => setSelectedRepo(e.target.value)}
+                  className="text-xs card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  {matrixMutation.data.repos.map((r) => <option key={r.repo} value={r.repo}>{r.repo}</option>)}
+                </select>
+              )}
+            </div>
+            <p className="px-4 pt-3 text-[0.6875rem] text-muted-foreground flex items-center gap-1.5">
+              <ShieldWarning className="size-3 shrink-0" />
+              Secret values are never shown here — metadata only.
+            </p>
+            {secretScanning.isLoading ? (
+              <div className="p-4"><Skeleton className="h-16 w-full" /></div>
+            ) : secretScanning.isError ? (
+              <p className="p-4 text-sm text-destructive">{secretScanning.error.message}</p>
+            ) : (secretScanning.data?.alerts.length ?? 0) === 0 ? (
+              <p className="p-4 text-sm text-muted-foreground">No secret scanning alerts for this repo</p>
+            ) : (
+              <div className="divide-y divide-border">
+                {secretScanning.data!.alerts.map((a) => (
+                  <a
+                    key={a.number}
+                    href={a.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center justify-between px-4 py-2.5 text-sm hover:bg-elevated transition-colors"
+                  >
+                    <span className="flex flex-col">
+                      <span className="text-foreground/90">{a.secret_type_display}</span>
+                      <span className="text-[0.6875rem] text-muted-foreground">#{a.number}</span>
+                    </span>
+                    <span
+                      className={`stat-chip ${a.state === "open" ? "text-red-400 border-red-500/30" : ""}`}
+                    >
+                      {a.state}
+                    </span>
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="card">
+            <div className="px-4 py-3 border-b border-border">
+              <span className="section-title">Remediation Trend</span>
+            </div>
+            <div className="p-4">
+              {remediationTrendData.length > 1 ? (
+                <AreaTimeChart data={remediationTrendData} label="checks passing" color={CHART_COLORS.series[1]} height={180} />
+              ) : (
+                <p className="text-sm text-muted-foreground">Run more scans to see a trend</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }

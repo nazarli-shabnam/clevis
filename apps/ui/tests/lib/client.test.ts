@@ -182,6 +182,15 @@ describe("api.analytics value normalization", () => {
     expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
   });
 
+  it("GETs /me/github/my-view?owner=... with an X-GitHub-Token header when supplied", async () => {
+    stubOkJson({ my_open_prs: [], review_requests: [], assigned_issues: [], my_recent_runs: [] });
+    const result = await api.analytics.myView("acme", "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/github/my-view?owner=acme");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
+    expect(result).toEqual({ my_open_prs: [], review_requests: [], assigned_issues: [], my_recent_runs: [] });
+  });
+
   it("GETs /me/analytics/history?owner=... and returns the raw scan history", async () => {
     stubOkJson([{ id: 1, owner: "acme", score: 80, total_checks: 3, failed_checks: 0, created_at: "2026-07-17T00:00:00Z" }]);
     const result = await api.analytics.history("acme");
@@ -190,6 +199,40 @@ describe("api.analytics value normalization", () => {
     expect(result).toEqual([
       { id: 1, owner: "acme", score: 80, total_checks: 3, failed_checks: 0, created_at: "2026-07-17T00:00:00Z" },
     ]);
+  });
+});
+
+describe("api.security", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function stubOkJson(body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))),
+    );
+  }
+
+  it("GETs /me/analytics/security-matrix/{owner} with an X-GitHub-Token header when supplied", async () => {
+    const body = { owner: "acme", repos: [], summary: { fully_compliant_count: 0, critical_risk_count: 0, secret_hits_count: 0, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } } };
+    stubOkJson(body);
+    const result = await api.security.matrix("acme", "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/analytics/security-matrix/acme");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
+    expect(result).toEqual(body);
+  });
+
+  it("GETs /me/repos/{owner}/{repo}/secret-scanning with no token header when omitted", async () => {
+    const body = { repository: "acme/demo", alerts: [] };
+    stubOkJson(body);
+    const result = await api.security.secretScanning("acme", "demo");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/repos/acme/demo/secret-scanning");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBeUndefined();
+    expect(result).toEqual(body);
   });
 });
 
@@ -277,6 +320,85 @@ describe("api.collab", () => {
     expect(String(url)).toContain("/github/orgs/acme/members/alice/membership");
     expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
     expect(result).toEqual({ state: "active", role: "member" });
+  });
+
+  it("GETs /github/orgs/{org}/permission-audit with an X-GitHub-Token header when supplied", async () => {
+    const body = {
+      generated_at: "2026-07-20T00:00:00Z",
+      repos_scanned: 1,
+      repos_total: 1,
+      repos: [],
+      risk_summary: { outside_with_write_or_admin: 0, members_with_admin: 0, total_outside_collaborators: 0 },
+    };
+    stubOkJson(body);
+    const result = await api.collab.permissionAudit("acme", "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/github/orgs/acme/permission-audit");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
+    expect(result).toEqual(body);
+  });
+
+  it("GETs /github/orgs/{org}/inactive-members with a default days window and no token header when omitted", async () => {
+    stubOkJson({ org: "acme", inactive_members: [], sampled_repos: [] });
+    await api.collab.inactiveMembers("acme");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/github/orgs/acme/inactive-members?days=30");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBeUndefined();
+  });
+
+  it("GETs /github/orgs/{org}/inactive-members with a custom days window", async () => {
+    stubOkJson({ org: "acme", inactive_members: [], sampled_repos: [] });
+    await api.collab.inactiveMembers("acme", 60, "ghp_test");
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("days=60");
+  });
+});
+
+describe("api.automation", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function stubOkJson(body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))),
+    );
+  }
+
+  it("GETs /me/repos/{owner}/{repo}/workflows with an X-GitHub-Token header when supplied", async () => {
+    stubOkJson({ repository: "acme/demo", workflows: [] });
+    const result = await api.automation.workflows("acme", "demo", "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/repos/acme/demo/workflows");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
+    expect(result).toEqual({ repository: "acme/demo", workflows: [] });
+  });
+
+  it("GETs /me/repos/{owner}/{repo}/actions/runs with a default per_page of 10 and no token header when omitted", async () => {
+    stubOkJson({ repository: "acme/demo", runs: [] });
+    const result = await api.automation.runs("acme", "demo");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/repos/acme/demo/actions/runs?per_page=10");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBeUndefined();
+    expect(result).toEqual({ repository: "acme/demo", runs: [] });
+  });
+
+  it("GETs /me/repos/{owner}/{repo}/actions/runs with a custom per_page", async () => {
+    stubOkJson({ repository: "acme/demo", runs: [] });
+    await api.automation.runs("acme", "demo", "ghp_test", 25);
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("per_page=25");
+  });
+
+  it("POSTs to /me/repos/{owner}/{repo}/workflows/{id}/dispatch with token: undefined when empty", async () => {
+    stubOkJson({ dispatched: true, message: "Workflow dispatched." });
+    const result = await api.automation.dispatch("acme", "demo", 1, { token: "", ref: "main" });
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/repos/acme/demo/workflows/1/dispatch");
+    expect(JSON.parse(init.body as string)).toEqual({ token: undefined, ref: "main" });
+    expect(result).toEqual({ dispatched: true, message: "Workflow dispatched." });
   });
 });
 

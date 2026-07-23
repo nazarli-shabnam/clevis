@@ -1,5 +1,6 @@
 """Tests for the Overview cockpit aggregate endpoint (docs/plan.md Phase 12)."""
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import httpx
@@ -54,6 +55,9 @@ _DEFAULT_SAFE_MOCKS = {
     "src.routers.analytics._safe_pr_merge_rate_4w": {"return_value": []},
     "src.routers.analytics._safe_commit_activity_4w_and_heatmap_52w": {"return_value": ([1, 2, 3, 4], [0] * 52)},
     "src.routers.analytics._safe_total_cache_bytes": {"return_value": 123456},
+    "src.routers.analytics._safe_milestones": {"return_value": ([], [])},
+    "src.routers.analytics._safe_pr_cycle_time_8w": {"return_value": []},
+    "src.routers.analytics._safe_release_cadence_4w": {"return_value": [0, 0, 0, 0]},
 }
 
 
@@ -313,3 +317,192 @@ def test_cache_job_success_rate_ignores_other_job_types(db):
     db.add(job)
     db.commit()
     assert _cache_job_success_rate(db) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Milestones / at-risk repos (docs/plan.md Phase 14)
+# ---------------------------------------------------------------------------
+
+
+def test_safe_milestones_returns_empty_on_error():
+    from src.routers.analytics import _safe_milestones
+
+    with patch("src.routers.analytics.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = httpx.RequestError("boom")
+        milestones, at_risk = _safe_milestones("acme", "ghp_test", ["repo-a"])
+    assert milestones == []
+    assert at_risk == []
+
+
+def test_safe_milestones_flags_overdue_as_critical():
+    from src.routers.analytics import _safe_milestones
+
+    with patch("src.routers.analytics.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = [
+            {"title": "v1", "due_on": "2020-01-01T00:00:00Z", "open_issues": 3, "closed_issues": 1}
+        ]
+        milestones, at_risk = _safe_milestones("acme", "ghp_test", ["repo-a"])
+
+    assert milestones[0].state == "overdue"
+    assert milestones[0].progress_pct == 25.0
+    assert len(at_risk) == 1
+    assert at_risk[0].repo == "repo-a"
+    assert at_risk[0].severity == "critical"
+
+
+def test_safe_milestones_on_track_when_no_due_date():
+    from src.routers.analytics import _safe_milestones
+
+    with patch("src.routers.analytics.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = [
+            {"title": "backlog", "due_on": None, "open_issues": 0, "closed_issues": 0}
+        ]
+        milestones, at_risk = _safe_milestones("acme", "ghp_test", ["repo-a"])
+
+    assert milestones[0].state == "on_track"
+    assert at_risk == []
+
+
+def test_safe_milestones_one_bad_repo_does_not_blank_others():
+    from src.routers.analytics import _safe_milestones
+
+    def _side_effect(method, path, params=None):
+        if "repo-bad" in path:
+            raise httpx.RequestError("boom")
+        return [{"title": "v1", "due_on": None, "open_issues": 0, "closed_issues": 0}]
+
+    with patch("src.routers.analytics.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = _side_effect
+        milestones, _ = _safe_milestones("acme", "ghp_test", ["repo-bad", "repo-good"])
+
+    assert len(milestones) == 1
+    assert milestones[0].repo == "repo-good"
+
+
+def test_milestone_state_unparsable_due_on_treated_as_on_track():
+    from src.routers.analytics import _milestone_state
+
+    assert _milestone_state("not-a-real-date", 0.0) == "on_track"
+
+
+def test_milestone_state_at_risk_when_due_soon_and_below_threshold():
+    from src.routers.analytics import _milestone_state
+
+    soon = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+    assert _milestone_state(soon, 40.0) == "at_risk"
+
+
+def test_milestone_state_on_track_when_due_soon_but_above_threshold():
+    from src.routers.analytics import _milestone_state
+
+    soon = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+    assert _milestone_state(soon, 90.0) == "on_track"
+
+
+def test_safe_milestones_multiple_overdue_milestones_same_repo_collect_both_reasons():
+    """Two overdue milestones in the same repo: the repo's aggregated at_risk entry
+    should collect both reasons (not just the first one it saw)."""
+    from src.routers.analytics import _safe_milestones
+
+    with patch("src.routers.analytics.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = [
+            {"title": "v1-overdue", "due_on": "2020-01-01T00:00:00Z", "open_issues": 3, "closed_issues": 1},
+            {"title": "v2-overdue", "due_on": "2020-02-01T00:00:00Z", "open_issues": 5, "closed_issues": 0},
+        ]
+        milestones, at_risk = _safe_milestones("acme", "ghp_test", ["repo-a"])
+
+    assert len(milestones) == 2
+    assert len(at_risk) == 1
+    assert at_risk[0].repo == "repo-a"
+    assert at_risk[0].severity == "critical"
+    assert len(at_risk[0].reasons) == 2
+
+
+# ---------------------------------------------------------------------------
+# PR cycle time / release cadence (docs/plan.md Phase 14)
+# ---------------------------------------------------------------------------
+
+
+def test_safe_pr_cycle_time_8w_returns_empty_on_error():
+    from src.routers.analytics import _safe_pr_cycle_time_8w
+
+    with patch("src.routers.analytics.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = httpx.RequestError("boom")
+        assert _safe_pr_cycle_time_8w("acme", "ghp_test") == []
+
+
+def test_safe_pr_cycle_time_8w_computes_average_days():
+    from src.routers.analytics import _safe_pr_cycle_time_8w
+
+    with patch("src.routers.analytics.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = {
+            "items": [
+                {"created_at": "2026-01-01T00:00:00Z", "closed_at": "2026-01-03T00:00:00Z"},
+                {"created_at": "2026-01-01T00:00:00Z", "closed_at": "2026-01-05T00:00:00Z"},
+            ]
+        }
+        buckets = _safe_pr_cycle_time_8w("acme", "ghp_test")
+    assert len(buckets) == 8
+    assert all(b.avg_days == 3.0 for b in buckets)
+
+
+def test_safe_pr_cycle_time_8w_zero_when_no_merges():
+    from src.routers.analytics import _safe_pr_cycle_time_8w
+
+    with patch("src.routers.analytics.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = {"items": []}
+        buckets = _safe_pr_cycle_time_8w("acme", "ghp_test")
+    assert all(b.avg_days == 0.0 for b in buckets)
+
+
+def test_safe_pr_cycle_time_8w_skips_malformed_search_items():
+    """An item missing closed_at (or with a garbage timestamp) shouldn't blow up the
+    week's average -- it's just excluded from that week's day-count."""
+    from src.routers.analytics import _safe_pr_cycle_time_8w
+
+    with patch("src.routers.analytics.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = {
+            "items": [
+                {"created_at": "2026-01-01T00:00:00Z"},  # missing closed_at -> KeyError
+                {"created_at": "2026-01-01T00:00:00Z", "closed_at": "not-a-date"},  # ValueError
+            ]
+        }
+        buckets = _safe_pr_cycle_time_8w("acme", "ghp_test")
+    assert all(b.avg_days == 0.0 for b in buckets)
+
+
+def test_safe_release_cadence_4w_returns_zeros_on_error():
+    from src.routers.analytics import _safe_release_cadence_4w
+
+    with patch("src.routers.analytics.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = httpx.RequestError("boom")
+        assert _safe_release_cadence_4w("acme", "ghp_test", ["repo-a"]) == [0, 0, 0, 0]
+
+
+def test_safe_release_cadence_4w_buckets_by_week():
+    from src.routers.analytics import _safe_release_cadence_4w, _week_start
+
+    this_week_release = {"published_at": (_week_start(0) + timedelta(days=1)).isoformat() + "T00:00:00Z"}
+    with patch("src.routers.analytics.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = [this_week_release]
+        totals = _safe_release_cadence_4w("acme", "ghp_test", ["repo-a"])
+    assert totals[3] == 1
+    assert sum(totals) == 1
+
+
+def test_safe_release_cadence_4w_skips_non_list_response_and_missing_or_bad_dates():
+    from src.routers.analytics import _safe_release_cadence_4w
+
+    def _side_effect(method, path, params=None):
+        if "repo-not-a-list" in path:
+            return {"message": "not found"}  # not a list -> skipped entirely
+        return [
+            {"published_at": None},  # missing published_at -> skipped
+            {"published_at": "not-a-real-timestamp"},  # unparsable -> skipped
+        ]
+
+    with patch("src.routers.analytics.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = _side_effect
+        totals = _safe_release_cadence_4w("acme", "ghp_test", ["repo-not-a-list", "repo-b"])
+
+    assert totals == [0, 0, 0, 0]

@@ -15,6 +15,7 @@ pattern used everywhere else in this codebase.
 """
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -24,6 +25,9 @@ from typing import Literal
 from src.core.db import get_db
 from src.core.rbac import OrgContext, require_org_role
 from src.schemas.collab import (
+    CollaboratorPermission,
+    InactiveMember,
+    InactiveMembersResponse,
     MembershipStatus,
     OrgInvitation,
     OrgInvitationsResponse,
@@ -31,6 +35,9 @@ from src.schemas.collab import (
     OrgMembersResponse,
     OutsideCollaborator,
     OutsideCollaboratorsResponse,
+    PermissionAuditResponse,
+    PermissionRiskSummary,
+    RepoPermissions,
 )
 from src.services.github_client import GitHubClient, github_error as _github_error
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token
@@ -41,6 +48,12 @@ router = APIRouter()
 # repo costs one more GitHub call, so large orgs are capped rather than left to
 # make hundreds of sequential requests.
 _MAX_REPOS_SCANNED = 50
+
+# permission-audit costs one collaborators call per repo; inactive-members costs
+# one commits call per (member, sampled repo) pair -- both tighter caps than the
+# single-call-per-repo endpoints above, rate-limit-aware per docs/plan.md Phase 18.
+_MAX_REPOS_FOR_PERMISSION_AUDIT = 20
+_MAX_REPOS_SAMPLED_FOR_ACTIVITY = 3
 
 
 def _resolve_token(db: Session, ctx: OrgContext, org_login: str, client_token: str | None) -> str:
@@ -195,3 +208,188 @@ def get_membership(
         raise _github_error(exc) from exc
 
     return MembershipStatus(state=raw["state"], role=raw["role"])
+
+
+# ---------------------------------------------------------------------------
+# Access control & risk (docs/plan.md Phase 18) -- who has elevated access, and
+# who's been inactive, across the org's repos.
+# ---------------------------------------------------------------------------
+
+_PERMISSION_RANK = ["pull", "triage", "push", "maintain", "admin"]
+_PERMISSION_DISPLAY = {"pull": "read", "triage": "triage", "push": "write", "maintain": "maintain", "admin": "admin"}
+
+
+def _collaborator_permission(raw: dict) -> str:
+    perms = raw.get("permissions") or {}
+    for key in reversed(_PERMISSION_RANK):
+        if perms.get(key):
+            return _PERMISSION_DISPLAY[key]
+    return "read"
+
+
+@router.get("/github/orgs/{org_login}/permission-audit", response_model=PermissionAuditResponse)
+def permission_audit(
+    org_login: str,
+    ctx: OrgContext = Depends(require_org_role(min_role="member")),
+    db: Session = Depends(get_db),
+    x_github_token: str | None = Header(default=None),
+):
+    token = _resolve_token(db, ctx, org_login, x_github_token)
+    client = GitHubClient(token)
+    try:
+        member_logins = {m["login"] for m in client.request_paginated(f"/orgs/{org_login}/members") if "login" in m}
+        outside_logins = {
+            c["login"] for c in client.request_paginated(f"/orgs/{org_login}/outside_collaborators") if "login" in c
+        }
+        repos_raw = client.request_paginated(f"/orgs/{org_login}/repos", params={"type": "all", "sort": "pushed"})
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        raise _github_error(exc) from exc
+
+    repos_total = len(repos_raw)
+    scanned_repos = repos_raw[:_MAX_REPOS_FOR_PERMISSION_AUDIT]
+
+    def _fetch_repo_collaborators(repo_name: str) -> list[dict]:
+        try:
+            return client.request_paginated(f"/repos/{org_login}/{repo_name}/collaborators")
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            return []
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        raw_by_repo = dict(
+            zip(
+                (r["name"] for r in scanned_repos),
+                pool.map(lambda r: _fetch_repo_collaborators(r["name"]), scanned_repos),
+            )
+        )
+
+    repos: list[RepoPermissions] = []
+    outside_with_elevated: set[str] = set()
+    members_with_admin: set[str] = set()
+    all_outside_seen: set[str] = set()
+
+    for repo_name, raw_collabs in raw_by_repo.items():
+        collaborators = []
+        for c in raw_collabs:
+            # A malformed collaborator entry missing `login` shouldn't 500 the whole
+            # repo's row -- skip just that entry, matching the invitations
+            # missing-created_at defensive pattern elsewhere in this file.
+            if "login" not in c:
+                continue
+            login = c["login"]
+            is_outside = login not in member_logins or login in outside_logins
+            permission = _collaborator_permission(c)
+            collaborators.append(
+                CollaboratorPermission(
+                    login=login,
+                    avatar_url=c.get("avatar_url", ""),
+                    permission=permission,
+                    affiliation="outside" if is_outside else "direct",
+                    is_outside_collaborator=is_outside,
+                )
+            )
+            if is_outside:
+                all_outside_seen.add(login)
+                if permission in ("write", "maintain", "admin"):
+                    outside_with_elevated.add(login)
+            elif permission == "admin":
+                members_with_admin.add(login)
+        repos.append(RepoPermissions(repo=repo_name, collaborators=collaborators))
+
+    return PermissionAuditResponse(
+        generated_at=datetime.now(timezone.utc),
+        repos_scanned=len(scanned_repos),
+        repos_total=repos_total,
+        repos=repos,
+        risk_summary=PermissionRiskSummary(
+            outside_with_write_or_admin=len(outside_with_elevated),
+            members_with_admin=len(members_with_admin),
+            total_outside_collaborators=len(all_outside_seen),
+        ),
+    )
+
+
+def _last_commit_for_author(client: GitHubClient, org_login: str, repo_name: str, login: str) -> tuple[str | None, bool]:
+    """Returns (last_commit_date, checked). `checked=False` means the GitHub call
+    itself failed (rate limit, network error, no repo visibility) -- that's an
+    unknown answer, not evidence the member has zero commits, and must not be
+    conflated with a real "checked, found nothing" result the way it silently was
+    before (a transient error could wrongly mark an active member as inactive)."""
+    try:
+        commits = client.request(
+            "GET", f"/repos/{org_login}/{repo_name}/commits", params={"author": login, "per_page": 1}
+        )
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        return None, False
+    if not isinstance(commits, list) or not commits:
+        return None, True
+    date = ((commits[0].get("commit") or {}).get("author") or {}).get("date")
+    return date, True
+
+
+@router.get("/github/orgs/{org_login}/inactive-members", response_model=InactiveMembersResponse)
+def inactive_members(
+    org_login: str,
+    days: int = 30,
+    ctx: OrgContext = Depends(require_org_role(min_role="member")),
+    db: Session = Depends(get_db),
+    x_github_token: str | None = Header(default=None),
+):
+    token = _resolve_token(db, ctx, org_login, x_github_token)
+    client = GitHubClient(token)
+    try:
+        admins_raw = client.request_paginated(f"/orgs/{org_login}/members", params={"role": "admin"})
+        members_raw = client.request_paginated(f"/orgs/{org_login}/members")
+        repos_raw = client.request_paginated(f"/orgs/{org_login}/repos", params={"type": "all", "sort": "pushed"})
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        raise _github_error(exc) from exc
+
+    admin_logins = {m["login"] for m in admins_raw if "login" in m}
+    sampled_repos = [r["name"] for r in repos_raw[:_MAX_REPOS_SAMPLED_FOR_ACTIVITY]]
+    now = datetime.now(timezone.utc)
+
+    def _member_last_activity(member: dict) -> tuple[str | None, str | None, bool]:
+        login = member.get("login")
+        if not login:
+            return None, None, False
+        verified = False
+        for repo_name in sampled_repos:
+            date, checked = _last_commit_for_author(client, org_login, repo_name, login)
+            if checked:
+                verified = True
+            if date:
+                return repo_name, date, True
+        # verified=True here means every sampled repo was successfully queried and
+        # genuinely had no commits from this member -- a real "no activity found"
+        # answer. verified=False means at least one lookup failed outright, so this
+        # member's activity is unknown rather than confirmed absent.
+        return None, None, verified
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        results = list(pool.map(_member_last_activity, members_raw))
+
+    inactive: list[InactiveMember] = []
+    for member, (repo_name, date, verified) in zip(members_raw, results):
+        login = member.get("login")
+        if not login or not verified:
+            # Can't confirm this member's activity (missing login, or every sampled
+            # repo's commits call failed) -- don't claim inactivity we can't back up.
+            continue
+        days_ago = None
+        if date:
+            try:
+                last = datetime.fromisoformat(date.replace("Z", "+00:00"))
+                days_ago = (now - last).days
+            except ValueError:
+                days_ago = None
+        if days_ago is None or days_ago >= days:
+            inactive.append(
+                InactiveMember(
+                    login=login,
+                    avatar_url=member.get("avatar_url", ""),
+                    role="admin" if login in admin_logins else "member",
+                    last_commit_repo=f"{org_login}/{repo_name}" if repo_name else None,
+                    last_commit_days_ago=days_ago,
+                )
+            )
+
+    return InactiveMembersResponse(org=org_login, sampled_repos=[f"{org_login}/{r}" for r in sampled_repos], members=inactive)

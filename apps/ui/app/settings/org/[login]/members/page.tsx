@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { CircleNotch, EnvelopeSimple, X } from "@phosphor-icons/react"
+import { CircleNotch, EnvelopeSimple, Warning, X } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { addRevokingId, isRevoking, removeRevokingId } from "@/lib/revoke-pending"
 import { relativeTime } from "@/lib/format"
@@ -16,6 +16,7 @@ const ROSTER_TABS = [
   { id: "members", label: "Members" },
   { id: "outside", label: "Outside" },
   { id: "pending", label: "Pending GitHub invitations" },
+  { id: "audit", label: "Audit" },
 ] as const
 
 type RosterTabId = (typeof ROSTER_TABS)[number]["id"]
@@ -65,8 +66,33 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
     queryFn: () => api.collab.invitations(orgLogin, token),
     enabled: tab === "pending" && tokenSettled,
   })
+  const permissionAuditQuery = useQuery({
+    queryKey: ["collab", "permission-audit", orgLogin],
+    queryFn: () => api.collab.permissionAudit(orgLogin, token),
+    enabled: tab === "audit" && tokenSettled,
+  })
+  const inactiveMembersQuery = useQuery({
+    queryKey: ["collab", "inactive-members", orgLogin],
+    queryFn: () => api.collab.inactiveMembers(orgLogin, 30, token),
+    enabled: tab === "audit" && tokenSettled,
+  })
 
-  const activeQuery = tab === "members" ? membersQuery : tab === "outside" ? outsideQuery : pendingQuery
+  const activeQuery =
+    tab === "members" ? membersQuery
+    : tab === "outside" ? outsideQuery
+    : tab === "pending" ? pendingQuery
+    : permissionAuditQuery
+
+  const outsideWithElevatedRepos = new Map<string, string[]>()
+  for (const repo of permissionAuditQuery.data?.repos ?? []) {
+    for (const c of repo.collaborators) {
+      if (c.is_outside_collaborator && (c.permission === "write" || c.permission === "maintain" || c.permission === "admin")) {
+        const existing = outsideWithElevatedRepos.get(c.login)
+        if (existing) existing.push(repo.repo)
+        else outsideWithElevatedRepos.set(c.login, [repo.repo])
+      }
+    }
+  }
 
   const filteredMembers = (membersQuery.data?.members ?? []).filter((m) =>
     m.login.toLowerCase().includes(search.toLowerCase()),
@@ -226,33 +252,119 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
             )}
           </>
         )
-      ) : (pendingQuery.data?.invitations.length ?? 0) === 0 ? (
-        <div className="px-4 py-8">
-          <p className="text-sm text-muted-foreground">No pending GitHub invitations</p>
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left text-muted-foreground font-medium px-4 py-2">Invitee</th>
-                <th className="text-left text-muted-foreground font-medium px-4 py-2">Role</th>
-                <th className="text-left text-muted-foreground font-medium px-4 py-2">Invited</th>
-                <th className="text-left text-muted-foreground font-medium px-4 py-2">Inviter</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {pendingQuery.data!.invitations.map((inv, i) => (
-                <tr key={i}>
-                  <td className="px-4 py-2.5 text-foreground/80">{inv.login ?? inv.email}</td>
-                  <td className="px-4 py-2.5 text-muted-foreground capitalize">{inv.role}</td>
-                  <td className="px-4 py-2.5 text-muted-foreground">{relativeTime(inv.invited_at)}</td>
-                  <td className="px-4 py-2.5 text-muted-foreground">{inv.inviter ?? "—"}</td>
+      ) : tab === "pending" ? ((pendingQuery.data?.invitations.length ?? 0) === 0 ? (
+          <div className="px-4 py-8">
+            <p className="text-sm text-muted-foreground">No pending GitHub invitations</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="text-left text-muted-foreground font-medium px-4 py-2">Invitee</th>
+                  <th className="text-left text-muted-foreground font-medium px-4 py-2">Role</th>
+                  <th className="text-left text-muted-foreground font-medium px-4 py-2">Invited</th>
+                  <th className="text-left text-muted-foreground font-medium px-4 py-2">Inviter</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {pendingQuery.data!.invitations.map((inv, i) => (
+                  <tr key={i}><td className="px-4 py-2.5 text-foreground/80">{inv.login ?? inv.email}</td><td className="px-4 py-2.5 text-muted-foreground capitalize">{inv.role}</td><td className="px-4 py-2.5 text-muted-foreground">{relativeTime(inv.invited_at)}</td><td className="px-4 py-2.5 text-muted-foreground">{inv.inviter ?? "—"}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : (
+        <>
+          {outsideWithElevatedRepos.size > 0 && (
+            <div className="px-4 py-3 border-b border-border bg-yellow-500/5">
+              <p className="text-xs font-medium text-yellow-400 flex items-center gap-1.5 mb-1.5"><Warning className="size-3.5" /> Access Risk: {outsideWithElevatedRepos.size} outside collaborator{outsideWithElevatedRepos.size === 1 ? "" : "s"} with write/admin access</p>
+              <ul className="text-xs text-muted-foreground flex flex-col gap-0.5">
+                {[...outsideWithElevatedRepos.entries()].map(([login, repos]) => (
+                  <li key={login}>{login} · {repos.join(", ")}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="px-4 py-2.5 border-b border-border">
+            <span className="text-xs font-medium text-foreground">Permission audit</span>
+            <span className="text-xs text-muted-foreground ml-2">
+              generated {permissionAuditQuery.data ? relativeTime(permissionAuditQuery.data.generated_at) : "—"}
+              {permissionAuditQuery.data && permissionAuditQuery.data.repos_scanned < permissionAuditQuery.data.repos_total && (
+                <> · scanned {permissionAuditQuery.data.repos_scanned} of {permissionAuditQuery.data.repos_total} repos</>
+              )}
+            </span>
+          </div>
+          <div className="overflow-x-auto max-h-96 overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="text-left text-muted-foreground font-medium px-4 py-2">Repo</th>
+                  <th className="text-left text-muted-foreground font-medium px-4 py-2">Collaborator</th>
+                  <th className="text-left text-muted-foreground font-medium px-4 py-2">Affiliation</th>
+                  <th className="text-left text-muted-foreground font-medium px-4 py-2">Permission</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {(permissionAuditQuery.data?.repos ?? []).flatMap((repo) =>
+                  repo.collaborators.map((c) => (
+                    <tr key={`${repo.repo}-${c.login}`} className={c.is_outside_collaborator && (c.permission === "write" || c.permission === "maintain" || c.permission === "admin") ? "bg-yellow-500/5" : ""}>
+                      <td className="px-4 py-2 font-mono text-muted-foreground truncate max-w-[10rem]">{repo.repo}</td>
+                      <td className="px-4 py-2 text-foreground/80">{c.login}</td>
+                      <td className="px-4 py-2 text-muted-foreground">{c.affiliation}</td>
+                      <td className="px-4 py-2 text-muted-foreground capitalize">{c.permission}</td>
+                    </tr>
+                  )),
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="px-4 py-2.5 border-b border-t border-border">
+            <span className="text-xs font-medium text-foreground">Inactive members (30d+)</span>
+            {inactiveMembersQuery.data && inactiveMembersQuery.data.sampled_repos.length > 0 && (
+              <span className="text-xs text-muted-foreground ml-2">
+                sampled from {inactiveMembersQuery.data.sampled_repos.join(", ")} — approximation, not exact
+              </span>
+            )}
+          </div>
+          {inactiveMembersQuery.isLoading ? (
+            <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
+              <CircleNotch className="size-3.5 animate-spin" /> Loading…
+            </div>
+          ) : inactiveMembersQuery.error ? (
+            // Distinct from the "no inactive members" empty state below -- an error here
+            // must not silently read as "org is clean," which would be a false-negative
+            // access-risk signal.
+            <div className="px-4 py-6">
+              <p className="text-xs text-destructive">{inactiveMembersQuery.error.message}</p>
+            </div>
+          ) : (inactiveMembersQuery.data?.members.length ?? 0) === 0 ? (
+            <div className="px-4 py-6">
+              <p className="text-sm text-muted-foreground">No inactive members found (within the sampled repos)</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <tbody className="divide-y divide-border">
+                  {inactiveMembersQuery.data!.members.map((m) => (
+                    <tr key={m.login}>
+                      <td className="px-4 py-2 text-foreground/80">{m.login}</td>
+                      <td className="px-4 py-2 text-muted-foreground capitalize">{m.role}</td>
+                      <td className="px-4 py-2 text-muted-foreground">
+                        {m.last_commit_days_ago != null
+                          ? `last commit ${m.last_commit_days_ago}d ago in ${m.last_commit_repo}`
+                          : "no commits found in sampled repos"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
     </div>
   )
