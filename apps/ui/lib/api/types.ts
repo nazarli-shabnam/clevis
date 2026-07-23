@@ -276,6 +276,27 @@ export interface PrWeekBucket {
   merged: number
 }
 
+export interface AtRiskRepo {
+  repo: string
+  reasons: string[]
+  severity: "warning" | "critical"
+}
+
+export interface MilestoneSummary {
+  repo: string
+  title: string
+  due_on: string | null
+  open_issues: number
+  closed_issues: number
+  progress_pct: number
+  state: "on_track" | "at_risk" | "overdue"
+}
+
+export interface PrCycleTimeWeek {
+  week: string
+  avg_days: number
+}
+
 export interface CockpitResponse {
   repo_count: number
   member_count: number
@@ -287,6 +308,78 @@ export interface CockpitResponse {
   commit_activity_4w: number[]
   total_cache_size_bytes: number
   cache_job_success_rate: number
+  at_risk_repos: AtRiskRepo[]
+  milestones: MilestoneSummary[]
+  pr_cycle_time_8w: PrCycleTimeWeek[]
+  release_cadence_4w: number[]
+}
+
+export interface MyViewPRSummary {
+  number: number
+  title: string
+  repository: string
+  html_url: string
+  updated_at: string
+}
+
+export interface MyViewIssueSummary {
+  number: number
+  title: string
+  repository: string
+  html_url: string
+  updated_at: string
+}
+
+export interface MyViewRunSummary {
+  repository: string
+  id: number
+  name: string | null
+  status: string
+  conclusion: string | null
+  html_url: string
+  created_at: string
+}
+
+export interface MyViewResponse {
+  my_open_prs: MyViewPRSummary[]
+  review_requests: MyViewPRSummary[]
+  assigned_issues: MyViewIssueSummary[]
+  my_recent_runs: MyViewRunSummary[]
+}
+
+export interface WorkflowSummary {
+  id: number
+  name: string
+  path: string
+  state: string
+  last_run_status: string | null
+  last_run_conclusion: string | null
+  last_run_at: string | null
+}
+
+export interface WorkflowsResponse {
+  repository: string
+  workflows: WorkflowSummary[]
+}
+
+export interface RunSummary {
+  id: number
+  name: string | null
+  status: string
+  conclusion: string | null
+  head_branch: string
+  created_at: string
+  duration_ms: number | null
+}
+
+export interface RunsResponse {
+  repository: string
+  runs: RunSummary[]
+}
+
+export interface DispatchResponse {
+  dispatched: boolean
+  message: string | null
 }
 
 export interface RepoSecurityRow {

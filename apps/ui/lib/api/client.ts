@@ -6,6 +6,7 @@ import type {
   CacheListResponse,
   CheckValue,
   CockpitResponse,
+  DispatchResponse,
   GithubMembershipStatus,
   GithubOrgInvitationsResponse,
   GithubOrgMembersResponse,
@@ -17,16 +18,19 @@ import type {
   InvitationPreview,
   JobOut,
   MyOrgMembership,
+  MyViewResponse,
   OrgEventsResponse,
   PendingInvitationSummary,
   RepoListResponse,
   RepoPullsResponse,
   RepoSecurityResponse,
   RepoStatsResponse,
+  RunsResponse,
   SavedTokenMeta,
   SecretScanningResponse,
   SecurityMatrixResponse,
   SyncInstallationsResponse,
+  WorkflowsResponse,
 } from "./types"
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
@@ -187,6 +191,8 @@ export const api = {
     // carried via header since this is a GET (see githubTokenHeader).
     cockpit: (owner: string, token?: string) =>
       get<CockpitResponse>(`/me/analytics/cockpit/${encodeURIComponent(owner)}`, githubTokenHeader(token)),
+    myView: (owner: string, token?: string) =>
+      get<MyViewResponse>(`/me/github/my-view?owner=${encodeURIComponent(owner)}`, githubTokenHeader(token)),
   },
   security: {
     matrix: (owner: string, token?: string) =>
@@ -237,6 +243,30 @@ export const api = {
   },
   jobs: {
     list: () => get<JobOut[]>("/jobs"),
+  },
+  automation: {
+    // token is optional — same App-or-PAT fallback as the rest of the API, carried
+    // via header since these are GETs (see githubTokenHeader).
+    workflows: (owner: string, repo: string, token?: string) =>
+      get<WorkflowsResponse>(
+        `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/workflows`,
+        githubTokenHeader(token),
+      ),
+    runs: (owner: string, repo: string, token?: string, perPage = 10) =>
+      get<RunsResponse>(
+        `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/actions/runs?per_page=${perPage}`,
+        githubTokenHeader(token),
+      ),
+    dispatch: (
+      owner: string,
+      repo: string,
+      workflowId: number,
+      body: { token: string; ref: string; inputs?: Record<string, string> },
+    ) =>
+      post<DispatchResponse>(
+        `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/workflows/${workflowId}/dispatch`,
+        { ...body, token: body.token || undefined },
+      ),
   },
   github: {
     events: (org: string, token: string, perPage = 30) =>

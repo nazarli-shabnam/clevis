@@ -182,6 +182,15 @@ describe("api.analytics value normalization", () => {
     expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
   });
 
+  it("GETs /me/github/my-view?owner=... with an X-GitHub-Token header when supplied", async () => {
+    stubOkJson({ my_open_prs: [], review_requests: [], assigned_issues: [], my_recent_runs: [] });
+    const result = await api.analytics.myView("acme", "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/github/my-view?owner=acme");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
+    expect(result).toEqual({ my_open_prs: [], review_requests: [], assigned_issues: [], my_recent_runs: [] });
+  });
+
   it("GETs /me/analytics/history?owner=... and returns the raw scan history", async () => {
     stubOkJson([{ id: 1, owner: "acme", score: 80, total_checks: 3, failed_checks: 0, created_at: "2026-07-17T00:00:00Z" }]);
     const result = await api.analytics.history("acme");
@@ -311,6 +320,54 @@ describe("api.collab", () => {
     expect(String(url)).toContain("/github/orgs/acme/members/alice/membership");
     expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
     expect(result).toEqual({ state: "active", role: "member" });
+  });
+});
+
+describe("api.automation", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function stubOkJson(body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))),
+    );
+  }
+
+  it("GETs /me/repos/{owner}/{repo}/workflows with an X-GitHub-Token header when supplied", async () => {
+    stubOkJson({ repository: "acme/demo", workflows: [] });
+    const result = await api.automation.workflows("acme", "demo", "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/repos/acme/demo/workflows");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
+    expect(result).toEqual({ repository: "acme/demo", workflows: [] });
+  });
+
+  it("GETs /me/repos/{owner}/{repo}/actions/runs with a default per_page of 10 and no token header when omitted", async () => {
+    stubOkJson({ repository: "acme/demo", runs: [] });
+    const result = await api.automation.runs("acme", "demo");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/repos/acme/demo/actions/runs?per_page=10");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBeUndefined();
+    expect(result).toEqual({ repository: "acme/demo", runs: [] });
+  });
+
+  it("GETs /me/repos/{owner}/{repo}/actions/runs with a custom per_page", async () => {
+    stubOkJson({ repository: "acme/demo", runs: [] });
+    await api.automation.runs("acme", "demo", "ghp_test", 25);
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("per_page=25");
+  });
+
+  it("POSTs to /me/repos/{owner}/{repo}/workflows/{id}/dispatch with token: undefined when empty", async () => {
+    stubOkJson({ dispatched: true, message: "Workflow dispatched." });
+    const result = await api.automation.dispatch("acme", "demo", 1, { token: "", ref: "main" });
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/repos/acme/demo/workflows/1/dispatch");
+    expect(JSON.parse(init.body as string)).toEqual({ token: undefined, ref: "main" });
+    expect(result).toEqual({ dispatched: true, message: "Workflow dispatched." });
   });
 });
 
