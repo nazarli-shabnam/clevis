@@ -133,4 +133,107 @@ describe("AutomationPage", () => {
       expect(screen.getByText("GitHub API unreachable")).toBeInTheDocument();
     });
   });
+
+  it("shows a loading skeleton, then the empty state, when a repo has no workflows", async () => {
+    let resolveWorkflows: (v: unknown) => void = () => {};
+    workflowsMock.mockImplementation(
+      () => new Promise((res) => { resolveWorkflows = res; }),
+    );
+    runsMock.mockResolvedValue({ repository: "acme/demo", runs: [] });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.change(screen.getByPlaceholderText("e.g. hello-world"), { target: { value: "demo" } });
+    fireEvent.click(screen.getByText("Load workflows"));
+
+    await waitFor(() => expect(screen.getByText("Loading…")).toBeInTheDocument());
+
+    resolveWorkflows({ repository: "acme/demo", workflows: [] });
+
+    await waitFor(() => {
+      expect(screen.getByText("No workflows found in this repository.")).toBeInTheDocument();
+    });
+  });
+
+  it("submits the load request when Enter is pressed in the repository field", async () => {
+    workflowsMock.mockResolvedValue({ repository: "acme/demo", workflows: [] });
+    runsMock.mockResolvedValue({ repository: "acme/demo", runs: [] });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    const repoInput = screen.getByPlaceholderText("e.g. hello-world");
+    fireEvent.change(repoInput, { target: { value: "demo" } });
+    fireEvent.keyDown(repoInput, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(workflowsMock).toHaveBeenCalledWith("acme", "demo", "");
+    });
+  });
+
+  it("saves a manually entered token and renders failure/pending status icons with fallback labels", async () => {
+    workflowsMock.mockResolvedValue({
+      repository: "acme/demo",
+      workflows: [
+        { id: 1, name: "CI", path: ".github/workflows/ci.yml", state: "active", last_run_status: "in_progress", last_run_conclusion: null, last_run_at: null },
+      ],
+    });
+    runsMock.mockResolvedValue({
+      repository: "acme/demo",
+      runs: [
+        { id: 200, name: null, status: "completed", conclusion: "failure", head_branch: "main", created_at: "2026-07-20T00:00:00Z", duration_ms: null },
+        { id: 201, name: "Build", status: "completed", conclusion: "cancelled", head_branch: "dev", created_at: "2026-07-20T00:00:00Z", duration_ms: null },
+      ],
+    });
+
+    const { api } = await import("@/lib/api/client");
+    const upsertMock = api.tokens.upsert as unknown as ReturnType<typeof vi.fn>;
+    upsertMock.mockReset();
+    upsertMock.mockResolvedValue({});
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.change(screen.getByPlaceholderText("e.g. hello-world"), { target: { value: "demo" } });
+    fireEvent.change(screen.getByPlaceholderText(/ghp_/), { target: { value: "ghp_manual123456789012345678901234" } });
+
+    await waitFor(() => expect(screen.getByText("Save token for this org")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Save token for this org"));
+    await waitFor(() => expect(upsertMock).toHaveBeenCalledWith("acme", "ghp_manual123456789012345678901234"));
+
+    fireEvent.click(screen.getByText("Load workflows"));
+
+    await waitFor(() => expect(screen.getByText("#200")).toBeInTheDocument());
+    expect(screen.getByText("Build")).toBeInTheDocument();
+    expect(screen.getByText("in_progress")).toBeInTheDocument();
+  });
+
+  it("surfaces a dispatch error and lets the user edit the ref before retrying", async () => {
+    workflowsMock.mockResolvedValue({
+      repository: "acme/demo",
+      workflows: [{ id: 1, name: "CI", path: ".github/workflows/ci.yml", state: "active", last_run_status: null, last_run_conclusion: null, last_run_at: null }],
+    });
+    runsMock.mockResolvedValue({ repository: "acme/demo", runs: [] });
+    dispatchMock.mockRejectedValue(new Error("GitHub API error: 422"));
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.change(screen.getByPlaceholderText("e.g. hello-world"), { target: { value: "demo" } });
+    fireEvent.click(screen.getByText("Load workflows"));
+
+    await waitFor(() => expect(screen.getByText("CI")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /Dispatch/i }));
+
+    const refInput = screen.getByDisplayValue("main");
+    fireEvent.change(refInput, { target: { value: "release" } });
+
+    fireEvent.click(screen.getByText("Dispatch workflow"));
+    fireEvent.click(screen.getByText("Confirm dispatch"));
+
+    await waitFor(() => {
+      expect(screen.getByText("GitHub API error: 422")).toBeInTheDocument();
+    });
+  });
 });

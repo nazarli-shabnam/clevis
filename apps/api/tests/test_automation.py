@@ -85,6 +85,72 @@ def test_personal_list_runs_computes_duration(automation_client):
     assert resp.json()["runs"][0]["duration_ms"] == 120_000
 
 
+def test_personal_list_workflows_github_error_propagates(automation_client):
+    error = httpx.HTTPStatusError(
+        "boom", request=httpx.Request("GET", "https://api.github.com/x"),
+        response=httpx.Response(404, request=httpx.Request("GET", "https://api.github.com/x")),
+    )
+    with patch("src.routers.automation.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = error
+        resp = automation_client.get(
+            "/me/repos/acme/demo/workflows", headers={"X-GitHub-Token": "ghp_testtoken123456789012345678901234"}
+        )
+    assert resp.status_code == 400
+
+
+def test_personal_list_runs_github_error_propagates(automation_client):
+    error = httpx.HTTPStatusError(
+        "boom", request=httpx.Request("GET", "https://api.github.com/x"),
+        response=httpx.Response(503, request=httpx.Request("GET", "https://api.github.com/x")),
+    )
+    with patch("src.routers.automation.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = error
+        resp = automation_client.get(
+            "/me/repos/acme/demo/actions/runs", headers={"X-GitHub-Token": "ghp_testtoken123456789012345678901234"}
+        )
+    assert resp.status_code == 400
+
+
+def test_personal_list_runs_no_duration_when_not_completed_or_missing_timestamps(automation_client):
+    with patch("src.routers.automation.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = {
+            "workflow_runs": [
+                {
+                    "id": 11,
+                    "name": "CI",
+                    "status": "in_progress",
+                    "conclusion": None,
+                    "head_branch": "main",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "run_started_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:02:00Z",
+                },
+                {
+                    "id": 12,
+                    "name": "CI",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "head_branch": "main",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "run_started_at": "not-a-real-timestamp",
+                    "updated_at": "2026-01-01T00:02:00Z",
+                },
+            ]
+        }
+        resp = automation_client.get(
+            "/me/repos/acme/demo/actions/runs", headers={"X-GitHub-Token": "ghp_testtoken123456789012345678901234"}
+        )
+    assert resp.status_code == 200
+    runs = resp.json()["runs"]
+    assert runs[0]["duration_ms"] is None
+    assert runs[1]["duration_ms"] is None
+
+
+def test_personal_list_runs_no_token_returns_400(automation_client):
+    resp = automation_client.get("/me/repos/acme/demo/actions/runs")
+    assert resp.status_code == 400
+
+
 def test_personal_dispatch_writes_audit_log_before_github_call(automation_client, db):
     db.add(User(id=_USER.id, email=_USER.email, name=None, password_hash=None, is_workspace_admin=False))
     db.commit()
@@ -201,3 +267,32 @@ def test_org_dispatch_owner_mismatch_forbidden(db, acme_org):
         json={"token": "ghp_testtoken123456789012345678901234", "ref": "main"},
     )
     assert resp.status_code == 403
+
+
+def test_org_list_workflows_no_token_returns_400(db, acme_org):
+    client = _org_client(db, acme_org["member"].id, email=acme_org["member"].email)
+    resp = client.get("/orgs/acme/repos/acme/demo/workflows")
+    assert resp.status_code == 400
+
+
+def test_org_list_runs_member_ok(db, acme_org):
+    client = _org_client(db, acme_org["member"].id, email=acme_org["member"].email)
+    with patch("src.routers.automation.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = {"workflow_runs": []}
+        resp = client.get(
+            "/orgs/acme/repos/acme/demo/actions/runs", headers={"X-GitHub-Token": "ghp_testtoken123456789012345678901234"}
+        )
+    assert resp.status_code == 200
+    assert resp.json()["runs"] == []
+
+
+def test_org_list_runs_no_token_returns_400(db, acme_org):
+    client = _org_client(db, acme_org["member"].id, email=acme_org["member"].email)
+    resp = client.get("/orgs/acme/repos/acme/demo/actions/runs")
+    assert resp.status_code == 400
+
+
+def test_org_dispatch_no_token_returns_400(db, acme_org):
+    client = _org_client(db, acme_org["admin"].id, email=acme_org["admin"].email)
+    resp = client.post("/orgs/acme/repos/acme/demo/workflows/1/dispatch", json={"ref": "main"})
+    assert resp.status_code == 400
