@@ -115,6 +115,23 @@ describe("InviteAcceptPage", () => {
     await screen.findByText(/verification email sent/i);
   });
 
+  it("shows an error message when resending the verification email fails", async () => {
+    previewMock.mockResolvedValue({ org_login: "acme", status: "pending" });
+    acceptMock.mockRejectedValue(new Error("Verify your email before accepting this invitation"));
+
+    renderPage();
+
+    const acceptButton = await screen.findByRole("button", { name: /accept invitation/i });
+    fireEvent.click(acceptButton);
+
+    const resendButton = await screen.findByRole("button", { name: /resend verification email/i });
+    resendVerificationMock.mockRejectedValue(new Error("network error"));
+    fireEvent.click(resendButton);
+
+    await waitFor(() => expect(resendVerificationMock).toHaveBeenCalled());
+    await screen.findByText(/couldn.t resend the verification email/i);
+  });
+
   it("does not show a resend button for an unrelated accept failure", async () => {
     previewMock.mockResolvedValue({ org_login: "acme", status: "pending" });
     acceptMock.mockRejectedValue(new Error("Invitation has expired"));

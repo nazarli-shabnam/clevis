@@ -479,3 +479,35 @@ describe("installations.lookup / installations.sync", () => {
     expect(String(url)).toContain("/orgs/acme/installations/sync");
   });
 });
+
+describe("api.auth email verification (issue #217)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function stubOkJson(body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))),
+    );
+  }
+
+  it("POSTs the token to /auth/verify-email", async () => {
+    stubOkJson({ ok: true });
+    const result = await api.auth.verifyEmail("a-token");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/auth/verify-email");
+    expect(JSON.parse(init.body as string)).toEqual({ token: "a-token" });
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("POSTs with no body to /auth/resend-verification", async () => {
+    stubOkJson({ ok: true, already_verified: false });
+    const result = await api.auth.resendVerification();
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/auth/resend-verification");
+    expect(JSON.parse(init.body as string)).toEqual({});
+    expect(result).toEqual({ ok: true, already_verified: false });
+  });
+});
