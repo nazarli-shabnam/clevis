@@ -1,8 +1,19 @@
+import logging
 import time
 
 import httpx
 
 from checks.base import Check, CheckMetadata
+
+logger = logging.getLogger(__name__)
+
+# Hard cap on pages fetched by _get_all_pages -- at per_page=100 this is 5,000 items max.
+# Without this, a large enough org (thousands of repos/members/workflow runs) can pull an
+# unbounded number of objects into one in-memory list during a scan, which is a plausible
+# direct cause of OOM crashes in the api process (see issue #214). Truncating with a warning
+# degrades a scan's completeness rather than crashing the whole run_all_checks() call, since
+# the runner.py prefetch that calls this isn't wrapped in try/except.
+_MAX_PAGES = 50
 
 
 def _get_with_retry(client: httpx.Client, url: str, headers: dict) -> httpx.Response:
@@ -43,16 +54,26 @@ def _get_all_pages(base_url: str, path: str, token: str) -> list:
     }
     results = []
     url: str | None = f"{base_url}{path}?per_page=100"
+    pages_fetched = 0
     with httpx.Client(timeout=20) as client:
         while url:
             r = _get_with_retry(client, url, headers)
             r.raise_for_status()
             results.extend(r.json())
+            pages_fetched += 1
             url = None
             for part in r.headers.get("Link", "").split(","):
                 part = part.strip()
                 if 'rel="next"' in part:
                     url = part.split(";")[0].strip().strip("<>")
+            if url and pages_fetched >= _MAX_PAGES:
+                logger.warning(
+                    "Truncating pagination for %s after %d pages (%d items) -- more pages were available",
+                    path,
+                    pages_fetched,
+                    len(results),
+                )
+                break
     return results
 
 
