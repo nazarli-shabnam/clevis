@@ -188,6 +188,22 @@ describe("OverviewPage cockpit", () => {
     expect(screen.getByText("Milestone 'v2' overdue")).toBeInTheDocument();
   });
 
+  it("renders at-risk repos with warning severity styling (not just critical)", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+    cockpitMock.mockResolvedValue({
+      ...EMPTY_COCKPIT,
+      at_risk_repos: [{ repo: "acme/worker", reasons: ["Milestone 'v3' due soon at 40% complete"], severity: "warning" }],
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("acme/worker")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Milestone 'v3' due soon at 40% complete")).toBeInTheDocument();
+  });
+
   it("renders milestone burndown rows", async () => {
     localStorage.setItem("default_org", "acme");
     tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
@@ -212,6 +228,41 @@ describe("OverviewPage cockpit", () => {
       expect(screen.getByText(/v2/)).toBeInTheDocument();
     });
     expect(screen.getByText((_, el) => el?.textContent === "8/10 closed · due just now")).toBeInTheDocument();
+  });
+
+  it("renders overdue and at-risk milestone chips with their own styling", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+    cockpitMock.mockResolvedValue({
+      ...EMPTY_COCKPIT,
+      milestones: [
+        {
+          repo: "acme/api",
+          title: "v1",
+          due_on: "2020-01-01T00:00:00Z",
+          open_issues: 3,
+          closed_issues: 1,
+          progress_pct: 25,
+          state: "overdue",
+        },
+        {
+          repo: "acme/worker",
+          title: "v3",
+          due_on: "2026-08-01T00:00:00Z",
+          open_issues: 6,
+          closed_issues: 4,
+          progress_pct: 40,
+          state: "at_risk",
+        },
+      ],
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("overdue")).toBeInTheDocument();
+    });
+    expect(screen.getByText("at risk")).toBeInTheDocument();
   });
 
   it("fetches My View data and switches tabs", async () => {

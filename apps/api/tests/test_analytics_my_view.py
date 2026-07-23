@@ -127,3 +127,75 @@ def test_my_view_falls_back_to_client_supplied_token_header(http):
 
     assert resp.status_code == 200
     assert resp.json()["my_open_prs"] == []
+
+
+def test_my_view_repos_fetch_failure_degrades_to_empty_recent_runs(http):
+    """If the repo-list call itself fails, my-view should still return 200 with an
+    empty my_recent_runs rather than propagating the error (repos are only used for
+    the recent-runs fan-out here, not required for the search-based PR/issue lists)."""
+
+    def _request_side_effect(method, path, params=None):
+        if path == "/user":
+            return {"login": "octocat"}
+        if path == "/search/issues":
+            return {"items": []}
+        return {}
+
+    with (
+        patch("src.routers.analytics.resolve_personal_token", return_value="ghp_test"),
+        patch("src.routers.analytics.GitHubClient") as mock_client,
+    ):
+        mock_client.return_value.request.side_effect = _request_side_effect
+        mock_client.return_value.request_paginated.side_effect = httpx.HTTPStatusError(
+            "boom",
+            request=httpx.Request("GET", "https://api.github.com/orgs/acme/repos"),
+            response=httpx.Response(500, request=httpx.Request("GET", "https://api.github.com/orgs/acme/repos")),
+        )
+        resp = http.get("/me/github/my-view?owner=acme")
+
+    assert resp.status_code == 200
+    assert resp.json()["my_recent_runs"] == []
+
+
+def test_my_view_search_failure_degrades_each_list_to_empty_but_still_returns_recent_runs(http):
+    def _request_side_effect(method, path, params=None):
+        if path == "/user":
+            return {"login": "octocat"}
+        if path == "/search/issues":
+            raise httpx.HTTPStatusError(
+                "boom",
+                request=httpx.Request("GET", "https://api.github.com/search/issues"),
+                response=httpx.Response(403, request=httpx.Request("GET", "https://api.github.com/search/issues")),
+            )
+        if path == "/repos/acme/demo/actions/runs":
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 1,
+                        "name": "CI",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "html_url": "https://github.com/acme/demo/actions/runs/1",
+                        "created_at": "2026-07-20T00:00:00Z",
+                    }
+                ]
+            }
+        if path == "/repos/acme/bad/actions/runs":
+            raise httpx.RequestError("boom")
+        return {}
+
+    with (
+        patch("src.routers.analytics.resolve_personal_token", return_value="ghp_test"),
+        patch("src.routers.analytics.GitHubClient") as mock_client,
+    ):
+        mock_client.return_value.request.side_effect = _request_side_effect
+        mock_client.return_value.request_paginated.return_value = [{"name": "demo"}, {"name": "bad"}]
+        resp = http.get("/me/github/my-view?owner=acme")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["my_open_prs"] == []
+    assert body["review_requests"] == []
+    assert body["assigned_issues"] == []
+    assert len(body["my_recent_runs"]) == 1
+    assert body["my_recent_runs"][0]["repository"] == "acme/demo"

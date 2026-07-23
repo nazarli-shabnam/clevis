@@ -182,6 +182,15 @@ describe("api.analytics value normalization", () => {
     expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
   });
 
+  it("GETs /me/github/my-view?owner=... with an X-GitHub-Token header when supplied", async () => {
+    stubOkJson({ my_open_prs: [], review_requests: [], assigned_issues: [], my_recent_runs: [] });
+    const result = await api.analytics.myView("acme", "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/github/my-view?owner=acme");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
+    expect(result).toEqual({ my_open_prs: [], review_requests: [], assigned_issues: [], my_recent_runs: [] });
+  });
+
   it("GETs /me/analytics/history?owner=... and returns the raw scan history", async () => {
     stubOkJson([{ id: 1, owner: "acme", score: 80, total_checks: 3, failed_checks: 0, created_at: "2026-07-17T00:00:00Z" }]);
     const result = await api.analytics.history("acme");
