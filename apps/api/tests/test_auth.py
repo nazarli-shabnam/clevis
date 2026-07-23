@@ -6,12 +6,15 @@ import bcrypt
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import text
+from sqlalchemy.orm import Query
 
 from src.core.auth import UserOut, require_auth, require_workspace_admin
 from src.core.db import get_db
 from src.core.rate_limit import _account_buckets as _account_rate_limit_buckets
 from src.core.rate_limit import _buckets as _rate_limit_buckets
 from src.repositories import invitation_repo, org_repo
+from src.routers.auth import _SETUP_LOCK_KEY
 from src.routers.auth import router as auth_router
 from src.routers.config import router as config_router
 
@@ -88,6 +91,35 @@ def test_setup_rejects_duplicate(auth_client):
     assert resp.status_code == 409
 
 
+def test_setup_advisory_lock_serializes_concurrent_holders(_engine):
+    # Regression test for issue #218: two concurrent /auth/setup calls with *different*
+    # emails both pass the count()==0 check before either commits, and (unlike the
+    # register-email race) there's no unique-constraint collision to catch it -- only a
+    # lock can. Verifies the lock primitive itself: a second connection can't acquire the
+    # same key while the first transaction holds it, and can once the first releases it.
+    with _engine.connect() as conn1, _engine.connect() as conn2:
+        conn1.begin()
+        conn2.begin()
+        try:
+            got1 = conn1.execute(
+                text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": _SETUP_LOCK_KEY}
+            ).scalar()
+            got2 = conn2.execute(
+                text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": _SETUP_LOCK_KEY}
+            ).scalar()
+            assert got1 is True
+            assert got2 is False
+
+            conn1.commit()  # releases conn1's advisory lock
+
+            got2_retry = conn2.execute(
+                text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": _SETUP_LOCK_KEY}
+            ).scalar()
+            assert got2_retry is True
+        finally:
+            conn2.rollback()
+
+
 # register
 
 def test_register_creates_non_owner(auth_client):
@@ -123,6 +155,30 @@ def test_register_rejects_duplicate_email(auth_client):
         "/auth/register", json={"email": "dupe@example.com", "password": "supersecret1234"}
     )
     assert resp.status_code == 409
+
+
+def test_register_concurrent_same_email_returns_409_not_500(auth_client, db):
+    # Regression test for issue #218: simulates two near-simultaneous /auth/register calls
+    # for the same email, same pattern as test_org_repo.py's concurrent-insert-race test --
+    # a row for this email is already committed (the "other request" that won the race),
+    # then the existence check is patched to fake a miss so this call proceeds to the real
+    # insert, which must collide on the genuine users.email unique constraint and return a
+    # clean 409 instead of an unhandled 500.
+    _setup_owner(auth_client, email="owner@example.com")
+    from src.core.db import User
+
+    db.add(User(email="race@example.com", name=None, password_hash="x", is_workspace_admin=False))
+    db.commit()
+
+    def racy_first(self):
+        return None
+
+    with patch.object(Query, "first", racy_first):
+        resp = auth_client.post(
+            "/auth/register", json={"email": "race@example.com", "password": "supersecret1234"}
+        )
+    assert resp.status_code == 409
+    assert db.query(User).filter(User.email == "race@example.com").count() == 1
 
 
 def test_register_disabled_returns_403(auth_client):

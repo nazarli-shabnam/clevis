@@ -21,6 +21,8 @@ import logging
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, EmailStr
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.app_config import get_config
@@ -33,6 +35,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _MIN_PASSWORD_LEN = 12
+
+# Arbitrary constant identifying the /auth/setup critical section for pg_advisory_xact_lock
+# (see setup()). Any int works; this one has no other significance.
+_SETUP_LOCK_KEY = 727100
 
 # Fixed hash checked when no real user/password_hash exists, so a login attempt for a
 # nonexistent email still pays the same bcrypt cost as a real one -- otherwise response
@@ -132,6 +138,13 @@ def setup_required(db: Session = Depends(get_db)):
 @router.post("/setup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 def setup(body: SetupRequest, db: Session = Depends(get_db)):
     """First-run only. Returns 409 if any user already exists."""
+    # Two concurrent /auth/setup calls with *different* emails can both pass the
+    # count()==0 check before either commits -- unlike /auth/register's email race, there's
+    # no unique-constraint collision to catch this (the two rows don't share a column
+    # value), so it would otherwise silently create two workspace admins. The advisory
+    # lock serializes the whole check-then-insert critical section; it's released
+    # automatically when this transaction commits or rolls back.
+    db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _SETUP_LOCK_KEY})
     if db.query(User).count() > 0:
         raise HTTPException(status_code=409, detail="Setup already complete")
     if len(body.password) < _MIN_PASSWORD_LEN:
@@ -146,7 +159,11 @@ def setup(body: SetupRequest, db: Session = Depends(get_db)):
         is_workspace_admin=True,
     )
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Setup already complete") from None
     db.refresh(user)
     token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name, user.token_version)
     return {"access_token": token, "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin)}
@@ -173,7 +190,14 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
         is_workspace_admin=False,
     )
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Lost a race with a concurrent /auth/register for the same email -- both passed
+        # the existence check above before either committed. users.email is unique, so the
+        # second commit raises here instead of racing to a raw 500.
+        db.rollback()
+        raise HTTPException(status_code=409, detail="An account with this email already exists") from None
     db.refresh(user)
     token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name, user.token_version)
     return {
