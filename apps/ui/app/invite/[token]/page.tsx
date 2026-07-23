@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
@@ -23,6 +24,22 @@ export default function InviteAcceptPage() {
     mutationFn: () => api.invitations.accept(token),
     onSuccess: () => router.push("/"),
   })
+
+  // The backend 403s with this specific message when the account's email isn't verified
+  // yet (issue #217) -- distinct from a genuine email mismatch, which also 403s but with
+  // different wording, so only this case gets a resend affordance.
+  const needsVerification = accept.isError && accept.error.message.toLowerCase().includes("verify")
+  const [resendState, setResendState] = useState<"idle" | "sending" | "sent" | "error">("idle")
+
+  async function resendVerification() {
+    setResendState("sending")
+    try {
+      await api.auth.resendVerification()
+      setResendState("sent")
+    } catch {
+      setResendState("error")
+    }
+  }
 
   return (
     <div className="max-w-md mx-auto mt-16">
@@ -68,7 +85,28 @@ export default function InviteAcceptPage() {
                   {accept.isPending ? "Joining…" : "Accept invitation"}
                 </Button>
               )}
-              {accept.isError && <p className="text-xs text-destructive">{accept.error.message}</p>}
+              {accept.isError && (
+                <div className="flex flex-col gap-1.5">
+                  <p className="text-xs text-destructive">{accept.error.message}</p>
+                  {needsVerification && (
+                    resendState === "sent" ? (
+                      <p className="text-xs text-primary">Verification email sent — check your inbox, then try again.</p>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={resendVerification}
+                        disabled={resendState === "sending"}
+                      >
+                        {resendState === "sending" ? "Sending…" : "Resend verification email"}
+                      </Button>
+                    )
+                  )}
+                  {resendState === "error" && (
+                    <p className="text-xs text-destructive">Couldn&rsquo;t resend the verification email. Try again shortly.</p>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>

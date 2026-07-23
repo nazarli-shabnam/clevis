@@ -116,6 +116,14 @@ class User(Base):
     github_login: Mapped[str | None] = mapped_column(Text, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # True for GitHub-linked accounts (GitHub already vouches for the email) and for the
+    # first-run /auth/setup admin (the deploying operator, implicitly trusted). False for
+    # self-service /auth/register accounts until they click the emailed verification link.
+    # Existing rows at migration time are backfilled true (see 0017) -- already-deployed
+    # users are grandfathered in as trusted, only new self-registrations start unverified.
+    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    email_verify_token: Mapped[str | None] = mapped_column(Text, nullable=True, unique=True)
+    email_verify_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Org(Base):

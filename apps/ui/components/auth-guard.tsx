@@ -7,7 +7,7 @@ import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
 
 // Routes that don't require authentication
-const PUBLIC_ROUTES = ["/login", "/setup", "/register"]
+const PUBLIC_ROUTES = ["/login", "/setup", "/register", "/verify-email"]
 // Prefixes for routes that don't require authentication (dynamic segments)
 const PUBLIC_ROUTE_PREFIXES = ["/invite/"]
 

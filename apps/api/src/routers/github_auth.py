@@ -77,6 +77,11 @@ def find_or_create_user(db: Session, identity: github_oauth.GitHubIdentity) -> U
         github_user_id=identity.github_user_id,
         github_login=identity.login,
         avatar_url=identity.avatar_url,
+        # GitHub already vouches for this email -- fetch_identity() only ever returns a
+        # GitHub-verified address (github_oauth._primary_verified_email filters on
+        # verified=True; GitHub itself requires every email on an account to be verified
+        # before it can be used). Same trust basis as the first-run setup admin. Issue #217.
+        email_verified=True,
     )
     db.add(user)
     db.commit()

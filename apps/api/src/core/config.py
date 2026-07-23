@@ -41,6 +41,16 @@ class Settings(BaseSettings):
     session_cookie_samesite: str = "lax"
     session_cookie_domain: str | None = None
 
+    # SMTP (email verification, issue #217). Optional -- same pattern as github_app_* above:
+    # if unset, src.services.email raises a clear "not configured" error only when actually
+    # used, and the register() route degrades gracefully (account still created, just stays
+    # unverified) rather than requiring every deployment to have working email.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: SecretStr | None = None
+    smtp_from: str | None = None
+
     model_config = SettingsConfigDict(env_file=_env_file, extra="ignore")
 
 
