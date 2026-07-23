@@ -39,7 +39,8 @@ from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_to
 router = APIRouter()
 
 # Each repo costs one additional GitHub call for failed-runs/release-timeline, on
-# top of the initial repo list -- same tier as security.py's per-repo matrix cap.
+# top of the initial repo list -- matching analytics.py's _MAX_REPOS_FOR_AGGREGATES
+# tier for per-repo fan-out.
 _MAX_REPOS_FOR_FEED = 20
 
 # Short TTL, well under the frontend's 30s poll interval -- collapses concurrent
@@ -154,8 +155,8 @@ def org_events(
 
 # ---------------------------------------------------------------------------
 # Full developer feed (docs/plan.md Phase 17) -- org-wide failed-run log and
-# release timeline, both fanned out per-repo the same way security.py's
-# compliance matrix is (best-effort per repo, capped repo count).
+# release timeline, both fanned out per-repo (best-effort per repo, capped
+# repo count), matching analytics.py's per-repo aggregate helper pattern.
 # ---------------------------------------------------------------------------
 
 
@@ -198,13 +199,18 @@ def _repo_failed_runs(client: GitHubClient, owner: str, repo: str) -> list[Faile
         if streak < 3:
             continue
         latest = runs[0]
+        # A malformed run entry (missing id/created_at) shouldn't 500 the whole repo's
+        # results -- skip just that workflow's streak, same as _pr_summaries/_issue_summaries
+        # in analytics.py degrade on a malformed search-result item.
+        if "id" not in latest or ("run_started_at" not in latest and "created_at" not in latest):
+            continue
         summaries.append(
             FailedRunSummary(
                 repo=f"{owner}/{repo}",
                 workflow_name=latest.get("name") or "",
                 branch=latest.get("head_branch", ""),
                 run_id=latest["id"],
-                started_at=latest.get("run_started_at") or latest["created_at"],
+                started_at=latest.get("run_started_at") or latest.get("created_at"),
                 duration_seconds=_run_duration_seconds(latest),
                 url=latest.get("html_url", ""),
                 actor=(latest.get("actor") or {}).get("login", ""),
