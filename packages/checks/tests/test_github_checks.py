@@ -106,6 +106,39 @@ def test_get_retries_on_429_then_succeeds():
     assert result == {"login": "acme"}
 
 
+def test_get_retries_on_secondary_rate_limit_403_then_succeeds():
+    # Regression test for issue #219: GitHub's secondary/abuse rate limit commonly
+    # returns 403 (not 429), often with a Retry-After header -- especially under this
+    # codebase's concurrent ThreadPoolExecutor fan-out.
+    request = httpx.Request("GET", "https://x/y")
+    rate_limited = httpx.Response(403, headers={"Retry-After": "1"}, request=request)
+    ok_response = httpx.Response(200, json={"login": "acme"}, request=request)
+    responses = iter([rate_limited, ok_response])
+
+    with patch("time.sleep"), patch("httpx.Client.get", side_effect=lambda url, headers: next(responses)):
+        result = _get("https://x/y", "tok")
+    assert result == {"login": "acme"}
+
+
+def test_get_does_not_retry_a_plain_permission_denied_403():
+    # A genuine permission-denied 403 (token lacks scope) has neither Retry-After nor
+    # X-RateLimit-Remaining: 0 -- must still surface immediately, not be mistaken for a
+    # rate limit and retried away. (_get itself doesn't inspect status, just returns/
+    # raises via raise_for_status -- assert the retry loop doesn't sleep/retry it.)
+    request = httpx.Request("GET", "https://x/y")
+    forbidden = httpx.Response(403, request=request)
+
+    with (
+        patch("time.sleep") as mock_sleep,
+        patch("httpx.Client.get", return_value=forbidden) as mock_get,
+    ):
+        with pytest.raises(httpx.HTTPStatusError):
+            _get("https://x/y", "tok")
+
+    mock_sleep.assert_not_called()
+    assert mock_get.call_count == 1
+
+
 def test_get_gives_up_after_3_attempts_on_persistent_connection_error():
     def fake_get(url, headers):
         raise httpx.ConnectError("network down", request=httpx.Request("GET", url))

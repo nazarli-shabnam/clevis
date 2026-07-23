@@ -5,6 +5,18 @@ from fastapi import HTTPException
 from src.core.config import settings
 
 
+def _is_secondary_rate_limit(resp: httpx.Response) -> bool:
+    """GitHub's secondary/abuse rate limit commonly returns 403 (not 429), often with a
+    Retry-After header -- especially under this codebase's concurrent ThreadPoolExecutor
+    fan-out (repos.py, collab.py, analytics.py). Without this, a 403 that would succeed on
+    retry raises immediately instead of backing off like the 429 case already does. A
+    genuine permission-denied 403 (e.g. token lacks scope) has neither header, so it's
+    unaffected and still surfaces immediately."""
+    if resp.status_code != 403:
+        return False
+    return "Retry-After" in resp.headers or resp.headers.get("X-RateLimit-Remaining") == "0"
+
+
 def github_error(exc: Exception) -> HTTPException:
     """Map an httpx exception raised by GitHubClient into the HTTPException every
     GitHub-proxying router returns to its caller."""
@@ -35,7 +47,7 @@ class GitHubClient:
                         time.sleep(2 ** attempt)
                         continue
                     raise
-                if resp.status_code == 429 and attempt < 2:
+                if (resp.status_code == 429 or _is_secondary_rate_limit(resp)) and attempt < 2:
                     time.sleep(2 ** attempt)
                     continue
                 resp.raise_for_status()
@@ -59,7 +71,7 @@ class GitHubClient:
                             time.sleep(2 ** attempt)
                             continue
                         raise
-                    if resp.status_code == 429 and attempt < 2:
+                    if (resp.status_code == 429 or _is_secondary_rate_limit(resp)) and attempt < 2:
                         time.sleep(2 ** attempt)
                         continue
                     resp.raise_for_status()

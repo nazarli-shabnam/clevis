@@ -16,9 +16,19 @@ logger = logging.getLogger(__name__)
 _MAX_PAGES = 50
 
 
+def _is_secondary_rate_limit(r: httpx.Response) -> bool:
+    """GitHub's secondary/abuse rate limit commonly returns 403 (not 429), often with a
+    Retry-After header -- especially under this codebase's concurrent ThreadPoolExecutor
+    fan-out. Without this, a 403 that would succeed on retry raises immediately instead of
+    backing off like the 429 case already does."""
+    if r.status_code != 403:
+        return False
+    return "Retry-After" in r.headers or r.headers.get("X-RateLimit-Remaining") == "0"
+
+
 def _get_with_retry(client: httpx.Client, url: str, headers: dict) -> httpx.Response:
     # Same retry/backoff contract as GitHubClient.request (apps/api/src/services/github_client.py):
-    # 3 attempts, exponential backoff on connection errors or a 429.
+    # 3 attempts, exponential backoff on connection errors, a 429, or a rate-limit-flavored 403.
     for attempt in range(3):
         try:
             r = client.get(url, headers=headers)
@@ -27,7 +37,7 @@ def _get_with_retry(client: httpx.Client, url: str, headers: dict) -> httpx.Resp
                 time.sleep(2**attempt)
                 continue
             raise
-        if r.status_code == 429 and attempt < 2:
+        if (r.status_code == 429 or _is_secondary_rate_limit(r)) and attempt < 2:
             time.sleep(2**attempt)
             continue
         return r
