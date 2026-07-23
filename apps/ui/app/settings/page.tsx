@@ -7,6 +7,7 @@ import { Trash, Plus, CircleNotch, Check, ArrowSquareOut, CheckCircle } from "@p
 import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { SectionError } from "@/components/section-error"
 import Link from "next/link"
 import { api } from "@/lib/api/client"
 import { initialConfigValues, mergeSavedConfigValue } from "@/lib/config-values"
@@ -168,21 +169,6 @@ function AppearanceSection() {
           )
         })}
       </div>
-    </div>
-  )
-}
-
-// ── Shared inline error state ────────────────────────────────────────────────
-
-function SectionError({ message, onRetry, retrying }: { message: string; onRetry: () => void; retrying?: boolean }) {
-  const retryContent: React.ReactNode = retrying ? <CircleNotch className="size-3 animate-spin" /> : "Retry"
-
-  return (
-    <div className="px-4 py-6 flex items-center justify-between gap-3">
-      <p className="text-sm text-destructive">{message}</p>
-      <Button size="sm" variant="outline" onClick={onRetry} disabled={retrying}>
-        {retryContent}
-      </Button>
     </div>
   )
 }

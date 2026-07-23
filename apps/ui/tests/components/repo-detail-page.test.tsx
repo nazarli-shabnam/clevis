@@ -253,6 +253,20 @@ describe("RepoDetailPage", () => {
     expect(await screen.findByText(/no github app installation found/i)).toBeInTheDocument();
   });
 
+  it("retries the security status request when Retry is clicked after an error", async () => {
+    reposSecurityMock.mockRejectedValueOnce(new Error("No GitHub App installation found"));
+    reposSecurityMock.mockResolvedValueOnce({ branch_protection: "protected", secret_scanning: "enabled" });
+
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /security/i }));
+
+    await screen.findByText(/no github app installation found/i);
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+
+    await waitFor(() => expect(screen.getByText("Protected")).toBeInTheDocument());
+    expect(reposSecurityMock).toHaveBeenCalledTimes(2);
+  });
+
   it("renders the Overview stats grid (stars, forks, watchers, default branch, open issues, latest release)", async () => {
     reposStatsMock.mockResolvedValue({
       repository: "acme/demo",

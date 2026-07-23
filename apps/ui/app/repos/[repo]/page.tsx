@@ -9,6 +9,7 @@ import Link from "next/link"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { Skeleton } from "@/components/ui/skeleton"
+import { SectionError } from "@/components/section-error"
 import { GitPullRequest, ArrowSquareOut, Star, GitFork, Eye, ShieldCheck, ShieldWarning, Shield } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { parseOwnerRepo } from "@/lib/repo-segment"
@@ -328,7 +329,11 @@ export default function RepoDetailPage() {
           {securityQuery.isLoading ? (
             <Skeleton className="h-16 w-full" />
           ) : securityQuery.isError ? (
-            <p className="text-xs text-destructive">{securityQuery.error.message}</p>
+            <SectionError
+              message={securityQuery.error.message}
+              onRetry={() => securityQuery.refetch()}
+              retrying={securityQuery.isFetching}
+            />
           ) : securityQuery.data ? (
             <div className="flex flex-col gap-2">
               <SecurityStatusRow
