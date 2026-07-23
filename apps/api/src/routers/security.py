@@ -39,9 +39,22 @@ router = APIRouter()
 _MAX_REPOS_FOR_MATRIX = 20
 
 
+def _branch_protection_status(exc: httpx.HTTPStatusError) -> str:
+    # Mirrors packages/checks/src/checks/github_checks.py's _branch_protection_status:
+    # a 404 is a real negative answer ("unprotected"), not an error; 403/429 mean the
+    # token can't see the answer at all, which must not be scored as a compliance fail.
+    code = exc.response.status_code
+    if code == 404:
+        return "unprotected"
+    if code in (403, 429):
+        return "unknown"
+    return "unprotected"
+
+
 def _repo_row(client: GitHubClient, owner: str, repo: dict) -> RepoSecurityRow:
     name = repo["name"]
     branch = repo.get("default_branch")
+    unknown: list[str] = []
 
     branch_protection = False
     force_push_allowed = False
@@ -51,12 +64,20 @@ def _repo_row(client: GitHubClient, owner: str, repo: dict) -> RepoSecurityRow:
             branch_protection = bool(details.get("protected"))
             protection = details.get("protection") or {}
             force_push_allowed = bool((protection.get("allow_force_pushes") or {}).get("enabled"))
-    except (httpx.HTTPStatusError, httpx.RequestError):
-        pass
+    except httpx.HTTPStatusError as exc:
+        # force_push_allowed comes from the same branch-details response, so an
+        # unknown branch_protection answer means force_push is equally unknown --
+        # they must not resolve to opposite compliance verdicts from one failed call.
+        if _branch_protection_status(exc) == "unknown":
+            unknown.extend(["branch_protection", "force_push"])
+    except httpx.RequestError:
+        # A transient network error is exactly as unknowable as a 403/429 -- neither
+        # is a real "unprotected" answer from GitHub (see PR history: 10b10e9, 027d30b).
+        unknown.extend(["branch_protection", "force_push"])
 
     secret_scanning = (
-        (repo.get("security_and_analysis") or {}).get("secret_scanning", {}).get("status") == "enabled"
-    )
+        (repo.get("security_and_analysis") or {}).get("secret_scanning") or {}
+    ).get("status") == "enabled"
 
     dependabot_enabled = False
     critical_count = 0
@@ -73,31 +94,37 @@ def _repo_row(client: GitHubClient, owner: str, repo: dict) -> RepoSecurityRow:
                     high_count += 1
     except httpx.HTTPStatusError as exc:
         # 404 means Dependabot alerts are genuinely disabled for this repo -- a real
-        # "disabled" answer, not an error. Any other status leaves dependabot_enabled
-        # False (unknown), same as the network-error branch below.
+        # "no alerts" answer. Any other status (403 missing security-events scope,
+        # 429, ...) means the alert count is unknown, not zero, so it must not
+        # silently score as "no critical/high alerts" -- see the identical fix in
+        # DependabotAlertsCheck (packages/checks/src/checks/github_checks.py, 3184c76).
         if exc.response.status_code != 404:
-            pass
+            unknown.append("dependabot")
     except httpx.RequestError:
-        pass
+        unknown.append("dependabot")
 
     code_scanning_clear = True
     try:
         cs_alerts = client.request("GET", f"/repos/{owner}/{name}/code-scanning/alerts", params={"state": "open"})
         if isinstance(cs_alerts, list):
             code_scanning_clear = len(cs_alerts) == 0
-    except (httpx.HTTPStatusError, httpx.RequestError):
-        # Disabled (404) or no visibility (403) -- nothing to flag, so treat as clear
-        # for scoring purposes rather than penalizing a repo the token can't see into.
-        pass
+    except httpx.HTTPStatusError as exc:
+        # Same 404-vs-other distinction as Dependabot above: 404 is a genuine
+        # "disabled, so no alerts" answer; anything else means no visibility.
+        if exc.response.status_code != 404:
+            unknown.append("code_scanning")
+    except httpx.RequestError:
+        unknown.append("code_scanning")
 
-    dimensions = [
-        branch_protection,
-        secret_scanning,
-        critical_count == 0 and high_count == 0,
-        code_scanning_clear,
-        not force_push_allowed,
-    ]
-    score = round(100 * sum(dimensions) / len(dimensions))
+    dimensions = {
+        "branch_protection": branch_protection,
+        "secret_scanning": secret_scanning,
+        "dependabot": critical_count == 0 and high_count == 0,
+        "code_scanning": code_scanning_clear,
+        "force_push": not force_push_allowed,
+    }
+    evaluable = {k: v for k, v in dimensions.items() if k not in unknown}
+    score = round(100 * sum(evaluable.values()) / len(evaluable)) if evaluable else 0
 
     return RepoSecurityRow(
         repo=name,
@@ -109,6 +136,7 @@ def _repo_row(client: GitHubClient, owner: str, repo: dict) -> RepoSecurityRow:
         code_scanning=code_scanning_clear,
         force_push_allowed=force_push_allowed,
         score=score,
+        unknown_dimensions=unknown,
     )
 
 
@@ -176,7 +204,8 @@ def personal_secret_scanning(
             number=a["number"],
             state=a.get("state", "open"),
             secret_type=a.get("secret_type", ""),
-            secret_type_display=a.get("secret_type_display", a.get("secret_type", "")),
+            # GitHub's actual field name is secret_type_display_name, not secret_type_display.
+            secret_type_display=a.get("secret_type_display_name", a.get("secret_type", "")),
             resolved_reason=a.get("resolution"),
             created_at=a["created_at"],
             resolved_at=a.get("resolved_at"),

@@ -404,15 +404,23 @@ export default function SecurityPage() {
                         onClick={() => setSelectedRepo(r.repo)}
                       >
                         <td className="px-4 py-2 font-mono text-foreground/90 truncate max-w-[10rem]">{r.repo}</td>
-                        <td className="text-center px-2 py-2">{r.branch_protection ? "✓" : "—"}</td>
+                        <td className="text-center px-2 py-2" title={r.unknown_dimensions.includes("branch_protection") ? "unknown — token can't see this" : undefined}>
+                          {r.unknown_dimensions.includes("branch_protection") ? "?" : r.branch_protection ? "✓" : "—"}
+                        </td>
                         <td className="text-center px-2 py-2">{r.secret_scanning ? "✓" : "—"}</td>
-                        <td className="text-center px-2 py-2">
-                          {r.dependabot_critical_count + r.dependabot_high_count > 0 ? (
+                        <td className="text-center px-2 py-2" title={r.unknown_dimensions.includes("dependabot") ? "unknown — token can't see this" : undefined}>
+                          {r.unknown_dimensions.includes("dependabot") ? (
+                            "?"
+                          ) : r.dependabot_critical_count + r.dependabot_high_count > 0 ? (
                             <span className="text-red-400">{r.dependabot_critical_count + r.dependabot_high_count}</span>
                           ) : "✓"}
                         </td>
-                        <td className="text-center px-2 py-2">{r.code_scanning ? "✓" : "—"}</td>
-                        <td className="text-center px-2 py-2">{r.force_push_allowed ? "✗" : "✓"}</td>
+                        <td className="text-center px-2 py-2" title={r.unknown_dimensions.includes("code_scanning") ? "unknown — token can't see this" : undefined}>
+                          {r.unknown_dimensions.includes("code_scanning") ? "?" : r.code_scanning ? "✓" : "—"}
+                        </td>
+                        <td className="text-center px-2 py-2" title={r.unknown_dimensions.includes("force_push") ? "unknown — token can't see this" : undefined}>
+                          {r.unknown_dimensions.includes("force_push") ? "?" : r.force_push_allowed ? "✗" : "✓"}
+                        </td>
                         <td className="text-right px-4 py-2 tabular-nums">{r.score}</td>
                       </tr>
                     ))}

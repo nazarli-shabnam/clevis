@@ -299,6 +299,9 @@ export interface RepoSecurityRow {
   code_scanning: boolean
   force_push_allowed: boolean
   score: number
+  // Dimension names the token couldn't evaluate (403/429/network error) -- excluded
+  // from `score`. Distinct from a genuine 404 "this is off" answer, which isn't unknown.
+  unknown_dimensions: string[]
 }
 
 export interface VulnCounts {

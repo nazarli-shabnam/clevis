@@ -13,6 +13,13 @@ class RepoSecurityRow(BaseModel):
     code_scanning: bool
     force_push_allowed: bool
     score: int
+    # Dimension names ("branch_protection", "dependabot", "code_scanning") the token
+    # couldn't evaluate (403/429/network error) rather than genuinely observed as
+    # compliant or not -- excluded from `score`'s denominator so a repo the token
+    # can't see into isn't scored as if it were clean. Never includes a dimension
+    # whose GitHub answer was a genuine 404 ("this feature is off"), which is a real
+    # negative result, not an unknown.
+    unknown_dimensions: list[str] = []
 
 
 class VulnCounts(BaseModel):

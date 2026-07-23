@@ -264,6 +264,7 @@ describe("SecurityPage", () => {
           code_scanning: true,
           force_push_allowed: false,
           score: 80,
+          unknown_dimensions: [],
         },
       ],
       summary: { fully_compliant_count: 0, critical_risk_count: 1, secret_hits_count: 0, vuln_by_severity: { critical: 1, high: 0, medium: 0, low: 0 } },
@@ -280,6 +281,38 @@ describe("SecurityPage", () => {
     expect(secretScanningMock).toHaveBeenCalledWith("acme", "api", "");
   });
 
+  it("shows a '?' for dimensions the token couldn't evaluate, not a false pass", async () => {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [],
+    });
+    securityMatrixMock.mockResolvedValue({
+      owner: "acme",
+      repos: [
+        {
+          repo: "api",
+          branch_protection: true,
+          secret_scanning: true,
+          dependabot_enabled: false,
+          dependabot_critical_count: 0,
+          dependabot_high_count: 0,
+          code_scanning: true,
+          force_push_allowed: false,
+          score: 100,
+          unknown_dimensions: ["dependabot"],
+        },
+      ],
+      summary: { fully_compliant_count: 0, critical_risk_count: 0, secret_hits_count: 0, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } },
+    });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /run scan/i }));
+
+    await waitFor(() => expect(screen.getByText("Compliance Matrix")).toBeInTheDocument());
+    expect(screen.getByTitle("unknown — token can't see this")).toHaveTextContent("?");
+  });
+
   it("never renders a raw secret value in the alerts list", async () => {
     analyticsOverviewMock.mockResolvedValue({
       owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [],
@@ -287,7 +320,7 @@ describe("SecurityPage", () => {
     securityMatrixMock.mockResolvedValue({
       owner: "acme",
       repos: [
-        { repo: "api", branch_protection: true, secret_scanning: false, dependabot_enabled: true, dependabot_critical_count: 0, dependabot_high_count: 0, code_scanning: true, force_push_allowed: false, score: 80 },
+        { repo: "api", branch_protection: true, secret_scanning: false, dependabot_enabled: true, dependabot_critical_count: 0, dependabot_high_count: 0, code_scanning: true, force_push_allowed: false, score: 80, unknown_dimensions: [] },
       ],
       summary: { fully_compliant_count: 0, critical_risk_count: 0, secret_hits_count: 1, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } },
     });
