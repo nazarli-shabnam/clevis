@@ -6,15 +6,15 @@ from datetime import datetime, timedelta, timezone
 from worker import MAX_RETRIES, RECLAIM_TIMEOUT_MINUTES, _reclaim_stale_jobs
 
 
-def _insert_job(conn, created_ids, *, status: str, updated_at, retry_count: int = 0) -> int:
+def _insert_job(conn, created_ids, *, status: str, updated_at, retry_count: int = 0, heartbeat_at=None) -> int:
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO jobs (job_type, payload, status, retry_count, updated_at)
-            VALUES ('github.clear_actions_cache', '{}', %s, %s, %s)
+            INSERT INTO jobs (job_type, payload, status, retry_count, updated_at, heartbeat_at)
+            VALUES ('github.clear_actions_cache', '{}', %s, %s, %s, %s)
             RETURNING id
             """,
-            (status, retry_count, updated_at),
+            (status, retry_count, updated_at, heartbeat_at),
         )
         job_id = cur.fetchone()[0]
     conn.commit()
@@ -50,6 +50,55 @@ def test_leaves_recently_updated_processing_job_alone(worker_db):
     status, retry_count, _result = _fetch(conn, job_id)
     assert status == "processing"
     assert retry_count == 0
+
+
+def test_leaves_a_stale_updated_at_job_alone_if_its_heartbeat_is_still_fresh(worker_db):
+    # Regression test for issue #215: a legitimately slow (not crashed) job's updated_at
+    # goes stale past RECLAIM_TIMEOUT_MINUTES since it's only set at claim time, but its
+    # heartbeat_at is touched every _JOB_HEARTBEAT_INTERVAL_SECONDS by _JobHeartbeat while
+    # the handler is actually running -- the reclaim sweep must check heartbeat_at too.
+    conn, created_ids = worker_db
+    stale_updated_at = datetime.now(timezone.utc) - timedelta(minutes=RECLAIM_TIMEOUT_MINUTES + 5)
+    fresh_heartbeat = datetime.now(timezone.utc) - timedelta(seconds=5)
+    job_id = _insert_job(
+        conn, created_ids, status="processing", updated_at=stale_updated_at, retry_count=0,
+        heartbeat_at=fresh_heartbeat,
+    )
+
+    _reclaim_stale_jobs(conn)
+
+    status, retry_count, _result = _fetch(conn, job_id)
+    assert status == "processing"
+    assert retry_count == 0
+
+
+def test_reclaims_a_stale_updated_at_job_with_a_stale_heartbeat_too(worker_db):
+    conn, created_ids = worker_db
+    stale = datetime.now(timezone.utc) - timedelta(minutes=RECLAIM_TIMEOUT_MINUTES + 5)
+    job_id = _insert_job(
+        conn, created_ids, status="processing", updated_at=stale, retry_count=0, heartbeat_at=stale,
+    )
+
+    _reclaim_stale_jobs(conn)
+
+    status, retry_count, _result = _fetch(conn, job_id)
+    assert status == "queued"
+    assert retry_count == 1
+
+
+def test_reclaims_a_stale_updated_at_job_with_a_null_heartbeat(worker_db):
+    # A job claimed before the heartbeat column existed, or whose handler hasn't ticked
+    # yet, has heartbeat_at IS NULL -- must still be reclaimed on updated_at staleness
+    # alone, same as before this feature existed.
+    conn, created_ids = worker_db
+    stale = datetime.now(timezone.utc) - timedelta(minutes=RECLAIM_TIMEOUT_MINUTES + 5)
+    job_id = _insert_job(conn, created_ids, status="processing", updated_at=stale, retry_count=0, heartbeat_at=None)
+
+    _reclaim_stale_jobs(conn)
+
+    status, retry_count, _result = _fetch(conn, job_id)
+    assert status == "queued"
+    assert retry_count == 1
 
 
 def test_leaves_queued_and_done_jobs_alone(worker_db):

@@ -31,6 +31,8 @@ import secrets
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, EmailStr
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.app_config import get_config
@@ -64,6 +66,10 @@ def _send_verification_email_best_effort(user: User) -> None:
         # would otherwise raise IndexError here, uncaught, breaking registration itself --
         # this function must never raise regardless of the cause.
         logger.exception("failed to send verification email to %s", user.email)
+
+# Arbitrary constant identifying the /auth/setup critical section for pg_advisory_xact_lock
+# (see setup()). Any int works; this one has no other significance.
+_SETUP_LOCK_KEY = 727100
 
 # Fixed hash checked when no real user/password_hash exists, so a login attempt for a
 # nonexistent email still pays the same bcrypt cost as a real one -- otherwise response
@@ -179,6 +185,15 @@ def setup_required(db: Session = Depends(get_db)):
 @router.post("/setup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 def setup(body: SetupRequest, db: Session = Depends(get_db)):
     """First-run only. Returns 409 if any user already exists."""
+    # Two concurrent /auth/setup calls with *different* emails can both pass the
+    # count()==0 check before either commits -- unlike /auth/register's email race, there's
+    # no unique-constraint collision to catch this (the two rows don't share a column
+    # value), so it would otherwise silently create two workspace admins. The advisory
+    # lock serializes the whole check-then-insert critical section; it's transaction-scoped,
+    # so it's released whenever this transaction ends -- an explicit commit/rollback below,
+    # or (on the early-409 path, which does neither) get_db()'s finally: db.close(), which
+    # implicitly rolls back and returns the connection to the pool at the end of the request.
+    db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _SETUP_LOCK_KEY})
     if db.query(User).count() > 0:
         raise HTTPException(status_code=409, detail="Setup already complete")
     if len(body.password) < _MIN_PASSWORD_LEN:
@@ -196,7 +211,11 @@ def setup(body: SetupRequest, db: Session = Depends(get_db)):
         email_verified=True,
     )
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Setup already complete") from None
     db.refresh(user)
     token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name, user.token_version)
     return {"access_token": token, "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin)}
@@ -224,7 +243,16 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
         email_verified=False,
     )
     db.add(user)
-    db.flush()  # assign user.id before generating/persisting the verification token below
+    try:
+        # flush (not commit) so user.id is assigned in time for the verification token
+        # below -- this is also where a race with a concurrent /auth/register for the same
+        # email actually surfaces: both passed the existence check above before either
+        # flushed, and users.email is unique, so the second flush raises here instead of
+        # racing to a raw 500 at commit time.
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="An account with this email already exists") from None
     _send_verification_email_best_effort(user)
     db.commit()
     db.refresh(user)
