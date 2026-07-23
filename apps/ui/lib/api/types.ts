@@ -422,3 +422,55 @@ export interface DispatchResponse {
   dispatched: boolean
   message: string | null
 }
+
+export interface RepoSecurityRow {
+  repo: string
+  branch_protection: boolean
+  secret_scanning: boolean
+  dependabot_enabled: boolean
+  dependabot_critical_count: number
+  dependabot_high_count: number
+  code_scanning: boolean
+  force_push_allowed: boolean
+  score: number
+  // Dimension names the token couldn't evaluate (403/429/network error) -- excluded
+  // from `score`. Distinct from a genuine 404 "this is off" answer, which isn't unknown.
+  unknown_dimensions: string[]
+}
+
+export interface VulnCounts {
+  critical: number
+  high: number
+  medium: number
+  low: number
+}
+
+export interface MatrixSummary {
+  fully_compliant_count: number
+  critical_risk_count: number
+  secret_hits_count: number
+  vuln_by_severity: VulnCounts
+}
+
+export interface SecurityMatrixResponse {
+  owner: string
+  repos: RepoSecurityRow[]
+  summary: MatrixSummary
+}
+
+export interface SecretAlert {
+  number: number
+  state: string
+  secret_type: string
+  secret_type_display: string
+  resolved_reason: string | null
+  created_at: string
+  resolved_at: string | null
+  repo: string
+  url: string
+}
+
+export interface SecretScanningResponse {
+  repository: string
+  alerts: SecretAlert[]
+}

@@ -22,6 +22,7 @@ from src.routers import (
     jobs,
     orgs,
     repos,
+    security,
     tokens,
     webhooks,
 )
@@ -69,6 +70,7 @@ app.include_router(actions_cache.router, tags=["actions-cache"])
 app.include_router(repos.router, tags=["repos"])
 app.include_router(github.router, tags=["github"])
 app.include_router(collab.router, tags=["collab"])
+app.include_router(security.router, tags=["security"])
 app.include_router(automation.router, tags=["automation"])
 app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 app.include_router(audit.router, prefix="/audit", tags=["audit"])
