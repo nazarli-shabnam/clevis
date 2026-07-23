@@ -22,6 +22,14 @@ log = logging.getLogger(__name__)
 # from a genuinely healthy one -- `restart: unless-stopped` only fires on a hard crash,
 # not a hang, so without this a stuck worker container would never be restarted.
 HEARTBEAT_FILE = Path("/tmp/worker_heartbeat")
+# The docker-compose healthcheck treats the heartbeat file as stale past 60s (see
+# docker-compose.yml). worker_poll_seconds is a live-editable app_config value with no
+# upper bound otherwise, and the heartbeat only gets touched once per loop iteration --
+# an operator setting it above this cap would make every iteration's normal sleep alone
+# exceed the healthcheck's staleness threshold, permanently false-positive-ing the worker
+# as hung. Kept comfortably below 60s so real job processing inside an iteration still
+# has margin before the healthcheck's threshold is reached.
+_MAX_POLL_SECONDS = 30
 
 # psycopg.connect() expects plain postgresql://, not the SQLAlchemy +psycopg dialect prefix
 _DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg://", "postgresql://")
@@ -49,11 +57,13 @@ def _read_app_config(key: str, default: str) -> str:
 
 
 def _read_poll_seconds() -> int:
-    """Read worker_poll_seconds, clamped to a minimum of 1. Falls back to 5 on a
-    malformed value so a bad config row can never crash or busy-loop the worker."""
+    """Read worker_poll_seconds, clamped to [1, _MAX_POLL_SECONDS]. Falls back to 5 on a
+    malformed value so a bad config row can never crash or busy-loop the worker. The upper
+    clamp keeps the heartbeat healthcheck's staleness threshold meaningful -- see
+    _MAX_POLL_SECONDS."""
     raw = _read_app_config("worker_poll_seconds", "5")
     try:
-        return max(1, int(raw))
+        return max(1, min(_MAX_POLL_SECONDS, int(raw)))
     except ValueError:
         log.warning("worker_poll_seconds %r is not an integer; using 5", raw)
         return 5
