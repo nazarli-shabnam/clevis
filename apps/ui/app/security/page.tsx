@@ -256,7 +256,7 @@ export default function SecurityPage() {
               </Button>
             )}
             {scan.isError && (
-              <div className="flex items-start gap-2 text-xs text-destructive">
+              <div data-testid="scan-error" className="flex items-start gap-2 text-xs text-destructive">
                 <Warning className="size-3.5 mt-0.5 shrink-0" />
                 {scan.error.message}
               </div>
@@ -381,7 +381,7 @@ export default function SecurityPage() {
             {matrixMutation.isPending ? (
               <div className="p-4"><Skeleton className="h-32 w-full" /></div>
             ) : matrixMutation.error ? (
-              <p className="p-4 text-sm text-destructive">{matrixMutation.error.message}</p>
+              <p className="p-4 text-sm text-destructive">Compliance matrix unavailable: {matrixMutation.error.message}</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">

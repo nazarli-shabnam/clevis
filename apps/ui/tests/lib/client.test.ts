@@ -193,6 +193,40 @@ describe("api.analytics value normalization", () => {
   });
 });
 
+describe("api.security", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function stubOkJson(body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))),
+    );
+  }
+
+  it("GETs /me/analytics/security-matrix/{owner} with an X-GitHub-Token header when supplied", async () => {
+    const body = { owner: "acme", repos: [], summary: { fully_compliant_count: 0, critical_risk_count: 0, secret_hits_count: 0, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } } };
+    stubOkJson(body);
+    const result = await api.security.matrix("acme", "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/analytics/security-matrix/acme");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
+    expect(result).toEqual(body);
+  });
+
+  it("GETs /me/repos/{owner}/{repo}/secret-scanning with no token header when omitted", async () => {
+    const body = { repository: "acme/demo", alerts: [] };
+    stubOkJson(body);
+    const result = await api.security.secretScanning("acme", "demo");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/repos/acme/demo/secret-scanning");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBeUndefined();
+    expect(result).toEqual(body);
+  });
+});
+
 describe("api.repos", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

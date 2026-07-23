@@ -90,6 +90,6 @@ test.describe("Security scan", () => {
     await page.getByPlaceholder("e.g. octocat").fill("missing-org")
     await page.getByRole("button", { name: "Run scan" }).click()
 
-    await expect(page.getByText(/No GitHub App installation found for 'missing-org'/i)).toBeVisible()
+    await expect(page.getByTestId("scan-error")).toContainText(/No GitHub App installation found for 'missing-org'/i)
   })
 })

@@ -313,6 +313,139 @@ describe("SecurityPage", () => {
     expect(screen.getByTitle("unknown — token can't see this")).toHaveTextContent("?");
   });
 
+  it("shows a loading skeleton, then a distinguishable error, when the compliance matrix fails", async () => {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [],
+    });
+    let rejectMatrix: (err: unknown) => void = () => {};
+    securityMatrixMock.mockImplementation(() => new Promise((_, rej) => { rejectMatrix = rej; }));
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /run scan/i }));
+
+    await waitFor(() => expect(screen.getByText("Compliance Matrix")).toBeInTheDocument());
+
+    rejectMatrix(new Error("No GitHub App installation found for 'acme'"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Compliance matrix unavailable:/)).toBeInTheDocument();
+    });
+  });
+
+  it("marks all dimensions unknown when the token can't see any of them, and lets the user click a row and switch repos", async () => {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [],
+    });
+    securityMatrixMock.mockResolvedValue({
+      owner: "acme",
+      repos: [
+        {
+          repo: "api",
+          branch_protection: false,
+          secret_scanning: false,
+          dependabot_enabled: false,
+          dependabot_critical_count: 0,
+          dependabot_high_count: 0,
+          code_scanning: false,
+          force_push_allowed: false,
+          score: 0,
+          unknown_dimensions: ["branch_protection", "dependabot", "code_scanning", "force_push"],
+        },
+        {
+          repo: "worker",
+          branch_protection: true,
+          secret_scanning: true,
+          dependabot_enabled: true,
+          dependabot_critical_count: 0,
+          dependabot_high_count: 0,
+          code_scanning: true,
+          force_push_allowed: false,
+          score: 100,
+          unknown_dimensions: [],
+        },
+      ],
+      summary: { fully_compliant_count: 1, critical_risk_count: 0, secret_hits_count: 0, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } },
+    });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /run scan/i }));
+
+    await waitFor(() => expect(screen.getByText("Compliance Matrix")).toBeInTheDocument());
+    expect(screen.getAllByTitle("unknown — token can't see this").length).toBeGreaterThanOrEqual(3);
+
+    fireEvent.click(screen.getAllByText("worker")[0]);
+    await waitFor(() => expect(secretScanningMock).toHaveBeenCalledWith("acme", "worker", ""));
+
+    const repoSelect = screen.getByDisplayValue("worker");
+    fireEvent.change(repoSelect, { target: { value: "api" } });
+    await waitFor(() => expect(secretScanningMock).toHaveBeenCalledWith("acme", "api", ""));
+  });
+
+  it("surfaces an error instead of crashing when secret scanning fails", async () => {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [],
+    });
+    securityMatrixMock.mockResolvedValue({
+      owner: "acme",
+      repos: [
+        { repo: "api", branch_protection: true, secret_scanning: false, dependabot_enabled: true, dependabot_critical_count: 0, dependabot_high_count: 0, code_scanning: true, force_push_allowed: false, score: 80, unknown_dimensions: [] },
+      ],
+      summary: { fully_compliant_count: 0, critical_risk_count: 0, secret_hits_count: 0, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } },
+    });
+    secretScanningMock.mockRejectedValue(new Error("GitHub API error: 403"));
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /run scan/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("GitHub API error: 403")).toBeInTheDocument();
+    });
+  });
+
+  it("renders a resolved secret alert without the open-state styling", async () => {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [],
+    });
+    securityMatrixMock.mockResolvedValue({
+      owner: "acme",
+      repos: [
+        { repo: "api", branch_protection: true, secret_scanning: false, dependabot_enabled: true, dependabot_critical_count: 0, dependabot_high_count: 0, code_scanning: true, force_push_allowed: false, score: 80, unknown_dimensions: [] },
+      ],
+      summary: { fully_compliant_count: 0, critical_risk_count: 0, secret_hits_count: 1, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } },
+    });
+    secretScanningMock.mockResolvedValue({
+      repository: "acme/api",
+      alerts: [
+        {
+          number: 2,
+          state: "resolved",
+          secret_type: "github_personal_access_token",
+          secret_type_display: "GitHub Personal Access Token",
+          resolved_reason: "revoked",
+          created_at: "2026-07-01T00:00:00Z",
+          resolved_at: "2026-07-02T00:00:00Z",
+          repo: "acme/api",
+          url: "https://github.com/acme/api/security/secret-scanning/2",
+        },
+      ],
+    });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /run scan/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("resolved")).toBeInTheDocument();
+    });
+  });
+
   it("never renders a raw secret value in the alerts list", async () => {
     analyticsOverviewMock.mockResolvedValue({
       owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [],
