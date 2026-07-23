@@ -270,6 +270,47 @@ export interface GithubMembershipStatus {
   role: "member" | "admin"
 }
 
+export interface CollaboratorPermission {
+  login: string
+  avatar_url: string
+  permission: "read" | "triage" | "write" | "maintain" | "admin"
+  affiliation: "direct" | "outside"
+  is_outside_collaborator: boolean
+}
+
+export interface RepoPermissions {
+  repo: string
+  collaborators: CollaboratorPermission[]
+}
+
+export interface PermissionRiskSummary {
+  outside_with_write_or_admin: number
+  members_with_admin: number
+  total_outside_collaborators: number
+}
+
+export interface PermissionAuditResponse {
+  generated_at: string
+  repos_scanned: number
+  repos_total: number
+  repos: RepoPermissions[]
+  risk_summary: PermissionRiskSummary
+}
+
+export interface InactiveMember {
+  login: string
+  avatar_url: string
+  role: "member" | "admin"
+  last_commit_repo: string | null
+  last_commit_days_ago: number | null
+}
+
+export interface InactiveMembersResponse {
+  org: string
+  sampled_repos: string[]
+  members: InactiveMember[]
+}
+
 export interface PrWeekBucket {
   week: string
   opened: number
