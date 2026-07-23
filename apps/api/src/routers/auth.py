@@ -54,12 +54,15 @@ def _send_verification_email_best_effort(user: User) -> None:
     succeed regardless of whether SMTP is configured or the send itself fails."""
     user.email_verify_token = secrets.token_urlsafe(32)
     user.email_verify_token_expires_at = datetime.now(timezone.utc) + _VERIFY_TOKEN_TTL
-    verify_url = f"{settings.cors_origins[0]}/verify-email?token={user.email_verify_token}"
     try:
+        verify_url = f"{settings.cors_origins[0]}/verify-email?token={user.email_verify_token}"
         send_verification_email(user.email, verify_url)
     except EmailNotConfigured:
         logger.warning("SMTP not configured -- skipping verification email for %s", user.email)
     except Exception:
+        # Covers both a send failure and a misconfigured empty CORS_ORIGINS (cors_origins[0]
+        # would otherwise raise IndexError here, uncaught, breaking registration itself --
+        # this function must never raise regardless of the cause.
         logger.exception("failed to send verification email to %s", user.email)
 
 # Fixed hash checked when no real user/password_hash exists, so a login attempt for a
@@ -100,12 +103,14 @@ class LoginRequest(BaseModel):
 
 
 class PendingInvitationSummary(BaseModel):
-    # Deliberately excludes the invitation token: registration has no email-verification
-    # step anywhere in this app, so "an account with email X" is not proof of controlling
-    # inbox X. Handing back the accept-capability token here would let anyone who merely
-    # knows a victim's email address (self-asserted at register, never verified) claim
-    # their pending org invitation without ever seeing the real invite link — this must
-    # stay informational only ("an invite exists"), never a shortcut to accepting it.
+    # Deliberately excludes the invitation token: the email isn't verified yet at
+    # register()/login() time (verification is async, via the emailed link -- see
+    # accept_invitation's email_verified check in src.routers.invitations), so "an
+    # account with email X" is still not immediate proof of controlling inbox X. Handing
+    # back the accept-capability token here would let anyone who merely knows a victim's
+    # email address (self-asserted at register, not yet verified) claim their pending org
+    # invitation without ever seeing the real invite link — this must stay informational
+    # only ("an invite exists"), never a shortcut to accepting it.
     org_login: str
     expires_at: datetime
 

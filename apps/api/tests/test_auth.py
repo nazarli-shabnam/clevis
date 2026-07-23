@@ -174,6 +174,21 @@ def test_register_logs_a_warning_but_does_not_fail_when_email_sending_raises(aut
     assert resp.status_code == 201
 
 
+def test_register_still_succeeds_when_cors_origins_is_misconfigured_empty(auth_client):
+    # Regression test: verify_url construction (f"{settings.cors_origins[0]}/...") used to
+    # sit outside the try/except in _send_verification_email_best_effort, so an operator
+    # misconfiguring CORS_ORIGINS=[] would raise an uncaught IndexError there and break
+    # registration itself, not just the email send.
+    from src.core.config import settings
+
+    _setup_owner(auth_client)
+    with patch.object(settings, "cors_origins", []):
+        resp = auth_client.post(
+            "/auth/register", json={"email": "member@example.com", "password": "supersecret1234"}
+        )
+    assert resp.status_code == 201
+
+
 def test_verify_email_marks_the_account_verified_and_clears_the_token(auth_client, db):
     _setup_owner(auth_client)
     auth_client.post("/auth/register", json={"email": "member@example.com", "password": "supersecret1234"})
