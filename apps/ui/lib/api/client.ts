@@ -7,6 +7,7 @@ import type {
   CheckValue,
   CockpitResponse,
   DispatchResponse,
+  FailedRunsResponse,
   GithubMembershipStatus,
   GithubOrgInvitationsResponse,
   GithubOrgMembersResponse,
@@ -23,6 +24,7 @@ import type {
   OrgEventsResponse,
   PendingInvitationSummary,
   PermissionAuditResponse,
+  ReleaseTimelineResponse,
   RepoListResponse,
   RepoPullsResponse,
   RepoSecurityResponse,
@@ -275,6 +277,16 @@ export const api = {
       post<OrgEventsResponse>(`/github/orgs/${encodeURIComponent(org)}/events`, {
         token: token || undefined,
         per_page: perPage,
+      }),
+    failedRuns: (org: string, token: string, limit = 20) =>
+      post<FailedRunsResponse>(`/github/orgs/${encodeURIComponent(org)}/failed-runs`, {
+        token: token || undefined,
+        limit,
+      }),
+    releaseTimeline: (org: string, token: string, days = 90) =>
+      post<ReleaseTimelineResponse>(`/github/orgs/${encodeURIComponent(org)}/release-timeline`, {
+        token: token || undefined,
+        days,
       }),
   },
   audit: {

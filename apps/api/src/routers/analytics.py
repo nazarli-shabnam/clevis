@@ -226,13 +226,20 @@ def _safe_pr_merge_rate_4w(owner: str, token: str) -> list[PrWeekBucket]:
         return []
 
 
-def _safe_commit_activity_4w(owner: str, token: str, repo_names: list[str]) -> list[int]:
-    # A single failing repo zeroes the whole aggregate rather than partially summing --
+def _safe_commit_activity_4w_and_heatmap_52w(
+    owner: str, token: str, repo_names: list[str]
+) -> tuple[list[int], list[int]]:
+    # Both windows are slices of the exact same GitHub call
+    # (/repos/{owner}/{repo}/stats/commit_activity already returns 52 weeks), so this
+    # fetches each repo once and derives both aggregates from it -- fetching twice
+    # (once per aggregate) would double this endpoint's GitHub API cost for no reason.
+    # A single failing repo zeroes both aggregates rather than partially summing --
     # simpler than reconciling "which repos contributed" and consistent with this
     # function's own all-or-nothing best-effort contract to its caller.
     try:
         client = GitHubClient(token)
-        totals = [0, 0, 0, 0]
+        totals_4w = [0, 0, 0, 0]
+        totals_52w = [0] * 52
         with ThreadPoolExecutor(max_workers=10) as pool:
             futures = [
                 pool.submit(client.request, "GET", f"/repos/{owner}/{repo}/stats/commit_activity")
@@ -240,12 +247,17 @@ def _safe_commit_activity_4w(owner: str, token: str, repo_names: list[str]) -> l
             ]
             for future in futures:
                 weeks = future.result()
-                if isinstance(weeks, list) and len(weeks) >= 4:
+                if not isinstance(weeks, list):
+                    continue
+                if len(weeks) >= 4:
                     for i, week in enumerate(weeks[-4:]):
-                        totals[i] += week.get("total", 0)
-        return totals
+                        totals_4w[i] += week.get("total", 0)
+                if len(weeks) >= 52:
+                    for i, week in enumerate(weeks[-52:]):
+                        totals_52w[i] += week.get("total", 0)
+        return totals_4w, totals_52w
     except (httpx.HTTPStatusError, httpx.RequestError):
-        return [0, 0, 0, 0]
+        return [0, 0, 0, 0], [0] * 52
 
 
 def _safe_total_cache_bytes(owner: str, token: str, repo_names: list[str]) -> int:
@@ -449,7 +461,7 @@ async def personal_analytics_cockpit(
         recent_events,
         open_pr_count,
         pr_merge_rate_4w,
-        commit_activity_4w,
+        (commit_activity_4w, commit_heatmap_52w),
         total_cache_size_bytes,
         (milestones, at_risk_repos),
         pr_cycle_time_8w,
@@ -459,7 +471,7 @@ async def personal_analytics_cockpit(
         anyio.to_thread.run_sync(lambda: _safe_recent_events(owner, token)),
         anyio.to_thread.run_sync(lambda: _safe_open_pr_count(owner, token)),
         anyio.to_thread.run_sync(lambda: _safe_pr_merge_rate_4w(owner, token)),
-        anyio.to_thread.run_sync(lambda: _safe_commit_activity_4w(owner, token, repo_names)),
+        anyio.to_thread.run_sync(lambda: _safe_commit_activity_4w_and_heatmap_52w(owner, token, repo_names)),
         anyio.to_thread.run_sync(lambda: _safe_total_cache_bytes(owner, token, repo_names)),
         anyio.to_thread.run_sync(lambda: _safe_milestones(owner, token, repo_names)),
         anyio.to_thread.run_sync(lambda: _safe_pr_cycle_time_8w(owner, token)),
@@ -475,6 +487,7 @@ async def personal_analytics_cockpit(
         open_pr_count=open_pr_count,
         pr_merge_rate_4w=pr_merge_rate_4w,
         commit_activity_4w=commit_activity_4w,
+        commit_heatmap_52w=commit_heatmap_52w,
         total_cache_size_bytes=total_cache_size_bytes,
         cache_job_success_rate=cache_job_success_rate,
         at_risk_repos=at_risk_repos,

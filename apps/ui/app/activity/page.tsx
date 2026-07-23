@@ -6,9 +6,15 @@ import { useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { ActivityList } from "@/components/activity-list"
 import { EventFeed } from "@/components/event-feed"
+import { HeatmapCalendar } from "@/components/charts/heatmap-calendar"
+import { CHART_COLORS } from "@/lib/charts/theme"
+import { relativeTime } from "@/lib/format"
 import { api } from "@/lib/api/client"
+import type { PullSummary } from "@/lib/api/types"
 
 const EVENTS_REFRESH_SECONDS = 30
+const HEATMAP_COLOR_SCALE = [CHART_COLORS.grid, "#1d4ed8", "#3b82f6", "#60a5fa", "#93c5fd"]
+const MAX_REPOS_FOR_PR_BOARD = 10
 
 // Isolated into its own component so the 1s tick only re-renders this small chip,
 // not the whole page (and the feed/job lists below it).
@@ -29,6 +35,8 @@ function RefreshCountdown({ resetKey, seconds }: { resetKey: number; seconds: nu
   return <span className="stat-chip">refreshes in {remaining}s</span>
 }
 
+type PrBoardTab = "feed" | "board"
+
 export default function ActivityPage() {
   // Marks all cockpit-sourced events as read so the sidebar's unread badge
   // clears once the user has actually looked at this page.
@@ -47,6 +55,8 @@ export default function ActivityPage() {
     setOrg(localStorage.getItem("default_org") || "")
   }, [])
 
+  const [feedTab, setFeedTab] = useState<PrBoardTab>("feed")
+
   const resolveQuery = useQuery({
     queryKey: ["tokens.resolve", org],
     queryFn: () => api.tokens.resolve(org),
@@ -55,11 +65,11 @@ export default function ActivityPage() {
   })
 
   const configured = !!resolveQuery.data?.token
+  const token = resolveQuery.data?.token ?? ""
 
   const eventsQuery = useQuery({
     queryKey: ["github.events", org],
     queryFn: () => {
-      const token = resolveQuery.data?.token
       if (!token) throw new Error("No GitHub token available for this organization")
       return api.github.events(org, token)
     },
@@ -72,6 +82,61 @@ export default function ActivityPage() {
   // tracks the real refetchInterval cadence instead of sticking at 0 after an error.
   const lastAttemptAt = Math.max(eventsQuery.dataUpdatedAt, eventsQuery.errorUpdatedAt)
 
+  // Heatmap data rides on the personal cockpit endpoint (commit_heatmap_52w) --
+  // that endpoint is personal-scoped (no OrgMembership needed), unlike the
+  // org-scoped failed-runs/release-timeline calls below, but the same resolved
+  // token works for either since it's just a client-supplied PAT either way.
+  const cockpitQuery = useQuery({
+    queryKey: ["analytics.cockpit-heatmap", org],
+    queryFn: () => api.analytics.cockpit(org, token),
+    enabled: configured,
+    retry: false,
+  })
+
+  const failedRunsQuery = useQuery({
+    queryKey: ["github.failed-runs", org],
+    queryFn: () => api.github.failedRuns(org, token),
+    enabled: configured,
+    retry: false,
+  })
+
+  const releaseTimelineQuery = useQuery({
+    queryKey: ["github.release-timeline", org],
+    queryFn: () => api.github.releaseTimeline(org, token),
+    enabled: configured,
+    retry: false,
+  })
+
+  const reposQuery = useQuery({
+    queryKey: ["repos.list", org],
+    queryFn: () => api.repos.list(org, token),
+    enabled: configured && feedTab === "board",
+    retry: false,
+  })
+
+  const prBoardQuery = useQuery({
+    queryKey: ["repos.pulls.board", org, reposQuery.data?.repos.map((r) => r.name).join(",")],
+    queryFn: async () => {
+      const repoNames = (reposQuery.data?.repos ?? []).slice(0, MAX_REPOS_FOR_PR_BOARD).map((r) => r.name)
+      const results = await Promise.all(
+        repoNames.map((repo) =>
+          api.repos.pulls(org, org, repo, token).catch(() => ({ repository: repo, total: 0, pulls: [] })),
+        ),
+      )
+      return results.flatMap((r) => r.pulls)
+    },
+    enabled: configured && feedTab === "board" && !!reposQuery.data,
+    retry: false,
+  })
+
+  const prsByAuthor = new Map<string, PullSummary[]>()
+  for (const pr of prBoardQuery.data ?? []) {
+    const author = pr.user ?? "unknown"
+    const existing = prsByAuthor.get(author)
+    if (existing) existing.push(pr)
+    else prsByAuthor.set(author, [pr])
+  }
+
   return (
     <>
       <PageHeader
@@ -81,9 +146,32 @@ export default function ActivityPage() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2 card">
-          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-            <span className="section-label">Activity Feed</span>
-            {configured && <RefreshCountdown resetKey={lastAttemptAt} seconds={EVENTS_REFRESH_SECONDS} />}
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setFeedTab("feed")}
+                aria-pressed={feedTab === "feed"}
+                className={`text-xs font-medium px-2.5 py-1 rounded-md border transition-colors ${
+                  feedTab === "feed"
+                    ? "border-border bg-elevated text-foreground"
+                    : "border-transparent text-muted-foreground hover:bg-elevated"
+                }`}
+              >
+                Activity Feed
+              </button>
+              <button
+                onClick={() => setFeedTab("board")}
+                aria-pressed={feedTab === "board"}
+                className={`text-xs font-medium px-2.5 py-1 rounded-md border transition-colors ${
+                  feedTab === "board"
+                    ? "border-border bg-elevated text-foreground"
+                    : "border-transparent text-muted-foreground hover:bg-elevated"
+                }`}
+              >
+                PR Board
+              </button>
+            </div>
+            {feedTab === "feed" && configured && <RefreshCountdown resetKey={lastAttemptAt} seconds={EVENTS_REFRESH_SECONDS} />}
           </div>
           {!configured ? (
             <div className="px-4 py-8">
@@ -94,8 +182,34 @@ export default function ActivityPage() {
                 </Link>
               </p>
             </div>
-          ) : (
+          ) : feedTab === "feed" ? (
             <EventFeed events={eventsQuery.data?.events ?? []} isLoading={eventsQuery.isLoading} />
+          ) : prBoardQuery.isLoading || reposQuery.isLoading ? (
+            <p className="px-4 py-8 text-sm text-muted-foreground">Loading…</p>
+          ) : prsByAuthor.size === 0 ? (
+            <p className="px-4 py-8 text-sm text-muted-foreground">No open pull requests</p>
+          ) : (
+            <div className="p-4 grid gap-3 sm:grid-cols-2">
+              {[...prsByAuthor.entries()].map(([author, prs]) => (
+                <div key={author} className="border border-border/60 rounded-md p-3">
+                  <p className="text-xs font-medium text-foreground mb-2">{author}</p>
+                  <ul className="flex flex-col gap-1.5">
+                    {prs.map((pr) => (
+                      <li key={pr.html_url}>
+                        <a
+                          href={pr.html_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs text-muted-foreground hover:text-foreground transition-colors truncate block"
+                        >
+                          #{pr.number} {pr.title}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
           )}
         </div>
 
@@ -107,6 +221,84 @@ export default function ActivityPage() {
           <ActivityList jobs={jobs} isLoading={jobsLoading} />
         </div>
       </div>
+
+      {configured && (
+        <div className="grid gap-4 lg:grid-cols-2 mt-4">
+          <div className="card lg:col-span-2">
+            <div className="px-4 py-3 border-b border-border">
+              <span className="section-label">Commit Heatmap (52w)</span>
+            </div>
+            <div className="p-4">
+              {(cockpitQuery.data?.commit_heatmap_52w ?? []).some((n) => n > 0) ? (
+                <HeatmapCalendar data={cockpitQuery.data!.commit_heatmap_52w} colorScale={HEATMAP_COLOR_SCALE} />
+              ) : (
+                <p className="text-sm text-muted-foreground">No commit activity in the last year</p>
+              )}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="px-4 py-3 border-b border-border">
+              <span className="section-label">CI Failure Log</span>
+            </div>
+            {(failedRunsQuery.data?.runs.length ?? 0) === 0 ? (
+              <p className="p-4 text-sm text-muted-foreground">No repeated CI failures</p>
+            ) : (
+              <div className="divide-y divide-border">
+                {failedRunsQuery.data!.runs.map((r) => (
+                  <a
+                    key={`${r.repo}-${r.run_id}`}
+                    href={r.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center justify-between px-4 py-2.5 text-sm hover:bg-elevated transition-colors"
+                  >
+                    <span className="flex flex-col min-w-0">
+                      <span className="text-foreground/90 truncate">{r.repo} · {r.workflow_name}</span>
+                      <span className="text-[0.6875rem] text-muted-foreground">{r.branch} · {r.actor}</span>
+                    </span>
+                    <span className="stat-chip text-red-400 border-red-500/30 shrink-0 ml-2">
+                      ×{r.consecutive_failures}
+                    </span>
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="card">
+            <div className="px-4 py-3 border-b border-border">
+              <span className="section-label">Release Timeline</span>
+            </div>
+            {(releaseTimelineQuery.data?.releases.length ?? 0) === 0 ? (
+              <p className="p-4 text-sm text-muted-foreground">No releases in the last 90 days</p>
+            ) : (
+              <div className="divide-y divide-border">
+                {releaseTimelineQuery.data!.releases.map((r) => (
+                  <a
+                    key={r.url}
+                    href={r.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center justify-between px-4 py-2.5 text-sm hover:bg-elevated transition-colors"
+                  >
+                    <span className="flex flex-col min-w-0">
+                      <span className="text-foreground/90 truncate">
+                        {r.repo} · {r.name}
+                        {r.is_prerelease && <span className="stat-chip ml-1.5 align-middle">pre-release</span>}
+                      </span>
+                      <span className="text-[0.6875rem] text-muted-foreground truncate">{r.body_preview}</span>
+                    </span>
+                    <span className="text-[0.6875rem] text-muted-foreground whitespace-nowrap shrink-0 ml-2">
+                      {relativeTime(r.published_at)}
+                    </span>
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </>
   )
 }

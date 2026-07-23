@@ -152,6 +152,38 @@ export interface OrgEventsResponse {
   events: OrgEvent[]
 }
 
+export interface FailedRunSummary {
+  repo: string
+  workflow_name: string
+  branch: string
+  run_id: number
+  started_at: string
+  duration_seconds: number | null
+  url: string
+  actor: string
+  consecutive_failures: number
+}
+
+export interface FailedRunsResponse {
+  org: string
+  runs: FailedRunSummary[]
+}
+
+export interface ReleaseSummary {
+  repo: string
+  tag_name: string
+  name: string
+  published_at: string
+  is_prerelease: boolean
+  body_preview: string
+  url: string
+}
+
+export interface ReleaseTimelineResponse {
+  org: string
+  releases: ReleaseSummary[]
+}
+
 export interface JobOut {
   id: number
   job_type: string
@@ -349,6 +381,7 @@ export interface CockpitResponse {
   commit_activity_4w: number[]
   total_cache_size_bytes: number
   cache_job_success_rate: number
+  commit_heatmap_52w: number[]
   at_risk_repos: AtRiskRepo[]
   milestones: MilestoneSummary[]
   pr_cycle_time_8w: PrCycleTimeWeek[]
