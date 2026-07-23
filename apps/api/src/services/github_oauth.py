@@ -69,12 +69,31 @@ def _web_base() -> str:
     return base
 
 
-def sign_state(*, now: int | None = None) -> tuple[str, str]:
+def safe_next_path(next_path: str | None) -> str | None:
+    """Only accept unambiguous same-site relative paths -- mirrors safeNextPath() in
+    apps/ui/app/login/page.tsx. Rejects protocol-relative ("//..."), backslash variants,
+    and control characters that could let URL parsing reinterpret this as an external
+    navigation target. Used both to validate the incoming `next` query param before it's
+    embedded in the signed state, and again when reading it back out of the state at the
+    callback, so a malformed claim can never end up in a redirect."""
+    if not next_path or not next_path.startswith("/") or next_path.startswith("//"):
+        return None
+    if "\\" in next_path or any(ord(c) < 0x20 or ord(c) == 0x7F for c in next_path):
+        return None
+    return next_path
+
+
+def sign_state(*, now: int | None = None, next: str | None = None) -> tuple[str, str]:
     """Returns (state, nonce). Callers must also set `nonce` as the STATE_COOKIE_NAME
-    cookie value on the browser and pass it back into verify_state() as cookie_nonce."""
+    cookie value on the browser and pass it back into verify_state() as cookie_nonce.
+    `next`, if a valid same-site path, is embedded in the signed payload so the callback
+    can redirect back to it -- see decode_state_next()."""
     issued = int(now if now is not None else time.time())
     nonce = secrets.token_urlsafe(24)
     payload = {"iat": issued, "exp": issued + _STATE_TTL_SECONDS, "purpose": _STATE_PURPOSE, "nonce": nonce}
+    validated_next = safe_next_path(next)
+    if validated_next:
+        payload["next"] = validated_next
     state = jwt.encode(payload, settings.auth_secret.get_secret_value(), algorithm=_STATE_ALG)
     return state, nonce
 
@@ -90,6 +109,17 @@ def verify_state(state: str, *, cookie_nonce: str | None = None) -> bool:
     if not token_nonce or not cookie_nonce or not hmac.compare_digest(token_nonce, cookie_nonce):
         return False
     return True
+
+
+def decode_state_next(state: str) -> str | None:
+    """Extract the `next` redirect path embedded by sign_state(), if any. Callers must call
+    verify_state() first -- this does not repeat the CSRF nonce/cookie check, only re-validates
+    the path shape as defense in depth."""
+    try:
+        payload = jwt.decode(state, settings.auth_secret.get_secret_value(), algorithms=[_STATE_ALG])
+    except jwt.InvalidTokenError:
+        return None
+    return safe_next_path(payload.get("next"))
 
 
 def build_authorize_url(*, state: str, redirect_uri: str) -> str:
