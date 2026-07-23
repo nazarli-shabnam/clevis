@@ -70,6 +70,40 @@ def test_list_repos_returns_paginated_results(repos_client):
     )
 
 
+def test_list_repos_returns_the_full_org_list_spanning_multiple_github_pages(repos_client):
+    # Regression test for issue #220 ("repo name filter only searches the already-loaded
+    # first page"): request_paginated() already follows GitHub's Link header across every
+    # page before returning (see test_github_client.py::test_follows_link_header_across_pages
+    # for that mechanism in isolation) -- this asserts the repos router doesn't truncate that
+    # result on the way out, i.e. a 150-repo org (spanning two 100-per-page GitHub responses)
+    # comes back as all 150 repos in one response, not just the first page's worth.
+    repos = [
+        {
+            "name": f"repo-{i}",
+            "full_name": f"acme/repo-{i}",
+            "private": False,
+            "description": None,
+            "language": None,
+            "stargazers_count": 0,
+            "forks_count": 0,
+            "watchers_count": 0,
+            "open_issues_count": 0,
+            "pushed_at": "2026-07-01T00:00:00Z",
+            "default_branch": "main",
+            "html_url": f"https://github.com/acme/repo-{i}",
+        }
+        for i in range(150)
+    ]
+    with patch("src.routers.repos.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.return_value = repos
+        resp = repos_client.post("/orgs/acme/repos", json={"token": "ghp_testtoken123456789012345678901234"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 150
+    assert len(body["repos"]) == 150
+    assert {r["name"] for r in body["repos"]} == {f"repo-{i}" for i in range(150)}
+
+
 def test_list_repos_no_installation_and_no_token_returns_400(repos_client):
     resp = repos_client.post("/orgs/acme/repos", json={})
     assert resp.status_code == 400

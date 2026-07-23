@@ -149,6 +149,43 @@ describe("ReposPage", () => {
     await waitFor(() => expect(screen.getByText(/no repositories match your filter/i)).toBeInTheDocument());
   });
 
+  it("filters against the full org repo list, not just a first page of results (issue #220 regression)", async () => {
+    // The backend's /orgs/{org}/repos endpoint already exhausts every GitHub API page
+    // (see apps/api/src/services/github_client.py request_paginated) before responding, so
+    // listMutation.data.repos here represents the org's *complete* repo list in one shot --
+    // there's no separate "load more" page for the client-side filter to miss. Simulate an
+    // org large enough to have spanned multiple 100-per-page GitHub responses by including a
+    // repo past index 100, and assert the name filter still finds it.
+    const repos = Array.from({ length: 150 }, (_, i) => ({
+      name: `repo-${i}`,
+      full_name: `acme/repo-${i}`,
+      private: false,
+      description: null,
+      language: null,
+      stargazers_count: 0,
+      forks_count: 0,
+      watchers_count: 0,
+      open_issues_count: 0,
+      pushed_at: "2026-07-01T00:00:00Z",
+      default_branch: "main",
+      html_url: `https://github.com/acme/repo-${i}`,
+    }));
+    reposListMock.mockResolvedValue({ org: "acme", total: 150, repos });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /load repositories/i }));
+    await waitFor(() => expect(screen.getByText("repo-0")).toBeInTheDocument());
+
+    // repo-149 would only exist on GitHub's second 100-per-page response -- confirms the
+    // filter searches the entire fetched list, not a truncated first page of it.
+    fireEvent.change(screen.getByPlaceholderText("Filter by name…"), { target: { value: "repo-149" } });
+
+    await waitFor(() => expect(screen.getByText("repo-149")).toBeInTheDocument());
+    expect(screen.queryByText("repo-0")).not.toBeInTheDocument();
+  });
+
   it("shows an error message when loading repos fails", async () => {
     reposListMock.mockRejectedValue(new Error("No GitHub App installation found"));
 
