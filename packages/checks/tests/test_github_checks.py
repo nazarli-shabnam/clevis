@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from checks.github_checks import (
+    _MAX_PAGES,
     BranchProtectionEnabled,
     CodeScanningCheck,
     DefaultBranchNoForcePushCheck,
@@ -13,6 +14,7 @@ from checks.github_checks import (
     OrgMFARequired,
     SecretScanningEnabled,
     _get,
+    _get_all_pages,
 )
 
 
@@ -112,6 +114,42 @@ def test_get_gives_up_after_3_attempts_on_persistent_connection_error():
         with pytest.raises(httpx.ConnectError):
             _get("https://x/y", "tok")
     assert mock_get.call_count == 3
+
+
+# ── _get_all_pages pagination cap (issue #214: unbounded pagination -> OOM) ────
+
+
+def test_get_all_pages_follows_link_header_across_pages():
+    def fake_get(url, headers):
+        page = int(url.split("&page=")[-1]) if "&page=" in url else 1
+        if page < 3:
+            link = f'<https://x/y?per_page=100&page={page + 1}>; rel="next"'
+            return httpx.Response(200, json=[{"id": page}], headers={"Link": link}, request=httpx.Request("GET", url))
+        return httpx.Response(200, json=[{"id": page}], request=httpx.Request("GET", url))
+
+    with patch("httpx.Client.get", side_effect=fake_get):
+        results = _get_all_pages("https://x", "/y", "tok")
+    assert results == [{"id": 1}, {"id": 2}, {"id": 3}]
+
+
+def test_get_all_pages_truncates_after_max_pages_and_logs_warning(caplog):
+    call_count = 0
+
+    def fake_get(url, headers):
+        nonlocal call_count
+        call_count += 1
+        link = '<https://x/y?page=next>; rel="next"'
+        return httpx.Response(200, json=[{"id": call_count}], headers={"Link": link}, request=httpx.Request("GET", url))
+
+    with patch("httpx.Client.get", side_effect=fake_get):
+        with caplog.at_level("WARNING"):
+            results = _get_all_pages("https://x", "/y", "tok")
+
+    # Stops at the cap rather than following the (still-present) Link header forever --
+    # this is the behavior that prevents an unbounded in-memory list on a huge org.
+    assert len(results) == _MAX_PAGES
+    assert call_count == _MAX_PAGES
+    assert "Truncating pagination" in caplog.text
 
 
 # ── DependabotAlertsCheck ────────────────────────────────────────────────────
