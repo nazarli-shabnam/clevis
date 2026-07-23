@@ -120,6 +120,27 @@ def test_setup_advisory_lock_serializes_concurrent_holders(_engine):
             conn2.rollback()
 
 
+def test_setup_concurrent_duplicate_email_returns_409_not_500(auth_client, db):
+    # Regression test for issue #218: the try/except around setup()'s db.commit() is a
+    # second line of defense behind the advisory lock (which serializes the count()==0
+    # check but doesn't stop two callers from racing on the *same* email specifically) --
+    # same pattern as test_register_concurrent_same_email_returns_409_not_500: fake the
+    # count() check to a miss so the real insert hits the genuine users.email unique
+    # constraint and returns a clean 409 instead of an unhandled 500.
+    _setup_owner(auth_client, email="owner@example.com")
+    from src.core.db import User
+
+    def racy_count(self):
+        return 0
+
+    with patch.object(Query, "count", racy_count):
+        resp = auth_client.post(
+            "/auth/setup", json={"email": "owner@example.com", "password": "supersecret1234"}
+        )
+    assert resp.status_code == 409
+    assert db.query(User).filter(User.email == "owner@example.com").count() == 1
+
+
 # register
 
 def test_register_creates_non_owner(auth_client):
