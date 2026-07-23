@@ -49,5 +49,5 @@ def assert_owner_matches_org(owner: str, ctx: OrgContext) -> None:
     """Raises 403 if a repo-level `owner` path/body value doesn't match the org context
     require_org_role already resolved — keeps an org-scoped route from acting on a
     GitHub owner outside the org the caller was authorized for."""
-    if owner != ctx.org.github_login:
+    if owner.lower() != ctx.org.github_login.lower():
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="owner must match the org in the URL")

@@ -1,12 +1,12 @@
 """Tests for src.core.rbac's org-role dependency."""
 
 import pytest
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import User, get_db
-from src.core.rbac import require_org_role
+from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role
 from src.repositories import org_membership_repo, org_repo
 
 _OUTSIDER = UserOut(id=99999, email="outsider@e.com", name=None, is_workspace_admin=False)
@@ -90,3 +90,26 @@ def test_route_rejects_unknown_org(rbac_app, acme_org):
 def test_route_requires_auth(rbac_app, acme_org):
     resp = TestClient(rbac_app).get("/orgs/acme/member-only")
     assert resp.status_code == 401
+
+
+# ── assert_owner_matches_org ────────────────────────────────────────────────────
+
+def test_assert_owner_matches_org_allows_exact_match(db):
+    org = org_repo.get_or_create(db, github_login="acme")
+    assert_owner_matches_org("acme", OrgContext(org=org, membership=None))
+
+
+def test_assert_owner_matches_org_is_case_insensitive(db):
+    # GitHub logins are case-insensitive (Acme and acme are the same account) --
+    # regression test for issue #224 item 1, matching the .lower() comparison already
+    # used in apps/api/src/routers/installations.py for the same class of check.
+    org = org_repo.get_or_create(db, github_login="acme")
+    assert_owner_matches_org("Acme", OrgContext(org=org, membership=None))
+    assert_owner_matches_org("ACME", OrgContext(org=org, membership=None))
+
+
+def test_assert_owner_matches_org_rejects_a_different_org(db):
+    org = org_repo.get_or_create(db, github_login="acme")
+    with pytest.raises(HTTPException) as exc_info:
+        assert_owner_matches_org("widgets-inc", OrgContext(org=org, membership=None))
+    assert exc_info.value.status_code == 403

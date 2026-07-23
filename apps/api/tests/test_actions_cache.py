@@ -86,6 +86,23 @@ def test_personal_clear_caches_non_dry_run_uses_client_token(cache_client, db):
     assert resp.json()["queued"] is True
 
 
+def test_clear_caches_rejects_oversized_key_and_ref(cache_client):
+    # Regression test for issue #224 item 3: CacheClearInput.key/.ref had no max_length,
+    # letting a caller bloat the jobs/audit_logs payload columns with an arbitrarily large
+    # value via a legitimate authenticated endpoint.
+    resp = cache_client.post(
+        "/me/repos/acme/demo/actions-caches/clear",
+        json={"dry_run": True, "key": "x" * 600},
+    )
+    assert resp.status_code == 422
+
+    resp = cache_client.post(
+        "/me/repos/acme/demo/actions-caches/clear",
+        json={"dry_run": True, "ref": "x" * 300},
+    )
+    assert resp.status_code == 422
+
+
 def test_personal_clear_caches_non_dry_run_no_token_returns_400(cache_client):
     resp = cache_client.post(
         "/me/repos/acme/demo/actions-caches/clear",

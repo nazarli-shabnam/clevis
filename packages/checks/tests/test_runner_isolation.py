@@ -18,3 +18,15 @@ def test_run_all_checks_continues_when_one_check_raises():
     assert statuses["organization_members_mfa_required"] == "error"
     assert statuses["repository_default_branch_protection_enabled"] == "not_applicable"
     assert statuses["repository_secret_scanning_enabled"] == "not_applicable"
+
+
+def test_run_all_checks_degrades_to_error_results_when_the_repo_list_prefetch_fails():
+    # Regression test for issue #224 item 4: the repo-list prefetch used to sit outside
+    # the per-check try/except, so a failure there raised out of run_all_checks entirely
+    # instead of degrading the same way an individual check failure does.
+    with patch("checks.runner._get_all_pages", side_effect=RuntimeError("network down")):
+        result = run_all_checks(owner="acme", token="tok")
+
+    assert result["repo_count"] == 0
+    assert len(result["checks"]) == 6
+    assert all(c["status"] == "error" for c in result["checks"])
