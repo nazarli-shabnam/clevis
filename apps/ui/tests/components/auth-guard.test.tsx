@@ -1,11 +1,12 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const replace = vi.fn();
+let mockPathname = "/repos";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace }),
-  usePathname: () => "/repos",
+  usePathname: () => mockPathname,
 }));
 
 import { AuthGuard } from "@/components/auth-guard";
@@ -43,6 +44,7 @@ describe("AuthGuard clevis:unauthorized handling", () => {
   beforeEach(() => {
     localStorage.clear();
     replace.mockClear();
+    mockPathname = "/repos";
     localStorage.setItem(TOKEN_KEY, makeJwt(1, "user@example.com"));
 
     vi.stubGlobal(
@@ -66,6 +68,7 @@ describe("AuthGuard clevis:unauthorized handling", () => {
   });
 
   afterEach(() => {
+    cleanup();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -94,16 +97,51 @@ describe("AuthGuard clevis:unauthorized handling", () => {
 
     expect(replace).toHaveBeenCalledWith("/login");
   });
+
+  it("does not log out or redirect on a clevis:unauthorized event while on a public route", async () => {
+    // e.g. a stale token from a previous session sitting in localStorage, attached to a
+    // best-effort call (like an invite preview) that happens to 401 -- must not force-log-out
+    // someone merely viewing a public page.
+    mockPathname = "/invite/abc123";
+
+    render(
+      <AuthProvider>
+        <AuthGuard>
+          <div>invite preview</div>
+        </AuthGuard>
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("invite preview")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new Event("clevis:unauthorized"));
+    });
+
+    // Give any (incorrect) async logout/redirect a chance to have fired before asserting
+    // it didn't -- avoids a false-pass from asserting too early.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(localStorage.getItem(TOKEN_KEY)).not.toBeNull();
+    expect(replace).not.toHaveBeenCalledWith("/login");
+    expect(screen.getByText("invite preview")).toBeInTheDocument();
+  });
 });
 
 describe("AuthGuard authUnconfirmed banner", () => {
   beforeEach(() => {
     localStorage.clear();
     replace.mockClear();
+    mockPathname = "/repos";
     localStorage.setItem(TOKEN_KEY, makeJwt(1, "user@example.com"));
   });
 
   afterEach(() => {
+    cleanup();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     vi.useRealTimers();
@@ -162,6 +200,7 @@ describe("AuthGuard pending invitations banner", () => {
   beforeEach(() => {
     localStorage.clear();
     replace.mockClear();
+    mockPathname = "/repos";
     localStorage.setItem(TOKEN_KEY, makeJwt(1, "user@example.com"));
 
     vi.stubGlobal(
@@ -179,6 +218,7 @@ describe("AuthGuard pending invitations banner", () => {
   });
 
   afterEach(() => {
+    cleanup();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });

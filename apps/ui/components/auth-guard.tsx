@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import { X } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth-context"
@@ -39,9 +39,20 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     }
   }, [isLoading, user, isPublic, router])
 
-  // Listen for 401 events from the API client
+  // Listen for 401 events from the API client. A ref (not a useEffect dependency) tracks
+  // the current isPublic so the listener reads it fresh on every event without needing to
+  // re-subscribe on every pathname change.
+  const isPublicRef = useRef(isPublic)
+  useEffect(() => {
+    isPublicRef.current = isPublic
+  }, [isPublic])
+
   useEffect(() => {
     function handle401() {
+      // A stale/garbage token from a previous session can still get attached to a
+      // best-effort call on a public route (e.g. an invite preview) -- that must not
+      // force-log-out or redirect someone who was never "logged in" on this page.
+      if (isPublicRef.current) return
       logout()
       router.replace("/login")
     }
