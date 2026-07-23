@@ -13,12 +13,18 @@ def client():
     yield GitHubClient(token="ghp_test", base_url="https://api.github.com")
 
 
-def _make_response(status_code: int, json_body: dict | list | None = None, text: str = "{}", link: str = ""):
+def _make_response(
+    status_code: int,
+    json_body: dict | list | None = None,
+    text: str = "{}",
+    link: str = "",
+    headers: dict | None = None,
+):
     resp = MagicMock(spec=httpx.Response)
     resp.status_code = status_code
     resp.text = text if json_body is None else str(json_body)
     resp.json.return_value = json_body if json_body is not None else {}
-    resp.headers = {"Link": link} if link else {}
+    resp.headers = {**({"Link": link} if link else {}), **(headers or {})}
     resp.raise_for_status = MagicMock()
     if status_code >= 400:
         resp.raise_for_status.side_effect = httpx.HTTPStatusError(
@@ -103,6 +109,66 @@ class TestExhaustedRetries:
 
         assert result == {"data": "hello"}
 
+    def test_retries_on_secondary_rate_limit_403_then_succeeds(self, client):
+        # Regression test for issue #219: GitHub's secondary/abuse rate limit commonly
+        # returns 403 (not 429), often with a Retry-After header.
+        rate_limited = _make_response(403, headers={"Retry-After": "1"})
+        ok_resp = _make_response(200, {"data": "hello"})
+
+        with (
+            patch("src.services.github_client.httpx.Client") as mock_client_cls,
+            patch("src.services.github_client.time.sleep"),
+        ):
+            mock_ctx = MagicMock()
+            mock_ctx.__enter__ = MagicMock(return_value=mock_ctx)
+            mock_ctx.__exit__ = MagicMock(return_value=False)
+            mock_ctx.request.side_effect = [rate_limited, ok_resp]
+            mock_client_cls.return_value = mock_ctx
+
+            result = client.request("GET", "/test")
+
+        assert result == {"data": "hello"}
+
+    def test_retries_on_x_ratelimit_remaining_zero_403_then_succeeds(self, client):
+        rate_limited = _make_response(403, headers={"X-RateLimit-Remaining": "0"})
+        ok_resp = _make_response(200, {"data": "hello"})
+
+        with (
+            patch("src.services.github_client.httpx.Client") as mock_client_cls,
+            patch("src.services.github_client.time.sleep"),
+        ):
+            mock_ctx = MagicMock()
+            mock_ctx.__enter__ = MagicMock(return_value=mock_ctx)
+            mock_ctx.__exit__ = MagicMock(return_value=False)
+            mock_ctx.request.side_effect = [rate_limited, ok_resp]
+            mock_client_cls.return_value = mock_ctx
+
+            result = client.request("GET", "/test")
+
+        assert result == {"data": "hello"}
+
+    def test_does_not_retry_a_plain_permission_denied_403(self, client):
+        # A genuine permission-denied 403 (token lacks scope) has neither Retry-After nor
+        # X-RateLimit-Remaining: 0 -- must still surface immediately, not be mistaken for
+        # a rate limit and retried away.
+        forbidden = _make_response(403)
+
+        with (
+            patch("src.services.github_client.httpx.Client") as mock_client_cls,
+            patch("src.services.github_client.time.sleep") as mock_sleep,
+        ):
+            mock_ctx = MagicMock()
+            mock_ctx.__enter__ = MagicMock(return_value=mock_ctx)
+            mock_ctx.__exit__ = MagicMock(return_value=False)
+            mock_ctx.request.return_value = forbidden
+            mock_client_cls.return_value = mock_ctx
+
+            with pytest.raises(httpx.HTTPStatusError):
+                client.request("GET", "/test")
+
+        mock_sleep.assert_not_called()
+        assert mock_ctx.request.call_count == 1
+
 
 class TestRequestPaginated:
     def test_follows_link_header_across_pages(self, client):
@@ -136,6 +202,24 @@ class TestRequestPaginated:
             mock_ctx.__enter__ = MagicMock(return_value=mock_ctx)
             mock_ctx.__exit__ = MagicMock(return_value=False)
             mock_ctx.get.side_effect = [resp_429, ok_resp]
+            mock_client_cls.return_value = mock_ctx
+
+            result = client.request_paginated("/repos/acme/x")
+
+        assert result == [{"id": 1}]
+
+    def test_retries_on_secondary_rate_limit_403_then_succeeds(self, client):
+        rate_limited = _make_response(403, headers={"Retry-After": "1"})
+        ok_resp = _make_response(200, [{"id": 1}])
+
+        with (
+            patch("src.services.github_client.httpx.Client") as mock_client_cls,
+            patch("src.services.github_client.time.sleep"),
+        ):
+            mock_ctx = MagicMock()
+            mock_ctx.__enter__ = MagicMock(return_value=mock_ctx)
+            mock_ctx.__exit__ = MagicMock(return_value=False)
+            mock_ctx.get.side_effect = [rate_limited, ok_resp]
             mock_client_cls.return_value = mock_ctx
 
             result = client.request_paginated("/repos/acme/x")
