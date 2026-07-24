@@ -39,6 +39,19 @@ def list_for_org(db: Session, org_id: int) -> list[Invitation]:
     return db.query(Invitation).filter(Invitation.org_id == org_id).order_by(Invitation.created_at.desc()).all()
 
 
+def get_pending_for_org_and_email(db: Session, org_id: int, email: str) -> Invitation | None:
+    return (
+        db.query(Invitation)
+        .filter(
+            Invitation.org_id == org_id,
+            Invitation.email.ilike(email),
+            Invitation.status == "pending",
+            Invitation.expires_at > datetime.now(timezone.utc),
+        )
+        .first()
+    )
+
+
 def list_pending_for_email(db: Session, email: str) -> list[Invitation]:
     return (
         db.query(Invitation)
