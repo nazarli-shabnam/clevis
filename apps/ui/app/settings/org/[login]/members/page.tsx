@@ -161,11 +161,15 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
         )}
       </div>
 
-      {activeQuery.isLoading ? (
+      {/* The audit tab renders two independently-fetched sections (permission audit,
+          inactive members) and gives each its own loading/error state below -- gating the
+          whole tab on permissionAuditQuery alone would hide inactive-members data that
+          loaded fine just because the audit call happened to fail (#252). */}
+      {tab !== "audit" && activeQuery.isLoading ? (
         <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
           <CircleNotch className="size-3.5 animate-spin" /> Loading…
         </div>
-      ) : activeQuery.isError ? (
+      ) : tab !== "audit" && activeQuery.isError ? (
         <div className="px-4 py-6">
           <p className="text-xs text-destructive">{activeQuery.error.message}</p>
         </div>
@@ -312,30 +316,40 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
               )}
             </span>
           </div>
-          <div className="overflow-x-auto max-h-96 overflow-y-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left text-muted-foreground font-medium px-4 py-2">Repo</th>
-                  <th className="text-left text-muted-foreground font-medium px-4 py-2">Collaborator</th>
-                  <th className="text-left text-muted-foreground font-medium px-4 py-2">Affiliation</th>
-                  <th className="text-left text-muted-foreground font-medium px-4 py-2">Permission</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {(permissionAuditQuery.data?.repos ?? []).flatMap((repo) =>
-                  repo.collaborators.map((c) => (
-                    <tr key={`${repo.repo}-${c.login}`} className={c.is_outside_collaborator && (c.permission === "write" || c.permission === "maintain" || c.permission === "admin") ? "bg-yellow-500/5" : ""}>
-                      <td className="px-4 py-2 font-mono text-muted-foreground truncate max-w-[10rem]">{repo.repo}</td>
-                      <td className="px-4 py-2 text-foreground/80">{c.login}</td>
-                      <td className="px-4 py-2 text-muted-foreground">{c.affiliation}</td>
-                      <td className="px-4 py-2 text-muted-foreground capitalize">{c.permission}</td>
-                    </tr>
-                  )),
-                )}
-              </tbody>
-            </table>
-          </div>
+          {permissionAuditQuery.isLoading ? (
+            <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
+              <CircleNotch className="size-3.5 animate-spin" /> Loading…
+            </div>
+          ) : permissionAuditQuery.isError ? (
+            <div className="px-4 py-6">
+              <p className="text-xs text-destructive">{permissionAuditQuery.error.message}</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto max-h-96 overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left text-muted-foreground font-medium px-4 py-2">Repo</th>
+                    <th className="text-left text-muted-foreground font-medium px-4 py-2">Collaborator</th>
+                    <th className="text-left text-muted-foreground font-medium px-4 py-2">Affiliation</th>
+                    <th className="text-left text-muted-foreground font-medium px-4 py-2">Permission</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {(permissionAuditQuery.data?.repos ?? []).flatMap((repo) =>
+                    repo.collaborators.map((c) => (
+                      <tr key={`${repo.repo}-${c.login}`} className={c.is_outside_collaborator && (c.permission === "write" || c.permission === "maintain" || c.permission === "admin") ? "bg-yellow-500/5" : ""}>
+                        <td className="px-4 py-2 font-mono text-muted-foreground truncate max-w-[10rem]">{repo.repo}</td>
+                        <td className="px-4 py-2 text-foreground/80">{c.login}</td>
+                        <td className="px-4 py-2 text-muted-foreground">{c.affiliation}</td>
+                        <td className="px-4 py-2 text-muted-foreground capitalize">{c.permission}</td>
+                      </tr>
+                    )),
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           <div className="px-4 py-2.5 border-b border-t border-border">
             <span className="text-xs font-medium text-foreground">Inactive members (30d+)</span>
