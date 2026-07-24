@@ -101,7 +101,9 @@ def test_process_job_marks_failed_when_token_decryption_fails():
 
     sql, params = conn._cursor.calls[0]
     assert "status='failed'" in sql
+    assert "retry_count=%s" in sql
     assert params[1] == 3
+    assert params[2] == 0
     assert conn.committed is True
 
 
