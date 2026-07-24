@@ -283,6 +283,66 @@ def test_sync_org_installation_requires_installation_id_to_bootstrap(db):
     assert org_repo.get_by_login(db, "acme") is None
 
 
+def test_sync_org_installation_rejects_account_login_org_login_mismatch(db, acme_org):
+    resp = _client(db, acme_org["admin"]).post(
+        "/orgs/acme/installations/sync",
+        json={"account_login": "widgets-inc", "account_type": "Organization", "installation_id": 7},
+    )
+    assert resp.status_code == 403
+
+
+def test_sync_org_installation_bootstrap_returns_503_when_app_not_configured(db):
+    me = _make_user(db, "founder@e.com", github_login="founder")
+    with (
+        _mock_installation("acme", "Organization"),
+        patch(
+            "src.routers.installations.github_app.get_installation_token",
+            side_effect=github_app.GitHubAppNotConfigured("not configured"),
+        ),
+    ):
+        resp = _client(db, me).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 503
+    assert org_repo.get_by_login(db, "acme") is None
+
+
+def test_sync_org_installation_bootstrap_returns_400_on_other_github_api_error(db):
+    me = _make_user(db, "founder@e.com", github_login="founder")
+    response = httpx.Response(500, request=httpx.Request("GET", "https://api.github.com/orgs/acme/memberships/founder"))
+    with (
+        _mock_installation("acme", "Organization"),
+        patch(
+            "src.routers.installations.github_app.get_installation_token",
+            side_effect=httpx.HTTPStatusError("server error", request=response.request, response=response),
+        ),
+    ):
+        resp = _client(db, me).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 400
+    assert org_repo.get_by_login(db, "acme") is None
+
+
+def test_sync_org_installation_bootstrap_returns_503_on_github_network_error(db):
+    me = _make_user(db, "founder@e.com", github_login="founder")
+    with (
+        _mock_installation("acme", "Organization"),
+        patch(
+            "src.routers.installations.github_app.get_installation_token",
+            side_effect=httpx.ConnectError("connection refused"),
+        ),
+    ):
+        resp = _client(db, me).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 503
+    assert org_repo.get_by_login(db, "acme") is None
+
+
 def test_sync_org_installation_requires_admin_unlinked_github_account_no_network_call(db, acme_org):
     """A non-admin member with no linked GitHub account can't be live-verified at all --
     must fail fast with 403 and never attempt a GitHub call."""

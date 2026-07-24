@@ -225,6 +225,9 @@ describe("SettingsPage", () => {
 
     const select = await screen.findByRole("combobox");
     await waitFor(() => expect(select).toHaveValue("acme"));
+
+    fireEvent.change(select, { target: { value: "widgets-inc" } });
+    expect(select).toHaveValue("widgets-inc");
   });
 
   it("does not overwrite an already-valid stored default org", async () => {

@@ -327,6 +327,10 @@ describe("OverviewPage cockpit", () => {
     await waitFor(() => {
       expect(screen.getByText("org access required")).toBeInTheDocument();
     });
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    const retryButton = screen.getByRole("button", { name: "Retry" });
+    fireEvent.click(retryButton);
+    // Retry re-fires both queries that feed the shared error banner.
+    await waitFor(() => expect(cockpitMock).toHaveBeenCalledTimes(2));
+    expect(myViewMock).toHaveBeenCalledTimes(2);
   });
 });

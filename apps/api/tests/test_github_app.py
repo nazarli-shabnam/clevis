@@ -144,3 +144,61 @@ def test_get_installation_raises_on_404(app_configured):
 
         with pytest.raises(httpx.HTTPStatusError):
             github_app.get_installation(404)
+
+
+def _mock_get_client(mock_resp):
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.get = MagicMock(return_value=mock_resp)
+    return mock_client
+
+
+def test_get_org_membership_role_returns_role_for_active_membership():
+    mock_resp = MagicMock(status_code=200)
+    mock_resp.json = MagicMock(return_value={"state": "active", "role": "admin"})
+    with patch("src.services.github_app.httpx.Client") as mock_cls:
+        mock_cls.return_value = _mock_get_client(mock_resp)
+        role = github_app.get_org_membership_role("itok", "acme", "founder")
+
+    assert role == "admin"
+    mock_resp.raise_for_status.assert_called_once()
+    url = mock_cls.return_value.get.call_args.args[0]
+    assert url.endswith("/orgs/acme/memberships/founder")
+    headers = mock_cls.return_value.get.call_args.kwargs["headers"]
+    assert headers["Authorization"] == "Bearer itok"
+
+
+def test_get_org_membership_role_returns_none_on_404():
+    mock_resp = MagicMock(status_code=404)
+    with patch("src.services.github_app.httpx.Client") as mock_cls:
+        mock_cls.return_value = _mock_get_client(mock_resp)
+        role = github_app.get_org_membership_role("itok", "acme", "outsider")
+
+    assert role is None
+    mock_resp.raise_for_status.assert_not_called()
+
+
+def test_get_org_membership_role_returns_none_for_pending_invite():
+    mock_resp = MagicMock(status_code=200)
+    mock_resp.json = MagicMock(return_value={"state": "pending", "role": "admin"})
+    with patch("src.services.github_app.httpx.Client") as mock_cls:
+        mock_cls.return_value = _mock_get_client(mock_resp)
+        role = github_app.get_org_membership_role("itok", "acme", "invitee")
+
+    assert role is None
+
+
+def test_get_org_membership_role_propagates_other_http_errors():
+    mock_resp = MagicMock(status_code=500)
+    mock_resp.raise_for_status = MagicMock(
+        side_effect=httpx.HTTPStatusError(
+            "server error",
+            request=httpx.Request("GET", "https://api.github.com/orgs/acme/memberships/founder"),
+            response=httpx.Response(500),
+        )
+    )
+    with patch("src.services.github_app.httpx.Client") as mock_cls:
+        mock_cls.return_value = _mock_get_client(mock_resp)
+        with pytest.raises(httpx.HTTPStatusError):
+            github_app.get_org_membership_role("itok", "acme", "founder")

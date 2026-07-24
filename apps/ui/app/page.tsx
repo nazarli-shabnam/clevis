@@ -144,6 +144,8 @@ export default function OverviewPage() {
   const orgQueryError = cockpitQuery.error ?? myViewQuery.error
   const orgQueryIsError = cockpitQuery.isError || myViewQuery.isError
   const orgQueryIsFetching = cockpitQuery.isFetching || myViewQuery.isFetching
+  const orgQueryErrorMessage =
+    orgQueryError instanceof Error ? orgQueryError.message : "Failed to load data for this organization."
 
   return (
     <>
@@ -162,7 +164,7 @@ export default function OverviewPage() {
       {org && orgQueryIsError && (
         <div className="card mb-6">
           <SectionError
-            message={orgQueryError instanceof Error ? orgQueryError.message : "Failed to load data for this organization."}
+            message={orgQueryErrorMessage}
             onRetry={() => { cockpitQuery.refetch(); myViewQuery.refetch() }}
             retrying={orgQueryIsFetching}
           />
