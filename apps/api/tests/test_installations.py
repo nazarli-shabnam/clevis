@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.core.auth import UserOut, require_auth
-from src.core.db import User, get_db
+from src.core.db import AuditLog, User, get_db
 from src.repositories import installation_repo, org_membership_repo, org_repo
 from src.routers.installations import router as inst_router
 from src.services import github_app
@@ -102,6 +102,21 @@ def test_sync_org_installation_admin_ok(db, acme_org):
     assert resp.json()["synced"] is True
 
 
+def test_sync_org_installation_writes_audit_log(db, acme_org):
+    # Regression test: connecting a GitHub App installation used to write no audit
+    # entry at all, so the Audit page stayed empty even for a workspace admin who'd
+    # genuinely connected an org.
+    with _mock_installation("acme", "Organization"):
+        _client(db, acme_org["admin"]).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    logs = db.query(AuditLog).filter(AuditLog.action == "installation.connected").all()
+    assert len(logs) == 1
+    assert logs[0].target == "acme"
+    assert logs[0].actor == acme_org["admin"].email
+
+
 def test_personal_installations_scoped_to_self(db):
     me = _make_user(db, "shabnam@e.com")
     someone_else = _make_user(db, "someoneelse@e.com")
@@ -132,6 +147,19 @@ def test_sync_personal_installation(db):
         )
     assert resp.status_code == 200
     assert resp.json()["synced"] is True
+
+
+def test_sync_personal_installation_writes_audit_log(db):
+    me = _make_user(db, "shabnam@e.com", github_login="shabnam")
+    with _mock_installation("shabnam", "User"):
+        _client(db, me).post(
+            "/me/installations/sync",
+            json={"account_login": "shabnam", "account_type": "User", "installation_id": 3},
+        )
+    logs = db.query(AuditLog).filter(AuditLog.action == "installation.connected.personal").all()
+    assert len(logs) == 1
+    assert logs[0].target == "shabnam"
+    assert logs[0].actor == me.email
 
 
 def test_sync_personal_installation_requires_linked_github_account(db):

@@ -4,14 +4,21 @@ import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { EmptyStateInline } from "@/components/empty-state"
+import { SectionError } from "@/components/section-error"
 import { api } from "@/lib/api/client"
 
-const ACTION_TYPES = ["", "cache.clear", "cache.clear.dry_run"]
+const ACTION_TYPES = [
+  "",
+  "cache.clear",
+  "cache.clear.dry_run",
+  "installation.connected",
+  "installation.connected.personal",
+]
 
 export default function AuditPage() {
   const [actionFilter, setActionFilter] = useState("")
 
-  const { data: logs = [], isLoading } = useQuery({
+  const { data: logs = [], isLoading, isError, error, isFetching, refetch } = useQuery({
     queryKey: ["audit", actionFilter],
     queryFn: () => api.audit.list(actionFilter || undefined),
     refetchInterval: 30_000,
@@ -43,6 +50,12 @@ export default function AuditPage() {
           <div className="px-4 py-8">
             <p className="text-sm text-muted-foreground animate-pulse">Loading…</p>
           </div>
+        ) : isError ? (
+          <SectionError
+            message={error instanceof Error ? error.message : "Failed to load audit events."}
+            onRetry={() => refetch()}
+            retrying={isFetching}
+          />
         ) : logs.length === 0 ? (
           <EmptyStateInline noun="audit events" qualifier={actionFilter || undefined} />
         ) : (

@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation"
 import { useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { EmptyStateInline } from "@/components/empty-state"
+import { SectionError } from "@/components/section-error"
 import { api } from "@/lib/api/client"
 import type { JobOut } from "@/lib/api/types"
 
@@ -12,7 +13,7 @@ export default function JobsPage() {
   const searchParams = useSearchParams()
   const highlightId = Number(searchParams.get("id")) || null
 
-  const { data: jobs = [], isLoading } = useQuery({
+  const { data: jobs = [], isLoading, isError, error, isFetching, refetch } = useQuery({
     queryKey: ["jobs"],
     queryFn: api.jobs.list,
     refetchInterval: 10_000,
@@ -51,6 +52,12 @@ export default function JobsPage() {
           <div className="px-4 py-8">
             <p className="text-sm text-muted-foreground animate-pulse">Loading…</p>
           </div>
+        ) : isError ? (
+          <SectionError
+            message={error instanceof Error ? error.message : "Failed to load jobs."}
+            onRetry={() => refetch()}
+            retrying={isFetching}
+          />
         ) : jobs.length === 0 ? (
           <EmptyStateInline noun="jobs" />
         ) : (
