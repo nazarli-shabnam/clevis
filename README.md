@@ -91,9 +91,8 @@ Once the instance is running, here's how to go from a fresh deploy to a connecte
 
 1. **Create the first account.** The first visit lands on `/setup`, which creates the initial admin. After that, sign in with a password or the "Sign in with GitHub" button.
 2. **Connect a GitHub org or account.** Go to **Settings → Connected orgs** and click **Install GitHub App** — this sends you to GitHub to authorize Clevis for that org/account, which is what grants read access to its repos. GitHub redirects you back into the app once you approve it, and the org/account shows up under "Connected orgs" a few seconds later. (The App itself is a one-time setup step for whoever deployed the instance — see [`docs/self-hosting.md`](docs/self-hosting.md) if that hasn't been done yet.) If you install into a brand-new org and the connection doesn't complete, sign out and back in with **"Sign in with GitHub"** once (this is what verifies your admin access on that org) and retry the install.
-3. **(Temporary) Add a personal access token only if needed.** Health & Security and Cache still accept a legacy PAT via **Settings → Personal access tokens (legacy)** as a fallback when no GitHub App installation is available for that org. Tracking removal of that requirement: [#189](https://github.com/nazarli-shabnam/clevis/issues/189).
 
-That's it — Overview, Activity, Repositories, Collaborators, and (when the App is connected) Health & Security / Cache work off the connected org from step 2.
+That's it — Overview, Activity, Repositories, Collaborators, Health & Security, and Cache all work off the connected org from step 2. A legacy personal access token (**Settings → Personal access tokens (legacy)**) is only ever needed as a manual fallback for an org that has no GitHub App installation — it is not a required step.
 
 ---
 
