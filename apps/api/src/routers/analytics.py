@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import anyio
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
@@ -20,6 +20,8 @@ from src.schemas.analytics import (
     CockpitResponse,
     IssueSummary,
     MilestoneSummary,
+    MyIssueListResponse,
+    MyPrListResponse,
     MyViewResponse,
     OrgEventSummary,
     PRSummary,
@@ -617,4 +619,115 @@ async def my_view(
         review_requests=_pr_summaries(review_requests_raw),
         assigned_issues=_issue_summaries(assigned_issues_raw),
         my_recent_runs=my_recent_runs,
+    )
+
+
+# ---------------------------------------------------------------------------
+# My PRs / My Reviews / My Issues -- dedicated paginated lists behind the "My
+# PRs"/"My Reviews"/"My Issues" pages. Deliberately separate from my_view above:
+# my_view is a fixed top-10 "glance" widget for the Overview page, while these
+# support real Prev/Next pagination via GitHub search's total_count. Kept as
+# their own functions/routes rather than reusing _search_items so my_view's
+# existing behavior and tests aren't disturbed.
+# ---------------------------------------------------------------------------
+
+# GitHub's search API only ever returns the first 1000 results for a query
+# (regardless of total_count) -- page*per_page beyond that always 422s, so we
+# short-circuit to an empty page instead of passing that error through.
+_MAX_SEARCH_RESULTS = 1000
+
+
+def _search_items_page(client: GitHubClient, query: str, page: int, per_page: int) -> tuple[list[dict], int]:
+    try:
+        result = client.request("GET", "/search/issues", params={"q": query, "per_page": per_page, "page": page})
+        if not isinstance(result, dict):
+            return [], 0
+        return result.get("items", []), result.get("total_count", 0)
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        return [], 0
+
+
+async def _my_items_list(
+    db: Session,
+    user: UserOut,
+    owner: str,
+    x_github_token: str | None,
+    query_template: str,
+    mapper,
+    response_cls,
+    page: int,
+    per_page: int,
+):
+    try:
+        token = await anyio.to_thread.run_sync(
+            lambda: resolve_owner_token(db, user_id=user.id, owner=owner, client_token=x_github_token)
+        )
+    except NoGitHubTokenAvailable as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    client = GitHubClient(token)
+    login = await anyio.to_thread.run_sync(lambda: _my_login(client))
+    if login is None or page * per_page > _MAX_SEARCH_RESULTS:
+        return response_cls(page=page, per_page=per_page)
+
+    query = query_template.format(login=login)
+    items_raw, total_count = await anyio.to_thread.run_sync(lambda: _search_items_page(client, query, page, per_page))
+    return response_cls(items=mapper(items_raw), total_count=total_count, page=page, per_page=per_page)
+
+
+@router.get("/me/github/my-prs", response_model=MyPrListResponse)
+async def my_prs(
+    owner: str,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(25, ge=1, le=100),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+    x_github_token: str | None = Header(default=None),
+):
+    return await _my_items_list(
+        db, user, owner, x_github_token, "is:pr is:open author:{login}", _pr_summaries, MyPrListResponse, page, per_page
+    )
+
+
+@router.get("/me/github/my-reviews", response_model=MyPrListResponse)
+async def my_reviews(
+    owner: str,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(25, ge=1, le=100),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+    x_github_token: str | None = Header(default=None),
+):
+    return await _my_items_list(
+        db,
+        user,
+        owner,
+        x_github_token,
+        "is:pr is:open review-requested:{login}",
+        _pr_summaries,
+        MyPrListResponse,
+        page,
+        per_page,
+    )
+
+
+@router.get("/me/github/my-issues", response_model=MyIssueListResponse)
+async def my_issues(
+    owner: str,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(25, ge=1, le=100),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+    x_github_token: str | None = Header(default=None),
+):
+    return await _my_items_list(
+        db,
+        user,
+        owner,
+        x_github_token,
+        "is:issue is:open assignee:{login}",
+        _issue_summaries,
+        MyIssueListResponse,
+        page,
+        per_page,
     )
