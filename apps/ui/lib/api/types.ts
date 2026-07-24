@@ -421,6 +421,20 @@ export interface MyViewResponse {
   my_recent_runs: MyViewRunSummary[]
 }
 
+export interface MyPrListResponse {
+  items: MyViewPRSummary[]
+  total_count: number
+  page: number
+  per_page: number
+}
+
+export interface MyIssueListResponse {
+  items: MyViewIssueSummary[]
+  total_count: number
+  page: number
+  per_page: number
+}
+
 export interface WorkflowSummary {
   id: number
   name: string

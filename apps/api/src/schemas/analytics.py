@@ -115,3 +115,17 @@ class MyViewResponse(BaseModel):
     review_requests: list[PRSummary] = []
     assigned_issues: list[IssueSummary] = []
     my_recent_runs: list[RunSummaryLite] = []
+
+
+class MyPrListResponse(BaseModel):
+    items: list[PRSummary] = []
+    total_count: int = 0
+    page: int = 1
+    per_page: int = 25
+
+
+class MyIssueListResponse(BaseModel):
+    items: list[IssueSummary] = []
+    total_count: int = 0
+    page: int = 1
+    per_page: int = 25

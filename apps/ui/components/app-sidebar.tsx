@@ -35,7 +35,7 @@ const groups = [
     { title: "Overview",         href: "/" },
     { title: "Activity",         href: "/activity", showUnreadBadge: true },
     { title: "Pull Requests",    href: "/pulls", comingSoon: true },
-    { title: "Releases",         href: "/releases", comingSoon: true },
+    { title: "Releases",         href: "/releases" },
   ],
   [
     { title: "Repositories",     href: "/repos" },
@@ -48,9 +48,9 @@ const groups = [
     { title: "Job Queue",        href: "/jobs" },
   ],
   [
-    { title: "My PRs",     href: "/my/prs", comingSoon: true },
-    { title: "My Reviews", href: "/my/reviews", comingSoon: true },
-    { title: "My Issues",  href: "/my/issues", comingSoon: true },
+    { title: "My PRs",     href: "/my/prs" },
+    { title: "My Reviews", href: "/my/reviews" },
+    { title: "My Issues",  href: "/my/issues" },
   ],
 ]
 

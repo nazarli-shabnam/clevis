@@ -13,5 +13,9 @@ describe("RootLayout module", () => {
     const mod = await import("@/app/layout");
 
     expect(mod.default).toBeInstanceOf(Function);
-  }, 30000);
+    // Dynamically importing the full root layout tree (providers, guards, etc.) can take
+    // well over 30s when running alongside the rest of the suite under CPU contention, even
+    // though it resolves in ~1s standalone -- 90s gives enough headroom without masking a
+    // genuine hang.
+  }, 90000);
 });

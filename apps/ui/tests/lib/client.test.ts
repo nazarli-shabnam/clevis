@@ -191,6 +191,33 @@ describe("api.analytics value normalization", () => {
     expect(result).toEqual({ my_open_prs: [], review_requests: [], assigned_issues: [], my_recent_runs: [] });
   });
 
+  it("GETs /me/github/my-prs?owner=...&page=...&per_page=... with an X-GitHub-Token header when supplied", async () => {
+    stubOkJson({ items: [], total_count: 0, page: 2, per_page: 10 });
+    const result = await api.analytics.myPrs("acme", 2, 10, "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/github/my-prs?owner=acme&page=2&per_page=10");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
+    expect(result).toEqual({ items: [], total_count: 0, page: 2, per_page: 10 });
+  });
+
+  it("GETs /me/github/my-reviews?owner=...&page=...&per_page=... with an X-GitHub-Token header when supplied", async () => {
+    stubOkJson({ items: [], total_count: 0, page: 1, per_page: 25 });
+    const result = await api.analytics.myReviews("acme", 1, 25, "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/github/my-reviews?owner=acme&page=1&per_page=25");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
+    expect(result).toEqual({ items: [], total_count: 0, page: 1, per_page: 25 });
+  });
+
+  it("GETs /me/github/my-issues?owner=...&page=...&per_page=... with an X-GitHub-Token header when supplied", async () => {
+    stubOkJson({ items: [], total_count: 0, page: 1, per_page: 25 });
+    const result = await api.analytics.myIssues("acme", 1, 25, "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/github/my-issues?owner=acme&page=1&per_page=25");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
+    expect(result).toEqual({ items: [], total_count: 0, page: 1, per_page: 25 });
+  });
+
   it("GETs /me/analytics/history?owner=... and returns the raw scan history", async () => {
     stubOkJson([{ id: 1, owner: "acme", score: 80, total_checks: 3, failed_checks: 0, created_at: "2026-07-17T00:00:00Z" }]);
     const result = await api.analytics.history("acme");

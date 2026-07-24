@@ -20,6 +20,8 @@ import type {
   InvitationPreview,
   JobOut,
   MyOrgMembership,
+  MyIssueListResponse,
+  MyPrListResponse,
   MyViewResponse,
   OrgEventsResponse,
   PendingInvitationSummary,
@@ -197,6 +199,21 @@ export const api = {
       get<CockpitResponse>(`/me/analytics/cockpit/${encodeURIComponent(owner)}`, githubTokenHeader(token)),
     myView: (owner: string, token?: string) =>
       get<MyViewResponse>(`/me/github/my-view?owner=${encodeURIComponent(owner)}`, githubTokenHeader(token)),
+    myPrs: (owner: string, page = 1, perPage = 25, token?: string) =>
+      get<MyPrListResponse>(
+        `/me/github/my-prs?owner=${encodeURIComponent(owner)}&page=${page}&per_page=${perPage}`,
+        githubTokenHeader(token),
+      ),
+    myReviews: (owner: string, page = 1, perPage = 25, token?: string) =>
+      get<MyPrListResponse>(
+        `/me/github/my-reviews?owner=${encodeURIComponent(owner)}&page=${page}&per_page=${perPage}`,
+        githubTokenHeader(token),
+      ),
+    myIssues: (owner: string, page = 1, perPage = 25, token?: string) =>
+      get<MyIssueListResponse>(
+        `/me/github/my-issues?owner=${encodeURIComponent(owner)}&page=${page}&per_page=${perPage}`,
+        githubTokenHeader(token),
+      ),
   },
   security: {
     matrix: (owner: string, token?: string) =>
