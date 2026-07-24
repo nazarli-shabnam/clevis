@@ -18,6 +18,11 @@ export default defineConfig({
     setupFiles: ["./vitest.setup.ts"],
     include: ["./tests/**/*.{test,spec}.{ts,tsx}"],
     passWithNoTests: false,
+    // Default (5000ms) is too tight once all ~43 files run concurrently -- CPU contention
+    // between jsdom environments intermittently pushes individual tests past it (a different
+    // file each run, not a real bug in any one of them). 20s gives headroom without masking a
+    // genuine hang; layout.test.tsx keeps its own higher override for its unusually slow import.
+    testTimeout: 20000,
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov", "json-summary"],
