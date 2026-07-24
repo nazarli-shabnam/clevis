@@ -105,6 +105,15 @@ def _fetch_stats(owner: str, repo: str, token: str) -> RepoStatsResponse:
     }
 
 
+def _evict_expired_stats(now: float) -> None:
+    # Installation tokens rotate hourly, so every org x repo x hour of uptime adds a new
+    # key that's never revisited once its token_hash goes stale -- without this sweep the
+    # dict grows without bound for a long-running instance serving many orgs.
+    expired = [key for key, (cached_at, _) in _stats_cache.items() if now - cached_at >= _STATS_CACHE_TTL_SECONDS]
+    for key in expired:
+        del _stats_cache[key]
+
+
 def _cached_stats(owner: str, repo: str, token: str) -> RepoStatsResponse:
     key = (owner, repo, _token_hash(token))
     now = time.monotonic()
@@ -113,6 +122,7 @@ def _cached_stats(owner: str, repo: str, token: str) -> RepoStatsResponse:
         return cached[1]
     stats = _fetch_stats(owner, repo, token)
     _stats_cache[key] = (now, stats)
+    _evict_expired_stats(now)
     return stats
 
 
