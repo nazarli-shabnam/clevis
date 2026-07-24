@@ -103,7 +103,7 @@ def test_cockpit_success_all_sources(http, db, mock_user):
     patchers = _patch_all()
     _start_all(patchers)
     try:
-        with patch("src.routers.analytics.resolve_personal_token", return_value="ghp_test"):
+        with patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"):
             resp = http.get("/me/analytics/cockpit/acme")
     finally:
         _stop_all(patchers)
@@ -124,7 +124,7 @@ def test_cockpit_no_scans_yet(http, db, mock_user):
     patchers = _patch_all()
     _start_all(patchers)
     try:
-        with patch("src.routers.analytics.resolve_personal_token", return_value="ghp_test"):
+        with patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"):
             resp = http.get("/me/analytics/cockpit/acme")
     finally:
         _stop_all(patchers)
@@ -139,7 +139,7 @@ def test_cockpit_no_cache_jobs_yet(http, db, mock_user):
     patchers = _patch_all()
     _start_all(patchers)
     try:
-        with patch("src.routers.analytics.resolve_personal_token", return_value="ghp_test"):
+        with patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"):
             resp = http.get("/me/analytics/cockpit/acme")
     finally:
         _stop_all(patchers)
@@ -152,7 +152,7 @@ def test_cockpit_degrades_when_pr_search_fails(http, db, mock_user):
     patchers = _patch_all({"src.routers.analytics._safe_open_pr_count": {"return_value": 0}})
     _start_all(patchers)
     try:
-        with patch("src.routers.analytics.resolve_personal_token", return_value="ghp_test"):
+        with patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"):
             resp = http.get("/me/analytics/cockpit/acme")
     finally:
         _stop_all(patchers)
@@ -167,7 +167,7 @@ def test_cockpit_degrades_when_events_fetch_fails(http, db, mock_user):
     patchers = _patch_all({"src.routers.analytics._safe_recent_events": {"return_value": []}})
     _start_all(patchers)
     try:
-        with patch("src.routers.analytics.resolve_personal_token", return_value="ghp_test"):
+        with patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"):
             resp = http.get("/me/analytics/cockpit/acme")
     finally:
         _stop_all(patchers)
@@ -180,7 +180,7 @@ def test_cockpit_fails_when_repo_list_fails(http, db, mock_user):
     patchers = _patch_all({"src.routers.analytics._safe_list_repos": {"side_effect": _HTTP_ERROR}})
     _start_all(patchers)
     try:
-        with patch("src.routers.analytics.resolve_personal_token", return_value="ghp_test"):
+        with patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"):
             resp = http.get("/me/analytics/cockpit/acme")
     finally:
         _stop_all(patchers)

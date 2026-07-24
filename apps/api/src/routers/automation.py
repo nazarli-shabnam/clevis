@@ -32,7 +32,7 @@ from src.schemas.automation import (
     WorkflowsResponse,
 )
 from src.services.github_client import GitHubClient, github_error as _github_error
-from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token, resolve_personal_token
+from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token, resolve_owner_token
 
 router = APIRouter()
 
@@ -198,7 +198,7 @@ def personal_list_workflows(
     x_github_token: str | None = Header(default=None),
 ):
     try:
-        token = resolve_personal_token(db, owner_user_id=user.id, account_login=owner, client_token=x_github_token)
+        token = resolve_owner_token(db, user_id=user.id, owner=owner, client_token=x_github_token)
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _list_workflows(owner, repo, token)
@@ -214,7 +214,7 @@ def personal_list_runs(
     x_github_token: str | None = Header(default=None),
 ):
     try:
-        token = resolve_personal_token(db, owner_user_id=user.id, account_login=owner, client_token=x_github_token)
+        token = resolve_owner_token(db, user_id=user.id, owner=owner, client_token=x_github_token)
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _list_runs(owner, repo, token, per_page)
@@ -231,7 +231,7 @@ def personal_dispatch_workflow(
 ):
     client_token = payload.token.get_secret_value() if payload.token else None
     try:
-        token = resolve_personal_token(db, owner_user_id=user.id, account_login=owner, client_token=client_token)
+        token = resolve_owner_token(db, user_id=user.id, owner=owner, client_token=client_token, min_role="admin")
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _dispatch(db, owner, repo, workflow_id, payload, token, actor=user.email)

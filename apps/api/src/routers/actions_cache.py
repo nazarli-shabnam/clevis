@@ -8,7 +8,7 @@ from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role
 from src.schemas.cache import CacheClearInput, CacheClearResponse, CacheListInput, CacheListResponse
 from src.services.cache_service import clear
 from src.services.github_client import GitHubClient
-from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token, resolve_personal_token
+from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token, resolve_owner_token
 
 router = APIRouter()
 
@@ -80,9 +80,7 @@ def personal_list_caches(
     db: Session = Depends(get_db),
 ):
     try:
-        token = resolve_personal_token(
-            db, owner_user_id=user.id, account_login=owner, client_token=_client_token(payload)
-        )
+        token = resolve_owner_token(db, user_id=user.id, owner=owner, client_token=_client_token(payload))
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _list_caches(owner, repo, token)
@@ -99,8 +97,8 @@ def personal_clear_caches(
     token = ""
     if not payload.dry_run:
         try:
-            token = resolve_personal_token(
-                db, owner_user_id=user.id, account_login=owner, client_token=_client_token(payload)
+            token = resolve_owner_token(
+                db, user_id=user.id, owner=owner, client_token=_client_token(payload), min_role="admin"
             )
         except NoGitHubTokenAvailable as exc:
             raise HTTPException(status_code=400, detail=str(exc))

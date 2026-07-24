@@ -19,6 +19,7 @@ export default function GithubInstallCallbackPage() {
   const searchParams = useSearchParams()
   const [status, setStatus] = useState<Status>("working")
   const [errorMessage, setErrorMessage] = useState("")
+  const [connectedAccount, setConnectedAccount] = useState<{ login: string; type: string } | null>(null)
   const ranRef = useRef(false)
 
   useEffect(() => {
@@ -48,8 +49,9 @@ export default function GithubInstallCallbackPage() {
           account_type === "User" ? { scope: "me" } : { scope: "org", orgLogin: account_login },
           { account_login, account_type, installation_id: id },
         )
+        setConnectedAccount({ login: account_login, type: account_type })
         setStatus("success")
-        setTimeout(() => router.replace("/settings?installed=1"), 1200)
+        setTimeout(() => router.replace("/settings?installed=1"), 1800)
       } catch (err) {
         setStatus("error")
         setErrorMessage(err instanceof Error ? err.message : "Failed to connect the installation.")
@@ -76,7 +78,15 @@ export default function GithubInstallCallbackPage() {
           )}
           {status === "success" && (
             <p className="text-sm text-primary flex items-center gap-1.5">
-              <CheckCircle className="size-3.5" /> Connected — redirecting to Settings…
+              <CheckCircle className="size-3.5" />
+              Connected{" "}
+              {connectedAccount && (
+                <>
+                  <strong>{connectedAccount.login}</strong>
+                  {connectedAccount.type === "User" ? " (your personal account)" : " (organization)"}
+                </>
+              )}{" "}
+              — redirecting to Settings…
             </p>
           )}
           {status === "error" && (

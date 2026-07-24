@@ -56,7 +56,7 @@ def test_my_view_degrades_to_empty_when_login_unresolvable(http):
     """An installation (App) token can't call GET /user -- this should degrade to an
     empty MyViewResponse, not 500 the page."""
     with (
-        patch("src.routers.analytics.resolve_personal_token", return_value="ghp_test"),
+        patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
         patch("src.routers.analytics.GitHubClient") as mock_client,
     ):
         mock_client.return_value.request.side_effect = httpx.HTTPStatusError(
@@ -103,7 +103,7 @@ def test_my_view_success(http):
         return {}
 
     with (
-        patch("src.routers.analytics.resolve_personal_token", return_value="ghp_test"),
+        patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
         patch("src.routers.analytics.GitHubClient") as mock_client,
     ):
         mock_client.return_value.request.side_effect = _request_side_effect
@@ -142,7 +142,7 @@ def test_my_view_repos_fetch_failure_degrades_to_empty_recent_runs(http):
         return {}
 
     with (
-        patch("src.routers.analytics.resolve_personal_token", return_value="ghp_test"),
+        patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
         patch("src.routers.analytics.GitHubClient") as mock_client,
     ):
         mock_client.return_value.request.side_effect = _request_side_effect
@@ -185,7 +185,7 @@ def test_my_view_search_failure_degrades_each_list_to_empty_but_still_returns_re
         return {}
 
     with (
-        patch("src.routers.analytics.resolve_personal_token", return_value="ghp_test"),
+        patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
         patch("src.routers.analytics.GitHubClient") as mock_client,
     ):
         mock_client.return_value.request.side_effect = _request_side_effect
