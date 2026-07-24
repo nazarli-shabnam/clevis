@@ -10,20 +10,32 @@ fall back to whatever token the caller supplied (the legacy PAT path). Raises
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 import httpx
 from sqlalchemy.orm import Session
 
 from src.core.config import settings
 from src.core.db import GitHubInstallation
-from src.repositories import installation_repo
+from src.repositories import installation_repo, org_membership_repo, org_repo
 from src.services import github_app
 
 logger = logging.getLogger(__name__)
 
+_ROLE_RANK = {"member": 0, "admin": 1}
+
 
 class NoGitHubTokenAvailable(RuntimeError):
     """Raised when no GitHub App installation and no client-supplied token are available."""
+
+
+class InsufficientOrgRole(RuntimeError):
+    """Raised when the caller is a member of the target org but below the role a
+    privileged action requires (e.g. a "member" hitting a cache-clear/dispatch
+    endpoint that needs "admin"). Callers must map this to 403, not fall back to a
+    client-supplied token -- honoring one here would let a client-supplied PAT
+    bypass the org-admin requirement (AGENTS.md: never bypass require_org_role
+    ("admin") on privileged org actions)."""
 
 
 def _from_installation(installation: GitHubInstallation | None) -> str | None:
@@ -93,3 +105,44 @@ def resolve_personal_token(db: Session, *, owner_user_id: int, account_login: st
     if client_token:
         return client_token
     raise _no_token_error(account_login, installation is not None, personal=True)
+
+
+def resolve_owner_token(
+    db: Session,
+    *,
+    user_id: int,
+    owner: str,
+    client_token: str | None,
+    min_role: Literal["member", "admin"] = "member",
+) -> str:
+    """Resolve a token for the "/me/*" endpoints, which accept an arbitrary `owner` (not
+    necessarily the caller's own account) -- e.g. Overview's cockpit/my-view widgets. If
+    `owner` is a Clevis org the caller has at least `min_role` in, prefer that org's
+    installation (same resolution the `/orgs/{org_login}/...` endpoints use) over a
+    personal-account installation, since an org-scoped install is the common case for
+    these widgets and resolve_personal_token's owner_user_id-scoped lookup can never
+    match it (this is why Overview showed "No GitHub App installation found" despite a
+    correctly connected org).
+
+    Role-gated, not just "org exists": without this, any authenticated user could pull
+    another org's GitHub data through a /me/* endpoint merely by typing its login,
+    bypassing the require_org_role check its /orgs/{org_login}/... equivalent enforces.
+    `min_role` defaults to "member" (read-only endpoints) but callers backing a
+    privileged action (e.g. cache clear, workflow dispatch) must pass "admin" to match
+    their org-scoped equivalent's requirement.
+
+    If the caller has no membership row for `owner` at all, this falls through to
+    resolve_personal_token (bring-your-own-token is fine here -- there's no Clevis org
+    relationship to bypass). But if a membership row exists and its role is below
+    `min_role`, this raises InsufficientOrgRole rather than falling through: silently
+    honoring a client-supplied token in that case would let a "member" trigger an
+    admin-only action just by pasting their own PAT, undermining the role gate above.
+    """
+    org = org_repo.get_by_login_ci(db, owner)
+    if org is not None:
+        membership = org_membership_repo.get(db, org.id, user_id)
+        if membership is not None:
+            if _ROLE_RANK.get(membership.role, -1) < _ROLE_RANK[min_role]:
+                raise InsufficientOrgRole(f"'{min_role}' access to '{owner}' is required for this action.")
+            return resolve_org_token(db, org_id=org.id, account_login=owner, client_token=client_token)
+    return resolve_personal_token(db, owner_user_id=user_id, account_login=owner, client_token=client_token)

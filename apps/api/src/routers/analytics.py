@@ -30,7 +30,7 @@ from src.schemas.analytics import (
 )
 from src.services.analytics_service import get_account_type, get_overview
 from src.services.github_client import GitHubClient, github_error as _github_error
-from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token, resolve_personal_token
+from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token, resolve_owner_token
 
 logger = logging.getLogger(__name__)
 
@@ -119,9 +119,7 @@ async def personal_analytics_overview(
     client_token = payload.token.get_secret_value() if payload.token else None
     try:
         token = await anyio.to_thread.run_sync(
-            lambda: resolve_personal_token(
-                db, owner_user_id=user.id, account_login=payload.owner, client_token=client_token
-            )
+            lambda: resolve_owner_token(db, user_id=user.id, owner=payload.owner, client_token=client_token)
         )
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -438,9 +436,7 @@ async def personal_analytics_cockpit(
 ):
     try:
         token = await anyio.to_thread.run_sync(
-            lambda: resolve_personal_token(
-                db, owner_user_id=user.id, account_login=owner, client_token=x_github_token
-            )
+            lambda: resolve_owner_token(db, user_id=user.id, owner=owner, client_token=x_github_token)
         )
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -593,7 +589,7 @@ async def my_view(
 ):
     try:
         token = await anyio.to_thread.run_sync(
-            lambda: resolve_personal_token(db, owner_user_id=user.id, account_login=owner, client_token=x_github_token)
+            lambda: resolve_owner_token(db, user_id=user.id, owner=owner, client_token=x_github_token)
         )
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))

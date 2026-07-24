@@ -8,8 +8,11 @@ It re-derives each dimension directly from the GitHub API per repo rather than r
 repos into a single org-wide pass/fail, not to return a per-repo row.
 
 Personal-scoped (`/me/...`), matching `analytics.py`'s `/me/analytics/overview` --
-the Security page scans an arbitrary owner by name, not a workspace Org the caller
-necessarily has an `OrgMembership` row for, so `require_org_role` doesn't apply here.
+the Security page scans an arbitrary owner by name, not necessarily a workspace Org
+the caller has an `OrgMembership` row for, so there's no `require_org_role` path
+gating this route directly. Token resolution still prefers an org-scoped installation
+over a personal one when `owner` does match an Org the caller is a member of, via
+`resolve_owner_token` -- see its docstring for why that's still membership-gated.
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -29,7 +32,7 @@ from src.schemas.security import (
     VulnCounts,
 )
 from src.services.github_client import GitHubClient, github_error as _github_error
-from src.services.token_resolution import NoGitHubTokenAvailable, resolve_personal_token
+from src.services.token_resolution import NoGitHubTokenAvailable, resolve_owner_token
 
 router = APIRouter()
 
@@ -171,7 +174,7 @@ def personal_security_matrix(
     x_github_token: str | None = Header(default=None),
 ):
     try:
-        token = resolve_personal_token(db, owner_user_id=user.id, account_login=owner, client_token=x_github_token)
+        token = resolve_owner_token(db, user_id=user.id, owner=owner, client_token=x_github_token)
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     try:
@@ -189,7 +192,7 @@ def personal_secret_scanning(
     x_github_token: str | None = Header(default=None),
 ):
     try:
-        token = resolve_personal_token(db, owner_user_id=user.id, account_login=owner, client_token=x_github_token)
+        token = resolve_owner_token(db, user_id=user.id, owner=owner, client_token=x_github_token)
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

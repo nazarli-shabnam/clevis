@@ -19,11 +19,15 @@ export default function GithubInstallCallbackPage() {
   const searchParams = useSearchParams()
   const [status, setStatus] = useState<Status>("working")
   const [errorMessage, setErrorMessage] = useState("")
+  const [connectedAccount, setConnectedAccount] = useState<{ login: string; type: string } | null>(null)
   const ranRef = useRef(false)
 
   useEffect(() => {
     if (ranRef.current) return
     ranRef.current = true
+
+    let cancelled = false
+    let redirectTimer: ReturnType<typeof setTimeout> | undefined
 
     const installationId = searchParams.get("installation_id")
     const setupAction = searchParams.get("setup_action")
@@ -48,15 +52,28 @@ export default function GithubInstallCallbackPage() {
           account_type === "User" ? { scope: "me" } : { scope: "org", orgLogin: account_login },
           { account_login, account_type, installation_id: id },
         )
+        if (cancelled) return
+        setConnectedAccount({ login: account_login, type: account_type })
         setStatus("success")
-        setTimeout(() => router.replace("/settings?installed=1"), 1200)
+        redirectTimer = setTimeout(() => router.replace("/settings?installed=1"), 1800)
       } catch (err) {
+        if (cancelled) return
         setStatus("error")
         setErrorMessage(err instanceof Error ? err.message : "Failed to connect the installation.")
       }
     }
     run()
-  }, [searchParams, router])
+
+    return () => {
+      cancelled = true
+      if (redirectTimer) clearTimeout(redirectTimer)
+    }
+    // router isn't included: Next's router object isn't reference-stable across renders,
+    // and this effect is a run-once flow (guarded by ranRef) -- depending on router would
+    // re-run the cleanup (and cancel the just-scheduled redirect timer) on every state
+    // update triggered by run() itself, well before the timer ever fires.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
 
   return (
     <div className="max-w-md mx-auto mt-16">
@@ -76,7 +93,15 @@ export default function GithubInstallCallbackPage() {
           )}
           {status === "success" && (
             <p className="text-sm text-primary flex items-center gap-1.5">
-              <CheckCircle className="size-3.5" /> Connected — redirecting to Settings…
+              <CheckCircle className="size-3.5" />
+              Connected{" "}
+              {connectedAccount && (
+                <>
+                  <strong>{connectedAccount.login}</strong>
+                  {connectedAccount.type === "User" ? " (your personal account)" : " (organization)"}
+                </>
+              )}{" "}
+              — redirecting to Settings…
             </p>
           )}
           {status === "error" && (
