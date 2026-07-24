@@ -79,7 +79,7 @@ export default function ReleasesPage() {
               onRetry={() => resolveQuery.refetch()}
               retrying={resolveQuery.isFetching}
             />
-          ) : releaseTimelineQuery.isLoading ? (
+          ) : releaseTimelineQuery.isLoading || resolveQuery.isLoading ? (
             <div className="px-4 py-8">
               <p className="text-sm text-muted-foreground animate-pulse">Loading…</p>
             </div>

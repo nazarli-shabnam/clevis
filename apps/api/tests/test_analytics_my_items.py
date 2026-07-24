@@ -175,7 +175,9 @@ def test_page_times_per_page_over_1000_returns_empty_without_calling_github(http
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body == {"items": [], "total_count": 0, "page": 11, "per_page": 100}
+    # total_count is capped at the reachable max (not 0) so page/lastPage math on the
+    # client stays consistent instead of regressing once paging crosses GitHub's window.
+    assert body == {"items": [], "total_count": 1000, "page": 11, "per_page": 100}
 
 
 def test_search_failure_degrades_to_empty_not_500(http):

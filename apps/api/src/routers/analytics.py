@@ -667,12 +667,20 @@ async def _my_items_list(
 
     client = GitHubClient(token)
     login = await anyio.to_thread.run_sync(lambda: _my_login(client))
-    if login is None or page * per_page > _MAX_SEARCH_RESULTS:
+    if login is None:
         return response_cls(page=page, per_page=per_page)
+    if page * per_page > _MAX_SEARCH_RESULTS:
+        # Beyond GitHub's reachable window -- report the capped total (not 0) so
+        # page/lastPage math stays consistent instead of regressing to "Page N of 1".
+        return response_cls(total_count=_MAX_SEARCH_RESULTS, page=page, per_page=per_page)
 
     query = query_template.format(login=login)
     items_raw, total_count = await anyio.to_thread.run_sync(lambda: _search_items_page(client, query, page, per_page))
-    return response_cls(items=mapper(items_raw), total_count=total_count, page=page, per_page=per_page)
+    # Cap the reported total to what's actually reachable, so the UI's Next button
+    # disables at the true boundary instead of this branch ever being hit from normal paging.
+    return response_cls(
+        items=mapper(items_raw), total_count=min(total_count, _MAX_SEARCH_RESULTS), page=page, per_page=per_page
+    )
 
 
 @router.get("/me/github/my-prs", response_model=MyPrListResponse)
