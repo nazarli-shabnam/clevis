@@ -305,4 +305,32 @@ describe("OverviewPage cockpit", () => {
     expect(screen.getByText("No releases in the last 4 weeks")).toBeInTheDocument();
     expect(screen.getByText("No merged pull requests yet")).toBeInTheDocument();
   });
+
+  it("shows a distinct 'no default org' banner (not a blank empty state) when nothing is configured", async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText(/No default organization selected yet/)).toBeInTheDocument();
+    });
+    const settingsLink = screen.getByRole("link", { name: "Settings" });
+    expect(settingsLink).toHaveAttribute("href", "/settings");
+    expect(cockpitMock).not.toHaveBeenCalled();
+  });
+
+  it("shows a retryable error banner (not a blank empty state) when the cockpit query fails", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+    cockpitMock.mockRejectedValue(new Error("org access required"));
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("org access required")).toBeInTheDocument();
+    });
+    const retryButton = screen.getByRole("button", { name: "Retry" });
+    fireEvent.click(retryButton);
+    // Retry re-fires both queries that feed the shared error banner.
+    await waitFor(() => expect(cockpitMock).toHaveBeenCalledTimes(2));
+    expect(myViewMock).toHaveBeenCalledTimes(2);
+  });
 });

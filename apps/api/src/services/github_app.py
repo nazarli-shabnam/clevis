@@ -114,6 +114,31 @@ def get_installation_token(installation_id: int) -> str:
         return fresh.token
 
 
+def get_org_membership_role(installation_token: str, org_login: str, username: str) -> str | None:
+    """Ask GitHub, authenticated as the App installation (not a user token), what role
+    `username` currently holds in `org_login` -- "admin" | "member" -- or None if they
+    have no active membership visible to the installation (404, or a non-"active" state
+    like a pending invite). Requires the App's installation to have at least read access
+    to the org's "Members" permission (already part of the documented required grants,
+    see docs/self-hosting.md). Used to bootstrap a brand-new Org/OrgMembership at
+    install-sync time without needing the caller's (never-persisted) OAuth user token."""
+    url = f"{settings.github_api_base}/orgs/{org_login}/memberships/{username}"
+    headers = {
+        "Authorization": f"Bearer {installation_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    with httpx.Client(timeout=20) as client:
+        resp = client.get(url, headers=headers)
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("state") != "active":
+        return None
+    return data.get("role")
+
+
 def clear_cache() -> None:
     """Drop all cached installation tokens (used by tests and on config change)."""
     with _lock:
