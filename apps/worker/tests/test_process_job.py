@@ -91,6 +91,20 @@ def test_process_job_marks_failed_on_4xx_http_error():
     assert conn.committed is True
 
 
+def test_process_job_marks_failed_when_token_decryption_fails():
+    """A payload with a token that fails to decrypt is a permanent failure, not a retry."""
+    conn = _FakeConn()
+
+    payload = json.dumps({"owner": "acme", "repo": "demo", "token": "not-a-valid-encrypted-token"})
+
+    process_job(conn, 3, "github.clear_actions_cache", payload)
+
+    sql, params = conn._cursor.calls[0]
+    assert "status='failed'" in sql
+    assert params[1] == 3
+    assert conn.committed is True
+
+
 def test_process_job_requeues_on_5xx_http_error():
     """5xx is presumed transient (GitHub-side issue) — worth a bounded retry, unlike 4xx."""
     conn = _FakeConn()
