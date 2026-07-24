@@ -365,7 +365,7 @@ describe("AppSidebar coming-soon badges", () => {
     vi.restoreAllMocks();
   });
 
-  it.each(["Pull Requests", "Releases", "My PRs", "My Reviews", "My Issues"])(
+  it.each(["Pull Requests"])(
     "shows a 'Soon' badge on the unshipped '%s' nav item",
     async (title) => {
       renderSidebar();
@@ -374,7 +374,20 @@ describe("AppSidebar coming-soon badges", () => {
     },
   );
 
-  it.each(["Overview", "Activity", "Repositories", "Health & Security", "Collaborators", "Automation", "Audit Log", "Job Queue"])(
+  it.each([
+    "Overview",
+    "Activity",
+    "Releases",
+    "Repositories",
+    "Health & Security",
+    "Collaborators",
+    "Automation",
+    "Audit Log",
+    "Job Queue",
+    "My PRs",
+    "My Reviews",
+    "My Issues",
+  ])(
     "shows no 'Soon' badge on the shipped '%s' nav item",
     async (title) => {
       renderSidebar();
