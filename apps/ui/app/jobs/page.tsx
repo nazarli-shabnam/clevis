@@ -43,7 +43,7 @@ export default function JobsPage() {
       <div className="card">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <span className="section-label">Jobs</span>
-          {!isLoading && (
+          {!isLoading && !isError && (
             <span className="stat-chip">{jobs.length} total</span>
           )}
         </div>

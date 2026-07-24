@@ -52,6 +52,9 @@ describe("JobsPage", () => {
     renderPage();
     await waitFor(() => expect(screen.getByText("Workspace admin access required")).toBeInTheDocument());
     expect(screen.queryByText(/No jobs/)).not.toBeInTheDocument();
+    // Regression test (CodeRabbit finding): a misleading "0 total" chip must not
+    // render alongside the error message.
+    expect(screen.queryByText(/total$/)).not.toBeInTheDocument();
 
     jobsListMock.mockResolvedValueOnce([]);
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));

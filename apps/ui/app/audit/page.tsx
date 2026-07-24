@@ -42,7 +42,7 @@ export default function AuditPage() {
                 <option key={a} value={a}>{a}</option>
               ))}
             </select>
-            {!isLoading && <span className="stat-chip">{logs.length} entries</span>}
+            {!isLoading && !isError && <span className="stat-chip">{logs.length} entries</span>}
           </div>
         </div>
 

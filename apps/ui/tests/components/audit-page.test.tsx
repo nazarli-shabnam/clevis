@@ -48,6 +48,9 @@ describe("AuditPage", () => {
     renderPage();
     await waitFor(() => expect(screen.getByText("Workspace admin access required")).toBeInTheDocument());
     expect(screen.queryByText(/No audit events/)).not.toBeInTheDocument();
+    // Regression test (CodeRabbit finding): a misleading "0 entries" chip must not
+    // render alongside the error message.
+    expect(screen.queryByText(/entries$/)).not.toBeInTheDocument();
 
     auditListMock.mockResolvedValueOnce([]);
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));

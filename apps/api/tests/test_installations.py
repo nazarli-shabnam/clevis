@@ -1,5 +1,6 @@
 """Tests for org-scoped and personal installation endpoints."""
 
+import json
 from unittest.mock import patch
 
 import httpx
@@ -115,6 +116,8 @@ def test_sync_org_installation_writes_audit_log(db, acme_org):
     assert len(logs) == 1
     assert logs[0].target == "acme"
     assert logs[0].actor == acme_org["admin"].email
+    payload = json.loads(logs[0].payload)
+    assert payload == {"account_type": "Organization", "installation_id": 7}
 
 
 def test_personal_installations_scoped_to_self(db):
@@ -160,6 +163,8 @@ def test_sync_personal_installation_writes_audit_log(db):
     assert len(logs) == 1
     assert logs[0].target == "shabnam"
     assert logs[0].actor == me.email
+    payload = json.loads(logs[0].payload)
+    assert payload == {"account_type": "User", "installation_id": 3}
 
 
 def test_sync_personal_installation_requires_linked_github_account(db):
