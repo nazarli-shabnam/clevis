@@ -282,6 +282,29 @@ def test_repo_stats_second_call_is_served_from_cache(repos_client):
     assert mock_client.return_value.request.call_count == 5
 
 
+def test_repo_stats_evicts_expired_entries_from_the_cache(repos_client):
+    # Installation tokens rotate hourly, so a long-running instance would otherwise
+    # accumulate one stale entry per org x repo x hour forever -- a cache miss now sweeps
+    # any entry whose TTL has already elapsed (#247).
+    import time as time_module
+
+    stale_key = ("other-owner", "other-repo", "deadbeef")
+    _stats_cache[stale_key] = (time_module.monotonic() - 10_000, {"repository": "other-owner/other-repo"})
+
+    with patch("src.routers.repos.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = _stats_side_effect(
+            repo_meta=_REPO_META,
+            commit_activity=[{"week": 1, "total": 5}],
+            release_error=_not_found(),
+        )
+        resp = repos_client.post(
+            "/orgs/acme/repos/acme/demo/stats", json={"token": "ghp_testtoken123456789012345678901234"}
+        )
+
+    assert resp.status_code == 200
+    assert stale_key not in _stats_cache
+
+
 def test_repo_stats_different_tokens_are_not_served_from_the_same_cache_entry(repos_client):
     with patch("src.routers.repos.GitHubClient") as mock_client:
         mock_client.return_value.request.side_effect = _stats_side_effect(

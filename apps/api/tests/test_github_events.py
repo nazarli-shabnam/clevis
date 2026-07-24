@@ -197,6 +197,24 @@ def test_events_different_tokens_are_not_served_from_the_same_cache_entry(events
     assert mock_client.return_value.request.call_count == 2
 
 
+def test_events_evicts_expired_entries_from_the_cache(events_client):
+    # Same reasoning as test_repos.py's equivalent test: token_hash rotates hourly with
+    # each fresh installation token, so stale entries would otherwise never be pruned (#247).
+    import time as time_module
+
+    stale_key = ("other-org", "deadbeef", 30)
+    _events_cache[stale_key] = (time_module.monotonic() - 10_000, {"org": "other-org", "events": []})
+
+    with patch("src.routers.github.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = [_PUSH_EVENT]
+        resp = events_client.post(
+            "/github/orgs/acme/events", json={"token": "ghp_testtoken123456789012345678901234"}
+        )
+
+    assert resp.status_code == 200
+    assert stale_key not in _events_cache
+
+
 def test_events_non_list_response_returns_502(events_client):
     # GitHubClient.request falls back to `{}` on an empty response body -- a non-list
     # response must surface as an error, not silently render as "no events".

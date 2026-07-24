@@ -124,6 +124,14 @@ def _fetch_events(org_login: str, token: str, per_page: int) -> OrgEventsRespons
     return OrgEventsResponse(org=org_login, events=events)
 
 
+def _evict_expired_events(now: float) -> None:
+    # Same reasoning as repos.py's _evict_expired_stats: token_hash rotates hourly with
+    # each fresh installation token, so stale keys would otherwise accumulate forever.
+    expired = [key for key, (cached_at, _) in _events_cache.items() if now - cached_at >= _EVENTS_CACHE_TTL_SECONDS]
+    for key in expired:
+        del _events_cache[key]
+
+
 def _cached_events(org_login: str, token: str, per_page: int) -> OrgEventsResponse:
     key = (org_login, _token_hash(token), per_page)
     now = time.monotonic()
@@ -132,6 +140,7 @@ def _cached_events(org_login: str, token: str, per_page: int) -> OrgEventsRespon
         return cached[1]
     events = _fetch_events(org_login, token, per_page)
     _events_cache[key] = (now, events)
+    _evict_expired_events(now)
     return events
 
 
