@@ -84,43 +84,53 @@ class ClearActionsCachePayload(BaseModel):
     ref: str | None = None
 
 
-def _mark_done(conn: psycopg.Connection, job_id: int, result: dict) -> None:
-    # WHERE status='processing' guards against a lost update if the reclaim sweep
-    # already reset this job (e.g. this worker stalled past RECLAIM_TIMEOUT_MINUTES)
-    # out from under us — the write becomes a safe no-op instead of clobbering
-    # whatever state/retry_count the reclaim (or another worker) since wrote.
+def _mark_done(conn: psycopg.Connection, job_id: int, result: dict, expected_retry_count: int) -> None:
+    # WHERE status='processing' AND retry_count=expected_retry_count fences this update
+    # against not just a lost update (reclaim already reset this job out from under us --
+    # status no longer 'processing') but also the narrower race where a *second* worker
+    # has since re-claimed the same job: reclaim bumps retry_count when it resets a stale
+    # job back to 'queued', so if that happened and another worker's SELECT ... FOR UPDATE
+    # picked it up again, status is back to 'processing' but retry_count no longer matches
+    # what *this* worker observed when it originally claimed the job. Without the
+    # retry_count check, this stale completion would silently clobber the second worker's
+    # in-flight row (issue #253).
     with conn.cursor() as cur:
         cur.execute(
-            "UPDATE jobs SET status='done', result=%s, updated_at=NOW() WHERE id=%s AND status='processing'",
-            (json.dumps(result), job_id),
+            "UPDATE jobs SET status='done', result=%s, updated_at=NOW() "
+            "WHERE id=%s AND status='processing' AND retry_count=%s",
+            (json.dumps(result), job_id, expected_retry_count),
         )
     conn.commit()
 
 
-def _mark_failed(conn: psycopg.Connection, job_id: int, error_text: str) -> None:
+def _mark_failed(conn: psycopg.Connection, job_id: int, error_text: str, expected_retry_count: int) -> None:
     with conn.cursor() as cur:
         cur.execute(
-            "UPDATE jobs SET status='failed', result=%s, updated_at=NOW() WHERE id=%s AND status='processing'",
-            (error_text, job_id),
+            "UPDATE jobs SET status='failed', result=%s, updated_at=NOW() "
+            "WHERE id=%s AND status='processing' AND retry_count=%s",
+            (error_text, job_id, expected_retry_count),
         )
     conn.commit()
 
 
 def _requeue_for_retry(conn: psycopg.Connection, job_id: int, retry_count: int, error_text: str) -> None:
+    # `retry_count` here is the value this worker observed at claim time -- same fencing
+    # reasoning as _mark_done/_mark_failed above, checked against the ORIGINAL value
+    # before it's incremented into new_count below.
     new_count = retry_count + 1
     if new_count > MAX_RETRIES:
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE jobs SET status='failed', retry_count=%s, result=%s, updated_at=NOW() "
-                "WHERE id=%s AND status='processing'",
-                (new_count, f"exceeded max retry attempts ({MAX_RETRIES}): {error_text}", job_id),
+                "WHERE id=%s AND status='processing' AND retry_count=%s",
+                (new_count, f"exceeded max retry attempts ({MAX_RETRIES}): {error_text}", job_id, retry_count),
             )
     else:
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE jobs SET status='queued', retry_count=%s, result=%s, updated_at=NOW() "
-                "WHERE id=%s AND status='processing'",
-                (new_count, error_text, job_id),
+                "WHERE id=%s AND status='processing' AND retry_count=%s",
+                (new_count, error_text, job_id, retry_count),
             )
     conn.commit()
 
@@ -129,7 +139,7 @@ def process_job(conn: psycopg.Connection, job_id: int, job_type: str, payload_ra
     handler = JOB_HANDLERS.get(job_type)
     if handler is None:
         log.error("job %d has no handler registered for job_type %r", job_id, job_type)
-        _mark_failed(conn, job_id, f"no handler registered for job_type {job_type!r}")
+        _mark_failed(conn, job_id, f"no handler registered for job_type {job_type!r}", retry_count)
         return
     try:
         handler(conn, job_id, payload_raw, retry_count)
@@ -139,7 +149,7 @@ def process_job(conn: psycopg.Connection, job_id: int, job_type: str, payload_ra
         # until the reclaim sweep picks it up, up to RECLAIM_TIMEOUT_MINUTES later,
         # instead of failing/retrying immediately.
         log.error("job %d hit an unexpected error: %s", job_id, error)
-        _mark_failed(conn, job_id, sanitize_error(error))
+        _mark_failed(conn, job_id, sanitize_error(error), retry_count)
 
 
 def _handle_clear_actions_cache(conn: psycopg.Connection, job_id: int, payload_raw: str, retry_count: int) -> None:
@@ -147,14 +157,14 @@ def _handle_clear_actions_cache(conn: psycopg.Connection, job_id: int, payload_r
         payload = ClearActionsCachePayload.model_validate_json(payload_raw)
     except ValidationError as error:
         log.error("job %d has an invalid payload: %s", job_id, error)
-        _mark_failed(conn, job_id, sanitize_error(error))
+        _mark_failed(conn, job_id, sanitize_error(error), retry_count)
         return
 
     try:
         token = decrypt_job_token(payload.token, settings.job_secret_key.get_secret_value())
     except Exception as error:
         log.error("job %d failed to decrypt its token: %s", job_id, error)
-        _mark_failed(conn, job_id, sanitize_error(error))
+        _mark_failed(conn, job_id, sanitize_error(error), retry_count)
         return
 
     base = settings.github_api_base
@@ -185,10 +195,10 @@ def _handle_clear_actions_cache(conn: psycopg.Connection, job_id: int, payload_r
 
     if resp.status_code >= 300:
         log.error("job %d failed: GitHub API error %d", job_id, resp.status_code)
-        _mark_failed(conn, job_id, f"GitHub API error: {resp.status_code}")
+        _mark_failed(conn, job_id, f"GitHub API error: {resp.status_code}", retry_count)
         return
 
-    _mark_done(conn, job_id, {"ok": True, "status": resp.status_code})
+    _mark_done(conn, job_id, {"ok": True, "status": resp.status_code}, retry_count)
     log.info("job %d done", job_id)
 
 

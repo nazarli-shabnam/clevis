@@ -91,6 +91,22 @@ def test_process_job_marks_failed_on_4xx_http_error():
     assert conn.committed is True
 
 
+def test_process_job_marks_failed_when_token_decryption_fails():
+    """A payload with a token that fails to decrypt is a permanent failure, not a retry."""
+    conn = _FakeConn()
+
+    payload = json.dumps({"owner": "acme", "repo": "demo", "token": "not-a-valid-encrypted-token"})
+
+    process_job(conn, 3, "github.clear_actions_cache", payload)
+
+    sql, params = conn._cursor.calls[0]
+    assert "status='failed'" in sql
+    assert "retry_count=%s" in sql
+    assert params[1] == 3
+    assert params[2] == 0
+    assert conn.committed is True
+
+
 def test_process_job_requeues_on_5xx_http_error():
     """5xx is presumed transient (GitHub-side issue) — worth a bounded retry, unlike 4xx."""
     conn = _FakeConn()
@@ -110,9 +126,10 @@ def test_process_job_requeues_on_5xx_http_error():
 
     sql, params = conn._cursor.calls[0]
     assert "status='queued'" in sql
-    new_retry_count, result_text, job_id = params
+    new_retry_count, result_text, job_id, expected_retry_count = params
     assert new_retry_count == 1
     assert job_id == 6
+    assert expected_retry_count == 0  # fences against a job reclaimed/re-claimed since this worker started
     assert "GitHub API error" in result_text
     assert conn.committed is True
 
@@ -133,9 +150,10 @@ def test_process_job_requeues_on_httpx_request_error():
 
     sql, params = conn._cursor.calls[0]
     assert "status='queued'" in sql
-    new_retry_count, result_text, job_id = params
+    new_retry_count, result_text, job_id, expected_retry_count = params
     assert new_retry_count == 3  # incremented from the passed-in retry_count=2
     assert job_id == 7
+    assert expected_retry_count == 2
     assert "connection refused" in result_text
     assert conn.committed is True
 
@@ -157,9 +175,10 @@ def test_process_job_fails_once_retry_cap_exceeded():
 
     sql, params = conn._cursor.calls[0]
     assert "status='failed'" in sql
-    new_retry_count, result_text, job_id = params
+    new_retry_count, result_text, job_id, expected_retry_count = params
     assert new_retry_count == MAX_RETRIES + 1
     assert job_id == 8
+    assert expected_retry_count == MAX_RETRIES
     assert "exceeded max retry attempts" in result_text
     assert conn.committed is True
 
@@ -294,6 +313,62 @@ def test_process_job_terminal_write_is_a_noop_if_reclaimed_out_from_under_it(wor
         cur.execute("SELECT status, retry_count FROM jobs WHERE id = %s", (job_id,))
         final_status, final_retry_count = cur.fetchone()
     assert final_status == "queued"
+    assert final_retry_count == 1
+
+
+def test_process_job_terminal_write_is_a_noop_if_a_second_worker_reclaimed_and_reprocessed_it(worker_db):
+    """Narrower race than the reclaim-to-'queued' case above (#253): the reclaim sweep
+    resets this job to 'queued' (bumping retry_count) AND a second worker's own
+    SELECT ... FOR UPDATE picks it back up, setting status back to 'processing' before
+    this (first) worker's stale terminal write runs. WHERE status='processing' alone
+    would then incorrectly match again -- the retry_count fence is what actually
+    prevents this worker's stale completion from clobbering the second worker's
+    in-flight row."""
+    conn, created_ids = worker_db
+    stale = datetime.now(timezone.utc) - timedelta(minutes=RECLAIM_TIMEOUT_MINUTES + 5)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO jobs (job_type, payload, status, retry_count, updated_at)
+            VALUES ('github.clear_actions_cache', '{}', 'processing', 0, %s)
+            RETURNING id
+            """,
+            (stale,),
+        )
+        job_id = cur.fetchone()[0]
+    conn.commit()
+    created_ids.append(job_id)
+
+    # Reclaim sweep fires (job -> 'queued', retry_count -> 1), then a second worker's
+    # own claim query picks it back up (job -> 'processing' again, same bumped retry_count).
+    _reclaim_stale_jobs(conn)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE jobs SET status = 'processing', updated_at = NOW() WHERE id = %s", (job_id,))
+    conn.commit()
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, retry_count FROM jobs WHERE id = %s", (job_id,))
+        reprocessed_status, reprocessed_retry_count = cur.fetchone()
+    assert reprocessed_status == "processing"
+    assert reprocessed_retry_count == 1
+
+    mock_response = MagicMock()
+    mock_response.status_code = 204
+    mock_response.text = ""
+    with patch("worker.httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.delete = MagicMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        # This (first) worker's in-memory retry_count is stale (captured before the
+        # reclaim) -- its completion must not touch the row the second worker now owns.
+        process_job(conn, job_id, "github.clear_actions_cache", _payload(), retry_count=0)
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, retry_count FROM jobs WHERE id = %s", (job_id,))
+        final_status, final_retry_count = cur.fetchone()
+    assert final_status == "processing"
     assert final_retry_count == 1
 
 
