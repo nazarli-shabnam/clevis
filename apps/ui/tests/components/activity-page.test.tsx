@@ -146,7 +146,13 @@ describe("ActivityPage", () => {
     renderPage();
 
     expect(await screen.findByText("No GitHub token available for this organization")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    const retryButton = screen.getByRole("button", { name: "Retry" });
+
+    githubEventsMock.mockResolvedValueOnce({ org: "acme", events: [] });
+    fireEvent.click(retryButton);
+
+    await waitFor(() => expect(githubEventsMock).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/no events yet/)).toBeInTheDocument();
   });
 
   it("renders the CI failure log and release timeline", async () => {
