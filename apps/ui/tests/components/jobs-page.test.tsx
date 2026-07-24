@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -51,8 +51,18 @@ describe("JobsPage", () => {
     jobsListMock.mockRejectedValue(new Error("Workspace admin access required"));
     renderPage();
     await waitFor(() => expect(screen.getByText("Workspace admin access required")).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(screen.queryByText(/No jobs/)).not.toBeInTheDocument();
+
+    jobsListMock.mockResolvedValueOnce([]);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByText(/No jobs/)).toBeInTheDocument());
+    expect(jobsListMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to a generic message when the rejection isn't an Error instance", async () => {
+    jobsListMock.mockRejectedValue("boom");
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Failed to load jobs.")).toBeInTheDocument());
   });
 
   it("shows the empty state only when the query genuinely succeeds with no rows", async () => {
