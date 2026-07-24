@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/page-header"
 import { ActivityList } from "@/components/activity-list"
 import { EventFeed } from "@/components/event-feed"
 import { HeatmapCalendar } from "@/components/charts/heatmap-calendar"
+import { SectionError } from "@/components/section-error"
 import { CHART_COLORS } from "@/lib/charts/theme"
 import { relativeTime } from "@/lib/format"
 import { api } from "@/lib/api/client"
@@ -64,16 +65,20 @@ export default function ActivityPage() {
     retry: false,
   })
 
-  const configured = !!resolveQuery.data?.token
   const token = resolveQuery.data?.token ?? ""
+  // Queries fire once an org is set and token resolution has settled, regardless of
+  // whether a saved PAT was found -- an org connected purely via GitHub App
+  // installation (no PAT ever saved, a fully supported flow) has no `token` here, but
+  // the API resolves an installation token server-side the same way Overview's queries
+  // already rely on (see app/page.tsx). Gating on a resolved PAT specifically made this
+  // page permanently blank for App-only orgs (#251).
+  const hasOrg = org.trim().length > 0
+  const queriesEnabled = hasOrg && !resolveQuery.isLoading
 
   const eventsQuery = useQuery({
     queryKey: ["github.events", org],
-    queryFn: () => {
-      if (!token) throw new Error("No GitHub token available for this organization")
-      return api.github.events(org, token)
-    },
-    enabled: configured,
+    queryFn: () => api.github.events(org, token),
+    enabled: queriesEnabled,
     retry: false,
     refetchInterval: EVENTS_REFRESH_SECONDS * 1000,
   })
@@ -89,28 +94,28 @@ export default function ActivityPage() {
   const cockpitQuery = useQuery({
     queryKey: ["analytics.cockpit-heatmap", org],
     queryFn: () => api.analytics.cockpit(org, token),
-    enabled: configured,
+    enabled: queriesEnabled,
     retry: false,
   })
 
   const failedRunsQuery = useQuery({
     queryKey: ["github.failed-runs", org],
     queryFn: () => api.github.failedRuns(org, token),
-    enabled: configured,
+    enabled: queriesEnabled,
     retry: false,
   })
 
   const releaseTimelineQuery = useQuery({
     queryKey: ["github.release-timeline", org],
     queryFn: () => api.github.releaseTimeline(org, token),
-    enabled: configured,
+    enabled: queriesEnabled,
     retry: false,
   })
 
   const reposQuery = useQuery({
     queryKey: ["repos.list", org],
     queryFn: () => api.repos.list(org, token),
-    enabled: configured && feedTab === "board",
+    enabled: queriesEnabled && feedTab === "board",
     retry: false,
   })
 
@@ -125,7 +130,7 @@ export default function ActivityPage() {
       )
       return results.flatMap((r) => r.pulls)
     },
-    enabled: configured && feedTab === "board" && !!reposQuery.data,
+    enabled: queriesEnabled && feedTab === "board" && !!reposQuery.data,
     retry: false,
   })
 
@@ -171,9 +176,9 @@ export default function ActivityPage() {
                 PR Board
               </button>
             </div>
-            {feedTab === "feed" && configured && <RefreshCountdown resetKey={lastAttemptAt} seconds={EVENTS_REFRESH_SECONDS} />}
+            {feedTab === "feed" && hasOrg && <RefreshCountdown resetKey={lastAttemptAt} seconds={EVENTS_REFRESH_SECONDS} />}
           </div>
-          {!configured ? (
+          {!hasOrg ? (
             <div className="px-4 py-8">
               <p className="text-sm text-muted-foreground">
                 No organization configured yet.{" "}
@@ -182,6 +187,12 @@ export default function ActivityPage() {
                 </Link>
               </p>
             </div>
+          ) : feedTab === "feed" && eventsQuery.isError ? (
+            <SectionError
+              message={eventsQuery.error instanceof Error ? eventsQuery.error.message : "Failed to load events."}
+              onRetry={() => eventsQuery.refetch()}
+              retrying={eventsQuery.isFetching}
+            />
           ) : feedTab === "feed" ? (
             <EventFeed events={eventsQuery.data?.events ?? []} isLoading={eventsQuery.isLoading} />
           ) : prBoardQuery.isLoading || reposQuery.isLoading ? (
@@ -222,7 +233,7 @@ export default function ActivityPage() {
         </div>
       </div>
 
-      {configured && (
+      {hasOrg && (
         <div className="grid gap-4 lg:grid-cols-2 mt-4">
           <div className="card lg:col-span-2">
             <div className="px-4 py-3 border-b border-border">
