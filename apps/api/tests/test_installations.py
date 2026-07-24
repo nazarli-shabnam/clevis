@@ -253,6 +253,38 @@ def test_sync_org_installation_bootstraps_new_org_for_live_github_admin(db):
     assert membership.role == "admin"
 
 
+def test_bootstrap_org_admin_advisory_lock_serializes_concurrent_holders(_engine):
+    # Regression test for #249: two concurrent installation syncs for the same org_login
+    # (different installation_id's) both live-verify the caller as admin before either
+    # commits its Org/OrgMembership rows -- only a lock closes that window, same pattern
+    # as auth.py's /auth/setup lock (test_setup_advisory_lock_serializes_concurrent_holders).
+    # Verifies the lock primitive itself: a second connection can't acquire the same
+    # hashtext(org_login) key while the first transaction holds it, and can once released.
+    from sqlalchemy import text
+
+    with _engine.connect() as conn1, _engine.connect() as conn2:
+        conn1.begin()
+        conn2.begin()
+        try:
+            got1 = conn1.execute(
+                text("SELECT pg_try_advisory_xact_lock(hashtext(:org_login))"), {"org_login": "acme"}
+            ).scalar()
+            got2 = conn2.execute(
+                text("SELECT pg_try_advisory_xact_lock(hashtext(:org_login))"), {"org_login": "acme"}
+            ).scalar()
+            assert got1 is True
+            assert got2 is False
+
+            conn1.commit()  # releases conn1's advisory lock
+
+            got2_retry = conn2.execute(
+                text("SELECT pg_try_advisory_xact_lock(hashtext(:org_login))"), {"org_login": "acme"}
+            ).scalar()
+            assert got2_retry is True
+        finally:
+            conn2.rollback()
+
+
 def test_sync_org_installation_rejects_live_non_admin(db):
     """The org already exists in Clevis (someone else connected it), the caller has no
     local membership, and the live GitHub check says they're a "member" not "admin" --

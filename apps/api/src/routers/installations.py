@@ -23,6 +23,7 @@
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
@@ -107,7 +108,17 @@ def _bootstrap_org_admin_from_installation(db: Session, db_user: User, org_login
     then get-or-create the Org/OrgMembership rows. Callers must already have confirmed
     db_user.github_login is set and installation_id is not None. Raises HTTPException on
     any failure to verify (GitHub API error, or the live check saying the caller isn't an
-    admin)."""
+    admin).
+
+    Serialized per org_login via pg_advisory_xact_lock (transaction-scoped, released at
+    the end of this request) -- without it, two concurrent installation syncs for the
+    same org_login (e.g. two admins racing to connect the same brand-new org with
+    different installation_id's) could both pass the live-admin check before either
+    commits, then race to attach to (or duplicate) the same Org row. Matches the pattern
+    /auth/setup uses for its own check-then-insert race (see auth.py's _SETUP_LOCK_KEY).
+    hashtext() maps the arbitrary org_login string to the int4 key pg_advisory_xact_lock
+    expects."""
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:org_login))"), {"org_login": org_login})
     try:
         installation_token = github_app.get_installation_token(installation_id)
         role = github_app.get_org_membership_role(installation_token, org_login, db_user.github_login)
