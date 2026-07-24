@@ -56,6 +56,12 @@ def create_invitation(
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
+    existing = invitation_repo.get_pending_for_org_and_email(db, org_id=ctx.org.id, email=body.email)
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A pending invitation already exists for {body.email} in this organization",
+        )
     invitation = invitation_repo.create(db, org_id=ctx.org.id, email=body.email, invited_by_user_id=user.id)
     return {
         "invitation": invitation,

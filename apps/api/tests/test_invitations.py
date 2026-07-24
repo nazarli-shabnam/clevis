@@ -57,6 +57,45 @@ def test_create_invitation_admin_ok(db, acme_org):
     assert "/invite/" in body["invite_link"]
 
 
+def test_create_invitation_rejects_duplicate_pending_invite(db, acme_org):
+    client = _client(db, acme_org["admin"])
+    first = client.post("/orgs/acme/invitations", json={"email": "bob@acme.com"})
+    assert first.status_code == 200
+
+    second = client.post("/orgs/acme/invitations", json={"email": "bob@acme.com"})
+    assert second.status_code == 409
+
+    # Only the first invite exists -- the rejected attempt didn't create a second row.
+    listing = client.get("/orgs/acme/invitations").json()
+    assert len(listing) == 1
+
+
+def test_create_invitation_duplicate_check_is_case_insensitive(db, acme_org):
+    client = _client(db, acme_org["admin"])
+    client.post("/orgs/acme/invitations", json={"email": "bob@acme.com"})
+
+    resp = client.post("/orgs/acme/invitations", json={"email": "BOB@ACME.COM"})
+    assert resp.status_code == 409
+
+
+def test_create_invitation_allows_new_invite_after_the_pending_one_is_revoked(db, acme_org):
+    client = _client(db, acme_org["admin"])
+    created = client.post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+    client.post(f"/orgs/acme/invitations/{created['invitation']['id']}/revoke")
+
+    resp = client.post("/orgs/acme/invitations", json={"email": "bob@acme.com"})
+    assert resp.status_code == 200
+
+
+def test_create_invitation_allows_new_invite_after_the_pending_one_expires(db, acme_org):
+    client = _client(db, acme_org["admin"])
+    created = client.post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+    _expire_invitation(db, created["invitation"]["id"])
+
+    resp = client.post("/orgs/acme/invitations", json={"email": "bob@acme.com"})
+    assert resp.status_code == 200
+
+
 def test_list_invitations_admin_only(db, acme_org):
     _client(db, acme_org["admin"]).post("/orgs/acme/invitations", json={"email": "bob@acme.com"})
     resp = _client(db, acme_org["admin"]).get("/orgs/acme/invitations")
