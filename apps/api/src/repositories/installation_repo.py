@@ -1,3 +1,4 @@
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -84,9 +85,16 @@ def create(
 
 
 def get_for_org(db: Session, org_id: int, account_login: str) -> GitHubInstallation | None:
+    # Case-insensitive: account_login is stored verbatim from GitHub's install payload,
+    # but RBAC/ownership checks elsewhere (assert_owner_matches_org, _verify_installation)
+    # already compare logins case-insensitively -- an exact match here could pass those
+    # checks yet fail to find an installation that's actually there (#246).
     return (
         db.query(GitHubInstallation)
-        .filter(GitHubInstallation.org_id == org_id, GitHubInstallation.account_login == account_login)
+        .filter(
+            GitHubInstallation.org_id == org_id,
+            func.lower(GitHubInstallation.account_login) == account_login.lower(),
+        )
         .first()
     )
 
@@ -96,7 +104,7 @@ def get_for_user(db: Session, owner_user_id: int, account_login: str) -> GitHubI
         db.query(GitHubInstallation)
         .filter(
             GitHubInstallation.owner_user_id == owner_user_id,
-            GitHubInstallation.account_login == account_login,
+            func.lower(GitHubInstallation.account_login) == account_login.lower(),
         )
         .first()
     )
