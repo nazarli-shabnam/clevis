@@ -385,6 +385,28 @@ describe("GithubRoster (Collaborators page)", () => {
     });
   });
 
+  it("still shows inactive members that loaded fine when the permission audit call fails (#252)", async () => {
+    membersMock.mockResolvedValue({ org: "acme", members: [], two_factor_overlay_available: true });
+    permissionAuditMock.mockRejectedValue(new Error("GitHub rate limit exceeded"));
+    inactiveMembersMock.mockResolvedValue({
+      org: "acme",
+      sampled_repos: ["acme/api"],
+      members: [{ login: "frank", avatar_url: "", role: "member", last_commit_repo: null, last_commit_days_ago: null }],
+    });
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Audit" }));
+
+    // Previously the whole Audit tab collapsed into a single generic error line whenever
+    // permissionAuditQuery failed, hiding the independently-fetched (and successfully
+    // loaded) inactive-members section entirely -- both must render their own state.
+    await waitFor(() => {
+      expect(screen.getByText("GitHub rate limit exceeded")).toBeInTheDocument();
+    });
+    expect(await screen.findByText("frank")).toBeInTheDocument();
+  });
+
   it("shows how long ago an inactive member's last commit was", async () => {
     membersMock.mockResolvedValue({ org: "acme", members: [], two_factor_overlay_available: true });
     inactiveMembersMock.mockResolvedValue({
