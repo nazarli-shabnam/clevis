@@ -28,7 +28,7 @@ export default function ReleasesPage() {
   })
 
   const token = resolveQuery.data?.token ?? ""
-  const queriesEnabled = org.trim().length > 2 && !resolveQuery.isLoading
+  const queriesEnabled = org.trim().length > 2 && resolveQuery.isSuccess
 
   const releaseTimelineQuery = useQuery({
     queryKey: ["github.release-timeline", org, days],
@@ -60,6 +60,7 @@ export default function ReleasesPage() {
             <select
               value={days}
               onChange={(e) => setDays(Number(e.target.value) as (typeof DAY_OPTIONS)[number])}
+              aria-label="Release time range"
               className="bg-elevated border border-border rounded-md text-xs text-muted-foreground font-mono px-2 py-1 focus:outline-none focus:border-primary"
             >
               {DAY_OPTIONS.map((d) => (
@@ -68,7 +69,17 @@ export default function ReleasesPage() {
             </select>
           </div>
 
-          {releaseTimelineQuery.isLoading ? (
+          {resolveQuery.isError ? (
+            <SectionError
+              message={
+                resolveQuery.error instanceof Error
+                  ? resolveQuery.error.message
+                  : "Failed to resolve GitHub access."
+              }
+              onRetry={() => resolveQuery.refetch()}
+              retrying={resolveQuery.isFetching}
+            />
+          ) : releaseTimelineQuery.isLoading ? (
             <div className="px-4 py-8">
               <p className="text-sm text-muted-foreground animate-pulse">Loading…</p>
             </div>

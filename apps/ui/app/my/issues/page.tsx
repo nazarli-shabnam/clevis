@@ -28,9 +28,11 @@ export default function MyIssuesPage() {
   const myIssuesQuery = useQuery({
     queryKey: ["analytics.my-issues", org, page],
     queryFn: () => api.analytics.myIssues(org, page, PER_PAGE, resolveQuery.data?.token),
-    enabled: org.trim().length > 2 && !resolveQuery.isLoading,
+    enabled: org.trim().length > 2 && resolveQuery.isSuccess,
     retry: false,
   })
+
+  const tokenFailed = resolveQuery.isError
 
   return (
     <>
@@ -50,12 +52,14 @@ export default function MyIssuesPage() {
         <MyItemsList
           items={myIssuesQuery.data?.items ?? []}
           isLoading={myIssuesQuery.isLoading || resolveQuery.isLoading}
-          isError={myIssuesQuery.isError}
+          isError={tokenFailed || myIssuesQuery.isError}
           errorMessage={
-            myIssuesQuery.error instanceof Error ? myIssuesQuery.error.message : "Failed to load your assigned issues."
+            tokenFailed
+              ? (resolveQuery.error instanceof Error ? resolveQuery.error.message : "Failed to resolve GitHub access.")
+              : (myIssuesQuery.error instanceof Error ? myIssuesQuery.error.message : "Failed to load your assigned issues.")
           }
-          onRetry={() => myIssuesQuery.refetch()}
-          retrying={myIssuesQuery.isFetching}
+          onRetry={() => (tokenFailed ? resolveQuery.refetch() : myIssuesQuery.refetch())}
+          retrying={tokenFailed ? resolveQuery.isFetching : myIssuesQuery.isFetching}
           emptyNoun="assigned issues"
           totalCount={myIssuesQuery.data?.total_count ?? 0}
           page={page}
