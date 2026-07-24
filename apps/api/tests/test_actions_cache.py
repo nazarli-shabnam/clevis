@@ -111,6 +111,25 @@ def test_personal_clear_caches_non_dry_run_no_token_returns_400(cache_client):
     assert resp.status_code == 400
 
 
+def test_personal_clear_caches_rejects_org_member_supplying_own_token(cache_client, db):
+    # Regression test (CodeRabbit finding on PR #264): a plain "member" of a connected
+    # org must not be able to trigger its cache clear through the personal endpoint by
+    # supplying their own PAT -- that would bypass the admin-only gate this endpoint is
+    # supposed to enforce via resolve_owner_token(min_role="admin").
+    db.add(User(id=_USER.id, email=_USER.email, name=None, password_hash=None, is_workspace_admin=False))
+    db.commit()
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org.id, _USER.id, role="member")
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id
+    )
+    resp = cache_client.post(
+        "/me/repos/acme/demo/actions-caches/clear",
+        json={"dry_run": False, "token": "ghp_testtoken123456789012345678901234"},
+    )
+    assert resp.status_code == 403
+
+
 # ── org-scoped ────────────────────────────────────────────────────────────────
 
 @pytest.fixture()

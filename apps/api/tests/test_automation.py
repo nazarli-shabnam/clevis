@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from src.core.auth import UserOut, require_auth
 from src.core.db import User, get_db
 from src.core.db import AuditLog
-from src.repositories import org_membership_repo, org_repo
+from src.repositories import installation_repo, org_membership_repo, org_repo
 from src.routers.automation import router as automation_router
 
 _USER = UserOut(id=1, email="u@example.com", name=None, is_workspace_admin=False)
@@ -214,6 +214,27 @@ def test_personal_dispatch_no_token_returns_400_and_still_no_github_call(automat
     with patch("src.routers.automation.GitHubClient") as mock_client:
         resp = automation_client.post("/me/repos/acme/demo/workflows/1/dispatch", json={"ref": "main"})
     assert resp.status_code == 400
+    mock_client.return_value.request.assert_not_called()
+
+
+def test_personal_dispatch_rejects_org_member_supplying_own_token(automation_client, db):
+    # Regression test (CodeRabbit finding on PR #264): a plain "member" of a connected
+    # org must not be able to dispatch its workflows through the personal endpoint by
+    # supplying their own PAT -- that would bypass the admin-only gate this endpoint is
+    # supposed to enforce via resolve_owner_token(min_role="admin").
+    db.add(User(id=_USER.id, email=_USER.email, name=None, password_hash=None, is_workspace_admin=False))
+    db.commit()
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org.id, _USER.id, role="member")
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id
+    )
+    with patch("src.routers.automation.GitHubClient") as mock_client:
+        resp = automation_client.post(
+            "/me/repos/acme/demo/workflows/1/dispatch",
+            json={"token": "ghp_testtoken123456789012345678901234", "ref": "main"},
+        )
+    assert resp.status_code == 403
     mock_client.return_value.request.assert_not_called()
 
 

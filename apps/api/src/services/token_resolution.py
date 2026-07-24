@@ -29,6 +29,15 @@ class NoGitHubTokenAvailable(RuntimeError):
     """Raised when no GitHub App installation and no client-supplied token are available."""
 
 
+class InsufficientOrgRole(RuntimeError):
+    """Raised when the caller is a member of the target org but below the role a
+    privileged action requires (e.g. a "member" hitting a cache-clear/dispatch
+    endpoint that needs "admin"). Callers must map this to 403, not fall back to a
+    client-supplied token -- honoring one here would let a client-supplied PAT
+    bypass the org-admin requirement (AGENTS.md: never bypass require_org_role
+    ("admin") on privileged org actions)."""
+
+
 def _from_installation(installation: GitHubInstallation | None) -> str | None:
     if installation is None or installation.installation_id is None:
         return None
@@ -121,10 +130,19 @@ def resolve_owner_token(
     `min_role` defaults to "member" (read-only endpoints) but callers backing a
     privileged action (e.g. cache clear, workflow dispatch) must pass "admin" to match
     their org-scoped equivalent's requirement.
+
+    If the caller has no membership row for `owner` at all, this falls through to
+    resolve_personal_token (bring-your-own-token is fine here -- there's no Clevis org
+    relationship to bypass). But if a membership row exists and its role is below
+    `min_role`, this raises InsufficientOrgRole rather than falling through: silently
+    honoring a client-supplied token in that case would let a "member" trigger an
+    admin-only action just by pasting their own PAT, undermining the role gate above.
     """
-    org = org_repo.get_by_login(db, owner)
+    org = org_repo.get_by_login_ci(db, owner)
     if org is not None:
         membership = org_membership_repo.get(db, org.id, user_id)
-        if membership is not None and _ROLE_RANK.get(membership.role, -1) >= _ROLE_RANK[min_role]:
+        if membership is not None:
+            if _ROLE_RANK.get(membership.role, -1) < _ROLE_RANK[min_role]:
+                raise InsufficientOrgRole(f"'{min_role}' access to '{owner}' is required for this action.")
             return resolve_org_token(db, org_id=org.id, account_login=owner, client_token=client_token)
     return resolve_personal_token(db, owner_user_id=user_id, account_login=owner, client_token=client_token)

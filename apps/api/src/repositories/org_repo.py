@@ -1,3 +1,4 @@
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -6,6 +7,15 @@ from src.core.db import Org
 
 def get_by_login(db: Session, github_login: str) -> Org | None:
     return db.query(Org).filter(Org.github_login == github_login).first()
+
+
+def get_by_login_ci(db: Session, github_login: str) -> Org | None:
+    # Case-insensitive: callers taking an arbitrary user-typed/query-param login (not a
+    # URL path segment already known to match) need this, same reasoning as
+    # installation_repo.get_for_org's case-insensitive match (#246) -- a casing variant
+    # of a connected org's login must still resolve to it, not silently miss and fall
+    # through to a different (personal) resolution path.
+    return db.query(Org).filter(func.lower(Org.github_login) == github_login.lower()).first()
 
 
 def get_by_id(db: Session, org_id: int) -> Org | None:

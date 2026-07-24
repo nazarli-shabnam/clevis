@@ -11,6 +11,7 @@ from src.core.db import User
 from src.repositories import installation_repo, org_membership_repo, org_repo
 from src.services import github_app
 from src.services.token_resolution import (
+    InsufficientOrgRole,
     NoGitHubTokenAvailable,
     resolve_org_token,
     resolve_owner_token,
@@ -198,8 +199,40 @@ def test_resolve_owner_token_requires_admin_role_when_min_role_is_admin(db, app_
     installation_repo.create(
         db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id
     )
-    with pytest.raises(NoGitHubTokenAvailable, match="Install the GitHub App"):
+    with pytest.raises(InsufficientOrgRole):
         resolve_owner_token(db, user_id=user.id, owner="acme", client_token=None, min_role="admin")
+
+
+def test_resolve_owner_token_rejects_insufficient_role_even_with_a_client_token(db, app_configured):
+    # Regression test (CodeRabbit finding on PR #264): a "member" must not be able to
+    # bypass the admin-only gate by supplying their own PAT -- that would let a
+    # client-supplied token stand in for the org-admin check AGENTS.md says must never
+    # be bypassed for privileged org actions (cache clear, workflow dispatch).
+    user = _make_user(db, "shabnam@e.com")
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org.id, user.id, role="member")
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id
+    )
+    with pytest.raises(InsufficientOrgRole):
+        resolve_owner_token(db, user_id=user.id, owner="acme", client_token="ghp_client", min_role="admin")
+
+
+def test_resolve_owner_token_matches_org_login_case_insensitively(db, app_configured):
+    # Regression test (CodeRabbit finding on PR #264): org_repo.get_by_login is an exact
+    # match, while installation_repo.get_for_org is already case-insensitive (#246) --
+    # a casing variant of a connected org's login must still resolve to its installation,
+    # not silently fall through to the personal-token path.
+    user = _make_user(db, "shabnam@e.com")
+    org = org_repo.get_or_create(db, github_login="OpenHikmah")
+    org_membership_repo.get_or_create(db, org.id, user.id, role="member")
+    installation_repo.create(
+        db, account_login="OpenHikmah", account_type="Organization", auth_mode="app", installation_id=99, org_id=org.id
+    )
+    with patch("src.services.token_resolution.github_app.get_installation_token", return_value="org-token") as mint:
+        token = resolve_owner_token(db, user_id=user.id, owner="openhikmah", client_token=None)
+    mint.assert_called_once_with(99)
+    assert token == "org-token"
 
 
 def test_resolve_owner_token_allows_admin_role_when_min_role_is_admin(db, app_configured):
