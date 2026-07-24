@@ -88,8 +88,30 @@ def test_resolve_org_token_falls_back_when_installation_token_mint_fails(db, app
 
 def test_resolve_org_token_raises_when_nothing_available(db, app_configured):
     org = org_repo.get_or_create(db, github_login="acme")
-    with pytest.raises(NoGitHubTokenAvailable):
+    with pytest.raises(NoGitHubTokenAvailable, match="Install the GitHub App"):
         resolve_org_token(db, org_id=org.id, account_login="acme", client_token=None)
+
+
+def test_resolve_org_token_error_distinguishes_mint_failure_from_no_installation(db, app_configured):
+    # Regression test for #250: an installation row exists (App was installed), but
+    # minting a token for it failed -- the error must say so, not tell the caller to
+    # "install" something that's already installed per the DB.
+    org = org_repo.get_or_create(db, github_login="acme")
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id
+    )
+    request = httpx.Request("POST", "https://api.github.com/app/installations/42/access_tokens")
+    response = httpx.Response(404, request=request)
+    with patch(
+        "src.services.token_resolution.github_app.get_installation_token",
+        side_effect=httpx.HTTPStatusError("not found", request=request, response=response),
+    ):
+        with pytest.raises(NoGitHubTokenAvailable) as exc_info:
+            resolve_org_token(db, org_id=org.id, account_login="acme", client_token=None)
+    message = str(exc_info.value)
+    assert "installation exists" in message
+    assert "minting a token" in message
+    assert "Install the GitHub App" not in message
 
 
 def test_resolve_personal_token_uses_installation_when_connected(db, app_configured):
@@ -105,5 +127,24 @@ def test_resolve_personal_token_uses_installation_when_connected(db, app_configu
 
 def test_resolve_personal_token_raises_when_nothing_available(db, app_configured):
     user = _make_user(db, "shabnam@e.com")
-    with pytest.raises(NoGitHubTokenAvailable):
+    with pytest.raises(NoGitHubTokenAvailable, match="Install the GitHub App"):
         resolve_personal_token(db, owner_user_id=user.id, account_login="shabnam", client_token=None)
+
+
+def test_resolve_personal_token_error_distinguishes_mint_failure_from_no_installation(db, app_configured):
+    user = _make_user(db, "shabnam@e.com")
+    installation_repo.create(
+        db, account_login="shabnam", account_type="User", auth_mode="app", installation_id=7, owner_user_id=user.id
+    )
+    request = httpx.Request("POST", "https://api.github.com/app/installations/7/access_tokens")
+    response = httpx.Response(404, request=request)
+    with patch(
+        "src.services.token_resolution.github_app.get_installation_token",
+        side_effect=httpx.HTTPStatusError("not found", request=request, response=response),
+    ):
+        with pytest.raises(NoGitHubTokenAvailable) as exc_info:
+            resolve_personal_token(db, owner_user_id=user.id, account_login="shabnam", client_token=None)
+    message = str(exc_info.value)
+    assert "installation exists" in message
+    assert "minting a token" in message
+    assert "Install the GitHub App" not in message
