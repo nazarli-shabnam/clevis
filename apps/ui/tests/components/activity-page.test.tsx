@@ -118,19 +118,35 @@ describe("ActivityPage", () => {
     renderPage();
 
     await waitFor(() => expect(tokensResolveMock).toHaveBeenCalledWith("hp"));
+    await waitFor(() => expect(githubEventsMock).toHaveBeenCalled());
     expect(await screen.findByText(/no events yet/)).toBeInTheDocument();
   });
 
-  it("shows an error instead of crashing when the events query runs without a resolved token", async () => {
+  it("still queries events when no PAT is saved, relying on the API's installation-token fallback (#251)", async () => {
     localStorage.setItem("default_org", "acme");
     tokensResolveMock.mockResolvedValue({ token: "" });
+    githubEventsMock.mockResolvedValue({ org: "acme", events: [] });
 
     renderPage();
 
-    // configured is false when token is empty, so the feed never queries and the
-    // configure prompt is shown -- no uncaught exception from a bare `.token` read.
-    expect(await screen.findByText(/No organization configured yet/)).toBeInTheDocument();
-    expect(githubEventsMock).not.toHaveBeenCalled();
+    // An org connected purely via GitHub App installation has no saved PAT, so
+    // resolveQuery resolves to an empty token -- the feed must still query (letting the
+    // API resolve an installation token server-side) instead of showing the "not
+    // configured" prompt, which would be a false negative for App-only orgs.
+    await waitFor(() => expect(githubEventsMock).toHaveBeenCalledWith("acme", ""));
+    expect(screen.queryByText(/No organization configured yet/)).not.toBeInTheDocument();
+    expect(await screen.findByText(/no events yet/)).toBeInTheDocument();
+  });
+
+  it("shows a retryable error when the events query fails with no working token available", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockResolvedValue({ token: "" });
+    githubEventsMock.mockRejectedValue(new Error("No GitHub token available for this organization"));
+
+    renderPage();
+
+    expect(await screen.findByText("No GitHub token available for this organization")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 
   it("renders the CI failure log and release timeline", async () => {
