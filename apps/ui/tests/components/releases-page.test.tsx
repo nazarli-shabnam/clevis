@@ -116,6 +116,22 @@ describe("ReleasesPage", () => {
     await waitFor(() => expect(screen.getByText("Failed to load releases.")).toBeInTheDocument());
   });
 
+  it("surfaces a token-resolve failure with retry instead of firing the release-timeline query", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockRejectedValue(new Error("No GitHub App installation found"));
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText("No GitHub App installation found")).toBeInTheDocument());
+    expect(releaseTimelineMock).not.toHaveBeenCalled();
+
+    tokensResolveMock.mockResolvedValueOnce({ token: "ghp_test" });
+    releaseTimelineMock.mockResolvedValueOnce({ org: "acme", releases: [RELEASE] });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(screen.getAllByText(/v1\.2\.0/).length).toBeGreaterThan(0));
+  });
+
   it("shows the empty state only when the query genuinely succeeds with no rows", async () => {
     localStorage.setItem("default_org", "acme");
     tokensResolveMock.mockResolvedValue({ token: "ghp_test" });

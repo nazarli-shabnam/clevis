@@ -100,6 +100,22 @@ describe("MyPRsPage", () => {
     await waitFor(() => expect(screen.getByText(/No open pull requests/)).toBeInTheDocument());
   });
 
+  it("surfaces a token-resolve failure with retry instead of firing the analytics query", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockRejectedValue(new Error("No GitHub App installation found"));
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText("No GitHub App installation found")).toBeInTheDocument());
+    expect(myPrsMock).not.toHaveBeenCalled();
+
+    tokensResolveMock.mockResolvedValueOnce({ token: "ghp_test" });
+    myPrsMock.mockResolvedValueOnce({ items: [PR_ITEM], total_count: 1, page: 1, per_page: 25 });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(screen.getByText("Fix bug")).toBeInTheDocument());
+  });
+
   it("advances to page 2 and re-queries when Next is clicked", async () => {
     localStorage.setItem("default_org", "acme");
     tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
