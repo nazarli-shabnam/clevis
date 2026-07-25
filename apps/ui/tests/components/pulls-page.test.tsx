@@ -112,7 +112,7 @@ describe("PullRequestsPage", () => {
     expect(rows[1]).toContain("Older PR");
   });
 
-  it("still renders other repos' pull requests when one repo's fetch fails", async () => {
+  it("still renders other repos' pull requests when one repo's fetch fails, with a partial-failure warning", async () => {
     localStorage.setItem("default_org", "acme");
     reposListMock.mockResolvedValue({
       org: "acme",
@@ -130,6 +130,35 @@ describe("PullRequestsPage", () => {
     renderPage();
 
     expect(await screen.findByText(/Still shows up/)).toBeInTheDocument();
+    // Regression test (CodeRabbit finding on PR #302): a partial failure must not look
+    // identical to a fully successful fetch -- the user should know results are incomplete.
+    expect(screen.getByText(/Couldn.t load pull requests for 1 of 2 repositories/)).toBeInTheDocument();
+  });
+
+  it("shows a retryable error instead of a misleading empty state when every repo's fetch fails", async () => {
+    localStorage.setItem("default_org", "acme");
+    reposListMock.mockResolvedValue({
+      org: "acme",
+      total: 2,
+      repos: [
+        { name: "api", full_name: "acme/api", private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: "https://github.com/acme/api" },
+        { name: "web", full_name: "acme/web", private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: "https://github.com/acme/web" },
+      ],
+    });
+    reposPullsMock.mockRejectedValue(new Error("GitHub API unreachable"));
+
+    renderPage();
+
+    expect(await screen.findByText(/Failed to load pull requests for all 2 repositories/)).toBeInTheDocument();
+    expect(screen.queryByText("No open pull requests")).not.toBeInTheDocument();
+    const retryButton = screen.getByRole("button", { name: /retry/i });
+
+    reposPullsMock.mockImplementation((_org: string, _owner: string, repo: string) =>
+      Promise.resolve({ repository: `acme/${repo}`, total: 0, pulls: repo === "api" ? [pull({ title: "Recovered PR" })] : [] }),
+    );
+    fireEvent.click(retryButton);
+
+    await waitFor(() => expect(screen.getByText(/Recovered PR/)).toBeInTheDocument());
   });
 
   it("shows an error with retry when the repo list fails to load", async () => {

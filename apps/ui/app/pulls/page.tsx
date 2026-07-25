@@ -21,6 +21,11 @@ interface PullRow extends PullSummary {
   repo: string
 }
 
+interface PullsFetchResult {
+  pulls: PullRow[]
+  failedRepoCount: number
+}
+
 export default function PullRequestsPage() {
   const { scope } = useActiveScope()
   const org = scope?.login ?? ""
@@ -49,8 +54,9 @@ export default function PullRequestsPage() {
 
   const pullsQuery = useQuery({
     queryKey: ["repos.pulls.all", org, repoNames.join(",")],
-    queryFn: async () => {
+    queryFn: async (): Promise<PullsFetchResult> => {
       const rows: PullRow[] = []
+      let failedRepoCount = 0
       for (let i = 0; i < repoNames.length; i += REPO_BATCH_SIZE) {
         const batch = repoNames.slice(i, i + REPO_BATCH_SIZE)
         const results = await Promise.all(
@@ -58,18 +64,26 @@ export default function PullRequestsPage() {
             api.repos
               .pulls(org, org, repo, token)
               .then((r) => r.pulls.map((p) => ({ ...p, repo })))
-              .catch(() => [] as PullRow[]),
+              .catch(() => {
+                failedRepoCount++
+                return [] as PullRow[]
+              }),
           ),
         )
         rows.push(...results.flat())
       }
-      return rows.sort((a, b) => b.created_at.localeCompare(a.created_at))
+      return { pulls: rows.sort((a, b) => b.created_at.localeCompare(a.created_at)), failedRepoCount }
     },
     enabled: queriesEnabled && !!reposQuery.data,
     retry: false,
   })
 
-  const pulls = pullsQuery.data ?? []
+  const pulls = pullsQuery.data?.pulls ?? []
+  const failedRepoCount = pullsQuery.data?.failedRepoCount ?? 0
+  // Distinguish "every repo failed to fetch" (a real outage -- show a retryable error,
+  // not a misleading "no open PRs") from a partial failure (show what did load, plus a
+  // warning) or complete success.
+  const allReposFailed = repoNames.length > 0 && failedRepoCount === repoNames.length
   const isLoading = reposQuery.isLoading || (reposQuery.isSuccess && pullsQuery.isLoading)
 
   return (
@@ -80,6 +94,11 @@ export default function PullRequestsPage() {
           <span className="section-title">Open Pull Requests</span>
           {pulls.length > 0 && <span className="stat-chip">{pulls.length} total</span>}
         </div>
+        {!isLoading && !allReposFailed && failedRepoCount > 0 && (
+          <p className="px-4 py-2 text-xs text-yellow-400/80 border-b border-border">
+            Couldn&rsquo;t load pull requests for {failedRepoCount} of {repoNames.length} repositories — results below are incomplete.
+          </p>
+        )}
         {!hasOrg ? (
           <div className="px-4 py-8">
             <p className="text-sm text-muted-foreground">
@@ -94,6 +113,12 @@ export default function PullRequestsPage() {
             message={reposQuery.error instanceof Error ? reposQuery.error.message : "Failed to load repositories."}
             onRetry={() => reposQuery.refetch()}
             retrying={reposQuery.isFetching}
+          />
+        ) : allReposFailed ? (
+          <SectionError
+            message={`Failed to load pull requests for all ${repoNames.length} repositories.`}
+            onRetry={() => pullsQuery.refetch()}
+            retrying={pullsQuery.isFetching}
           />
         ) : isLoading ? (
           <div className="p-4 flex flex-col gap-2">
