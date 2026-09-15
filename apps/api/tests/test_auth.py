@@ -541,6 +541,27 @@ def test_login_surfaces_pending_invitation(auth_client, db):
     assert pending[0]["org_login"] == "acme"
 
 
+def test_login_surfaces_multiple_pending_invitations(auth_client, db):
+    """_pending_invitations_for batches the org lookup in one query rather than looping
+    per invitation -- assert each invitation still resolves to its own org's login."""
+    owner = _setup_owner(auth_client, email="owner@example.com")
+    auth_client.post(
+        "/auth/register", json={"email": "member@example.com", "password": "supersecret1234"}
+    )
+    acme = org_repo.get_or_create(db, github_login="acme")
+    globex = org_repo.get_or_create(db, github_login="globex")
+    invitation_repo.create(db, org_id=acme.id, email="member@example.com", invited_by_user_id=owner["user"]["id"])
+    invitation_repo.create(db, org_id=globex.id, email="member@example.com", invited_by_user_id=owner["user"]["id"])
+
+    resp = auth_client.post(
+        "/auth/login", json={"email": "member@example.com", "password": "supersecret1234"}
+    )
+
+    assert resp.status_code == 200
+    org_logins = {inv["org_login"] for inv in resp.json()["pending_invitations"]}
+    assert org_logins == {"acme", "globex"}
+
+
 def test_login_omits_expired_invitation(auth_client, db):
     owner = _setup_owner(auth_client, email="owner@example.com")
     auth_client.post(
