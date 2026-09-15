@@ -36,7 +36,11 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "lcov", "json-summary"],
       include: ["app/**", "components/**", "lib/**", "hooks/**"],
-      exclude: ["**/*.d.ts", "components/ui/**"],
+      // An explicit `exclude` replaces v8's default list wholesale (which normally excludes
+      // test files itself) -- so test files co-located with source under lib/** etc. must be
+      // excluded here too, or diff-cover counts their own describe/it lines as "changed source"
+      // needing coverage and fails (e.g. members-href.test.ts scored 0%, see PR #424).
+      exclude: ["**/*.d.ts", "components/ui/**", "**/*.{test,spec}.{ts,tsx}"],
       // Global floor is a regression guard, not an aspirational target — most `app/**` page
       // components have no unit tests yet (large, integration-style route components; this
       // repo's convention so far is unit-testing extracted logic/hooks/components, not full
