@@ -30,6 +30,8 @@ _ACCEPTED_KEYS = {
     "pr_nudge_mode",
     "digest_poll_seconds",
     "digest_cadence",
+    # Issue #409: webhook_deliveries re-enqueue sweep
+    "webhook_requeue_poll_seconds",
 }
 _TTL = 60.0
 _cache: dict[str, tuple[str, float]] = {}

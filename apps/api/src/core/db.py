@@ -143,8 +143,10 @@ class WebhookDelivery(Base):
     # Exact verified raw body bytes, not re-serialized JSON, so a byte-for-byte copy of what
     # HMAC was checked against is preserved for any future signature re-verification/replay.
     payload: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    # queued | queue_failed -- queue_failed lets a future re-enqueue sweep find rows whose
-    # Redis XADD didn't succeed even though the payload itself was durably stored.
+    # queued | queue_failed | queue_abandoned -- queue_failed lets webhook_requeue_sweep.py
+    # (issue #409) find rows whose Redis XADD didn't succeed even though the payload itself
+    # was durably stored, and retry it. queue_abandoned is that same sweep giving up on a
+    # row past its max retry age -- permanently lost, not retried again.
     status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
