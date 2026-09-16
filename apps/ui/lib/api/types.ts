@@ -430,7 +430,7 @@ export interface PrCycleTimeWeek {
 
 export interface CockpitResponse {
   repo_count: number
-  member_count: number
+  member_count: number | null
   latest_score: number | null
   score_trend: number[]
   recent_events: OrgEvent[]

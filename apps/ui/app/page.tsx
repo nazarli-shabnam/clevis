@@ -234,7 +234,7 @@ export default function OverviewPage() {
           href={membersUrl}
           loading={cockpitQuery.isLoading}
           configured={configured}
-          value={cockpit?.member_count}
+          value={cockpit?.member_count ?? undefined}
         />
       </div>
 
