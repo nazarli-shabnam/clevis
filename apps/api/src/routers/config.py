@@ -20,6 +20,8 @@ _INT_KEYS = {
     "worker_poll_seconds",
     "gap_heal_poll_seconds",
     "gap_heal_stale_hours",
+    "membership_reconcile_poll_seconds",
+    "membership_reconcile_stale_hours",
     "pr_nudge_stale_days",
     "digest_poll_seconds",
 }

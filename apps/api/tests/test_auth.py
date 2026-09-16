@@ -839,6 +839,16 @@ def test_update_config_pr_nudge_stale_days_is_int_validated(config_client_owner)
     assert resp.status_code == 422
 
 
+@pytest.mark.parametrize("key", ["membership_reconcile_poll_seconds", "membership_reconcile_stale_hours"])
+def test_update_config_membership_reconcile_keys_are_int_validated(config_client_owner, key):
+    # Regression test for issue #415: these two keys are in app_config's _ACCEPTED_KEYS
+    # but were missing from this router's _INT_KEYS, so a non-numeric value passed
+    # validation and got persisted -- the reconcile loop/sweep would then silently fall
+    # back to its default every iteration instead of surfacing a 422 at write time.
+    resp = config_client_owner.put(f"/config/{key}", json={"value": "notanint"})
+    assert resp.status_code == 422
+
+
 def test_update_config_success(config_client_owner):
     with (
         patch("src.routers.config.set_config") as mock_set,
