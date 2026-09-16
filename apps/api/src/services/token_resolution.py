@@ -69,7 +69,7 @@ def _no_token_error(account_login: str, installation_exists: bool, *, personal: 
     if installation_exists:
         # Distinct from "never installed" -- the installation row is there, minting just
         # failed (stale/uninstalled on GitHub's side, or a transient API error; see the
-        # warning _from_installation already logged). Telling the caller to "install" it
+        # error _from_installation already logged). Telling the caller to "install" it
         # sends them down the wrong path when, per the DB, it's already installed.
         return NoGitHubTokenAvailable(
             f"A GitHub App installation exists for '{account_login}' but minting a token for it "
