@@ -1,6 +1,8 @@
 """Tests for checks.runner — verifies B-05 fix: org repos are fetched only once."""
 from unittest.mock import MagicMock, patch
 
+import httpx
+
 from checks.runner import run_all_checks
 
 
@@ -68,3 +70,45 @@ def test_run_all_checks_passes_repos_to_checks():
 
     # _get_all_pages inside github_checks must NOT be called (repos passed in)
     mock_check_pages.assert_not_called()
+
+
+def test_run_all_checks_personal_account_uses_installation_repos():
+    """A personal (User-type) account's repos must come from /installation/repositories,
+    not /orgs/{owner}/repos (which 404s for a User account)."""
+    with (
+        patch("checks.runner._get_all_pages", return_value=FAKE_REPOS) as mock_pages,
+        patch("checks.github_checks._get") as mock_get,
+    ):
+        mock_get.side_effect = lambda url, token: FAKE_BRANCH if "/branches/" in url else []
+        result = run_all_checks(owner="octocat", token="tok", account_type="User")
+
+    mock_pages.assert_called_once_with(
+        "https://api.github.com", "/installation/repositories", "tok", items_key="repositories"
+    )
+    mfa = next(c for c in result["checks"] if c["id"] == "organization_members_mfa_required")
+    assert mfa["status"] == "not_applicable"
+    # Every /orgs/{owner} call for MFA is skipped for a personal account -- _get should
+    # never see an org-detail URL.
+    assert all("/orgs/" not in call.args[0] for call in mock_get.call_args_list)
+
+
+def test_run_all_checks_personal_account_falls_back_to_user_repos_on_auth_mismatch():
+    """A legacy PAT (not an installation token) 401s/403s on /installation/repositories --
+    fall back to /user/repos."""
+    forbidden = httpx.HTTPStatusError(
+        "boom", request=MagicMock(), response=MagicMock(status_code=403),
+    )
+
+    def fake_pages(base_url, path, token, items_key=None):
+        if path == "/installation/repositories":
+            raise forbidden
+        assert path == "/user/repos?affiliation=owner&type=all"
+        return FAKE_REPOS
+
+    with (
+        patch("checks.runner._get_all_pages", side_effect=fake_pages),
+        patch("checks.github_checks._get", return_value=[]),
+    ):
+        result = run_all_checks(owner="octocat", token="tok", account_type="User")
+
+    assert result["repo_count"] == len(FAKE_REPOS)

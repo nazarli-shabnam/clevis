@@ -92,20 +92,25 @@ def _get(url: str, token: str) -> dict | list:
     return r.json()
 
 
-def _get_all_pages(base_url: str, path: str, token: str) -> list:
+def _get_all_pages(base_url: str, path: str, token: str, items_key: str | None = None) -> list:
+    """Paginate a GitHub list endpoint. `items_key` is for endpoints like
+    /installation/repositories that nest the array under a field instead of
+    returning it bare (unlike /orgs/{owner}/repos)."""
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
     results = []
-    url: str | None = f"{base_url}{path}?per_page=100"
+    sep = "&" if "?" in path else "?"
+    url: str | None = f"{base_url}{path}{sep}per_page=100"
     pages_fetched = 0
     with httpx.Client(timeout=20) as client:
         while url:
             r = _get_with_retry(client, url, headers)
             r.raise_for_status()
-            results.extend(r.json())
+            body = r.json()
+            results.extend(body[items_key] if items_key else body)
             pages_fetched += 1
             url = None
             for part in r.headers.get("Link", "").split(","):
@@ -149,7 +154,18 @@ class OrgMFARequired(Check):
         token: str,
         base_url: str = "https://api.github.com",
         repos: list | None = None,  # unused — MFA check operates at org level
+        account_type: str = "Organization",
     ) -> dict:
+        if account_type == "User":
+            # GitHub has no org-style MFA-requirement setting for a personal account, and
+            # a personal-install token can't read /user's own 2FA status either (that field
+            # is only visible to a user-to-server token, not an installation token) --
+            # there's no reliable equivalent to check, so this is excluded from scoring
+            # rather than guessed at.
+            return {
+                "status": "not_applicable",
+                "value": "MFA requirement doesn't apply to personal accounts",
+            }
         org = _get(f"{base_url}/orgs/{owner}", token)
         if "two_factor_requirement_enabled" not in org:
             return {
@@ -174,6 +190,7 @@ class BranchProtectionEnabled(Check):
         token: str,
         base_url: str = "https://api.github.com",
         repos: list | None = None,
+        account_type: str = "Organization",  # unused — these checks are already per-repo
     ) -> dict:
         if repos is None:
             repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
@@ -218,6 +235,7 @@ class SecretScanningEnabled(Check):
         token: str,
         base_url: str = "https://api.github.com",
         repos: list | None = None,
+        account_type: str = "Organization",  # unused — these checks are already per-repo
     ) -> dict:
         if repos is None:
             repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
@@ -247,6 +265,7 @@ class DependabotAlertsCheck(Check):
         token: str,
         base_url: str = "https://api.github.com",
         repos: list | None = None,
+        account_type: str = "Organization",  # unused — these checks are already per-repo
     ) -> dict:
         if repos is None:
             repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
@@ -301,6 +320,7 @@ class CodeScanningCheck(Check):
         token: str,
         base_url: str = "https://api.github.com",
         repos: list | None = None,
+        account_type: str = "Organization",  # unused — these checks are already per-repo
     ) -> dict:
         if repos is None:
             repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
@@ -354,6 +374,7 @@ class DefaultBranchNoForcePushCheck(Check):
         token: str,
         base_url: str = "https://api.github.com",
         repos: list | None = None,
+        account_type: str = "Organization",  # unused — these checks are already per-repo
     ) -> dict:
         if repos is None:
             repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)

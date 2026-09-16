@@ -49,6 +49,7 @@ def http(app):
 
 
 _DEFAULT_SAFE_MOCKS = {
+    "src.routers.analytics.get_account_type": {"return_value": "Organization"},
     "src.routers.analytics._safe_list_repos": {"return_value": [{"name": "api"}, {"name": "worker"}]},
     "src.routers.analytics._safe_member_count": {"return_value": (12, True)},
     "src.routers.analytics._safe_recent_events": {"return_value": ([], True)},
@@ -277,6 +278,25 @@ def test_cockpit_falls_back_to_client_supplied_token_header(http, db, mock_user)
         _stop_all(patchers)
 
     assert resp.status_code == 200
+
+
+def test_cockpit_threads_account_type_for_personal_account(http, db, mock_user):
+    """A personal (User-type) owner must resolve repos via the non-org path -- see
+    list_owner_repos in github_client.py. Regression test for the cockpit previously
+    always calling /orgs/{owner}/repos regardless of account type."""
+    patchers = _patch_all({"src.routers.analytics.get_account_type": {"return_value": "User"}})
+    _start_all(patchers)
+    try:
+        with (
+            patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
+            patch("src.routers.analytics._safe_list_repos", return_value=[{"name": "dotfiles"}]) as mock_repos,
+        ):
+            resp = http.get("/me/analytics/cockpit/octocat")
+    finally:
+        _stop_all(patchers)
+
+    assert resp.status_code == 200
+    mock_repos.assert_called_once_with("octocat", "ghp_test", "User")
 
 
 # ---------------------------------------------------------------------------

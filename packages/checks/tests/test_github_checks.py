@@ -28,6 +28,20 @@ def test_org_mfa_missing_field_returns_error():
     assert result["status"] == "error"
 
 
+def test_org_mfa_not_applicable_for_personal_account():
+    """A personal (User-type) account has no org-level MFA requirement setting, and no
+    GitHub call should even be attempted for it."""
+    check = OrgMFARequired()
+
+    def _fail_if_called(url, token):
+        raise AssertionError("MFA check must not call GitHub for a personal account")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", _fail_if_called)
+        result = check.run(owner="octocat", token="tok", account_type="User")
+    assert result["status"] == "not_applicable"
+
+
 def test_secret_scanning_null_security_and_analysis_does_not_crash():
     check = SecretScanningEnabled()
     repos = [{"name": "demo", "security_and_analysis": None}]

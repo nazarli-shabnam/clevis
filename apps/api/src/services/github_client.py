@@ -61,8 +61,10 @@ class GitHubClient:
                 return resp.json() if resp.text else {}
         raise RuntimeError("request loop exhausted without returning")
 
-    def request_paginated(self, path: str, params: dict | None = None) -> list:
-        """GET every page of a list endpoint, following the `Link: rel="next"` header."""
+    def request_paginated(self, path: str, params: dict | None = None, items_key: str | None = None) -> list:
+        """GET every page of a list endpoint, following the `Link: rel="next"` header.
+        `items_key` is for endpoints like /installation/repositories that nest the
+        array under a field instead of returning it bare."""
         results: list = []
         url: str | None = f"{self.base}{path}"
         next_params = dict(params or {})
@@ -83,7 +85,8 @@ class GitHubClient:
                         continue
                     resp.raise_for_status()
                     break
-                results.extend(resp.json())
+                body = resp.json()
+                results.extend(body[items_key] if items_key else body)
                 next_params = {}
                 url = None
                 for part in resp.headers.get("Link", "").split(","):
@@ -91,3 +94,22 @@ class GitHubClient:
                     if 'rel="next"' in part:
                         url = part.split(";")[0].strip().strip("<>")
         return results
+
+
+def list_owner_repos(client: "GitHubClient", owner: str, account_type: str) -> list[dict]:
+    """Repo list for either a GitHub org or a personal (User-type) account.
+    /orgs/{owner}/repos 404s for a User account. A personal account's token from
+    resolve_owner_token can be either a minted GitHub App installation token (works
+    with /installation/repositories, not with user-to-server endpoints) or a legacy
+    PAT (the reverse) -- callers here can't tell which, so try the installation-only
+    endpoint first and fall back to /user/repos on an auth-type mismatch (401/403).
+    Same contract as checks.runner._fetch_repos, kept separate since this layer uses
+    GitHubClient rather than the checks package's own httpx helpers."""
+    if account_type != "User":
+        return client.request_paginated(f"/orgs/{owner}/repos", params={"type": "all", "sort": "pushed"})
+    try:
+        return client.request_paginated("/installation/repositories", items_key="repositories")
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (401, 403):
+            return client.request_paginated("/user/repos", params={"affiliation": "owner", "type": "all", "sort": "pushed"})
+        raise

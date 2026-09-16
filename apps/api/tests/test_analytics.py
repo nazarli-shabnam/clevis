@@ -138,21 +138,23 @@ def test_overview_unexpected_exception_logs_and_returns_500(http):
     mock_logger.exception.assert_called_once_with("analytics_overview failed")
 
 
-# ── personal-account guard (issue #144) ────────────────────────────────────────
+# ── personal-account parity ─────────────────────────────────────────────────────
 
-def test_personal_overview_rejects_user_account_with_422(http):
+def test_personal_overview_runs_checks_for_user_account(http):
+    """A personal (User-type) account is no longer rejected -- it gets a real scan,
+    with account_type threaded into get_overview so checks.runner can use the
+    personal-account repo-listing path and mark org-only checks not_applicable."""
     with (
         patch("src.routers.analytics.get_account_type", return_value="User") as mock_account_type,
-        patch("src.routers.analytics.get_overview") as mock_overview,
+        patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW) as mock_overview,
     ):
         resp = http.post(
             "/me/analytics/overview",
             json={"owner": "octocat", "token": "ghp_test"},
         )
-    assert resp.status_code == 422
-    assert "Personal GitHub accounts aren't supported" in resp.json()["detail"]
+    assert resp.status_code == 200
     mock_account_type.assert_called_once()
-    mock_overview.assert_not_called()
+    mock_overview.assert_called_once_with(owner="octocat", token="ghp_test", account_type="User")
 
 
 def test_personal_overview_account_type_http_error_returns_400(http):

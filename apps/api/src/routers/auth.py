@@ -187,6 +187,8 @@ def _pending_invitations_for(db: Session, email: str) -> list[PendingInvitationS
     """Invitations sent to this email that are still pending and unexpired — surfaced
     at register/login so a user doesn't need the original invite link to discover them."""
     invitations = invitation_repo.list_pending_for_email(db, email)
+    if not invitations:
+        return []
     org_ids = [inv.org_id for inv in invitations]
     orgs_by_id = {org.id: org for org in db.query(Org).filter(Org.id.in_(org_ids)).all()}
     return [

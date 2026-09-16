@@ -567,6 +567,7 @@ def test_pending_invitations_for_batches_org_lookup_across_multiple_orgs():
         summaries = _pending_invitations_for(fake_db, "member@example.com")
 
     assert {s.org_login for s in summaries} == {"acme", "globex"}
+    fake_db.query.assert_called_once()
 
 
 def test_login_omits_expired_invitation(auth_client, db):

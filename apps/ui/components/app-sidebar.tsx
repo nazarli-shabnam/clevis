@@ -4,7 +4,7 @@ import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import { useQuery } from "@tanstack/react-query"
-import { GearSix, Check, SignOut, UserPlus, ArrowSquareOut, User } from "@phosphor-icons/react"
+import { GearSix, Check, SignOut, UserPlus, ArrowSquareOut, Plus } from "@phosphor-icons/react"
 import {
   Sidebar,
   SidebarContent,
@@ -146,9 +146,9 @@ function ProfileDropdown({
           {addInstallUrl && (
             <a
               href={addInstallUrl}
-              className="flex items-center gap-2 px-2 py-1.5 text-left rounded-md hover:bg-sidebar-accent/60 transition-colors text-sidebar-foreground/70 hover:text-sidebar-foreground"
+              className="flex items-center gap-2 px-2 py-1.5 text-left rounded-md hover:bg-sidebar-accent/60 transition-colors text-primary hover:text-primary font-medium"
             >
-              <User className="size-3.5 shrink-0" />
+              <Plus className="size-3.5 shrink-0" weight="bold" />
               <span className="text-[0.8125rem] flex-1">
                 {scopeOptions.some((o) => o.scope.kind === "personal")
                   ? "Add another account or org"
