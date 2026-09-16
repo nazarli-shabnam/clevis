@@ -233,7 +233,7 @@ jobs:
       # Full docker-compose stack (not direct processes) so this exercises the real images —
       # the same ones verified in Docker Build Verification — not just app code in isolation.
       - name: Start stack
-        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile backend --profile frontend up --build -d
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml up --build -d
 
       - name: Wait for API and UI to be reachable
         run: |

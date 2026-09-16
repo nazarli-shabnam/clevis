@@ -122,10 +122,10 @@ cd apps/worker && python src/worker.py
 
 Full stack via Docker:
 ```bash
-docker compose --profile backend --profile frontend up --build
+docker compose up --build
 ```
 
-Docker Compose profiles: `backend` (db + api + worker), `frontend` (db + ui), default = db only.
+No Compose profiles: every service starts on a plain `docker compose up` (commit `db3d859` deliberately removed profiles so Coolify's deploy, which doesn't pass `--profile` flags, brings up the whole stack) — for a db-only local dev setup, name the service explicitly: `docker compose up db`.
 
 ## Commands
 

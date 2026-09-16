@@ -10,7 +10,7 @@ Thanks for helping improve clevis. This document describes how to work in the re
 | `apps/api` | Python API |
 | `apps/worker` | Python worker |
 | `packages/checks` | `clevis-checks` shared Python library |
-| `docker-compose.yml` | Full-stack Docker Compose (profiles: backend, frontend) |
+| `docker-compose.yml` | Full-stack Docker Compose (no profiles -- everything starts on a plain `up`) |
 
 ## Prerequisites
 
@@ -182,7 +182,7 @@ Run locally, from the **repository root**:
 # those on first run — Postgres only sets the password at first init, so switching .env
 # credentials afterward will fail with "password authentication failed". If that happens,
 # `docker volume rm clevis_pgdata` to force a clean re-init (you'll lose local dev DB data).
-docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile backend --profile frontend up --build -d
+docker compose -f docker-compose.yml -f docker-compose.ci.yml up --build -d
 
 # Wait for both to respond (compose healthchecks cover db/api; poll ui yourself):
 curl http://localhost:8080/healthz
