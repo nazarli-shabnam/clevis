@@ -1,12 +1,14 @@
 """S5 PR 2: periodically re-sync tenants whose activity_sync_cursors row has gone stale.
 
 Reuses PR #342's install-time backfill job type (github.backfill_repo_events) unchanged --
-gap-healing is that same job, triggered on a schedule instead of only at install time. Only
-re-syncs tenants that already have a cursor row (i.e. already synced at least once, via install
-time or a previous sweep run): a tenant whose install-time backfill never completed (best-effort,
-per PR #342) stays unsynced until a real retry mechanism for THAT exists -- deliberately out of
-scope here, which is about keeping already-synced tenants fresh, not guaranteeing eventual sync
-for a failed install.
+gap-healing is that same job, triggered on a schedule instead of only at install time.
+
+Issue #410: also covers tenants with a connected installation but *no* cursor row at all --
+that means the install-time backfill (best-effort, per PR #342's
+_enqueue_backfill_best_effort) never even got a job queued, or the job never completed, and
+there's no other retry mechanism for that first backfill. Treated as maximally stale, sourced
+from the installation row itself (see _installation_account) since there's no cursor payload
+to read account_login/account_type from.
 
 Called from an asyncio background loop started in main.py's lifespan (see gap_heal_loop.py),
 mirroring apps/worker's own poll-loop shape rather than pulling in a new scheduler dependency.
@@ -20,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from src.core.app_config import get_config
 from src.core.db import set_session_tenant
+from src.repositories import installation_repo
 from src.services import backfill_service
 from src.services.sweep_lock import try_acquire_sweep_slot
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token, resolve_personal_token
@@ -58,6 +61,22 @@ def _has_active_backfill_job(db: Session, tenant_id: int) -> bool:
     return row is not None
 
 
+def _installation_account(db: Session, *, kind: str, org_id: int | None, personal_user_id: int | None) -> tuple[str | None, str | None]:
+    """Resolve (account_login, account_type) for a tenant that has no activity_sync_cursors
+    row yet -- the only place that payload shape can come from without a prior successful
+    backfill (issue #410) is the connected installation itself. Returns (None, None) if no
+    installation with an actual installation_id is connected -- nothing to backfill from."""
+    installations = (
+        installation_repo.list_for_org(db, org_id)
+        if kind == "org"
+        else installation_repo.list_for_user(db, personal_user_id)
+    )
+    installed = [i for i in installations if i.installation_id is not None]
+    if not installed:
+        return None, None
+    return installed[0].account_login, installed[0].account_type
+
+
 def run_gap_heal_sweep(db: Session) -> None:
     stale_hours = _read_stale_hours()
     cutoff = datetime.now(timezone.utc) - timedelta(hours=stale_hours)
@@ -80,10 +99,20 @@ def run_gap_heal_sweep(db: Session) -> None:
             {"tenant_id": tenant_id},
         ).fetchone()
         if cursor_row is None:
-            continue
-        account_login, account_type, last_synced_at = cursor_row
-        if last_synced_at is not None and last_synced_at >= cutoff:
-            continue
+            # Issue #410: no cursor row means the install-time backfill (installations.py's
+            # best-effort _enqueue_backfill_best_effort) either never got a job queued or
+            # never completed -- there's no other retry mechanism for that first backfill.
+            # Treat "no cursor" as maximally stale and give it the same one-shot enqueue
+            # attempt a stale cursor would get, sourced from the installation row itself.
+            account_login, account_type = _installation_account(
+                db, kind=kind, org_id=org_id, personal_user_id=personal_user_id
+            )
+            if account_login is None:
+                continue
+        else:
+            account_login, account_type, last_synced_at = cursor_row
+            if last_synced_at is not None and last_synced_at >= cutoff:
+                continue
         # Acquired before the active-job check (not after) so the whole check-then-enqueue
         # window for this tenant is mutually exclusive across concurrent sweep passes (e.g.
         # two API replicas) -- a losing process skips this tenant entirely this tick rather
