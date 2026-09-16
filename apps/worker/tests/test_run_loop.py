@@ -72,3 +72,20 @@ def test_run_wraps_a_claimed_job_in_a_job_heartbeat(worker_db, monkeypatch):
     # run() actually wrapped the claimed job rather than calling process_job bare.
     assert heartbeat_at is not None
     assert heartbeat_at > datetime.now(timezone.utc) - timedelta(seconds=10)
+
+
+def test_run_logs_full_exception_on_generic_poll_error(monkeypatch, caplog):
+    # Regression test for issue #413: the generic `except Exception` branch used to log
+    # only type(error).__name__ -- a single word, no message/stack -- making a real
+    # handler bug indistinguishable from any other exception in production logs.
+    monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 1)
+    monkeypatch.setattr(worker, "_reclaim_stale_jobs", MagicMock(side_effect=RuntimeError("boom")))
+    monkeypatch.setattr(worker.time, "sleep", MagicMock(side_effect=_StopLoop))
+
+    with caplog.at_level("ERROR", logger="worker"):
+        try:
+            worker.run()
+        except _StopLoop:
+            pass
+
+    assert any("boom" in r.exc_text for r in caplog.records if r.exc_info)

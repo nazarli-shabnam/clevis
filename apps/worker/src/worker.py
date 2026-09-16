@@ -615,8 +615,8 @@ def run() -> None:
                         process_job(conn, *row)
         except psycopg.OperationalError:
             log.error("database connection failed, retrying in %ds", poll_seconds)
-        except Exception as error:
-            log.error("worker poll error: %s", type(error).__name__)
+        except Exception:
+            log.exception("worker poll error")
 
         time.sleep(poll_seconds)
 

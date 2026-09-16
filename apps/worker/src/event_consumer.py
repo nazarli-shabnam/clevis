@@ -487,8 +487,8 @@ def run() -> None:
         try:
             redis_client = _redis_client()
             _ensure_group(redis_client)
-        except (redis.RedisError, OSError) as error:
-            log.error("event consumer initialization error: %s", type(error).__name__)
+        except (redis.RedisError, OSError):
+            log.exception("event consumer initialization error")
             redis_client = None
             time.sleep(5)
     log.info("event consumer started, group=%s consumer=%s", _GROUP_NAME, _CONSUMER_NAME)
@@ -515,11 +515,11 @@ def run() -> None:
                             # the batch on the shared connection.
                             log.exception("failed to process stream entry %s", entry_id)
                             _rollback_quietly(pg_conn)
-        except (psycopg.OperationalError, redis.RedisError) as error:
-            log.error("event consumer connection error: %s", type(error).__name__)
+        except (psycopg.OperationalError, redis.RedisError):
+            log.exception("event consumer connection error")
             time.sleep(5)
-        except Exception as error:
-            log.error("event consumer loop error: %s", type(error).__name__)
+        except Exception:
+            log.exception("event consumer loop error")
             time.sleep(5)
 
 
