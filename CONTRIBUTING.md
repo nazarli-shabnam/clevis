@@ -146,26 +146,17 @@ python -m compileall apps/api/src apps/worker/src
 
 ### Docker images
 
-From the **repository root** (both `apps/api` and `apps/worker` build from the repo root so their images can install the shared `packages/checks` dependency; `apps/ui` has no such dependency and builds from its own directory):
+CI's `Docker Build Verification` job (issue #418) builds all three images via `docker
+compose ... up --build -d --wait` and blocks until every service's own healthcheck
+(already defined in `docker-compose.yml`) reports healthy — API's actually calls its own
+`/healthz` internally, worker's checks its heartbeat files, UI's curls `/api/health`. This
+runs each image the way it runs in production (through `entrypoint.sh`, against a real
+throwaway Postgres/Redis), not just proving the Dockerfile's instructions succeed. If you
+change a Dockerfile or `entrypoint.sh`, run the equivalent locally before opening a PR:
 
 ```bash
-docker build -t clevis-api -f apps/api/Dockerfile .
-docker build -t clevis-worker -f apps/worker/Dockerfile .
-docker build -t clevis-ui -f apps/ui/Dockerfile apps/ui
-```
-
-CI also smoke-tests the API and worker images after building — it runs each image's entrypoint module directly (`import src.main` / `import worker`) with dummy env vars, bypassing `entrypoint.sh` so no live DB is required. This catches a class of bug that a plain `docker build` can't: an image that builds fine but is missing a runtime dependency (e.g. `packages/checks` not being installed), which only surfaces once the container actually runs. If you change either Dockerfile, run the equivalent locally before opening a PR:
-
-```bash
-docker run --rm --entrypoint python \
-  -e DATABASE_URL=postgresql+psycopg://smoke:smoke@localhost:5432/smoke \
-  -e JOB_SECRET_KEY=local-smoke-test-key -e AUTH_SECRET=local-smoke-test-secret \
-  clevis-api -c "import src.main"
-
-docker run --rm --entrypoint python \
-  -e DATABASE_URL=postgresql://smoke:smoke@localhost:5432/smoke \
-  -e JOB_SECRET_KEY=local-smoke-test-key \
-  clevis-worker -c "import worker"
+docker compose -f docker-compose.yml -f docker-compose.ci.yml up --build -d --wait
+docker compose -f docker-compose.yml -f docker-compose.ci.yml down -v
 ```
 
 ### E2E tests

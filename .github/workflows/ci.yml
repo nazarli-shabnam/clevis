@@ -294,32 +294,37 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build API image
-        run: docker build -t clevis-api -f apps/api/Dockerfile .
-
-      - name: Build Worker image
-        run: docker build -t clevis-worker -f apps/worker/Dockerfile .
-
-      - name: Build UI image
-        run: docker build -t clevis-ui -f apps/ui/Dockerfile apps/ui
-
-      # Building an image only proves the Dockerfile's instructions succeed — it does not
-      # prove the app can actually import/start (e.g. a missing runtime dependency like
-      # packages/checks not being installed in an image). Smoke-test by importing the
-      # entrypoint module directly, bypassing entrypoint.sh so no live DB is needed.
-      - name: Smoke-test API image
+      # Dummy secrets, same pattern as the "e2e" job's -- this stack is thrown away at the
+      # end of the job, nothing here is a real credential.
+      - name: Write CI env file
         run: |
-          docker run --rm --entrypoint python \
-            -e DATABASE_URL=postgresql+psycopg://smoke:smoke@localhost:5432/smoke \
-            -e JOB_SECRET_KEY=ci-smoke-test-key-not-for-production-use-000 \
-            -e AUTH_SECRET=ci-smoke-test-secret-not-for-production-use-00 \
-            -e REDIS_URL=redis://smoke:6379/0 \
-            clevis-api -c "import src.main"
+          cat > .env <<'EOF'
+          DB_USER=clevis
+          DB_PASSWORD=clevis
+          DB_NAME=clevis
+          JOB_SECRET_KEY=ci-docker-secret-key-not-for-production-use-00
+          AUTH_SECRET=ci-docker-auth-secret-not-for-production-use-000
+          NEXT_PUBLIC_API_BASE=http://localhost:8080
+          NEXT_PUBLIC_GITHUB_APP_SLUG=
+          REDIS_PASSWORD=ci-docker-redis-password-not-for-production-00
+          EOF
 
-      - name: Smoke-test Worker image
-        run: |
-          docker run --rm --entrypoint python \
-            -e DATABASE_URL=postgresql://smoke:smoke@localhost:5432/smoke \
-            -e JOB_SECRET_KEY=ci-smoke-test-key-not-for-production-use-000 \
-            -e REDIS_URL=redis://smoke:6379/0 \
-            clevis-worker -c "import worker"
+      # A build-only check (previously: docker build + docker run --entrypoint python -c
+      # "import ...") only proves the Dockerfile's instructions succeed and the module
+      # imports -- it never executed entrypoint.sh (env-var validation, alembic upgrade
+      # head, the clevis_api role switch), booted uvicorn/the worker poll loop against a
+      # real DB, or smoke-tested the UI image at all (issue #418). `--wait` blocks until
+      # every service's own healthcheck (already defined in docker-compose.yml -- API
+      # curls its own /healthz, worker checks its heartbeat files, UI curls /api/health)
+      # reports healthy, or fails the job if one doesn't -- so this now proves each image
+      # actually runs the way it runs in production, not just that it builds.
+      - name: Build and start the full stack
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml up --build -d --wait
+
+      - name: Stack logs (on failure)
+        if: failure()
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml logs
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml down -v
