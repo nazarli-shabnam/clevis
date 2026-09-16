@@ -18,5 +18,6 @@ class Check:
         token: str,
         base_url: str = "https://api.github.com",
         repos: list | None = None,
+        account_type: str = "Organization",
     ) -> dict:
         raise NotImplementedError
