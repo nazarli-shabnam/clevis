@@ -148,8 +148,9 @@ python -m compileall apps/api/src apps/worker/src
 
 CI's `Docker Build Verification` job (issue #418) builds all three images via `docker
 compose ... up --build -d --wait` and blocks until every service's own healthcheck
-(already defined in `docker-compose.yml`) reports healthy — API's actually calls its own
-`/healthz` internally, worker's checks its heartbeat files, UI's curls `/api/health`. This
+(already defined in `docker-compose.yml`) reports healthy — API's hits its own `/healthz`
+via Python's urllib, worker's checks its heartbeat files, UI's checks `/api/health` via
+Node's `http` client (not curl — the runner image has none). This
 runs each image the way it runs in production (through `entrypoint.sh`, against a real
 throwaway Postgres/Redis), not just proving the Dockerfile's instructions succeed. If you
 change a Dockerfile or `entrypoint.sh`, run the equivalent locally before opening a PR:

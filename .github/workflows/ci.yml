@@ -314,9 +314,11 @@ jobs:
       # imports -- it never executed entrypoint.sh (env-var validation, alembic upgrade
       # head, the clevis_api role switch), booted uvicorn/the worker poll loop against a
       # real DB, or smoke-tested the UI image at all (issue #418). `--wait` blocks until
-      # every service's own healthcheck (already defined in docker-compose.yml -- API
-      # curls its own /healthz, worker checks its heartbeat files, UI curls /api/health)
-      # reports healthy, or fails the job if one doesn't -- so this now proves each image
+      # every service's own healthcheck (already defined in docker-compose.yml -- API's
+      # hits its own /healthz via Python's urllib, worker's checks its heartbeat files,
+      # UI's checks /api/health via Node's http client, not curl -- see that file's own
+      # comment on why) reports healthy, or fails the job if one doesn't -- so this now
+      # proves each image
       # actually runs the way it runs in production, not just that it builds.
       - name: Build and start the full stack
         run: docker compose -f docker-compose.yml -f docker-compose.ci.yml up --build -d --wait
