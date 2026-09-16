@@ -130,3 +130,33 @@ def test_personal_clear_caches_rejects_org_member_supplying_own_token(cache_clie
         json={"dry_run": False, "token": "ghp_testtoken123456789012345678901234"},
     )
     assert resp.status_code == 403
+
+
+def test_personal_clear_caches_dry_run_rejects_org_member(cache_client, db):
+    # Regression test for issue #416: the dry_run branch skipped resolve_owner_token
+    # entirely, so a plain "member" of a connected org (or anyone with no membership at
+    # all) could dry-run against the org's repo with no admin check and still get a
+    # cache.clear.dry_run audit row written. check_owner_role must now run before the
+    # dry_run branch too, not just on the non-dry-run path.
+    db.add(User(id=_USER.id, email=_USER.email, name=None, password_hash=None, is_workspace_admin=False))
+    db.commit()
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org.id, _USER.id, role="member")
+    resp = cache_client.post(
+        "/me/repos/acme/demo/actions-caches/clear",
+        json={"dry_run": True},
+    )
+    assert resp.status_code == 403
+
+
+def test_personal_clear_caches_dry_run_allows_org_admin(cache_client, db):
+    db.add(User(id=_USER.id, email=_USER.email, name=None, password_hash=None, is_workspace_admin=False))
+    db.commit()
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org.id, _USER.id, role="admin")
+    resp = cache_client.post(
+        "/me/repos/acme/demo/actions-caches/clear",
+        json={"dry_run": True},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["dry_run"] is True

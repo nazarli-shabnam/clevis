@@ -11,6 +11,7 @@ from src.services.github_client import GitHubClient
 from src.services.token_resolution import (
     InsufficientOrgRole,
     NoGitHubTokenAvailable,
+    check_owner_role,
     resolve_owner_token,
 )
 
@@ -61,6 +62,10 @@ def personal_clear_caches(
     db: Session = Depends(get_db),
     user: UserOut = Depends(require_auth),
 ):
+    try:
+        check_owner_role(db, user_id=user.id, owner=owner, min_role="admin")
+    except InsufficientOrgRole as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     token = ""
     if not payload.dry_run:
         try:

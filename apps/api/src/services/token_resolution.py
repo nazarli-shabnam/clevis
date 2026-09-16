@@ -107,6 +107,25 @@ def resolve_personal_token(db: Session, *, owner_user_id: int, account_login: st
     raise _no_token_error(account_login, installation is not None, personal=True)
 
 
+def check_owner_role(db: Session, *, user_id: int, owner: str, min_role: Literal["member", "admin"]) -> None:
+    """Raise InsufficientOrgRole if `owner` is a Clevis org the caller has a membership
+    row in with a role below `min_role`. No-op otherwise -- `owner` isn't a Clevis org,
+    or the caller has sufficient role, or the caller has no membership row at all
+    (bring-your-own-token territory, same as resolve_owner_token's fallthrough).
+
+    Split out of resolve_owner_token so a caller that needs the role gate enforced but
+    doesn't need a token yet (e.g. a dry-run action that makes no GitHub call) doesn't
+    have to also satisfy token resolution just to pass the check.
+    """
+    org = org_repo.get_by_login_ci(db, owner)
+    if org is None:
+        return
+    org = org_repo.ensure_tenant_linked(db, org)
+    membership = tenant_repo.get_membership(db, org.tenant_id, user_id)
+    if membership is not None and _ROLE_RANK.get(membership.role, -1) < _ROLE_RANK[min_role]:
+        raise InsufficientOrgRole(f"'{min_role}' access to '{owner}' is required for this action.")
+
+
 def resolve_owner_token(
     db: Session,
     *,
@@ -138,12 +157,11 @@ def resolve_owner_token(
     honoring a client-supplied token in that case would let a "member" trigger an
     admin-only action just by pasting their own PAT, undermining the role gate above.
     """
+    check_owner_role(db, user_id=user_id, owner=owner, min_role=min_role)
     org = org_repo.get_by_login_ci(db, owner)
     if org is not None:
         org = org_repo.ensure_tenant_linked(db, org)
         membership = tenant_repo.get_membership(db, org.tenant_id, user_id)
         if membership is not None:
-            if _ROLE_RANK.get(membership.role, -1) < _ROLE_RANK[min_role]:
-                raise InsufficientOrgRole(f"'{min_role}' access to '{owner}' is required for this action.")
             return resolve_org_token(db, org_id=org.id, account_login=owner, client_token=client_token)
     return resolve_personal_token(db, owner_user_id=user_id, account_login=owner, client_token=client_token)
