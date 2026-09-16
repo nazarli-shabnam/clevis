@@ -33,7 +33,8 @@ from src.schemas.security import (
     SecurityMatrixResponse,
     VulnCounts,
 )
-from src.services.github_client import GitHubClient, github_error as _github_error
+from src.services.analytics_service import get_account_type
+from src.services.github_client import GitHubClient, github_error as _github_error, list_owner_repos
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_owner_token
 
 router = APIRouter()
@@ -244,9 +245,11 @@ def _repo_row(client: GitHubClient, owner: str, repo: dict, alerts_by_repo: dict
     )
 
 
-def _build_matrix(owner: str, token: str, db: Session | None = None, tenant_id: int | None = None) -> SecurityMatrixResponse:
+def _build_matrix(
+    owner: str, token: str, db: Session | None = None, tenant_id: int | None = None, account_type: str = "Organization"
+) -> SecurityMatrixResponse:
     client = GitHubClient(token)
-    repos = client.request_paginated(f"/orgs/{owner}/repos", params={"type": "all", "sort": "pushed"})
+    repos = list_owner_repos(client, owner, account_type)
     scanned = repos[:_MAX_REPOS_FOR_MATRIX]
 
     alerts_by_repo = None
@@ -284,7 +287,8 @@ def personal_security_matrix(
         raise HTTPException(status_code=400, detail=str(exc))
     tenant_id = _security_connected_tenant(db, user.id, owner)
     try:
-        return _build_matrix(owner, token, db=db, tenant_id=tenant_id)
+        account_type = get_account_type(owner, token)
+        return _build_matrix(owner, token, db=db, tenant_id=tenant_id, account_type=account_type)
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise _github_error(exc) from exc
 

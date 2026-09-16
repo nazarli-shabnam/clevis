@@ -35,7 +35,7 @@ from src.schemas.analytics import (
     ScanHistoryEntry,
 )
 from src.services.analytics_service import get_account_type, get_overview
-from src.services.github_client import GitHubClient, github_error as _github_error
+from src.services.github_client import GitHubClient, github_error as _github_error, list_owner_repos
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token, resolve_owner_token
 
 logger = logging.getLogger(__name__)
@@ -48,9 +48,9 @@ _MAX_REPOS_FOR_AGGREGATES = 30
 _CACHE_JOB_TYPE = "github.clear_actions_cache"
 
 
-async def _run_overview(owner: str, token: str) -> AnalyticsResponse:
+async def _run_overview(owner: str, token: str, account_type: str = "Organization") -> AnalyticsResponse:
     try:
-        return await anyio.to_thread.run_sync(lambda: get_overview(owner=owner, token=token))
+        return await anyio.to_thread.run_sync(lambda: get_overview(owner=owner, token=token, account_type=account_type))
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=400, detail=f"GitHub API error: {exc.response.status_code}")
     except httpx.RequestError:
@@ -144,12 +144,7 @@ async def personal_analytics_overview(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     account_type = await _get_account_type(payload.owner, token)
-    if account_type == "User":
-        raise HTTPException(
-            status_code=422,
-            detail="Personal GitHub accounts aren't supported for security scanning yet. Connect a GitHub organization instead.",
-        )
-    result = await _run_overview(payload.owner, token)
+    result = await _run_overview(payload.owner, token, account_type=account_type)
     # payload.owner here can be any GitHub account the user has a token for (bring-your-own-
     # token path), not necessarily a Clevis org -- the scan row is associated with the
     # scanning user's own personal tenant, consistent with the existing scanned_by_user_id-
@@ -342,9 +337,9 @@ def personal_analytics_export(
 # ---------------------------------------------------------------------------
 
 
-def _safe_list_repos(owner: str, token: str) -> list[dict]:
+def _safe_list_repos(owner: str, token: str, account_type: str = "Organization") -> list[dict]:
     client = GitHubClient(token)
-    return client.request_paginated(f"/orgs/{owner}/repos", params={"type": "all", "sort": "pushed"})
+    return list_owner_repos(client, owner, account_type)
 
 
 def _safe_member_count(owner: str, token: str) -> tuple[int, bool]:
@@ -816,8 +811,9 @@ async def personal_analytics_cockpit(
     score_trend = [s["score"] for s in reversed(scans)]
     cache_job_success_rate = _cache_job_success_rate(db)
 
+    account_type = await _get_account_type(owner, token)
     try:
-        repos = await anyio.to_thread.run_sync(lambda: _safe_list_repos(owner, token))
+        repos = await anyio.to_thread.run_sync(lambda: _safe_list_repos(owner, token, account_type))
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise _github_error(exc) from exc
     repo_names = [r["name"] for r in repos]

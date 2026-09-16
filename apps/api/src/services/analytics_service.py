@@ -17,9 +17,9 @@ def get_account_type(owner: str, token: str, base_url: str | None = None) -> str
     return r.json().get("type", "User")
 
 
-def get_overview(owner: str, token: str) -> dict:
+def get_overview(owner: str, token: str, account_type: str = "Organization") -> dict:
     base_url = settings.github_api_base
-    report = run_all_checks(owner=owner, token=token, base_url=base_url)
+    report = run_all_checks(owner=owner, token=token, base_url=base_url, account_type=account_type)
     checks = report["checks"]
     scored = [c for c in checks if c["status"] != "not_applicable"]
     failed = [c for c in scored if c["status"] in ("fail", "error")]
