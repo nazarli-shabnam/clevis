@@ -141,6 +141,7 @@ def test_my_view_falls_back_to_users_github_login_when_user_endpoint_unresolvabl
 
     with (
         patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
+        patch("src.routers.analytics.get_account_type", return_value="Organization"),
         patch("src.routers.analytics.GitHubClient") as mock_client,
     ):
         mock_client.return_value.request.side_effect = _request_side_effect
@@ -187,6 +188,7 @@ def test_my_view_success(http):
 
     with (
         patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
+        patch("src.routers.analytics.get_account_type", return_value="Organization"),
         patch("src.routers.analytics.GitHubClient") as mock_client,
     ):
         mock_client.return_value.request.side_effect = _request_side_effect
@@ -234,6 +236,7 @@ def test_my_view_repos_fetch_failure_degrades_to_empty_recent_runs(http):
 
     with (
         patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
+        patch("src.routers.analytics.get_account_type", return_value="Organization"),
         patch("src.routers.analytics.GitHubClient") as mock_client,
     ):
         mock_client.return_value.request.side_effect = _request_side_effect
@@ -243,6 +246,41 @@ def test_my_view_repos_fetch_failure_degrades_to_empty_recent_runs(http):
             response=httpx.Response(500, request=httpx.Request("GET", "https://api.github.com/orgs/acme/repos")),
         )
         resp = http.get("/me/github/my-view?owner=acme")
+
+    assert resp.status_code == 200
+    assert resp.json()["my_recent_runs"] == []
+
+
+def test_my_view_resolves_account_type_for_repo_listing(http):
+    """A User-account owner must not hit /orgs/{owner}/repos for the recent-runs repo
+    fan-out (that endpoint 404s for User accounts) -- my-view should resolve account_type
+    the same way personal_analytics_cockpit does and route through the User-account path."""
+
+    def _request_side_effect(method, path, params=None):
+        if path == "/user":
+            return {"login": "octocat"}
+        if path == "/orgs/octocat/repos":
+            raise AssertionError("must not call the org repos endpoint for a User account")
+        if path == "/installation/repositories":
+            return {"repositories": [{"name": "demo"}]}
+        if path == "/search/issues":
+            return {"items": []}
+        if path == "/repos/octocat/demo/actions/runs":
+            return {"workflow_runs": []}
+        return {}
+
+    with (
+        patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
+        patch("src.routers.analytics.get_account_type", return_value="User"),
+        patch("src.routers.analytics.GitHubClient") as mock_client,
+    ):
+        mock_client.return_value.request.side_effect = _request_side_effect
+        mock_client.return_value.request_paginated.side_effect = (
+            lambda path, params=None, items_key=None: _request_side_effect("GET", path, params).get(
+                items_key or "items", []
+            )
+        )
+        resp = http.get("/me/github/my-view?owner=octocat")
 
     assert resp.status_code == 200
     assert resp.json()["my_recent_runs"] == []
@@ -277,6 +315,7 @@ def test_my_view_search_failure_degrades_each_list_to_empty_but_still_returns_re
 
     with (
         patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
+        patch("src.routers.analytics.get_account_type", return_value="Organization"),
         patch("src.routers.analytics.GitHubClient") as mock_client,
     ):
         mock_client.return_value.request.side_effect = _request_side_effect

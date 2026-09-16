@@ -257,6 +257,47 @@ def test_cockpit_not_degraded_when_every_safe_call_succeeds_but_returns_empty(ht
     assert resp.json()["degraded"] is False
 
 
+def test_cockpit_user_account_reports_member_count_not_applicable(http, db, mock_user):
+    """A personal (User-type) owner has no "members" concept -- member_count must come back
+    null (not a fallback 0, which would look identical to a real empty org) and the response
+    must not be flagged degraded, since this isn't a failed call."""
+    overrides = dict(_DEFAULT_SAFE_MOCKS)
+    overrides["src.routers.analytics.get_account_type"] = {"return_value": "User"}
+    del overrides["src.routers.analytics._safe_member_count"]  # exercise the real account_type branch
+    patchers = [patch(target, **kwargs) for target, kwargs in overrides.items()]
+    _start_all(patchers)
+    try:
+        with patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"):
+            resp = http.get("/me/analytics/cockpit/octocat")
+    finally:
+        _stop_all(patchers)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["member_count"] is None
+    assert body["degraded"] is False
+
+
+def test_safe_open_pr_count_uses_user_qualifier_for_personal_accounts(http):
+    from src.routers import analytics
+
+    with patch("src.routers.analytics.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = {"total_count": 3}
+        count, ok = analytics._safe_open_pr_count("octocat", "ghp_test", account_type="User")
+
+    assert (count, ok) == (3, True)
+    called_query = mock_client.return_value.request.call_args.kwargs["params"]["q"]
+    assert called_query.startswith("user:octocat ")
+
+
+def test_safe_member_count_returns_not_applicable_for_personal_accounts(http):
+    from src.routers import analytics
+
+    count, ok = analytics._safe_member_count("octocat", "ghp_test", account_type="User")
+
+    assert (count, ok) == (None, True)
+
+
 def test_cockpit_fails_when_repo_list_fails(http, db, mock_user):
     patchers = _patch_all({"src.routers.analytics._safe_list_repos": {"side_effect": _HTTP_ERROR}})
     _start_all(patchers)

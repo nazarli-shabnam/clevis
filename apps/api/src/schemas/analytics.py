@@ -111,7 +111,10 @@ class PrCycleTimeWeek(BaseModel):
 
 class CockpitResponse(BaseModel):
     repo_count: int
-    member_count: int
+    # None for a User-type (personal) owner -- personal GitHub accounts have no "members"
+    # concept, so there's no fallback numeric value to report; not the same as `degraded`,
+    # which flags a live GitHub call that genuinely failed.
+    member_count: int | None
     latest_score: int | None
     score_trend: list[int]
     recent_events: list[OrgEventSummary]

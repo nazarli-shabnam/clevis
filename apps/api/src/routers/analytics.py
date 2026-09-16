@@ -342,10 +342,21 @@ def _safe_list_repos(owner: str, token: str, account_type: str = "Organization")
     return list_owner_repos(client, owner, account_type)
 
 
-def _safe_member_count(owner: str, token: str) -> tuple[int, bool]:
-    """Returns (count, ok) -- ok=False means the call failed and count is a fallback 0, not a real
-    zero. Callers must fold `not ok` into CockpitResponse.degraded rather than trusting the bare
-    count, which previously looked identical to "this org genuinely has zero members." """
+def _owner_search_qualifier(owner: str, account_type: str) -> str:
+    # GitHub's search API needs `user:` rather than `org:` to scope a query to a
+    # personal (User-type) account's repos -- `org:` only matches organizations.
+    return f"user:{owner}" if account_type == "User" else f"org:{owner}"
+
+
+def _safe_member_count(owner: str, token: str, account_type: str = "Organization") -> tuple[int | None, bool]:
+    """Returns (count, ok). count is None for a User-type owner -- personal accounts have no
+    "members" concept, so there's no GitHub equivalent to fall back to; ok=True there since
+    that's not a failure. Otherwise ok=False means the call failed and count is a fallback 0,
+    not a real zero. Callers must fold `not ok` into CockpitResponse.degraded rather than
+    trusting the bare count, which previously looked identical to "this org genuinely has zero
+    members." """
+    if account_type == "User":
+        return None, True
     try:
         client = GitHubClient(token)
         return len(client.request_paginated(f"/orgs/{owner}/members")), True
@@ -486,24 +497,26 @@ def _search_count(client: GitHubClient, query: str) -> int:
     return result.get("total_count", 0) if isinstance(result, dict) else 0
 
 
-def _safe_open_pr_count(owner: str, token: str) -> tuple[int, bool]:
+def _safe_open_pr_count(owner: str, token: str, account_type: str = "Organization") -> tuple[int, bool]:
     try:
         client = GitHubClient(token)
-        return _search_count(client, f"org:{owner} type:pr state:open"), True
+        qualifier = _owner_search_qualifier(owner, account_type)
+        return _search_count(client, f"{qualifier} type:pr state:open"), True
     except (httpx.HTTPStatusError, httpx.RequestError):
         return 0, False
 
 
-def _safe_pr_merge_rate_4w(owner: str, token: str) -> list[PrWeekBucket]:
+def _safe_pr_merge_rate_4w(owner: str, token: str, account_type: str = "Organization") -> list[PrWeekBucket]:
     try:
         client = GitHubClient(token)
+        qualifier = _owner_search_qualifier(owner, account_type)
         week_starts = [_week_start(weeks_ago) for weeks_ago in range(3, -1, -1)]
         with ThreadPoolExecutor(max_workers=8) as pool:
             futures = [
                 (
                     start,
-                    pool.submit(_search_count, client, f"org:{owner} type:pr created:{start}..{start + timedelta(days=7)}"),
-                    pool.submit(_search_count, client, f"org:{owner} type:pr merged:{start}..{start + timedelta(days=7)}"),
+                    pool.submit(_search_count, client, f"{qualifier} type:pr created:{start}..{start + timedelta(days=7)}"),
+                    pool.submit(_search_count, client, f"{qualifier} type:pr merged:{start}..{start + timedelta(days=7)}"),
                 )
                 for start in week_starts
             ]
@@ -694,17 +707,18 @@ def _safe_milestones(owner: str, token: str, repo_names: list[str]) -> tuple[lis
     return milestones[:10], at_risk_repos[:10]
 
 
-def _week_pr_cycle_time(client: GitHubClient, owner: str, start: date) -> PrCycleTimeWeek:
+def _week_pr_cycle_time(client: GitHubClient, owner: str, start: date, account_type: str = "Organization") -> PrCycleTimeWeek:
     # closed_at approximates merge time for a merged PR (search API's issues endpoint
     # doesn't expose merged_at directly) -- an approximation, same spirit as Phase 18's
     # documented "last activity" sampling elsewhere in this codebase.
     # GitHub's search API date qualifiers are inclusive on both ends at day granularity,
     # so the window end is `+6 days` (a 7-day span) not `+7` -- otherwise a PR merged
     # exactly on a week-boundary day would double-count into both adjacent weeks.
+    qualifier = _owner_search_qualifier(owner, account_type)
     result = client.request(
         "GET",
         "/search/issues",
-        params={"q": f"org:{owner} type:pr merged:{start}..{start + timedelta(days=6)}", "per_page": 30},
+        params={"q": f"{qualifier} type:pr merged:{start}..{start + timedelta(days=6)}", "per_page": 30},
     )
     items = result.get("items", []) if isinstance(result, dict) else []
     days: list[float] = []
@@ -719,12 +733,14 @@ def _week_pr_cycle_time(client: GitHubClient, owner: str, start: date) -> PrCycl
     return PrCycleTimeWeek(week=start.isoformat(), avg_days=avg_days)
 
 
-def _safe_pr_cycle_time_8w(owner: str, token: str) -> list[PrCycleTimeWeek]:
+def _safe_pr_cycle_time_8w(owner: str, token: str, account_type: str = "Organization") -> list[PrCycleTimeWeek]:
     try:
         client = GitHubClient(token)
         week_starts = [_week_start(weeks_ago) for weeks_ago in range(7, -1, -1)]
         with ThreadPoolExecutor(max_workers=8) as pool:
-            futures = [pool.submit(_week_pr_cycle_time, client, owner, start) for start in week_starts]
+            futures = [
+                pool.submit(_week_pr_cycle_time, client, owner, start, account_type) for start in week_starts
+            ]
             return [f.result() for f in futures]
     except (httpx.HTTPStatusError, httpx.RequestError):
         return []
@@ -828,15 +844,15 @@ async def personal_analytics_cockpit(
         pr_cycle_time_8w,
         release_cadence_4w,
     ) = await asyncio.gather(
-        anyio.to_thread.run_sync(lambda: _safe_member_count(owner, token)),
+        anyio.to_thread.run_sync(lambda: _safe_member_count(owner, token, account_type)),
         anyio.to_thread.run_sync(
             lambda: _cockpit_events_and_commit_activity(db, owner, token, connected_tenant_id, repo_names)
         ),
-        anyio.to_thread.run_sync(lambda: _safe_open_pr_count(owner, token)),
-        anyio.to_thread.run_sync(lambda: _safe_pr_merge_rate_4w(owner, token)),
+        anyio.to_thread.run_sync(lambda: _safe_open_pr_count(owner, token, account_type)),
+        anyio.to_thread.run_sync(lambda: _safe_pr_merge_rate_4w(owner, token, account_type)),
         anyio.to_thread.run_sync(lambda: _safe_total_cache_bytes(owner, token, repo_names)),
         anyio.to_thread.run_sync(lambda: _safe_milestones(owner, token, repo_names)),
-        anyio.to_thread.run_sync(lambda: _safe_pr_cycle_time_8w(owner, token)),
+        anyio.to_thread.run_sync(lambda: _safe_pr_cycle_time_8w(owner, token, account_type)),
         anyio.to_thread.run_sync(lambda: _safe_release_cadence_4w(owner, token, repo_names)),
     )
 
@@ -985,8 +1001,9 @@ async def my_view(
     if login is None:
         return MyViewResponse(identity_unresolved=True)
 
+    account_type = await _get_account_type(owner, token)
     try:
-        repos = await anyio.to_thread.run_sync(lambda: _safe_list_repos(owner, token))
+        repos = await anyio.to_thread.run_sync(lambda: _safe_list_repos(owner, token, account_type))
     except (httpx.HTTPStatusError, httpx.RequestError):
         repos = []
     repo_names = [r["name"] for r in repos]
