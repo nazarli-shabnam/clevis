@@ -50,10 +50,14 @@ def _from_installation(installation: GitHubInstallation | None) -> str | None:
         logger.warning("GitHub App installation %s exists but the App is not configured", installation.installation_id)
         return None
     except (httpx.HTTPStatusError, httpx.RequestError):
-        # The installation row is stale (App uninstalled/suspended on GitHub's side) or
-        # GitHub's token-minting endpoint is briefly unreachable. Don't let this become an
-        # unhandled 500 — fall back to a client-supplied token same as "no installation".
-        logger.warning("Failed to mint an installation token for installation %s", installation.installation_id, exc_info=True)
+        # The installation row is stale (App uninstalled/suspended on GitHub's side), the
+        # App's private key was rotated/revoked, or GitHub's token-minting endpoint is
+        # briefly unreachable. Don't let this become an unhandled 500 -- fall back to a
+        # client-supplied token same as "no installation". `error`, not `warning`: unlike
+        # GitHubAppNotConfigured (routine until an operator sets the App up), this is an
+        # active installation that used to work and just failed, degrading every request
+        # through it to "paste a PAT" with only this log line as a signal.
+        logger.error("Failed to mint an installation token for installation %s", installation.installation_id, exc_info=True)
         return None
 
 
