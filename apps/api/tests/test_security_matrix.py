@@ -66,6 +66,16 @@ def _insert_security_alert(db, tenant_id, *, repo, kind, number, state, severity
     db.commit()
 
 
+@pytest.fixture(autouse=True)
+def _default_account_type():
+    # _build_matrix resolves account_type before choosing an org vs. personal repo-listing
+    # path (see list_owner_repos) -- default every test in this file to "Organization" (the
+    # existing behavior) unless a test overrides it, so the org-repos mocking below doesn't
+    # need touching just to account for the new personal-account branch.
+    with patch("src.routers.security.get_account_type", return_value="Organization"):
+        yield
+
+
 @pytest.fixture()
 def client(db):
     app = FastAPI()
@@ -544,3 +554,50 @@ def test_secret_scanning_falls_back_to_live_when_aggregate_has_no_rows(connected
     body = resp.json()
     assert body["source"] == "github"
     assert [a["number"] for a in body["alerts"]] == [7]
+
+
+# ── personal (User-type) account support ────────────────────────────────────────
+
+def test_security_matrix_personal_account_uses_installation_repos_endpoint(client):
+    """A personal account's repo list must come from /installation/repositories, not
+    /orgs/{owner}/repos (which 404s for a User account) -- see list_owner_repos."""
+    with (
+        patch("src.routers.security.get_account_type", return_value="User"),
+        patch("src.routers.security.GitHubClient") as mock_client,
+    ):
+        mock_client.return_value.request_paginated.return_value = [
+            {"name": "dotfiles", "default_branch": "main", "security_and_analysis": {}},
+        ]
+        mock_client.return_value.request.return_value = {}
+        resp = client.get("/me/analytics/security-matrix/octocat", headers={"X-GitHub-Token": "ghp_test"})
+
+    assert resp.status_code == 200
+    assert resp.json()["repos"][0]["repo"] == "dotfiles"
+    mock_client.return_value.request_paginated.assert_called_once_with(
+        "/installation/repositories", items_key="repositories"
+    )
+
+
+def test_security_matrix_personal_account_falls_back_to_user_repos_on_auth_mismatch(client):
+    """If the token resolved for a personal account is a legacy PAT (not a GitHub App
+    installation token), /installation/repositories 401s/403s -- fall back to /user/repos."""
+    forbidden = httpx.HTTPStatusError(
+        "boom", request=httpx.Request("GET", "https://api.github.com/installation/repositories"),
+        response=httpx.Response(403, request=httpx.Request("GET", "https://api.github.com/installation/repositories")),
+    )
+
+    def _request_paginated_side_effect(path, params=None, items_key=None):
+        if path == "/installation/repositories":
+            raise forbidden
+        return [{"name": "dotfiles", "default_branch": "main", "security_and_analysis": {}}]
+
+    with (
+        patch("src.routers.security.get_account_type", return_value="User"),
+        patch("src.routers.security.GitHubClient") as mock_client,
+    ):
+        mock_client.return_value.request_paginated.side_effect = _request_paginated_side_effect
+        mock_client.return_value.request.return_value = {}
+        resp = client.get("/me/analytics/security-matrix/octocat", headers={"X-GitHub-Token": "ghp_test"})
+
+    assert resp.status_code == 200
+    assert resp.json()["repos"][0]["repo"] == "dotfiles"
