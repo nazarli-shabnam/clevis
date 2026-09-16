@@ -1,6 +1,7 @@
 """Tests for auth router and config router."""
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import bcrypt
 import pytest
@@ -14,7 +15,7 @@ from src.core.db import User, get_db
 from src.core.rate_limit import _account_buckets as _account_rate_limit_buckets
 from src.core.rate_limit import _buckets as _rate_limit_buckets
 from src.repositories import invitation_repo, org_repo
-from src.routers.auth import _SETUP_LOCK_KEY
+from src.routers.auth import _SETUP_LOCK_KEY, _pending_invitations_for
 from src.routers.auth import router as auth_router
 from src.routers.config import router as config_router
 
@@ -539,6 +540,33 @@ def test_login_surfaces_pending_invitation(auth_client, db):
     pending = resp.json()["pending_invitations"]
     assert len(pending) == 1
     assert pending[0]["org_login"] == "acme"
+
+
+def test_pending_invitations_for_batches_org_lookup_across_multiple_orgs():
+    """_pending_invitations_for batches the org lookup into one Org.id.in_(...) query
+    rather than looping per invitation -- assert each invitation still resolves to its
+    own org's login when invitations span multiple orgs.
+
+    Exercised as a direct unit test against a mocked Session, not a full login round
+    trip: invitations' RLS policy (migration 0030) is strict equality against the
+    single-valued app.tenant_id session variable, so a live query genuinely cannot see
+    two different orgs' rows in one call under CI's RLS-enforcing clevis_api role --
+    true for the original per-row loop just as much as this batched version. A live
+    multi-org round trip would flake on that pre-existing constraint, not on anything
+    this function does."""
+    acme = SimpleNamespace(id=1, github_login="acme")
+    globex = SimpleNamespace(id=2, github_login="globex")
+    now = datetime.now(timezone.utc)
+    inv_acme = SimpleNamespace(org_id=1, expires_at=now)
+    inv_globex = SimpleNamespace(org_id=2, expires_at=now)
+
+    fake_db = MagicMock()
+    fake_db.query.return_value.filter.return_value.all.return_value = [acme, globex]
+
+    with patch("src.routers.auth.invitation_repo.list_pending_for_email", return_value=[inv_acme, inv_globex]):
+        summaries = _pending_invitations_for(fake_db, "member@example.com")
+
+    assert {s.org_login for s in summaries} == {"acme", "globex"}
 
 
 def test_login_omits_expired_invitation(auth_client, db):

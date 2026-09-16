@@ -187,13 +187,13 @@ def _pending_invitations_for(db: Session, email: str) -> list[PendingInvitationS
     """Invitations sent to this email that are still pending and unexpired — surfaced
     at register/login so a user doesn't need the original invite link to discover them."""
     invitations = invitation_repo.list_pending_for_email(db, email)
-    summaries = []
-    for inv in invitations:
-        org = db.query(Org).filter(Org.id == inv.org_id).first()
-        if org is None:
-            continue
-        summaries.append(PendingInvitationSummary(org_login=org.github_login, expires_at=inv.expires_at))
-    return summaries
+    org_ids = [inv.org_id for inv in invitations]
+    orgs_by_id = {org.id: org for org in db.query(Org).filter(Org.id.in_(org_ids)).all()}
+    return [
+        PendingInvitationSummary(org_login=orgs_by_id[inv.org_id].github_login, expires_at=inv.expires_at)
+        for inv in invitations
+        if inv.org_id in orgs_by_id
+    ]
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
