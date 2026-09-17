@@ -7,7 +7,7 @@ from unittest.mock import patch
 from sqlalchemy import text
 
 from src.core.db import Job, User
-from src.repositories import org_repo, tenant_repo
+from src.repositories import installation_repo, org_repo, tenant_repo
 from src.services import backfill_service, gap_heal_sweep
 from src.services.gap_heal_sweep import run_gap_heal_sweep
 from src.services.token_resolution import NoGitHubTokenAvailable
@@ -61,10 +61,9 @@ def test_sweep_skips_a_fresh_cursor(db):
     assert _backfill_jobs(db) == []
 
 
-def test_sweep_skips_a_tenant_with_no_cursor_row_yet(db):
-    # No cursor row means the tenant's install-time backfill never completed -- retrying
-    # that is deliberately out of scope for the gap-heal sweep (see gap_heal_sweep.py's
-    # module docstring); it must not be treated as "infinitely stale".
+def test_sweep_skips_a_tenant_with_no_cursor_row_and_no_installation(db):
+    # No cursor row AND no connected installation -- nothing to backfill from, and this
+    # must not raise trying to guess an account_login/account_type from nowhere.
     org_repo.get_or_create(db, github_login="acme-sweep-never-synced")
 
     with patch("src.services.gap_heal_sweep.resolve_org_token") as mock_resolve:
@@ -72,6 +71,67 @@ def test_sweep_skips_a_tenant_with_no_cursor_row_yet(db):
 
     mock_resolve.assert_not_called()
     assert _backfill_jobs(db) == []
+
+
+def test_sweep_enqueues_a_first_backfill_for_a_tenant_with_no_cursor_row_but_an_installation(db):
+    # Regression test for issue #410: a tenant whose install-time backfill was never even
+    # enqueued (installations.py's _enqueue_backfill_best_effort is best-effort) has no
+    # activity_sync_cursors row at all -- previously that meant it was silently skipped
+    # forever, with no other retry mechanism for that first backfill. Sourced from the
+    # installation row since there's no cursor payload to read account_login/type from.
+    org = org_repo.get_or_create(db, github_login="acme-sweep-never-backfilled")
+    installation_repo.create(
+        db, account_login="acme-sweep-never-backfilled", account_type="Organization",
+        auth_mode="app", installation_id=99, org_id=org.id,
+    )
+
+    with patch("src.services.gap_heal_sweep.resolve_org_token", return_value="tok") as mock_resolve:
+        run_gap_heal_sweep(db)
+
+    mock_resolve.assert_called_once()
+    jobs = _backfill_jobs(db)
+    assert len(jobs) == 1
+    payload = json.loads(jobs[0].payload)
+    assert payload["account_login"] == "acme-sweep-never-backfilled"
+    assert payload["tenant_id"] == org.tenant_id
+
+
+def test_sweep_skips_a_tenant_with_no_cursor_row_and_an_uninstalled_legacy_pat_org(db):
+    # A github_installations row can exist with installation_id=None for a legacy PAT-only
+    # setup (see token_resolution.py) -- that's not "connected" for backfill purposes, same
+    # as a tenant with no installation row at all.
+    org = org_repo.get_or_create(db, github_login="acme-sweep-legacy-pat")
+    installation_repo.create(
+        db, account_login="acme-sweep-legacy-pat", account_type="Organization",
+        auth_mode="pat", installation_id=None, org_id=org.id,
+    )
+
+    with patch("src.services.gap_heal_sweep.resolve_org_token") as mock_resolve:
+        run_gap_heal_sweep(db)
+
+    mock_resolve.assert_not_called()
+    assert _backfill_jobs(db) == []
+
+
+def test_sweep_enqueues_a_first_backfill_for_a_personal_tenant_with_no_cursor_row_but_an_installation(db):
+    user = User(email="octocat-sweep-never-backfilled@example.com", name=None, password_hash=None, is_workspace_admin=False)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    tenant_repo.ensure_personal_tenant(db, user.id)
+    installation_repo.create(
+        db, account_login="octocat-sweep-never-backfilled", account_type="User",
+        auth_mode="app", installation_id=77, owner_user_id=user.id,
+    )
+
+    with patch("src.services.gap_heal_sweep.resolve_personal_token", return_value="tok") as mock_resolve:
+        run_gap_heal_sweep(db)
+
+    mock_resolve.assert_called_once()
+    _, kwargs = mock_resolve.call_args
+    assert kwargs["account_login"] == "octocat-sweep-never-backfilled"
+    jobs = _backfill_jobs(db)
+    assert len(jobs) == 1
 
 
 def test_sweep_resolves_personal_tenants_via_resolve_personal_token(db):
