@@ -7,7 +7,7 @@ This is the shared, tool-agnostic guide for working in this repository — for a
 Clevis is a GitHub analytics dashboard with three independently deployable services and one shared Python library:
 
 - **`apps/api`** — FastAPI REST backend (Python). Handles auth (password + GitHub OAuth), org/membership management, analytics, RBAC, and job enqueueing. Uses SQLAlchemy 2 + Alembic against PostgreSQL.
-- **`apps/worker`** — Standalone Python process. Polls the `jobs` table using `SELECT … FOR UPDATE SKIP LOCKED` and calls the GitHub API to execute background tasks (currently: clearing Actions cache). Uses raw psycopg3, not SQLAlchemy. A background thread (`_JobHeartbeat`) touches `jobs.heartbeat_at` every ~10s while a handler runs, so `_reclaim_stale_jobs` can tell a slow-but-alive job apart from a crashed one.
+- **`apps/worker`** — Standalone Python process. Polls the `jobs` table using `SELECT … FOR UPDATE SKIP LOCKED` and calls the GitHub API to execute background tasks — three job types are registered in `JOB_HANDLERS` (`apps/worker/src/worker.py`): clearing Actions caches, backfilling repo events, and reconciling org membership. Uses raw psycopg3, not SQLAlchemy. A background thread (`_JobHeartbeat`) touches `jobs.heartbeat_at` every ~10s while a handler runs, so `_reclaim_stale_jobs` can tell a slow-but-alive job apart from a crashed one.
 - **`apps/ui`** — Next.js 15 / React 19 frontend. Uses TanStack Query for data fetching, Tailwind v4, Base UI primitives, shadcn components.
 - **`packages/checks`** — `clevis-checks` Python package. Defines `Check` base class and six GitHub security checks (org MFA enforcement, branch protection, secret scanning, Dependabot alerts, code scanning alerts, default-branch force-push protection). Must be installed editable for `import checks` to work.
 
@@ -23,8 +23,13 @@ Tables managed by Alembic — no runtime DDL. (Not an exhaustive list of every t
 - **`audit_logs`** — immutable audit trail; every significant action (cache clear, dry-run, etc.) writes here with actor, action, target, and payload JSON.
 - **`jobs`** — job queue; composite index on `(status, job_type)` for efficient worker polling. Status lifecycle: `queued → processing → done/failed`. The `result` column stores JSON on success or a raw exception string on failure. `retry_count` caps both reclaim-after-crash and transient-failure retries at `MAX_RETRIES`; `heartbeat_at` (issue #215) lets a long-running-but-alive job survive the reclaim sweep past `RECLAIM_TIMEOUT_MINUTES`.
 - **`scan_results`** — historical security-scan snapshots (score, checks JSON) powering the score-trend chart; `scanned_by_user_id` scopes personal-endpoint scan history when there's no org membership to gate on.
-- **`app_config`** — DB-backed, Settings-page-editable runtime config (`worker_poll_seconds`, `gap_heal_poll_seconds`, `gap_heal_stale_hours`; see Development setup below).
-- **`webhook_deliveries`** — issue #191/S3: durable landing spot for verified GitHub webhook payloads (raw `bytea` body, delivery id, event type, resolved `tenant_id` when resolvable) before they're queued onto Redis Streams for later processing. `status` (`queued`/`queue_failed`) lets a future sweep re-enqueue anything the queue write itself failed on. Not deduplicated by `delivery_id` here — GitHub redelivers on retry, and dedupe is the S4 event-processor's job, not this table's.
+- **`app_config`** — DB-backed, Settings-page-editable runtime config. Eleven keys are currently accepted (`apps/api/src/core/app_config.py`'s `_ACCEPTED_KEYS`); see Development setup below for the full list.
+- **`webhook_deliveries`** — issue #191/S3: durable landing spot for verified GitHub webhook payloads (raw `bytea` body, delivery id, event type, resolved `tenant_id` when resolvable) before they're queued onto Redis Streams for later processing. `status` (`queued`/`queue_failed`) lets a re-enqueue sweep (issue #409, `webhook_requeue_sweep.py`) retry anything the queue write itself failed on. Not deduplicated by `delivery_id` here — GitHub redelivers on retry, and dedupe is the S4 event-processor's job, not this table's.
+- **`repo_events`** / **`repo_event_daily_counts`** — S4's normalized event model (migrations 0036/0037): individual GitHub events deduplicated by webhook delivery ID, plus a per-(tenant, repo, event_type, day) rollup, both populated by `apps/worker`'s Redis Streams consumer (`event_consumer.py`).
+- **`security_alerts`** — normalized Dependabot/code-scanning/secret-scanning alert state (migration 0039), upserted by the same event consumer from `dependabot_alert`/`code_scanning_alert`/`secret_scanning_alert` webhooks; read by `routers/security.py`.
+- **`org_members`** / **`repo_collaborators`** — normalized org-member and repo-collaborator rosters (migration 0040), populated by the event consumer from `organization`/`member` webhooks and corrected by the membership-reconciliation poll (2FA status has no webhook coverage at all); read by `routers/collab.py` for the Collaborators page.
+- **`activity_sync_cursors`** / **`org_membership_sync_cursors`** — per-tenant watermarks (migrations 0038/0041) recording how far event backfill and membership reconciliation have progressed, read by the gap-heal sweep and membership-reconcile loop respectively to decide what's stale.
+- **`automation_repo_settings`** — per-(tenant, repo, feature) opt-in switch and saved options (migration 0043) for write automations (issue #288 bulk branch protection, issue #290 Dependabot triage), read/written via `repositories/automation_settings_repo.py`.
 
 ### Job queue flow
 
@@ -76,18 +81,18 @@ pip install -e packages/checks
 cd apps/ui && bun install
 ```
 
-**Required env vars (7 total):** `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JOB_SECRET_KEY`, `AUTH_SECRET`, `NEXT_PUBLIC_API_BASE`, `REDIS_PASSWORD`. Everything else is optional with a safe default in code (`CORS_ORIGINS`, `GITHUB_API_BASE`, the `GITHUB_APP_*` block for GitHub App auth/OAuth, the `SMTP_*` block for verification emails — see `.env.example`). Everything else lives in the `app_config` DB table (configured via Settings page).
+**Required env vars (6 total):** `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JOB_SECRET_KEY`, `AUTH_SECRET`, `REDIS_PASSWORD` — `apps/api/entrypoint.sh` hard-fails startup if any of these six are unset. Everything else is optional with a safe default in code (`NEXT_PUBLIC_API_BASE` falls back to `http://localhost:8080` in `apps/ui/lib/api/client.ts` and friends, `CORS_ORIGINS`, `GITHUB_API_BASE`, the `GITHUB_APP_*` block for GitHub App auth/OAuth, the `SMTP_*` block for verification emails — see `.env.example`). Everything else lives in the `app_config` DB table (configured via Settings page).
 
 Key variables:
 - `DB_USER`, `DB_PASSWORD`, `DB_NAME` — Postgres credentials. Docker Compose maps these to `POSTGRES_USER/PASSWORD/DB` for the db container; entrypoints construct `DATABASE_URL` from them (host = `db`).
 - `DATABASE_URL` — local dev only (outside Docker); format: `postgresql+psycopg://<user>:<pass>@localhost:5432/<db>`.
 - `JOB_SECRET_KEY` — Fernet key for token encryption; generate with `openssl rand -hex 32`
 - `AUTH_SECRET` — JWT signing secret; generate with `openssl rand -hex 32`
-- `NEXT_PUBLIC_API_BASE` — `http://localhost:8080` for local dev
 - `REDIS_PASSWORD` — issue #191/S3's webhook ingestion queue (Redis Streams). Auths the `redis` Compose service (`--requirepass`, so any other container on the shared network can't read/inject stream entries); `apps/api/entrypoint.sh` builds `REDIS_URL` from it, same pattern as `DB_USER`/`DB_PASSWORD`/`DB_NAME` → `DATABASE_URL`. `REDIS_URL` itself is local-dev-only (outside Docker), same as `DATABASE_URL`.
 - `API_PORT` / `UI_PORT` — `8080` / `3000`
 
 **Deploy-time config (env vars, safe defaults in code):**
+- `NEXT_PUBLIC_API_BASE` — default `http://localhost:8080` (baked in at UI build time as a Next.js `NEXT_PUBLIC_*` var, not read at runtime; see `apps/ui/Dockerfile`'s `ARG`).
 - `CORS_ORIGINS` — JSON array of allowed origins; default `["http://localhost:3000"]`. Read once at API startup (a security boundary), so a change requires an API restart. Set your real UI domain in production.
 - `GITHUB_API_BASE` — default `https://api.github.com`; set for GitHub Enterprise (e.g. `https://github.yourco.com/api/v3`). Used by both the API and the worker. Not runtime-editable because it's where GitHub tokens are sent.
 - `GITHUB_APP_ID` / `GITHUB_APP_CLIENT_ID` / `GITHUB_APP_CLIENT_SECRET` / `GITHUB_APP_PRIVATE_KEY` / `GITHUB_APP_WEBHOOK_SECRET` / `NEXT_PUBLIC_GITHUB_APP_SLUG` — unset by default (all `None`); "Sign in with GitHub" and the "Install GitHub App" button raise a clear "not configured" error until these are set. See `docs/self-hosting.md` for how to register the App.
@@ -99,6 +104,13 @@ Key variables:
 - `worker_poll_seconds` — default `5`, clamped to `[1, 30]`; the worker re-reads it each loop, so changes take effect live without a restart. The upper clamp keeps the worker's heartbeat healthcheck in `docker-compose.yml` meaningful (see `apps/worker/src/worker.py`'s `_MAX_POLL_SECONDS`).
 - `gap_heal_poll_seconds` — default `900`, clamped to `[60, 3600]`. How often the API's gap-heal sweep (issue #192/S5 PR 2) runs, via an `asyncio` background loop started in `apps/api/src/main.py`'s lifespan (`src/services/gap_heal_loop.py`) — the API's own equivalent of the worker's poll loop, re-read each iteration.
 - `gap_heal_stale_hours` — default `6`, clamped to `[1, 168]`. How old a tenant's `activity_sync_cursors.last_synced_at` must be before the sweep re-enqueues a `github.backfill_repo_events` job for it (`src/services/gap_heal_sweep.py`).
+- `registration_enabled` — gates whether `/auth/register` accepts new self-signups (instance-wide toggle).
+- `membership_reconcile_poll_seconds` / `membership_reconcile_stale_hours` — the org-membership-reconciliation loop's poll cadence and staleness threshold, mirroring `gap_heal_poll_seconds`/`gap_heal_stale_hours`'s shape for `org_membership_sync_cursors` instead of `activity_sync_cursors`.
+- `pr_nudge_stale_days` / `pr_nudge_mode` — issue #289's stale-PR/stale-review nudge sweep: how many days idle counts as stale, and its notification mode.
+- `digest_poll_seconds` / `digest_cadence` — the scheduled leadership-digest loop's (issue #292) poll interval and send cadence.
+- `webhook_requeue_poll_seconds` — issue #409: how often the sweep re-enqueues `webhook_deliveries` rows stuck at `status='queue_failed'`.
+
+The full accepted-key list lives in `apps/api/src/core/app_config.py`'s `_ACCEPTED_KEYS` — treat that as the source of truth over this doc if they ever drift.
 
 ## Running locally
 
