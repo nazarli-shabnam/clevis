@@ -36,17 +36,21 @@ router = APIRouter()
 #     (Dependabot alerts: read, Code scanning alerts: read, Secret scanning alerts:
 #     read) to be turned on for GitHub to actually send these -- see
 #     docs/self-hosting.md.
-#   - Org membership / repo access events (member/organization/membership/team, added
-#     for the Collaborators dashboard, post-S6 stage) -- landed here durably as of this
-#     PR; member/organization are normalized into org_members/repo_collaborators (see
-#     event_consumer.py), membership/team are acked-but-skipped for now (team-based
-#     repo access is deferred, see that module's docstring). Requires the Clevis
+#   - Org membership / repo access events (member/organization, added for the
+#     Collaborators dashboard, post-S6 stage) -- normalized into
+#     org_members/repo_collaborators (see event_consumer.py). Requires the Clevis
 #     GitHub App's own webhook subscriptions + permissions (Members: read -- no write
-#     or Administration access needed for any of these four events) -- see
-#     docs/self-hosting.md.
+#     or Administration access needed) -- see docs/self-hosting.md.
 # Either way, an ingested event just accumulates in webhook_deliveries with
 # status="queued" until its consumer exists -- that's the expected handoff state, not
 # a bug.
+#
+# membership/team are deliberately NOT subscribed here (issue #411): team-based repo
+# access normalization doesn't exist yet (see event_consumer.py's
+# _NOT_YET_NORMALIZED_EVENT_TYPES / org_membership_store.py's module docstring), and
+# ingesting them anyway had no bound -- webhook_deliveries rows and Redis stream
+# entries accumulated forever with no consumer ever moving them past "queued". Re-add
+# membership/team here once that consumer actually exists.
 _INGESTED_EVENT_TYPES = {
     "push",
     "pull_request",
@@ -58,8 +62,6 @@ _INGESTED_EVENT_TYPES = {
     "secret_scanning_alert",
     "member",
     "organization",
-    "membership",
-    "team",
 }
 
 # Redis Stream key the ingestion path XADDs onto; a future S4 consumer group reads

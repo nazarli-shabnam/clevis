@@ -59,10 +59,13 @@ _CONSUMER_NAME = f"worker-{os.getpid()}"
 _SECURITY_ALERT_EVENT_TYPES = {"dependabot_alert", "code_scanning_alert", "secret_scanning_alert"}
 
 # member/organization normalize into org_members/repo_collaborators (Collaborators PR 1 of 3).
-# membership/team are durably queued (same webhooks.py change) but have no normalizer yet --
-# team-based repo access is deferred, see org_membership_store.py's module docstring -- so
-# _process_entry acks-and-skips them via _NOT_YET_NORMALIZED_EVENT_TYPES, same placeholder
-# pattern PR #350 used for the security alerts before their own consumer existed.
+# membership/team have no normalizer yet -- team-based repo access is deferred, see
+# org_membership_store.py's module docstring -- so webhooks.py's _INGESTED_EVENT_TYPES no
+# longer subscribes to them at all (issue #411: ingesting with no consumer and no bound
+# meant unbounded accumulation in webhook_deliveries + the Redis stream). This handling
+# stays as a safety net for any already-queued backlog from before that change deploys,
+# same placeholder pattern PR #350 used for the security alerts before their own consumer
+# existed -- remove once membership/team are re-subscribed with a real normalizer.
 _ORG_MEMBERSHIP_EVENT_TYPES = {"member", "organization"}
 _NOT_YET_NORMALIZED_EVENT_TYPES = {"membership", "team"}
 
