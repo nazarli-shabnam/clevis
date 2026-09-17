@@ -212,7 +212,14 @@ export default function AutomationPage() {
           <div className="p-4 flex flex-col gap-3">
             <div>
               <label className="text-xs font-medium text-foreground block mb-1.5">Organization / Owner</label>
-              <Input placeholder="e.g. octocat" value={owner} onChange={(e) => setOwner(e.target.value)} />
+              <Input
+                placeholder="e.g. octocat"
+                value={owner}
+                onChange={(e) => setOwner(e.target.value)}
+                autoComplete="off"
+                data-1p-ignore
+                data-lpignore="true"
+              />
             </div>
             <div>
               <label htmlFor="repository" className="text-xs font-medium text-foreground block mb-1.5">Repository</label>
@@ -258,6 +265,9 @@ export default function AutomationPage() {
                   value={token}
                   onChange={(e) => { setToken(e.target.value); setTokenSaved(false) }}
                   className="font-mono"
+                  autoComplete="new-password"
+                  data-1p-ignore
+                  data-lpignore="true"
                 />
               </div>
             )}
