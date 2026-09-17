@@ -293,7 +293,9 @@ def test_handler_marks_failed_on_undecryptable_token():
 
 def test_handler_marks_failed_on_4xx_from_github():
     conn = _FakeConn()
-    with patch("worker.membership_reconcile.fetch_org_roster") as mock_fetch, patch("worker.httpx.Client"):
+    with patch("worker.membership_reconcile.fetch_org_roster") as mock_fetch, patch("worker.httpx.Client"), patch(
+        "worker.org_membership_store.acquire_tenant_lock"
+    ), patch("worker.org_membership_store.release_tenant_lock"):
         mock_response = MagicMock(status_code=404)
         mock_fetch.side_effect = httpx.HTTPStatusError("error", request=MagicMock(), response=mock_response)
         worker._handle_reconcile_org_membership(conn, 2, _payload(), 0)
@@ -304,7 +306,9 @@ def test_handler_marks_failed_on_4xx_from_github():
 
 def test_handler_requeues_on_5xx_from_github():
     conn = _FakeConn()
-    with patch("worker.membership_reconcile.fetch_org_roster") as mock_fetch, patch("worker.httpx.Client"):
+    with patch("worker.membership_reconcile.fetch_org_roster") as mock_fetch, patch("worker.httpx.Client"), patch(
+        "worker.org_membership_store.acquire_tenant_lock"
+    ), patch("worker.org_membership_store.release_tenant_lock"):
         mock_response = MagicMock(status_code=502)
         mock_fetch.side_effect = httpx.HTTPStatusError("error", request=MagicMock(), response=mock_response)
         worker._handle_reconcile_org_membership(conn, 3, _payload(), 0)
@@ -318,7 +322,9 @@ def test_handler_requeues_on_an_exhausted_429_from_github():
     # reaching the handler with one still means "still rate-limited", not "bad request" -- it
     # must go through the job-level retry, not be marked permanently failed.
     conn = _FakeConn()
-    with patch("worker.membership_reconcile.fetch_org_roster") as mock_fetch, patch("worker.httpx.Client"):
+    with patch("worker.membership_reconcile.fetch_org_roster") as mock_fetch, patch("worker.httpx.Client"), patch(
+        "worker.org_membership_store.acquire_tenant_lock"
+    ), patch("worker.org_membership_store.release_tenant_lock"):
         mock_response = MagicMock(status_code=429, headers={})
         mock_fetch.side_effect = httpx.HTTPStatusError("error", request=MagicMock(), response=mock_response)
         worker._handle_reconcile_org_membership(conn, 6, _payload(), 0)
@@ -329,7 +335,9 @@ def test_handler_requeues_on_an_exhausted_429_from_github():
 
 def test_handler_requeues_on_an_exhausted_secondary_rate_limit_403():
     conn = _FakeConn()
-    with patch("worker.membership_reconcile.fetch_org_roster") as mock_fetch, patch("worker.httpx.Client"):
+    with patch("worker.membership_reconcile.fetch_org_roster") as mock_fetch, patch("worker.httpx.Client"), patch(
+        "worker.org_membership_store.acquire_tenant_lock"
+    ), patch("worker.org_membership_store.release_tenant_lock"):
         mock_response = MagicMock(status_code=403, headers={"Retry-After": "30"})
         mock_fetch.side_effect = httpx.HTTPStatusError("error", request=MagicMock(), response=mock_response)
         worker._handle_reconcile_org_membership(conn, 7, _payload(), 0)
@@ -342,7 +350,9 @@ def test_handler_marks_failed_on_a_genuine_403_not_a_rate_limit():
     # A plain permission-denied 403 (no Retry-After/X-RateLimit-Remaining headers) is not a
     # rate limit -- must still be a terminal failure, not endlessly requeued.
     conn = _FakeConn()
-    with patch("worker.membership_reconcile.fetch_org_roster") as mock_fetch, patch("worker.httpx.Client"):
+    with patch("worker.membership_reconcile.fetch_org_roster") as mock_fetch, patch("worker.httpx.Client"), patch(
+        "worker.org_membership_store.acquire_tenant_lock"
+    ), patch("worker.org_membership_store.release_tenant_lock"):
         mock_response = MagicMock(status_code=403, headers={})
         mock_fetch.side_effect = httpx.HTTPStatusError("error", request=MagicMock(), response=mock_response)
         worker._handle_reconcile_org_membership(conn, 8, _payload(), 0)
@@ -355,7 +365,7 @@ def test_handler_requeues_on_network_error():
     conn = _FakeConn()
     with patch("worker.membership_reconcile.fetch_org_roster", side_effect=httpx.RequestError("connection reset")), patch(
         "worker.httpx.Client"
-    ):
+    ), patch("worker.org_membership_store.acquire_tenant_lock"), patch("worker.org_membership_store.release_tenant_lock"):
         worker._handle_reconcile_org_membership(conn, 4, _payload(), 0)
 
     sql, params = conn._cursor.calls[0]
@@ -367,7 +377,9 @@ def test_handler_requeues_on_roster_incomplete():
     with patch(
         "worker.membership_reconcile.fetch_org_roster",
         side_effect=membership_reconcile.RosterIncomplete("pagination looped back to an already-fetched page"),
-    ), patch("worker.httpx.Client"):
+    ), patch("worker.httpx.Client"), patch("worker.org_membership_store.acquire_tenant_lock"), patch(
+        "worker.org_membership_store.release_tenant_lock"
+    ):
         worker._handle_reconcile_org_membership(conn, 4, _payload(), 0)
 
     sql, _params = conn._cursor.calls[0]
@@ -394,7 +406,9 @@ def test_handler_rolls_back_and_requeues_on_a_db_error():
     conn = _FailingConn()
     roster = {"members": [], "two_factor_disabled_logins": set(), "outside_logins": set()}
 
-    with patch("worker.membership_reconcile.fetch_org_roster", return_value=roster), patch("worker.httpx.Client"):
+    with patch("worker.membership_reconcile.fetch_org_roster", return_value=roster), patch(
+        "worker.httpx.Client"
+    ), patch("worker.org_membership_store.acquire_tenant_lock"), patch("worker.org_membership_store.release_tenant_lock"):
         worker._handle_reconcile_org_membership(conn, 5, _payload(), 0)
 
     assert conn.rolled_back is True

@@ -25,6 +25,44 @@ from datetime import datetime
 
 import psycopg
 
+# Namespace string for the tenant-membership advisory lock below -- hashed the same way
+# apps/api/src/services/sweep_lock.py hashes its own job_type namespace, so the two lock
+# families can't collide on the same bigint key space by coincidence.
+_LOCK_NAMESPACE = "org_membership_reconcile"
+
+
+def acquire_tenant_lock(conn: psycopg.Connection, tenant_id: int) -> None:
+    """Session-level advisory lock serializing org-membership writes for one tenant across
+    processes and connections (issue #357): the periodic reconciliation job's full
+    roster-fetch-to-snapshot-apply window (worker.py's _handle_reconcile_org_membership) and
+    the webhook path's per-event write (event_consumer.py) block each other out instead of
+    interleaving. Without this, a webhook mutation landing between the reconcile job's roster
+    fetch and its snapshot write could be silently undone by that snapshot (a stale roster
+    resurrecting a just-removed member) or itself wipe a member the snapshot is about to write
+    (a stale removal racing a fresh add) -- comparing against added_at/granted_at alone (the
+    webhook path's own ordering guard, see this module's top docstring) can't catch this,
+    because the reconcile snapshot's DELETE has no per-row timestamp to compare against.
+
+    Same (hashtext(namespace), tenant_id) two-key convention as sweep_lock.py's
+    try_acquire_sweep_slot, but the blocking, session-scoped primitive (pg_advisory_lock, not
+    pg_try_advisory_xact_lock): the reconcile side must hold this across an HTTP round trip to
+    GitHub that happens before any transaction opens, so the lock's lifetime can't be tied to a
+    commit/rollback -- callers MUST release it explicitly via release_tenant_lock, in a
+    finally, regardless of which return path they take.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_lock(hashtext(%s), %s)", (_LOCK_NAMESPACE, tenant_id))
+    conn.commit()
+
+
+def release_tenant_lock(conn: psycopg.Connection, tenant_id: int) -> None:
+    """Releases the lock acquired by acquire_tenant_lock. Safe to call after the same
+    connection's pending transaction was rolled back -- pg_advisory_lock's session-level hold
+    is independent of transaction state; only this (or the session ending) releases it."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_unlock(hashtext(%s), %s)", (_LOCK_NAMESPACE, tenant_id))
+    conn.commit()
+
 
 def upsert_org_member(
     cur: psycopg.Cursor, *, tenant_id: int, login: str, avatar_url: str, role: str, added_at: datetime
