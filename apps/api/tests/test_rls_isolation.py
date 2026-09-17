@@ -135,3 +135,33 @@ def test_rls_blocks_cross_tenant_audit_log_access():
         finally:
             session.close()
     engine.dispose()
+
+
+# Every table FORCE-enabled RLS ever added to, across 0031 (memberships/
+# github_installations/scan_results) and 0046 (issue #412's completion of the S3-S6
+# rollout). Plain pg_catalog metadata -- unlike test_rls_blocks_cross_tenant_audit_log_access
+# above, this needs no non-superuser role and never skips, so it's the one RLS regression
+# check that always runs on a default `pytest -q`.
+_EXPECTED_FORCE_RLS_TABLES = {
+    "memberships",
+    "github_installations",
+    "scan_results",
+    "repo_events",
+    "repo_event_daily_counts",
+    "activity_sync_cursors",
+    "security_alerts",
+    "org_members",
+    "repo_collaborators",
+    "org_membership_sync_cursors",
+    "automation_repo_settings",
+}
+
+
+def test_every_tenant_table_has_force_rls(db):
+    rows = db.execute(
+        text(
+            "SELECT relname FROM pg_class "
+            "WHERE relnamespace = 'public'::regnamespace AND relforcerowsecurity"
+        )
+    ).fetchall()
+    assert {row[0] for row in rows} == _EXPECTED_FORCE_RLS_TABLES
