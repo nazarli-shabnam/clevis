@@ -1026,10 +1026,13 @@ def test_run_recovers_from_a_connection_error(monkeypatch, caplog):
 def test_run_recovers_from_a_generic_loop_error(monkeypatch, caplog):
     # Same as test_run_recovers_from_a_connection_error, but for the catch-all `except
     # Exception` branch (not the narrower psycopg/redis one) -- e.g. a bug in
-    # _sweep_pending itself, rather than a connection blip.
+    # _sweep_pending itself, rather than a connection blip. Uses psycopg.ProgrammingError
+    # rather than a bare RuntimeError: it's a real psycopg exception type, but NOT a
+    # subclass of OperationalError, so it proves the narrow/generic except split actually
+    # routes a psycopg-raised-but-non-connection error to the generic branch.
     monkeypatch.setattr(event_consumer, "_redis_client", lambda: MagicMock())
     monkeypatch.setattr(event_consumer, "_ensure_group", MagicMock())
-    monkeypatch.setattr(event_consumer.psycopg, "connect", MagicMock(side_effect=RuntimeError("boom")))
+    monkeypatch.setattr(event_consumer.psycopg, "connect", MagicMock(side_effect=psycopg.ProgrammingError("boom")))
     monkeypatch.setattr(event_consumer.time, "sleep", MagicMock())
     monkeypatch.setattr(event_consumer, "_touch_heartbeat", MagicMock(side_effect=[None, None, _StopLoop]))
 
