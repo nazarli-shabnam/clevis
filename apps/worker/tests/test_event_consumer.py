@@ -1023,6 +1023,27 @@ def test_run_recovers_from_a_connection_error(monkeypatch, caplog):
     assert any("refused" in r.exc_text for r in caplog.records if r.exc_info)
 
 
+def test_run_recovers_from_a_generic_loop_error(monkeypatch, caplog):
+    # Same as test_run_recovers_from_a_connection_error, but for the catch-all `except
+    # Exception` branch (not the narrower psycopg/redis one) -- e.g. a bug in
+    # _sweep_pending itself, rather than a connection blip.
+    monkeypatch.setattr(event_consumer, "_redis_client", lambda: MagicMock())
+    monkeypatch.setattr(event_consumer, "_ensure_group", MagicMock())
+    monkeypatch.setattr(event_consumer.psycopg, "connect", MagicMock(side_effect=RuntimeError("boom")))
+    monkeypatch.setattr(event_consumer.time, "sleep", MagicMock())
+    monkeypatch.setattr(event_consumer, "_touch_heartbeat", MagicMock(side_effect=[None, None, _StopLoop]))
+
+    with caplog.at_level("ERROR", logger="event_consumer"), pytest.raises(_StopLoop):
+        event_consumer.run()
+
+    assert event_consumer.psycopg.connect.call_count == 2  # retried instead of crashing after the first failure
+    # Regression test for issue #413: this used to log only type(error).__name__ (a
+    # single word, no message/stack), making a real bug indistinguishable from any
+    # other exception. log.exception must record the actual exception message and
+    # traceback.
+    assert any("boom" in r.exc_text for r in caplog.records if r.exc_info)
+
+
 def test_run_retries_initialization_instead_of_dying_on_a_startup_redis_error(monkeypatch, caplog):
     # A Redis error constructing the client or creating the consumer group used to be
     # completely uncaught -- run() would raise straight out, silently killing the
