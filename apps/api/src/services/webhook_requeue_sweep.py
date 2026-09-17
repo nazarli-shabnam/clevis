@@ -34,7 +34,16 @@ _MAX_AGE_HOURS = 24
 # success was never actually durable. Re-XADD is safe either way: the consumer only
 # marks a row 'processed' after it's actually applied, so a row still 'queued' has
 # definitely not been consumed yet, and re-adding it can't cause a double-apply.
+#
+# Excludes rows event_consumer.py deliberately leaves 'queued' forever on purpose (not
+# stuck): a null tenant_id (no tenant to scope a normalized row to) or an event_type with
+# no normalizer yet (membership/team, see event_consumer.py's
+# _NOT_YET_NORMALIZED_EVENT_TYPES). Without this exclusion, this sweep would re-XADD
+# those every tick forever -- the consumer re-acks without ever changing their status, so
+# they'd cross this threshold again next tick and repeat indefinitely, defeating the
+# whole point of bounding the stream.
 _STUCK_QUEUED_MINUTES = 30
+_NOT_YET_NORMALIZED_EVENT_TYPES = ("membership", "team")
 # Cap per tick so a large backlog can't block the loop indefinitely; the next tick picks
 # up whatever's left.
 _BATCH_LIMIT = 200
@@ -50,10 +59,17 @@ def run_webhook_requeue_sweep(db: Session) -> None:
     rows = db.execute(
         text(
             "SELECT id, tenant_id, event_type, received_at, status FROM webhook_deliveries "
-            "WHERE status = 'queue_failed' OR (status = 'queued' AND received_at < :stuck_queued_cutoff) "
+            "WHERE status = 'queue_failed' OR ("
+            "  status = 'queued' AND received_at < :stuck_queued_cutoff"
+            "  AND tenant_id IS NOT NULL AND event_type != ALL(:not_yet_normalized)"
+            ") "
             "ORDER BY id LIMIT :limit FOR UPDATE SKIP LOCKED"
         ),
-        {"limit": _BATCH_LIMIT, "stuck_queued_cutoff": stuck_queued_cutoff},
+        {
+            "limit": _BATCH_LIMIT,
+            "stuck_queued_cutoff": stuck_queued_cutoff,
+            "not_yet_normalized": list(_NOT_YET_NORMALIZED_EVENT_TYPES),
+        },
     ).fetchall()
     if not rows:
         return
