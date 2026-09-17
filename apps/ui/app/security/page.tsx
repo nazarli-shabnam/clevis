@@ -285,6 +285,9 @@ export default function SecurityPage() {
                 value={owner}
                 onChange={(e) => setOwner(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && owner && !scan.isPending && runScan()}
+                autoComplete="off"
+                data-1p-ignore
+                data-lpignore="true"
               />
             </div>
             {!hasInstallationForOwner && (
@@ -307,6 +310,9 @@ export default function SecurityPage() {
                   onChange={(e) => { setToken(e.target.value); setTokenSaved(false) }}
                   className="font-mono"
                   onKeyDown={(e) => e.key === "Enter" && owner && !scan.isPending && runScan()}
+                  autoComplete="new-password"
+                  data-1p-ignore
+                  data-lpignore="true"
                 />
               </div>
             )}

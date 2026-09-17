@@ -525,6 +525,9 @@ function SavedTokensSection() {
               placeholder="Org or owner"
               value={addOrg}
               onChange={(e) => setAddOrg(e.target.value)}
+              autoComplete="off"
+              data-1p-ignore
+              data-lpignore="true"
             />
           </Field>
           <Field>
@@ -535,6 +538,9 @@ function SavedTokensSection() {
               value={addToken}
               onChange={(e) => setAddToken(e.target.value)}
               className="font-mono"
+              autoComplete="new-password"
+              data-1p-ignore
+              data-lpignore="true"
             />
           </Field>
           <Field>
