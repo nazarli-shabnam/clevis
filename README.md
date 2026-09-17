@@ -26,7 +26,7 @@
 | **Overview** | At-a-glance stats across your repositories and organization. |
 | **Activity** | Repository and org event streams pulled from the GitHub API. |
 | **Repositories** | Browse and inspect repositories with their key signals in one place. |
-| **Health & Security** | A computed **security score** backed by six automated checks — **MFA enforcement**, **branch protection**, **secret scanning**, **Dependabot alerts**, **code scanning alerts**, and **default-branch force-push protection** — each with pass/fail status and remediation guidance. |
+| **Health & Security** | A computed **security score** backed by six automated checks — **MFA enforcement**, **branch protection**, **secret scanning**, **Dependabot alerts**, **code scanning alerts**, and **default-branch force-push protection** — each with a **pass**, **fail**, **error**, or **not_applicable** status and remediation guidance. |
 | **Collaborators** | See who has access across the surface you manage. |
 | **Automation** | Run privileged maintenance jobs (e.g. clearing GitHub Actions caches) with **dry-run** support and a full **audit trail**. |
 
