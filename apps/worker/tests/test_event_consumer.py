@@ -856,6 +856,42 @@ def test_organization_member_added_with_missing_login_is_dropped_not_crashed(pg_
         assert cur.fetchone()[0] == "queued"
 
 
+def test_organization_event_db_error_still_releases_the_tenant_lock(pg_conn, tenant_id, monkeypatch):
+    # Regression test: a psycopg.Error mid-write used to leave pg_conn's transaction
+    # aborted, and release_tenant_lock's plain SELECT pg_advisory_unlock (not a
+    # COMMIT/ROLLBACK) would then itself fail with InFailedSqlTransaction -- leaking the
+    # lock for the rest of this connection's lifetime (issue #357 follow-up).
+    conn, state = pg_conn
+
+    def _raise(*args, **kwargs):
+        raise psycopg.errors.UniqueViolation("simulated write failure")
+
+    monkeypatch.setattr(event_consumer.org_membership_store, "upsert_org_member", _raise)
+
+    payload = {
+        "action": "member_added",
+        "membership": {"role": "member", "user": {"login": "octocat", "avatar_url": ""}},
+    }
+    row_id = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-org-db-error-1", event_type="organization", payload=payload)
+
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        event_consumer._process_entry(conn, _FakeRedis(), "1-0", _entry_fields(row_id, "organization", tenant_id))
+
+    # A second connection can immediately acquire the same tenant's lock -- if it had
+    # leaked, this would return False instead.
+    other_conn = psycopg.connect(_DB_URL, autocommit=True)
+    try:
+        with other_conn.cursor() as cur:
+            cur.execute(
+                "SELECT pg_try_advisory_lock(hashtext(%s), %s)",
+                ("org_membership_reconcile", tenant_id),
+            )
+            assert cur.fetchone()[0] is True
+            cur.execute("SELECT pg_advisory_unlock(hashtext(%s), %s)", ("org_membership_reconcile", tenant_id))
+    finally:
+        other_conn.close()
+
+
 def test_process_entry_drops_malformed_json_payload(pg_conn, tenant_id):
     conn, state = pg_conn
     with conn.cursor() as cur:

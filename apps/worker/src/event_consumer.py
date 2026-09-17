@@ -361,45 +361,61 @@ def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry
         return
 
     if event_type in _ORG_MEMBERSHIP_EVENT_TYPES:
-        with pg_conn.cursor() as cur:
-            cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
-            if event_type == "member":
-                member_normalized = _normalize_member_event(payload)
-                action = payload.get("action")
-                if member_normalized is None:
-                    log.error("webhook_deliveries row %s has no repository.full_name or member.login, dropping", delivery_row_id)
-                    redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
-                    return
-                if action == "removed":
-                    org_membership_store.remove_repo_collaborator(
-                        cur, tenant_id=tenant_id, repo=member_normalized["repo"], login=member_normalized["login"],
-                        event_received_at=received_at,
-                    )
-                else:
-                    org_membership_store.upsert_repo_collaborator(cur, tenant_id=tenant_id, granted_at=received_at, **member_normalized)
-            else:  # organization
-                action = payload.get("action")
-                if action == "member_removed":
-                    login = ((payload.get("membership") or {}).get("user") or {}).get("login")
-                    if not login:
-                        log.error("webhook_deliveries row %s has no membership.user.login, dropping", delivery_row_id)
+        # Held for this event's whole write (issue #357) so it can't land between the
+        # reconciliation job's roster fetch and its snapshot apply -- see
+        # org_membership_store.acquire_tenant_lock's docstring for the race this closes.
+        org_membership_store.acquire_tenant_lock(pg_conn, tenant_id)
+        try:
+            with pg_conn.cursor() as cur:
+                cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+                if event_type == "member":
+                    member_normalized = _normalize_member_event(payload)
+                    action = payload.get("action")
+                    if member_normalized is None:
+                        log.error("webhook_deliveries row %s has no repository.full_name or member.login, dropping", delivery_row_id)
                         redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
                         return
-                    org_membership_store.remove_org_member(cur, tenant_id=tenant_id, login=login, event_received_at=received_at)
-                elif action == "member_added":
-                    org_normalized = _normalize_organization_event(payload)
-                    if org_normalized is None:
-                        log.error("webhook_deliveries row %s has no membership.user.login, dropping", delivery_row_id)
-                        redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
-                        return
-                    org_membership_store.upsert_org_member(cur, tenant_id=tenant_id, added_at=received_at, **org_normalized)
-                else:
-                    # member_invited/renamed/deleted don't affect org_members -- ack as a no-op.
-                    log.debug("webhook_deliveries row %s is an organization/%s event, no-op for org_members", delivery_row_id, action)
-            cur.execute("UPDATE webhook_deliveries SET status = 'processed' WHERE id = %s", (delivery_row_id,))
-        pg_conn.commit()
-        redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
-        return
+                    if action == "removed":
+                        org_membership_store.remove_repo_collaborator(
+                            cur, tenant_id=tenant_id, repo=member_normalized["repo"], login=member_normalized["login"],
+                            event_received_at=received_at,
+                        )
+                    else:
+                        org_membership_store.upsert_repo_collaborator(cur, tenant_id=tenant_id, granted_at=received_at, **member_normalized)
+                else:  # organization
+                    action = payload.get("action")
+                    if action == "member_removed":
+                        login = ((payload.get("membership") or {}).get("user") or {}).get("login")
+                        if not login:
+                            log.error("webhook_deliveries row %s has no membership.user.login, dropping", delivery_row_id)
+                            redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
+                            return
+                        org_membership_store.remove_org_member(cur, tenant_id=tenant_id, login=login, event_received_at=received_at)
+                    elif action == "member_added":
+                        org_normalized = _normalize_organization_event(payload)
+                        if org_normalized is None:
+                            log.error("webhook_deliveries row %s has no membership.user.login, dropping", delivery_row_id)
+                            redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
+                            return
+                        org_membership_store.upsert_org_member(cur, tenant_id=tenant_id, added_at=received_at, **org_normalized)
+                    else:
+                        # member_invited/renamed/deleted don't affect org_members -- ack as a no-op.
+                        log.debug("webhook_deliveries row %s is an organization/%s event, no-op for org_members", delivery_row_id, action)
+                cur.execute("UPDATE webhook_deliveries SET status = 'processed' WHERE id = %s", (delivery_row_id,))
+            pg_conn.commit()
+            redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
+            return
+        except psycopg.Error:
+            # Roll back before the finally's release_tenant_lock runs -- pg_advisory_unlock
+            # is a plain statement, not COMMIT/ROLLBACK, so issuing it against an aborted
+            # transaction (left that way by this exception) would itself fail with
+            # InFailedSqlTransaction, leaking the lock for the rest of this connection's
+            # lifetime. Re-raised so the caller's own except-block still does its normal
+            # "leave unacked, _sweep_pending reclaims it" handling.
+            pg_conn.rollback()
+            raise
+        finally:
+            org_membership_store.release_tenant_lock(pg_conn, tenant_id)
 
     if event_type in _SECURITY_ALERT_EVENT_TYPES:
         alert_normalized = _normalize_security_alert(event_type, payload, received_at)
