@@ -94,6 +94,28 @@ def test_resolve_org_token_raises_when_nothing_available(db, app_configured):
         resolve_org_token(db, org_id=org.id, account_login="acme", client_token=None)
 
 
+def test_installation_mint_failure_logs_at_error_not_warning(db, app_configured, caplog):
+    # Regression test for issue #414: a broken/rotated App key or a GitHub 5xx degrades
+    # every request through this installation to "fall back to a client-supplied PAT"
+    # with only this log line as a signal -- it must be `error`, not `warning`, so it's
+    # distinguishable from the routine "App isn't configured yet" case.
+    org = org_repo.get_or_create(db, github_login="acme")
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id
+    )
+    request = httpx.Request("POST", "https://api.github.com/app/installations/42/access_tokens")
+    response = httpx.Response(401, request=request)
+    with (
+        patch(
+            "src.services.token_resolution.github_app.get_installation_token",
+            side_effect=httpx.HTTPStatusError("unauthorized", request=request, response=response),
+        ),
+        caplog.at_level("ERROR", logger="src.services.token_resolution"),
+    ):
+        resolve_org_token(db, org_id=org.id, account_login="acme", client_token="ghp_client")
+    assert any(r.levelname == "ERROR" and "Failed to mint" in r.message for r in caplog.records)
+
+
 def test_resolve_org_token_error_distinguishes_mint_failure_from_no_installation(db, app_configured):
     # Regression test for #250: an installation row exists (App was installed), but
     # minting a token for it failed -- the error must say so, not tell the caller to

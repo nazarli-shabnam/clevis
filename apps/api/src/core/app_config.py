@@ -53,8 +53,16 @@ def get_config(key: str, default: str = "") -> str:
             ).fetchone()
         val = row[0] if row else default
     except Exception:
-        logger.warning("app_config read failed for key %r, using default", key)
-        val = default
+        # A transient DB blip or a missing SELECT grant (e.g. a constrained clevis_api
+        # role) shouldn't silently flip a security-posture setting like
+        # registration_enabled back to its code default -- serve the last-known-good
+        # cached value instead, if we have one. Don't refresh its timestamp: we want
+        # the next call to retry the DB rather than pin the stale value for a full TTL.
+        if key in _cache:
+            logger.error("app_config read failed for key %r, serving last-known-good cached value", key)
+            return _cache[key][0]
+        logger.error("app_config read failed for key %r and no cached value exists, using default", key)
+        return default
 
     _cache[key] = (val, now)
     return val
