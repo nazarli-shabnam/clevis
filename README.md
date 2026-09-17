@@ -100,7 +100,7 @@ That's it — Overview, Activity, Repositories, Collaborators, Health & Security
 
 ## Contributing
 
-Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for dev setup, CI checks, and commit conventions, and [`DESIGN.md`](DESIGN.md) for UI design language.
+Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for dev setup, CI checks, and commit conventions, and [`DESIGN.md`](DESIGN.md) for UI design language. For what stage the project is at, see [`ROADMAP.md`](ROADMAP.md).
 
 Found a security issue? Please follow the [security policy](SECURITY.md) rather than opening a public issue.
 
