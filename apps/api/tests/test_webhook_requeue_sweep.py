@@ -43,7 +43,10 @@ def test_sweep_requeues_a_recent_queue_failed_row(db):
         run_webhook_requeue_sweep(db)
 
     mock_client.xadd.assert_called_once_with(
-        "webhook_events", {"delivery_row_id": row.id, "event_type": "push", "tenant_id": ""}
+        "webhook_events",
+        {"delivery_row_id": row.id, "event_type": "push", "tenant_id": ""},
+        maxlen=50_000,
+        approximate=True,
     )
     db.refresh(row)
     assert row.status == "queued"
@@ -107,3 +110,24 @@ def test_sweep_does_not_touch_rows_already_queued_or_abandoned(db):
     db.refresh(abandoned_row)
     assert queued_row.status == "queued"
     assert abandoned_row.status == "queue_abandoned"
+
+
+def test_sweep_reenqueues_a_queued_row_stuck_past_the_stuck_threshold(db):
+    # Issue #440: a row still 'queued' this long after receipt almost certainly had its
+    # stream entry trimmed (MAXLEN) before the consumer group ever read it -- the same
+    # recovery path as a failed XADD, just a different original cause.
+    stuck = datetime.now(timezone.utc) - timedelta(minutes=45)
+    row = _make_row(db, status="queued", received_at=stuck)
+
+    mock_client = MagicMock()
+    with patch("src.services.webhook_requeue_sweep.get_redis_client", return_value=mock_client):
+        run_webhook_requeue_sweep(db)
+
+    mock_client.xadd.assert_called_once_with(
+        "webhook_events",
+        {"delivery_row_id": row.id, "event_type": "push", "tenant_id": ""},
+        maxlen=50_000,
+        approximate=True,
+    )
+    db.refresh(row)
+    assert row.status == "queued"

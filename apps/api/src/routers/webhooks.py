@@ -68,6 +68,18 @@ _INGESTED_EVENT_TYPES = {
 # from this same key.
 _WEBHOOK_STREAM_KEY = "webhook_events"
 
+# Approximate cap (issue #440) so the stream can't grow unbounded if the consumer group
+# ever falls behind or stops entirely -- XADD's own MAXLEN ~ trimming, not a separate
+# sweep, so there's no new loop/config to keep in sync. `delivery_row_id` is the only
+# durable reference back to webhook_deliveries, but the row + its `status` there are the
+# real source of truth (trimming a stream entry doesn't delete anything, it just means
+# the consumer group's XREADGROUP won't see it anymore); webhook_requeue_sweep.py's
+# staleness check now also catches a row trimmed before consumption (still 'queued' well
+# past normal processing time), same recovery path as a 'queue_failed' row. 50k is
+# generous headroom over normal throughput -- the recovery sweep, not this trim, is what
+# actually protects against real data loss.
+_WEBHOOK_STREAM_MAXLEN = 50_000
+
 # GitHub caps webhook deliveries around 25MB; refuse anything larger long before that
 # so a body this endpoint (unauthenticated until the signature check passes) can't be
 # used to exhaust memory. Enforced by counting streamed bytes, not by trusting a
@@ -193,6 +205,8 @@ def _handle_ingested_event(db: Session, event: str, delivery_id: str, raw_body: 
                 "event_type": event,
                 "tenant_id": tenant_id if tenant_id is not None else "",
             },
+            maxlen=_WEBHOOK_STREAM_MAXLEN,
+            approximate=True,
         )
     except Exception:
         # A transient Redis blip isn't GitHub's retry problem to solve -- the payload
