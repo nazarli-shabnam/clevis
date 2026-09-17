@@ -405,6 +405,15 @@ def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry
             pg_conn.commit()
             redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
             return
+        except psycopg.Error:
+            # Roll back before the finally's release_tenant_lock runs -- pg_advisory_unlock
+            # is a plain statement, not COMMIT/ROLLBACK, so issuing it against an aborted
+            # transaction (left that way by this exception) would itself fail with
+            # InFailedSqlTransaction, leaking the lock for the rest of this connection's
+            # lifetime. Re-raised so the caller's own except-block still does its normal
+            # "leave unacked, _sweep_pending reclaims it" handling.
+            pg_conn.rollback()
+            raise
         finally:
             org_membership_store.release_tenant_lock(pg_conn, tenant_id)
 
