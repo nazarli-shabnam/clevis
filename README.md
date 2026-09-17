@@ -26,7 +26,7 @@
 | **Overview** | At-a-glance stats across your repositories and organization. |
 | **Activity** | Repository and org event streams pulled from the GitHub API. |
 | **Repositories** | Browse and inspect repositories with their key signals in one place. |
-| **Health & Security** | A computed **security score** backed by automated checks — **MFA enforcement**, **branch protection**, and **secret scanning** — each with pass/fail status and remediation guidance. |
+| **Health & Security** | A computed **security score** backed by six automated checks — **MFA enforcement**, **branch protection**, **secret scanning**, **Dependabot alerts**, **code scanning alerts**, and **default-branch force-push protection** — each with a **pass**, **fail**, **error**, or **not_applicable** status and remediation guidance. |
 | **Collaborators** | See who has access across the surface you manage. |
 | **Automation** | Run privileged maintenance jobs (e.g. clearing GitHub Actions caches) with **dry-run** support and a full **audit trail**. |
 
@@ -43,7 +43,7 @@ Clevis is three independently deployable services around one shared check librar
 | **`apps/api`** | FastAPI · SQLAlchemy 2 · Alembic | REST backend — auth, analytics, RBAC, and job enqueueing. |
 | **`apps/worker`** | Python · psycopg3 | Polls the job queue (`SELECT … FOR UPDATE SKIP LOCKED`) and executes GitHub API tasks. Scales to multiple replicas safely. |
 | **`apps/ui`** | Next.js 15 · React 19 · TanStack Query | The dashboard — dense, dark, keyboard-friendly. |
-| **`packages/checks`** | `clevis-checks` (Python) | The security-check engine (MFA, branch protection, secret scanning) with built-in GitHub pagination. |
+| **`packages/checks`** | `clevis-checks` (Python) | The security-check engine — six checks (MFA, branch protection, secret scanning, Dependabot alerts, code scanning alerts, default-branch force-push protection) — with built-in GitHub pagination. |
 
 **Security model:** Access is enforced per route with JWT auth dependencies (`require_auth`, `require_workspace_admin`) and org-scoped roles (`require_org_role("member"|"admin")`). GitHub credentials may be stored as Fernet-encrypted rows in `saved_tokens` (legacy PAT path); job payloads are also Fernet-encrypted at enqueue time and decrypted only when the worker processes them. Prefer a connected GitHub App installation so the API can mint short-lived installation tokens instead. Every request carries a propagated `X-Request-ID` for traceability.
 
