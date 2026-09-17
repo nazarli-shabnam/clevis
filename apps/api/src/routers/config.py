@@ -24,6 +24,7 @@ _INT_KEYS = {
     "membership_reconcile_stale_hours",
     "pr_nudge_stale_days",
     "digest_poll_seconds",
+    "webhook_requeue_poll_seconds",
 }
 _BOOL_KEYS = {"registration_enabled"}
 # key -> allowed values, for small closed-vocabulary settings (issues #292, #289).
