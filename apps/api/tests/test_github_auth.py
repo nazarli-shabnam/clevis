@@ -178,6 +178,32 @@ def test_concurrent_oauth_callback_for_same_identity_recovers_the_winner(db):
     assert db.query(User).filter(User.github_user_id == 1001).count() == 1
 
 
+def test_concurrent_identity_vs_existing_email_raises_email_already_registered(db):
+    # Regression test: the flush's IntegrityError isn't always a github_user_id collision
+    # -- a different concurrent request (e.g. a competing /auth/register) can grab this
+    # identity's email in the gap between the upfront email check and the flush. Recovery
+    # must fall back to the same EmailAlreadyRegistered business rule the upfront check
+    # enforces, not leak a raw IntegrityError as an unhandled 500.
+    existing = User(email="shared@example.com", name="Existing", password_hash="x", is_workspace_admin=True)
+    db.add(existing)
+    db.commit()
+
+    real_first = Query.first
+    calls = {"n": 0}
+
+    def racy_first(self):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return None
+        return real_first(self)
+
+    with patch.object(Query, "first", racy_first):
+        with pytest.raises(EmailAlreadyRegistered):
+            find_or_create_user(db, _identity(github_user_id=9999, email="shared@example.com"))
+
+    assert db.query(User).filter(User.github_user_id == 9999).count() == 0
+
+
 # ── endpoints ─────────────────────────────────────────────────────────────────
 
 def test_login_redirects_to_github(gh_client, oauth_configured):
