@@ -23,6 +23,7 @@ import logging
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.auth import create_access_token, set_session_cookie
@@ -55,14 +56,18 @@ class EmailAlreadyRegistered(Exception):
     auto-link in this case instead of silently taking over that account."""
 
 
+def _refresh_profile(user: User, identity: github_oauth.GitHubIdentity) -> None:
+    """Returning GitHub user -- refresh their profile fields, keep their role."""
+    user.github_login = identity.login
+    user.avatar_url = identity.avatar_url
+    if not user.name and identity.name:
+        user.name = identity.name
+
+
 def find_or_create_user(db: Session, identity: github_oauth.GitHubIdentity) -> User:
     user = db.query(User).filter(User.github_user_id == identity.github_user_id).first()
     if user is not None:
-        # Returning GitHub user -- refresh their profile fields, keep their role.
-        user.github_login = identity.login
-        user.avatar_url = identity.avatar_url
-        if not user.name and identity.name:
-            user.name = identity.name
+        _refresh_profile(user, identity)
         db.commit()
         db.refresh(user)
         return user
@@ -86,10 +91,25 @@ def find_or_create_user(db: Session, identity: github_oauth.GitHubIdentity) -> U
         email_verified=True,
     )
     db.add(user)
-    # flush (not commit): land the personal tenant/membership in the same transaction as
-    # this user, then commit once -- a failure between two separate commits could otherwise
-    # leave a User row with no personal tenant (#323 CodeRabbit finding).
-    db.flush()
+    try:
+        # flush (not commit): land the personal tenant/membership in the same transaction
+        # as this user, then commit once -- a failure between two separate commits could
+        # otherwise leave a User row with no personal tenant (#323 CodeRabbit finding).
+        db.flush()
+    except IntegrityError:
+        # Two concurrent OAuth callbacks for the same brand-new GitHub identity (or the
+        # same email) both passed the checks above before either flushed -- same race
+        # /auth/setup and /auth/register guard against, but a login should recover
+        # gracefully instead of 409ing like those self-service flows: the loser re-queries
+        # for the winner's now-committed row and returns it. Issue #464.
+        db.rollback()
+        user = db.query(User).filter(User.github_user_id == identity.github_user_id).first()
+        if user is None:
+            raise
+        _refresh_profile(user, identity)
+        db.commit()
+        db.refresh(user)
+        return user
     set_session_user(db, user.id)
     tenant_repo.ensure_personal_tenant(db, user.id, commit=False)
     db.commit()

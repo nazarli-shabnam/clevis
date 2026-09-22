@@ -8,6 +8,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from sqlalchemy.orm import Query
+
 from src.core.config import settings
 from src.core.db import User, get_db
 from src.core.rate_limit import _buckets as _rate_limit_buckets
@@ -147,6 +149,33 @@ def test_new_github_user_is_created_already_verified(db):
     # account shouldn't need to click an emailed verification link too.
     user = find_or_create_user(db, _identity())
     assert user.email_verified is True
+
+
+def test_concurrent_oauth_callback_for_same_identity_recovers_the_winner(db):
+    # Regression test for issue #464: simulates two near-simultaneous OAuth callbacks for
+    # the same brand-new GitHub identity, same pattern as test_auth.py's
+    # test_register_concurrent_same_email_returns_409_not_500 -- a row for this identity is
+    # already committed (the "other request" that won the race), then the two pre-insert
+    # existence checks (by github_user_id, then by email) are patched to fake a miss so
+    # this call proceeds to the real insert, which must collide on the genuine
+    # github_user_id unique constraint. Unlike /auth/register, login should recover
+    # gracefully: the loser re-queries for the winner's row instead of 500ing or 409ing.
+    winner = find_or_create_user(db, _identity())
+
+    real_first = Query.first
+    calls = {"n": 0}
+
+    def racy_first(self):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return None
+        return real_first(self)
+
+    with patch.object(Query, "first", racy_first):
+        loser = find_or_create_user(db, _identity(name="Octo Loser"))
+
+    assert loser.id == winner.id
+    assert db.query(User).filter(User.github_user_id == 1001).count() == 1
 
 
 # ── endpoints ─────────────────────────────────────────────────────────────────
