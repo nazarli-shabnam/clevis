@@ -192,6 +192,13 @@ def _admin_org(db, user, login="acme"):
     return org
 
 
+def _member_org(db, user, login="acme"):
+    org = org_repo.get_or_create(db, github_login=login)
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=user.id, role="member")
+    db.commit()
+    return org
+
+
 def _blob(text):
     return {"content": base64.b64encode(text.encode()).decode(), "sha": "blobsha"}
 
@@ -246,6 +253,32 @@ def test_org_scan_returns_findings(client, db, user):
     assert body["findings"][0]["rule"] == "pull_request_target_checks_out_pr_code"
     assert body["pr_url"] is None
     assert db.query(AuditLog).filter(AuditLog.action == "workflow_lint.scan").count() == 1
+
+
+def test_org_member_can_run_a_read_only_scan_without_admin(client, db, user):
+    # Regression test for issue #469: a read-only scan (open_pr=false) through the
+    # org-scoped route should need only membership, same as its personal-route sibling
+    # (test_personal_route_scan_needs_only_membership_and_audits_under_personal_tenant) --
+    # not admin.
+    _member_org(db, user)
+    with patch("src.routers.workflow_lint.GitHubClient") as mock:
+        _github(mock, workflows={"bad.yml": _BAD_PRT})
+        resp = client.post(
+            "/orgs/acme/repos/acme/api/workflow-lint", json={"token": "ghp_member"}
+        )
+    assert resp.status_code == 200
+
+
+def test_org_open_pr_requires_admin_of_the_org(client, db, user):
+    # Regression test for issue #469: opening a fix PR writes to GitHub, so it should
+    # require org-admin even through the org-scoped route, same as
+    # test_personal_open_pr_requires_admin_of_a_connected_org's personal-route check.
+    _member_org(db, user)
+    resp = client.post(
+        "/orgs/acme/repos/acme/api/workflow-lint",
+        json={"token": "ghp_member", "open_pr": True},
+    )
+    assert resp.status_code == 403
 
 
 def test_open_pr_creates_branch_commits_and_pr(client, db, user):
