@@ -31,9 +31,22 @@ _MAX_AGE_HOURS = 24
 # issue #440: a row still 'queued' this long after receipt is well past any normal
 # XREADGROUP pickup latency (seconds) -- either its stream entry was trimmed by
 # _WEBHOOK_STREAM_MAXLEN before the consumer group read it, or the original XADD's
-# success was never actually durable. Re-XADD is safe either way: the consumer only
-# marks a row 'processed' after it's actually applied, so a row still 'queued' has
-# definitely not been consumed yet, and re-adding it can't cause a double-apply.
+# success was never actually durable. We can't tell that apart from "consumer group is
+# just genuinely backlogged and will still get to the original entry" (no lag/watermark
+# tracking against the stream exists here), so under sustained backlog this can add a
+# second stream entry for a delivery that was going to be processed anyway -- the
+# normalizer in apps/worker/src/event_consumer.py then runs twice for the same
+# delivery_row_id. That's safe ONLY because every currently-ingested event type's DB
+# write there is a genuine idempotent upsert, not because it can't happen: repo_events
+# (ON CONFLICT ... DO NOTHING, enforced by
+# test_processing_the_same_delivery_twice_is_idempotent), security_alerts (ON CONFLICT
+# ... DO UPDATE guarded by updated_at, enforced by
+# test_redelivered_security_alert_updates_state_instead_of_duplicating), org_members and
+# repo_collaborators (guarded upserts, enforced by
+# test_redelivered_member_added_does_not_overwrite_role and
+# test_out_of_order_member_removed_does_not_delete_a_newer_repo_collaborator) -- all in
+# apps/worker/tests/test_event_consumer.py. A new ingested event type that skips a
+# matching idempotency test would make re-XADD here unsafe for it -- issue #462.
 #
 # Excludes rows event_consumer.py deliberately leaves 'queued' forever on purpose (not
 # stuck): a null tenant_id (no tenant to scope a normalized row to) or an event_type with
