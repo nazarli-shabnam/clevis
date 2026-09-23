@@ -129,11 +129,14 @@ def workflow_lint_org(
     owner: str,
     repo: str,
     body: LintRequest,
-    ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),
 ) -> LintResponse:
+    # Opening a PR writes to GitHub, so it needs org-admin when open_pr=true; a read-only
+    # scan only needs membership -- same grading as workflow_lint_personal's
+    # resolve_owner_token call above.
+    ctx: OrgContext = require_org_role(min_role="admin" if body.open_pr else "member")(org_login, db, user)
     assert_owner_matches_org(owner, ctx)
     try:
         token = resolve_org_token(
