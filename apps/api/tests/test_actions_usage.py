@@ -1,10 +1,6 @@
-"""Tests for GET /orgs/{org}/usage/actions (issue #294).
+"""Tests for GET /orgs/{org}/usage/actions (admin-only, GitHub enhanced-billing usage summary).
 
-Admin-only. Reads GitHub's enhanced-billing usage summary
-(``GET /organizations/{org}/settings/billing/usage/summary?product=actions`` — the
-older ``/settings/billing/actions`` endpoint was retired 2025-09-26), which needs an
-App permission Clevis doesn't request by default: a 403 from GitHub is turned into a
-400 with a clear hint so the UI can hide the card instead of erroring the page.
+The App lacks billing permission by default, so a GitHub 403 maps to a 400 the UI can hide.
 """
 
 from datetime import datetime, timezone

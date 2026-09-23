@@ -23,18 +23,10 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# Touched once per poll loop iteration so the docker-compose healthcheck can tell a hung
-# worker (process alive but stuck, e.g. blocked on a network call with no timeout) apart
-# from a genuinely healthy one -- `restart: unless-stopped` only fires on a hard crash,
-# not a hang, so without this a stuck worker container would never be restarted.
+# Touched each loop so the healthcheck can detect a hung (not just crashed) worker.
 HEARTBEAT_FILE = Path("/tmp/worker_heartbeat")
-# The docker-compose healthcheck treats the heartbeat file as stale past 60s (see
-# docker-compose.yml). worker_poll_seconds is a live-editable app_config value with no
-# upper bound otherwise, and the heartbeat only gets touched once per loop iteration --
-# an operator setting it above this cap would make every iteration's normal sleep alone
-# exceed the healthcheck's staleness threshold, permanently false-positive-ing the worker
-# as hung. Kept comfortably below 60s so real job processing inside an iteration still
-# has margin before the healthcheck's threshold is reached.
+# Healthcheck treats the heartbeat as stale past 60s; cap the live-editable poll
+# interval well below that so a normal sleep can't look like a hang.
 _MAX_POLL_SECONDS = 30
 
 # psycopg.connect() expects plain postgresql://, not the SQLAlchemy +psycopg dialect prefix
@@ -42,11 +34,9 @@ _CONNECT_TIMEOUT_SECONDS = 5
 
 
 def _plain_db_url(url: str) -> str:
-    """Strip the SQLAlchemy dialect prefix and bound connection establishment. Without an
-    explicit connect_timeout, psycopg.connect() can block indefinitely on a network blip /
-    paused pooler -- and it's called on the hot poll-loop path (and, worse, synchronously in
-    _JobHeartbeat.__enter__ after a job is already committed as 'processing'), so an
-    unbounded hang there stalls the worker until the 60s docker healthcheck restarts it."""
+    """Strip the SQLAlchemy dialect prefix and bound connect time.
+
+    Without connect_timeout, psycopg.connect() can hang indefinitely on the hot poll path."""
     stripped = url.replace("postgresql+psycopg://", "postgresql://")
     sep = "&" if "?" in stripped else "?"
     return f"{stripped}{sep}connect_timeout={_CONNECT_TIMEOUT_SECONDS}"
@@ -54,18 +44,12 @@ def _plain_db_url(url: str) -> str:
 
 _DB_URL = _plain_db_url(settings.database_url.get_secret_value())
 
-# Shared cap on jobs.retry_count, incremented by both the reclaim sweep (a worker
-# crashed mid-job) and a transient-failure requeue in process_job — either path marks
-# the job 'failed' once exceeded, so a job can't retry forever regardless of cause.
+# Shared cap on retry_count for both reclaim-after-crash and transient-failure requeue.
 MAX_RETRIES = 5
-# A job left in 'processing' longer than this almost certainly had its worker crash or
-# get killed mid-job (see _reclaim_stale_jobs) rather than still being genuinely in flight
-# -- unless its heartbeat_at is still fresh (see _JobHeartbeat / _reclaim_stale_jobs).
+# A 'processing' job older than this, with a stale heartbeat, is presumed crashed.
 RECLAIM_TIMEOUT_MINUTES = 30
 
-# How often _JobHeartbeat touches jobs.heartbeat_at while a handler is running. Comfortably
-# below RECLAIM_TIMEOUT_MINUTES so a genuinely slow-but-alive job's heartbeat always stays
-# fresh well ahead of the reclaim sweep's staleness check.
+# Kept well below RECLAIM_TIMEOUT_MINUTES so a slow-but-alive job stays fresh.
 _JOB_HEARTBEAT_INTERVAL_SECONDS = 10
 
 
@@ -83,10 +67,7 @@ def _read_app_config(key: str, default: str) -> str:
 
 
 def _read_poll_seconds() -> int:
-    """Read worker_poll_seconds, clamped to [1, _MAX_POLL_SECONDS]. Falls back to 5 on a
-    malformed value so a bad config row can never crash or busy-loop the worker. The upper
-    clamp keeps the heartbeat healthcheck's staleness threshold meaningful -- see
-    _MAX_POLL_SECONDS."""
+    """Read worker_poll_seconds, clamped to [1, _MAX_POLL_SECONDS]; 5 on a malformed value."""
     raw = _read_app_config("worker_poll_seconds", "5")
     try:
         return max(1, min(_MAX_POLL_SECONDS, int(raw)))
@@ -117,15 +98,8 @@ class ReconcileOrgMembershipPayload(BaseModel):
 
 
 def _mark_done(conn: psycopg.Connection, job_id: int, result: dict, expected_retry_count: int) -> None:
-    # WHERE status='processing' AND retry_count=expected_retry_count fences this update
-    # against not just a lost update (reclaim already reset this job out from under us --
-    # status no longer 'processing') but also the narrower race where a *second* worker
-    # has since re-claimed the same job: reclaim bumps retry_count when it resets a stale
-    # job back to 'queued', so if that happened and another worker's SELECT ... FOR UPDATE
-    # picked it up again, status is back to 'processing' but retry_count no longer matches
-    # what *this* worker observed when it originally claimed the job. Without the
-    # retry_count check, this stale completion would silently clobber the second worker's
-    # in-flight row (issue #253).
+    # The retry_count match fences against reclaim resetting this job and a second
+    # worker re-claiming it (status is 'processing' again, but retry_count was bumped).
     with conn.cursor() as cur:
         cur.execute(
             "UPDATE jobs SET status='done', result=%s, updated_at=NOW() "
@@ -146,9 +120,7 @@ def _mark_failed(conn: psycopg.Connection, job_id: int, error_text: str, expecte
 
 
 def _requeue_for_retry(conn: psycopg.Connection, job_id: int, retry_count: int, error_text: str) -> None:
-    # `retry_count` here is the value this worker observed at claim time -- same fencing
-    # reasoning as _mark_done/_mark_failed above, checked against the ORIGINAL value
-    # before it's incremented into new_count below.
+    # Fence on the retry_count observed at claim time, same as _mark_done/_mark_failed.
     new_count = retry_count + 1
     if new_count > MAX_RETRIES:
         with conn.cursor() as cur:
@@ -176,18 +148,14 @@ def process_job(conn: psycopg.Connection, job_id: int, job_type: str, payload_ra
     try:
         handler(conn, job_id, payload_raw, retry_count)
     except Exception as error:
-        # Safety net for anything not handled above (e.g. a bug in the handler, or an
-        # unanticipated exception type) — without this, the job would stay 'processing'
-        # until the reclaim sweep picks it up, up to RECLAIM_TIMEOUT_MINUTES later,
-        # instead of failing/retrying immediately.
+        # Safety net for anything unhandled, so the job fails/retries now instead of
+        # waiting for the reclaim sweep.
         log.error("job %d hit an unexpected error: %s", job_id, error)
         _mark_failed(conn, job_id, sanitize_error(error), retry_count)
 
 
 def _github_error_message(resp: httpx.Response) -> str:
-    """Prefer GitHub's own error message over a bare status code, so jobs.result
-    tells an operator *why* a clear failed (e.g. "Resource not accessible by
-    integration") instead of just "GitHub API error: 403"."""
+    """Prefer GitHub's own error message over a bare status code in jobs.result."""
     try:
         message = resp.json().get("message")
     except (ValueError, AttributeError):
@@ -198,15 +166,12 @@ def _github_error_message(resp: httpx.Response) -> str:
 
 
 def _github_response_is_error(conn: psycopg.Connection, job_id: int, retry_count: int, resp: httpx.Response) -> bool:
-    """Apply the shared transient/permanent split to one GitHub response. Returns True
-    (and marks the job requeued or failed) when the response is an error; False when the
-    caller should keep going."""
+    """Apply the transient/permanent split to one GitHub response.
+
+    Returns True (after requeueing or failing the job) on an error, False otherwise."""
     rate_limited = resp.status_code == 429 or membership_reconcile._is_secondary_rate_limit(resp)
     if resp.status_code >= 500 or rate_limited:
-        # 5xx is presumed transient (GitHub-side issue); a 429 or a secondary-rate-limit
-        # 403 (403 + Retry-After / X-RateLimit-Remaining: 0) means back off and retry
-        # later, not that the request is invalid -- same split as
-        # _handle_reconcile_org_membership.
+        # 5xx, 429, and secondary-rate-limit 403 are transient: back off and retry.
         log.warning("job %d got a %d from GitHub (attempt %d)", job_id, resp.status_code, retry_count + 1)
         _requeue_for_retry(conn, job_id, retry_count, sanitize_error(_github_error_message(resp)))
         return True
@@ -252,9 +217,8 @@ def _handle_clear_actions_cache(conn: psycopg.Connection, job_id: int, payload_r
                 log.info("job %d done", job_id)
                 return
 
-            # Global "clear everything": GitHub has no bulk-delete endpoint, so list every
-            # cache entry (paginated) then delete each by id. A keyless DELETE on the
-            # collection is a 422 — which is why this path used to fail every time.
+            # GitHub has no bulk-delete endpoint (keyless DELETE is a 422): list every
+            # cache entry, then delete each by id.
             cache_ids: list[int] = []
             page = 1
             while True:
@@ -271,8 +235,7 @@ def _handle_clear_actions_cache(conn: psycopg.Connection, job_id: int, payload_r
             for cache_id in cache_ids:
                 resp = client.delete(f"{repo_path}/{cache_id}", headers=headers)
                 if resp.status_code == 404:
-                    # Already gone — e.g. a retry re-running after a partial success, or a
-                    # concurrent clear. Not an error; just skip it.
+                    # Already gone (retry after partial success, or a concurrent clear).
                     continue
                 if _github_response_is_error(conn, job_id, retry_count, resp):
                     return
@@ -329,8 +292,7 @@ def _handle_backfill_repo_events(conn: psycopg.Connection, job_id: int, payload_
     inserted_count = 0
     try:
         with conn.cursor() as cur:
-            # Same session-context mechanism as event_consumer.py's _process_entry -- see
-            # its comment for why this isn't a clevis_worker BYPASSRLS grant instead.
+            # Session context for RLS, same as event_consumer.py's _process_entry.
             cur.execute(f"SET app.tenant_id = {int(payload.tenant_id)}")
             for raw_event in raw_events:
                 normalized = backfill.normalize(raw_event)
@@ -339,10 +301,7 @@ def _handle_backfill_repo_events(conn: psycopg.Connection, job_id: int, payload_
                 if repo_events_store.insert_event_and_upsert_daily_count(cur, tenant_id=payload.tenant_id, **normalized):
                     inserted_count += 1
 
-            # Marks this tenant as freshly synced regardless of trigger (install-time or
-            # the gap-heal sweep) -- issue #192's sync cursor. Upserted in the same
-            # transaction as the event inserts above so a rolled-back run (below) doesn't
-            # advance the cursor past events that were never actually stored.
+            # Upserted in the same transaction so a rollback doesn't advance the cursor.
             cur.execute(
                 """
                 INSERT INTO activity_sync_cursors (tenant_id, account_login, account_type, last_synced_at)
@@ -357,12 +316,8 @@ def _handle_backfill_repo_events(conn: psycopg.Connection, job_id: int, payload_
             )
         conn.commit()
     except psycopg.Error as error:
-        # Without a rollback here, this connection's transaction stays aborted -- the
-        # _mark_failed/process_job safety net UPDATE that would otherwise run on it next
-        # would itself raise InFailedSqlTransaction, leaving the job stuck in
-        # 'processing' until the reclaim sweep instead of being requeued. The synthetic
-        # backfill:<id> delivery_id makes a full retry safe -- nothing is lost by
-        # requeueing rather than resuming.
+        # Roll back so the aborted transaction doesn't break the safety-net UPDATE;
+        # synthetic delivery_ids make a full retry safe.
         conn.rollback()
         log.warning("job %d failed to store backfilled events (attempt %d): %s", job_id, retry_count + 1, error)
         _requeue_for_retry(conn, job_id, retry_count, sanitize_error(error))
@@ -396,9 +351,8 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
-    # Held from before the roster fetch until after the snapshot below commits (issue #357) --
-    # see org_membership_store.acquire_tenant_lock's docstring for why this has to span the
-    # HTTP round trip and can't be a transaction-scoped lock.
+    # Held from before the roster fetch until the snapshot commits; must span the HTTP
+    # round trip, so it can't be transaction-scoped.
     org_membership_store.acquire_tenant_lock(conn, payload.tenant_id)
     try:
         try:
@@ -406,11 +360,8 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
                 roster = membership_reconcile.fetch_org_roster(client, base, headers, payload.org_login)
         except httpx.HTTPStatusError as error:
             resp = error.response
-            # _get_with_retry already retried a 429/secondary-403 rate limit up to 3 times inside
-            # fetch_org_roster's own request loop -- reaching here with one of those statuses means
-            # the limit was still in effect after that backoff, not that the request is invalid.
-            # Requeue it for the job-level retry (a later attempt, well after this run) instead of
-            # treating it the same as a genuine 4xx like 404/403-permission-denied.
+            # Rate limit still in effect after _get_with_retry's backoff: requeue for a later
+            # attempt rather than failing like a genuine 4xx.
             if resp.status_code == 429 or membership_reconcile._is_secondary_rate_limit(resp) or resp.status_code >= 500:
                 log.warning("job %d got a %d from GitHub (attempt %d)", job_id, resp.status_code, retry_count + 1)
                 _requeue_for_retry(conn, job_id, retry_count, sanitize_error(_github_error_message(resp)))
@@ -423,11 +374,7 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
             _requeue_for_retry(conn, job_id, retry_count, sanitize_error(error))
             return
         except membership_reconcile.RosterIncomplete as error:
-            # Never treat an untrustworthy members/admins/outside_collaborators fetch as ground
-            # truth -- reconcile_org_members would DELETE real members a looping/malformed page
-            # this run couldn't retrieve. Requeue and retry rather than mark_failed: this is very
-            # likely transient (a GitHub pagination glitch, a momentary bad response body) and
-            # self-heals on the next attempt.
+            # An untrustworthy roster would DELETE real members; requeue, likely transient.
             log.warning("job %d got an incomplete roster (attempt %d): %s", job_id, retry_count + 1, error)
             _requeue_for_retry(conn, job_id, retry_count, sanitize_error(error))
             return
@@ -436,8 +383,7 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
         members = [
             {
                 **m,
-                # None (overlay unavailable) stays None; otherwise a member is 2FA-enabled iff
-                # NOT in the disabled set -- mirrors collab.py's list_members overlay logic.
+                # None (overlay unavailable) stays None; else enabled iff not in the disabled set.
                 "two_factor_enabled": None if two_factor_disabled is None else m["login"] not in two_factor_disabled,
             }
             for m in roster["members"]
@@ -446,19 +392,14 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
 
         try:
             with conn.cursor() as cur:
-                # Same session-context mechanism as event_consumer.py's _process_entry and
-                # worker.py's own backfill handler -- see either's comment for why this isn't a
-                # clevis_worker BYPASSRLS grant instead.
+                # Session context for RLS, same as event_consumer.py's _process_entry.
                 cur.execute(f"SET app.tenant_id = {int(payload.tenant_id)}")
                 synced_at = datetime.now(timezone.utc)
                 org_membership_store.reconcile_org_members(cur, tenant_id=payload.tenant_id, members=members, synced_at=synced_at)
                 org_membership_store.reconcile_repo_collaborator_outside_status(
                     cur, tenant_id=payload.tenant_id, member_logins=member_logins, outside_logins=roster["outside_logins"]
                 )
-                # Marks this tenant as freshly reconciled regardless of whether the roster
-                # actually changed -- same posture as activity_sync_cursors's cursor, upserted
-                # in the same transaction so a rolled-back run (below) doesn't advance the
-                # cursor past a reconciliation that never actually happened.
+                # Upserted in the same transaction so a rollback doesn't advance the cursor.
                 cur.execute(
                     """
                     INSERT INTO org_membership_sync_cursors (tenant_id, org_login, last_synced_at)
@@ -472,9 +413,7 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
                 )
             conn.commit()
         except psycopg.Error as error:
-            # Without a rollback here, this connection's transaction stays aborted -- see
-            # _handle_backfill_repo_events's identical comment for why that would leave the job
-            # stuck instead of requeued.
+            # Roll back so the aborted transaction doesn't leave the job stuck.
             conn.rollback()
             log.warning("job %d failed to store reconciled membership (attempt %d): %s", job_id, retry_count + 1, error)
             _requeue_for_retry(conn, job_id, retry_count, sanitize_error(error))
@@ -486,9 +425,8 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
         org_membership_store.release_tenant_lock(conn, payload.tenant_id)
 
 
-# job_type -> handler. Each handler takes (conn, job_id, payload_raw, retry_count) and is
-# responsible for its own payload validation and terminal/retry outcome via _mark_done /
-# _mark_failed / _requeue_for_retry.
+# job_type -> handler(conn, job_id, payload_raw, retry_count); each handler owns its
+# payload validation and terminal/retry outcome.
 JOB_HANDLERS = {
     "github.clear_actions_cache": _handle_clear_actions_cache,
     "github.backfill_repo_events": _handle_backfill_repo_events,
@@ -497,19 +435,10 @@ JOB_HANDLERS = {
 
 
 def _reclaim_stale_jobs(conn: psycopg.Connection) -> None:
-    """Reset jobs stuck in 'processing' past RECLAIM_TIMEOUT_MINUTES back to 'queued' —
-    the worker that claimed them almost certainly crashed or was killed mid-job, and the
-    poll query only ever selects 'queued' rows, so without this such a job is stuck
-    forever. Shares retry_count/MAX_RETRIES with process_job's transient-failure retry so
-    a job that repeatedly crashes its worker eventually gets marked 'failed' instead of
-    looping indefinitely.
+    """Reset jobs stuck in 'processing' past RECLAIM_TIMEOUT_MINUTES back to 'queued'.
 
-    Only reclaims a job whose heartbeat_at is ALSO stale (or null, for a job claimed before
-    this column existed / before its handler's first heartbeat tick) -- updated_at alone is
-    set once at claim time and never again until the job finishes, so on its own it can't
-    tell a legitimately slow job from a crashed one. heartbeat_at is touched every
-    _JOB_HEARTBEAT_INTERVAL_SECONDS by _JobHeartbeat while a handler is actually running
-    (see issue #215), so a still-alive job's heartbeat stays fresh well past 30 minutes."""
+    Only reclaims when heartbeat_at is also stale (or null), since updated_at is set once at
+    claim time. Shares retry_count/MAX_RETRIES with process_job so a crash loop ends 'failed'."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -536,8 +465,7 @@ def _reclaim_stale_jobs(conn: psycopg.Connection) -> None:
 
 
 def _touch_job_heartbeat(job_id: int) -> None:
-    """Runs on its own DB connection, separate from the one process_job uses on the main
-    thread -- psycopg connections aren't safe to share across threads."""
+    """Runs on its own connection; psycopg connections aren't thread-safe."""
     try:
         with psycopg.connect(_DB_URL) as hb_conn:
             with hb_conn.cursor() as cur:
@@ -547,21 +475,16 @@ def _touch_job_heartbeat(job_id: int) -> None:
                 )
             hb_conn.commit()
     except Exception as exc:
-        # Non-fatal -- worst case the reclaim sweep sees a stale heartbeat and reclaims a
-        # job that's actually still running, the same failure mode as before this existed.
+        # Non-fatal: worst case the reclaim sweep reclaims a still-running job.
         log.warning("could not touch heartbeat for job %d: %s", job_id, exc)
-    # Also refresh the container-level file heartbeat (see _touch_heartbeat/HEARTBEAT_FILE):
-    # run()'s loop only touches it once per poll iteration, before a job is even claimed, so
-    # without this a job handler running past the healthcheck's 60s staleness threshold would
-    # get the worker marked unhealthy mid-job -- exactly during the long-running handlers this
-    # DB heartbeat was added to support.
+    # Also refresh the file heartbeat, or a handler running past 60s would mark the
+    # container unhealthy mid-job.
     _touch_heartbeat()
 
 
 class _JobHeartbeat:
-    """Context manager: touches jobs.heartbeat_at for `job_id` every
-    _JOB_HEARTBEAT_INTERVAL_SECONDS on a background thread for as long as the `with` block
-    runs, so _reclaim_stale_jobs can tell this job apart from a crashed one. See issue #215."""
+    """Context manager: touches jobs.heartbeat_at every _JOB_HEARTBEAT_INTERVAL_SECONDS on a
+    background thread while the block runs."""
 
     def __init__(self, job_id: int):
         self._job_id = job_id
@@ -586,8 +509,7 @@ def _touch_heartbeat() -> None:
     try:
         HEARTBEAT_FILE.write_text(str(time.time()))
     except OSError as exc:
-        # Non-fatal -- the heartbeat is only a liveness signal for the healthcheck, not
-        # required for job processing itself.
+        # Non-fatal: the heartbeat is only a healthcheck liveness signal.
         log.warning("could not write heartbeat file %s: %s", HEARTBEAT_FILE, exc)
 
 
@@ -596,7 +518,7 @@ def run() -> None:
     log.info("worker started, polling every %ds", poll_seconds)
     while True:
         _touch_heartbeat()
-        # Re-read poll interval each cycle so changes in settings take effect without restart
+        # Re-read each cycle so settings changes take effect without restart.
         poll_seconds = _read_poll_seconds()
         try:
             with psycopg.connect(_DB_URL) as conn:
@@ -631,10 +553,6 @@ def run() -> None:
 if __name__ == "__main__":
     import event_consumer
 
-    # Runs on its own daemon thread, independent of this module's jobs-table poll loop
-    # below -- see event_consumer.py's module docstring for why (Redis Streams consumer
-    # group, issue #191/S4 PR 1). A crash inside it is caught and logged by its own
-    # run() loop and doesn't take down the process; it does not currently fail the
-    # container healthcheck on its own (see event_consumer.py's _HEARTBEAT_FILE note).
+    # Event consumer on its own daemon thread; does not fail the container healthcheck on its own.
     event_consumer.start_background_thread()
     run()

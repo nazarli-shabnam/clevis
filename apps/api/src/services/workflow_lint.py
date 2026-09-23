@@ -1,12 +1,10 @@
-"""GitHub Actions workflow policy linting + optional auto-fix PR (issue #291).
+"""GitHub Actions workflow policy linting + optional auto-fix PR.
 
 Detects a small set of high-signal, well-understood dangerous patterns in a repo's
 ``.github/workflows/*.yml`` and — on request — opens a PR with a conservative fix.
 
-**Requires write scopes Clevis does not request by default:** ``contents: write``
-(branch + commit), ``pull_requests: write`` (open the PR), and ``workflows: write``
-(GitHub blocks pushing changes to ``.github/workflows/**`` without it). Documented
-in docs/self-hosting.md; a 403 from GitHub is surfaced by the router as a 400.
+Requires ``contents``/``pull_requests``/``workflows: write`` (GitHub blocks pushing to
+``.github/workflows/**`` without the last); a 403 is surfaced by the router as a 400.
 """
 
 from __future__ import annotations

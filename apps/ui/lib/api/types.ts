@@ -28,7 +28,7 @@ export interface CheckResult {
   value: CheckValue
 }
 
-// Issue #289: POST /orgs/{org}/repos/{owner}/{repo}/pr-nudges
+// POST /orgs/{org}/repos/{owner}/{repo}/pr-nudges
 export interface PrNudgeResult {
   number: number
   title: string
@@ -41,9 +41,8 @@ export interface PrNudgeResponse {
   results: PrNudgeResult[]
 }
 
-// Issue #294: GET /orgs/{org}/usage/actions (GitHub Actions minutes this billing month,
-// from GitHub's enhanced-billing usage summary API). `included_minutes_used` is the
-// slice covered by the plan's allowance; `paid_minutes_used` is what was billed on top.
+// GET /orgs/{org}/usage/actions. `included_minutes_used` is covered by the plan's allowance;
+// `paid_minutes_used` is what was billed on top.
 export interface ActionsUsageResponse {
   total_minutes_used: number
   included_minutes_used: number
@@ -149,8 +148,7 @@ export interface LatestRelease {
 export interface RepoStatsResponse {
   repository: string
   commit_activity: CommitActivityWeek[]
-  // "aggregate" when commit_activity is estimated from stored push-event counts
-  // (S6) instead of GitHub's own commit-level stats/commit_activity endpoint.
+  // "aggregate" when commit_activity is estimated from stored push-event counts instead of GitHub's stats.
   commit_activity_source: "github" | "aggregate"
   participation: { all?: number[]; owner?: number[] }
   contributors: { author?: { login?: string }; total: number }[]
@@ -266,11 +264,8 @@ export interface InstallationMeta {
   account_type: string
   installation_id: number | null
   created_at: string
-  // Permission-drift fields. `permissions_synced_at` is null for installs whose
-  // permissions have never been observed (pre-tracking, or before the first
-  // permission-accept webhook / a reconnect) — `blocked_features` is empty then too.
-  // Optional so older callers/fixtures that don't set them still typecheck; the API
-  // always includes them.
+  // `permissions_synced_at` is null when permissions were never observed (`blocked_features` is empty then too).
+  // Optional so fixtures that omit them still typecheck; the API always includes them.
   permissions_synced_at?: string | null
   blocked_features?: BlockedFeature[]
 }
@@ -481,9 +476,8 @@ export interface MyViewResponse {
   review_requests: MyViewPRSummary[]
   assigned_issues: MyViewIssueSummary[]
   my_recent_runs: MyViewRunSummary[]
-  // True when GitHub couldn't tell Clevis who the signed-in user is on GitHub (an
-  // installation/App token can't call GET /user, and this user has no GitHub-OAuth-linked
-  // login to fall back on) -- distinguishes that from "you really have zero open items."
+  // True when GitHub couldn't identify the user (an installation token can't call GET /user and there's
+  // no OAuth-linked login) -- distinguishes that from genuinely zero open items.
   identity_unresolved: boolean
 }
 
@@ -553,7 +547,7 @@ export interface DispatchAllResponse {
   failed_count: number
 }
 
-// issue #288 — bulk branch-protection apply
+// Bulk branch-protection apply
 export interface BranchProtectionPreset {
   required_pull_request_reviews?: { required_approving_review_count: number } | null
   enforce_admins?: boolean
@@ -584,7 +578,7 @@ export interface BranchProtectionBulkResponse {
   results?: BranchProtectionRepoResult[]
 }
 
-// issue #291 — workflow policy lint + auto-fix PR
+// Workflow policy lint + auto-fix PR
 export interface WorkflowLintFinding {
   path: string
   rule: string
@@ -598,7 +592,7 @@ export interface WorkflowLintResponse {
   pr_url: string | null
 }
 
-// issue #290 — Dependabot auto-triage
+// Dependabot auto-triage
 export interface DependabotTriageDecision {
   repo: string
   number: number | null
@@ -624,9 +618,8 @@ export interface RepoSecurityRow {
   // Dimension names the token couldn't evaluate (403/429/network error) -- excluded
   // from `score`. Distinct from a genuine 404 "this is off" answer, which isn't unknown.
   unknown_dimensions: string[]
-  // "aggregate" when dependabot/code_scanning came from ingested webhook events instead
-  // of a live GitHub call (post-S6 PR 3) -- branch_protection/force_push/secret_scanning
-  // have no ingested event covering them and stay live either way.
+  // "aggregate" when dependabot/code_scanning came from ingested webhook events; the other
+  // dimensions have no ingested event and stay live.
   alerts_source: "github" | "aggregate"
 }
 
@@ -670,7 +663,7 @@ export interface SecretScanningResponse {
   source: "github" | "aggregate"
 }
 
-// Issue #286: response from POST /me/repos/{owner}/{repo}/issues.
+// Response from POST /me/repos/{owner}/{repo}/issues.
 export interface CreateIssueResponse {
   number: number
   html_url: string

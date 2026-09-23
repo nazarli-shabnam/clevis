@@ -1,4 +1,4 @@
-"""Tests for the leadership-digest sweep (issue #292)."""
+"""Tests for the leadership-digest sweep."""
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -73,7 +73,7 @@ def test_due_org_emails_verified_admins_and_records_an_audit_log(db):
 
     assert send.call_count == 1
     assert send.call_args[0][0] == "due-admin@e.com"
-    assert "digest-sweep-due" in send.call_args[0][1]  # subject
+    assert "digest-sweep-due" in send.call_args[0][1]
     assert _audit_rows(db, org.tenant_id) == 1
 
 
@@ -95,9 +95,9 @@ def test_recently_sent_org_is_skipped(db):
 
 
 def test_due_state_is_rechecked_after_acquiring_the_slot(db):
-    # Another replica sends (and commits its digest.sent row) in the window between
-    # this sweep's tenant query and its slot acquisition. The recheck *after*
-    # try_acquire_sweep_slot must catch that and not send a duplicate.
+    # A peer replica can send and commit its digest.sent row between this sweep's
+    # tenant query and slot acquisition; the recheck after try_acquire_sweep_slot
+    # must catch that and not send a duplicate.
     org = _seed_org_with_scan(db, "digest-sweep-race")
     _admin(db, org.tenant_id, "race-admin@e.com")
 

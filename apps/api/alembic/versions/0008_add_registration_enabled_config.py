@@ -1,9 +1,5 @@
 """seed registration_enabled app_config key
 
-Self-hosted instances can now allow open self-registration (POST /auth/register).
-The owner can disable it later from Settings -> Instance Configuration; default is
-"true" so existing and fresh instances keep working without extra setup.
-
 Revision ID: 0008
 Revises: 0007
 Create Date: 2026-07-06

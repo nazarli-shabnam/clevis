@@ -1,58 +1,10 @@
-"""Add org_members + repo_collaborators tables + grants (Collaborators PR 1 of 3).
+"""Add org_members + repo_collaborators tables + grants.
 
-Normalized store for the org membership / repo access webhook events durably queued since
-this PR (member/organization/membership/team -- see apps/api/src/routers/webhooks.py's
-_INGESTED_EVENT_TYPES). Populated by apps/worker's event_consumer.py.
+repo_collaborators.source is 'direct' only; team-based access is not modeled yet.
 
-Two tables, not one polymorphic table like security_alerts (migration 0039): a person (org
-membership) and a repo-access grant are genuinely different shapes with different keys, unlike
-the three GitHub alert kinds which shared one spine. Both represent *current state*, not a log
-(rows are deleted on removal, not soft-marked) -- closer to activity_sync_cursors's posture
-than repo_events's append-only one.
-
-org_members.role is captured from the `organization` webhook event's member_added payload
-(`membership.role`, e.g. "member"/"admin") at add-time -- accurate then. But no webhook event
-covers a role changing *after* that (verified against GitHub's webhook docs -- no
-member_updated/role-change action exists in the organization event's action list), so this
-column can silently go stale for an existing member whose role later changes, until a future
-reconciliation poll (Collaborators PR 2, not built yet) corrects it -- that poll, not this
-ingestion path, is the only source of truth for an existing member's *current* role. Documented
-here so a future reader doesn't assume this table's role column always reflects live GitHub
-state.
-
-repo_collaborators.source is 'direct' only in this PR -- team-based repo access ('team') is
-explicitly deferred: computing it requires joining the team webhook event's
-added_to_repository/removed_from_repository actions against the membership event's per-team
-roster to derive effective per-user access, a materially bigger modeling problem than a direct
-member-event grant, and GitHub's own team-event payloads don't reliably convey the granted
-permission level either. membership/team events are durably queued (this PR's webhooks.py
-change) but acked-and-skipped by the consumer for now, not silently dropped -- see
-event_consumer.py's own guard for the exact mechanism, mirroring the security-alert stage's PR 1
-placeholder pattern.
-
-repo_collaborators.is_outside_collaborator is nullable, not a False default: the `member`
-event's payload alone can't determine org-membership status (GitHub doesn't include it there),
-so this column is NULL ("not yet known") until the reconciliation poll (Collaborators PR 2)
-fills it in -- a False default would misrepresent unknown data as a confirmed "this is a direct
-org member," which is a real, different claim.
-
-RLS is ENABLE-only, no FORCE -- same reasoning as every migration since 0030: the table-owning
-migration role is unaffected either way, and this only starts enforcing for a non-owner role
-once that role is actually granted access to it (this migration).
-
-Grants mirror migration 0039 exactly: clevis_worker gets SELECT+INSERT+UPDATE+DELETE (it
-upserts and deletes, unlike repo_events' insert-only shape) and clevis_api gets the same grant,
-not because the API writes these tables yet, but because CI runs apps/worker's tests under
-DATABASE_URL=clevis_api (no clevis_worker CI provisioning exists) -- without this, the new
-consumer's own tests would fail in CI with the same InsufficientPrivilege class of bug already
-hit on migrations 0035/0036/0039 (0039's own inline grant was a no-op in CI for the same root
-cause: docker/provision-api-role-existing-deployment.sh provisions clevis_api *after* migrations
-run there, so this migration's guarded grant never finds the role -- the matching guarded block
-is added to that script in this same PR, not as a follow-up fix).
-
-Upgrade is purely additive (two new tables, four conditional grants) -- zero data-loss risk.
-Downgrade drops both tables; safe since nothing reads them yet (Collaborators PR 3 hasn't
-shipped).
+org_members.role is captured at add-time from the webhook payload; no GitHub webhook
+event covers a role changing afterward, so this column can go stale for an existing
+member until a reconciliation poll corrects it -- it is not always current GitHub state.
 
 Revision ID: 0040
 Revises: 0039
@@ -90,14 +42,9 @@ def upgrade() -> None:
         sa.Column("repo", sa.String(), nullable=False),
         sa.Column("login", sa.String(), nullable=False),
         sa.Column("permission", sa.String(), nullable=False),
-        # 'direct' only in this PR -- see this migration's own docstring for why 'team' is
-        # deferred rather than built now.
+        # 'direct' only; team-based access is not modeled yet.
         sa.Column("source", sa.String(), nullable=False, server_default="direct"),
-        # Nullable, not a False default: the `member` event alone can't determine
-        # org-membership status (see this migration's docstring) -- NULL means "not yet
-        # known", distinct from a real "confirmed direct org member" False (CodeRabbit
-        # finding on Collaborators PR 1: a False default would misrepresent unknown data
-        # as a known negative).
+        # NULL = not yet known; the `member` event alone can't determine org membership.
         sa.Column("is_outside_collaborator", sa.Boolean(), nullable=True),
         sa.Column("granted_at", sa.DateTime(timezone=True), nullable=False),
     )

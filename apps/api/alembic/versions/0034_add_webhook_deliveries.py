@@ -1,43 +1,7 @@
-"""Add webhook_deliveries table (issue #191, S3 webhook ingestion PR 1 of 4).
+"""Add webhook_deliveries table.
 
-Upgrade is purely additive and touches no existing table -- zero data-loss risk.
-Downgrade drops this table and permanently deletes any stored payloads; do not
-run it against a real environment without explicit confirmation (AGENTS.md).
-Durable landing spot for verified GitHub webhook payloads before they're queued
-onto Redis Streams for later processing (a future S4 event-processor fleet).
-See docs/architecture/clevis-architecture.md's Ingestion pipeline layer for the
-target design; this table is the "raw payload store" half of it. Object storage
-(MinIO) is the architecture doc's eventual answer for that role, but standing up
-a second stateful service for what's typically a few KB of JSON is infra ahead
-of need at this stage -- Postgres is already the trusted durable store this repo
-uses everywhere else. Table bloat from unbounded accumulation is a known,
-deliberately deferred follow-up (a retention/pruning job, once something -- S4 --
-actually consumes these rows), not solved here.
-
-No unique constraint on delivery_id: GitHub redelivers the same delivery id on
-retry, and dedupe is the future S4 consumer's job operating on the queue side,
-not a write-side constraint here -- enforcing uniqueness now would mean deciding
-dedupe semantics (reject vs. upsert vs. which duplicate wins) that belong to
-S4's design.
-
-No Row-Level Security on this table, despite the nullable tenant_id column --
-deliberately structured like `jobs`/`app_config` (see migration 0030's docstring
-for why those two are excluded), not like the Group A/B tenant-scoped tables.
-The webhook receiver writes this table on an unauthenticated connection with no
-app.tenant_id session var set (there's no authenticated tenant context at
-webhook-receive time -- see src/core/rbac.py's _set_tenant_session_context,
-only ever called from require_org_role/require_personal_tenant, neither of
-which runs on this route), so a tenant-matching WITH CHECK would reject every
-insert regardless of whether tenant_id resolution succeeded. And the future S4
-consumer fleet needs to read pending rows across all tenants at once, not one
-tenant's rows at a time -- the same structural reason `jobs` has no RLS. Access
-control here is HMAC-signature verification at the receiver, not row-level
-tenant isolation.
-
-Grants clevis_api access to the new table + its backing sequence inline (see
-migration 0032's docstring: "a future new table requires its own reviewed
-migration to grant clevis_api access, rather than silently inheriting it").
-No-op when the clevis_api role doesn't exist, matching 0032/0033.
+No RLS: the webhook receiver has no tenant context; access is gated by HMAC verification.
+Retention/pruning of accumulated payloads is not implemented yet.
 
 Revision ID: 0034
 Revises: 0033

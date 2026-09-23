@@ -15,9 +15,7 @@ from src.routers.invitations import router as invitations_router
 
 
 def _make_user(db, email: str, email_verified: bool = True) -> UserOut:
-    # Verified by default so the existing email-match tests below aren't also implicitly
-    # testing the (separately covered) email-verification requirement -- see
-    # test_accept_invitation_unverified_email_forbidden for that.
+    # Verified by default so email-match tests don't also exercise the verification requirement.
     user = User(email=email, name=None, password_hash=None, is_workspace_admin=False, email_verified=email_verified)
     db.add(user)
     db.commit()
@@ -114,9 +112,8 @@ def test_create_invitation_allows_new_invite_after_the_pending_one_expires(db, a
 
 
 def test_invitation_repo_rejects_a_second_pending_row(db, acme_org):
-    # Issue #270: the DB-level guard. Bypasses the router's pre-check by calling the
-    # repo directly -- without the partial unique index (migration 0042) this second
-    # insert would silently create a duplicate pending row.
+    # DB-level guard: bypasses the router's pre-check; without the partial unique index this
+    # would create a duplicate pending row.
     org, admin = acme_org["org"], acme_org["admin"]
     invitation_repo.create(db, org_id=org.id, email="dup@acme.com", invited_by_user_id=admin.id)
 
@@ -128,13 +125,8 @@ def test_invitation_repo_rejects_a_second_pending_row(db, acme_org):
 
 
 def test_partial_unique_index_rejects_a_raw_duplicate_pending_insert(db, acme_org):
-    # Issue #270: proves the DB constraint itself -- independent of
-    # invitation_repo.create's IntegrityError handling. A raw second INSERT of a
-    # pending row for the same (org_id, lower(email)) must violate
-    # uq_invitations_org_email_pending. This is exactly what serialises two
-    # concurrent create_invitation requests: Postgres lets one INSERT win and
-    # fails the other, turning the router's non-atomic check-then-insert race into
-    # a clean one-winner outcome.
+    # The constraint itself must reject a second pending row for (org_id, lower(email)); this
+    # is what makes concurrent create_invitation requests one-winner.
     org, admin = acme_org["org"], acme_org["admin"]
     invitation_repo.create(db, org_id=org.id, email="race@acme.com", invited_by_user_id=admin.id)
 
@@ -159,9 +151,7 @@ def test_partial_unique_index_rejects_a_raw_duplicate_pending_insert(db, acme_or
 
 
 def test_create_invitation_reraises_non_duplicate_integrity_errors(db, acme_org):
-    # The IntegrityError -> DuplicatePendingInvitation conversion must be narrow: a
-    # different constraint failure (here, a bad invited_by_user_id FK) has to
-    # surface as itself, not as a misleading "already exists" 409.
+    # A different constraint failure (bad FK) must surface as itself, not a misleading 409.
     org = acme_org["org"]
     with pytest.raises(IntegrityError):
         invitation_repo.create(db, org_id=org.id, email="fk@acme.com", invited_by_user_id=999_999_999)
@@ -212,8 +202,7 @@ def test_accept_invitation_ok(db, acme_org):
 
 
 def test_accept_invitation_unverified_email_forbidden(db, acme_org):
-    # Regression test for issue #217: email match alone must not be enough for a
-    # self-registered account that hasn't proven it controls the invited inbox.
+    # Email match alone isn't enough for an account that hasn't verified the invited inbox.
     unverified = _make_user(db, "dave@acme.com", email_verified=False)
     created = _client(db, acme_org["admin"]).post("/orgs/acme/invitations", json={"email": "dave@acme.com"}).json()
     token = created["invite_link"].rsplit("/", 1)[-1]

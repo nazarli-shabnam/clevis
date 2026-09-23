@@ -1,9 +1,7 @@
-"""Tests for the stale-PR nudge routes (issue #289).
+"""Tests for the stale-PR nudge routes.
 
-Personal + org scoped, admin-gated, first write to GitHub's Pull requests API from
-Clevis -- so it needs `pull_requests: write`, surfaced as a 400 when GitHub 403s.
-Faked GitHub via `patch(".GitHubClient")`: list reads go through
-``request_paginated`` (PR list, issue comments), writes through ``request``.
+Needs `pull_requests: write` (GitHub 403 -> 400). Faked GitHubClient: reads via
+``request_paginated``, writes via ``request``.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -235,8 +233,7 @@ def test_github_unreachable_becomes_503(client, db, user):
 
 
 def test_unconnected_owner_audits_under_the_callers_personal_tenant(client, db, user):
-    # A bring-your-own-PAT sweep against an account with no Clevis org still needs a
-    # tenant for the audit row -- audit_logs' RLS policy rejects a NULL tenant_id.
+    # A PAT sweep with no Clevis org still needs an audit tenant; RLS rejects a NULL tenant_id.
     from src.repositories import tenant_repo
 
     set_config("pr_nudge_mode", "comment")

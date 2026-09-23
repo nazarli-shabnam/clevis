@@ -1,4 +1,4 @@
-"""Tests for GitHubClient.request — covers B-03 (single client) and B-04 (no silent None)."""
+"""Tests for GitHubClient.request."""
 from unittest.mock import MagicMock, call, patch
 
 import httpx
@@ -34,7 +34,7 @@ def _make_response(
 
 
 class TestSingleClient:
-    """B-03: httpx.Client instantiated once outside retry loop."""
+    """httpx.Client is instantiated once outside the retry loop."""
 
     def test_one_client_per_request_call(self, client):
         ok_resp = _make_response(200, {"id": 1})
@@ -74,7 +74,7 @@ class TestSingleClient:
 
 
 class TestExhaustedRetries:
-    """B-04: exhausted retries must raise, not return None."""
+    """Exhausted retries must raise, not return None."""
 
     def test_request_error_raises_after_three_attempts(self, client):
         with (
@@ -110,8 +110,8 @@ class TestExhaustedRetries:
         assert result == {"data": "hello"}
 
     def test_retries_on_secondary_rate_limit_403_then_succeeds(self, client):
-        # Regression test for issue #219: GitHub's secondary/abuse rate limit commonly
-        # returns 403 (not 429), often with a Retry-After header.
+        # GitHub's secondary/abuse rate limit commonly returns 403 (not 429), often with
+        # a Retry-After header.
         rate_limited = _make_response(403, headers={"Retry-After": "1"})
         ok_resp = _make_response(200, {"data": "hello"})
 

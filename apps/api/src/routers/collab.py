@@ -1,17 +1,8 @@
-"""Read-only GitHub org roster endpoints (docs/plan.md Phase 11 — Collaborators).
+"""Read-only GitHub org roster endpoints: members, outside collaborators, invitations,
+membership. Mounted at "/github/orgs/{org_login}/..." directly on the router.
 
-Proxies GitHub's org members / outside-collaborators / invitations / membership
-endpoints. No mutation routes here — invite/revoke actions are a later phase.
-
-Mounted with the full "/github/orgs/{org_login}/..." path on the router itself
-(no `prefix=` passed to include_router in main.py), matching github.py's
-convention for GitHub-proxy routers. Resolves a token via resolve_org_token,
-preferring a GitHub App installation but falling back to a client-supplied PAT
-carried in the `X-GitHub-Token` request header -- these are plain GETs, so a
-PAT can't travel in the body the way every other GitHub-proxy POST route does;
-a header (never a query string, which would leak into logs/browser history) is
-the safe equivalent, matching the "PAT is optional if the App is connected"
-pattern used everywhere else in this codebase.
+Token resolves via resolve_org_token, falling back to a client PAT carried in the
+`X-GitHub-Token` header rather than a query string, which would leak into logs.
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -47,14 +38,12 @@ from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_to
 
 router = APIRouter()
 
-# Bounds the per-repo fan-out in list_outside_collaborators -- each additional
-# repo costs one more GitHub call, so large orgs are capped rather than left to
-# make hundreds of sequential requests.
+# Bounds the per-repo fan-out in list_outside_collaborators -- large orgs are capped
+# rather than making hundreds of sequential GitHub calls.
 _MAX_REPOS_SCANNED = 50
 
-# permission-audit costs one collaborators call per repo; inactive-members costs
-# one commits call per (member, sampled repo) pair -- both tighter caps than the
-# single-call-per-repo endpoints above, rate-limit-aware per docs/plan.md Phase 18.
+# permission-audit costs one collaborators call per repo; inactive-members costs one
+# commits call per (member, sampled repo) pair -- tighter caps to stay rate-limit-aware.
 _MAX_REPOS_FOR_PERMISSION_AUDIT = 20
 _MAX_REPOS_SAMPLED_FOR_ACTIVITY = 3
 
@@ -67,38 +56,25 @@ def _resolve_token(db: Session, ctx: OrgContext, org_login: str, client_token: s
 
 
 def _installation_connected(db: Session, ctx: OrgContext) -> bool:
-    """True if this org has a live GitHub App installation -- gates whether list_members and
-    inactive_members can read from the ingested org_members/repo_events tables (kept fresh by
-    the reconciliation poll and the webhook/backfill pipeline, respectively) instead of calling
-    GitHub live. Mirrors security.py's _security_connected_tenant / analytics.py's
-    _cockpit_connected_tenant installation_id-presence gate -- but require_org_role's own
-    dependency (unlike those two personal-scoped routers' require_auth) already resolved
-    membership and set the RLS tenant-session-context for this request, so this only needs the
-    installation check itself.
+    """True if this org has a live GitHub App installation -- gates whether list_members
+    and inactive_members read from the ingested org_members/repo_events tables instead of
+    calling GitHub live.
 
-    Deliberately NOT used to gate list_outside_collaborators or permission_audit's per-repo
-    collaborator enumeration: repo_collaborators only has rows for grants the `member` webhook
-    event has observed since this org connected (migration 0040's own docstring) -- there was
-    never a backfill job for pre-existing direct grants, unlike repo_events (S5 install-time
-    backfill + gap-heal) or org_members (this reconciliation poll's own full-roster fetch). Re-
-    pointing those two endpoints today would silently under-report real outside collaborators/
-    permissions for any org connected before Clevis started listening. Left fully live until a
-    repo_collaborators backfill exists -- a separate design decision, not this PR's job."""
+    Not used to gate list_outside_collaborators or permission_audit: repo_collaborators
+    only has rows for grants observed via webhook since connecting (no backfill exists for
+    pre-existing direct grants), so those stay live until a repo_collaborators backfill is
+    built."""
     installation = installation_repo.get_for_org(db, org_id=ctx.org.id, account_login=ctx.org.github_login)
     return installation is not None and installation.installation_id is not None
 
 
 def _org_members_synced(db: Session, ctx: OrgContext) -> bool:
-    """True only once org_membership_sync_cursors has a row for this tenant -- i.e. at least
-    one reconciliation poll has actually completed, not merely that an installation exists.
-    Installation presence alone isn't enough: right after connecting, org_members can still be
-    empty (only the webhook path may have touched it) until the poll's first sweep tick runs
-    (up to membership_reconcile_poll_seconds, default 15 minutes) -- reading org_members as
-    authoritative in that window would show 0 members for an org that actually has some, which
-    is actively misleading rather than merely stale (CodeRabbit finding on PR #355). A cursor
-    row is only ever written in the same transaction as a successful reconcile_org_members call
-    (worker.py's _handle_reconcile_org_membership), so its presence reliably means the table is
-    now trustworthy."""
+    """True only once org_membership_sync_cursors has a row for this tenant -- i.e. at
+    least one reconciliation poll has completed, not merely that an installation exists.
+    Right after connecting, org_members can still be empty until the first sweep tick
+    runs; reading it as authoritative in that window would misleadingly show 0 members.
+    A cursor row is only written alongside a successful reconcile, so its presence means
+    the table is trustworthy."""
     if not _installation_connected(db, ctx):
         return False
     row = db.execute(
@@ -108,9 +84,9 @@ def _org_members_synced(db: Session, ctx: OrgContext) -> bool:
 
 
 def _activity_synced(db: Session, ctx: OrgContext) -> bool:
-    """Same reasoning as _org_members_synced, but gates inactive_members' repo_events read on
-    activity_sync_cursors instead -- the S5 backfill/gap-heal cursor, same "row exists only
-    after a successful sync" invariant."""
+    """Same reasoning as _org_members_synced, but gates inactive_members' repo_events read
+    on activity_sync_cursors instead -- same "row exists only after a successful sync"
+    invariant."""
     if not _installation_connected(db, ctx):
         return False
     row = db.execute(
@@ -141,8 +117,7 @@ def list_members(
                 login=r.login,
                 avatar_url=r.avatar_url,
                 role=r.role,
-                # Not captured by any ingestion path (org_members has no site_admin column) --
-                # this flag is GitHub-instance-wide, not org-scoped, and rarely true; the live
+                # Not captured by ingestion (org_members has no site_admin column); the live
                 # path below still reports it accurately for an unconnected org.
                 site_admin=False,
                 two_factor_enabled=r.two_factor_enabled,
@@ -152,13 +127,8 @@ def list_members(
         return OrgMembersResponse(
             org=org_login,
             members=members,
-            # True only if EVERY member has an actual (non-None) 2FA reading -- the UI's
-            # "Members without 2FA: N" footer (members/page.tsx) is gated on this flag and
-            # counts strictly `two_factor_enabled is False`, so a partial reading (some members
-            # polled, some not -- possible here since COALESCE preserves a per-member value
-            # across reconciliation runs, unlike the live path's single all-or-nothing overlay
-            # call) would silently undercount rather than honestly report "not fully known"
-            # (CodeRabbit finding on PR #355).
+            # True only if EVERY member has a real (non-None) 2FA reading -- the UI's "no 2FA"
+            # count is gated on this so a partial reading doesn't silently undercount.
             two_factor_overlay_available=bool(members) and all(m.two_factor_enabled is not None for m in members),
         )
 
@@ -183,10 +153,8 @@ def list_members(
         for m in target_raw
     ]
 
-    # Best-effort: the 2FA overlay is optional context on top of the member list
-    # that already succeeded above, so any failure here (missing owner scope, or
-    # a transient network/upstream error) degrades to "unavailable" rather than
-    # failing the whole response -- the member/role data is still useful without it.
+    # Best-effort: the 2FA overlay is optional context on the already-succeeded member
+    # list, so a failure here degrades to "unavailable" rather than failing the response.
     two_factor_overlay_available = True
     try:
         no_2fa_raw = client.request_paginated(f"/orgs/{org_login}/members", params={"filter": "2fa_disabled"})
@@ -211,8 +179,7 @@ def list_outside_collaborators(
     try:
         outside_raw = client.request_paginated(f"/orgs/{org_login}/outside_collaborators")
         # Fetches the full repo list (not just the first _MAX_REPOS_SCANNED) so
-        # repos_total below is an exact count, not an estimate -- the UI's
-        # "scanned X of Y" note depends on Y being accurate.
+        # repos_total is exact -- the UI's "scanned X of Y" note depends on it.
         repos_raw = client.request_paginated(f"/orgs/{org_login}/repos", params={"type": "all", "sort": "pushed"})
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise _github_error(exc) from exc
@@ -276,8 +243,7 @@ def list_github_invitations(
             inviter=(i.get("inviter") or {}).get("login"),
         )
         for i in raw
-        # created_at is expected on every GitHub invitation object, but skip
-        # rather than 500 the whole list if a malformed entry is ever missing it.
+        # Skip rather than 500 the whole list if a malformed entry is missing created_at.
         if "created_at" in i
     ]
     return OrgInvitationsResponse(org=org_login, invitations=invitations)
@@ -300,11 +266,6 @@ def get_membership(
 
     return MembershipStatus(state=raw["state"], role=raw["role"])
 
-
-# ---------------------------------------------------------------------------
-# Access control & risk (docs/plan.md Phase 18) -- who has elevated access, and
-# who's been inactive, across the org's repos.
-# ---------------------------------------------------------------------------
 
 _PERMISSION_RANK = ["pull", "triage", "push", "maintain", "admin"]
 _PERMISSION_DISPLAY = {"pull": "read", "triage": "triage", "push": "write", "maintain": "maintain", "admin": "admin"}
@@ -361,9 +322,7 @@ def permission_audit(
     for repo_name, raw_collabs in raw_by_repo.items():
         collaborators = []
         for c in raw_collabs:
-            # A malformed collaborator entry missing `login` shouldn't 500 the whole
-            # repo's row -- skip just that entry, matching the invitations
-            # missing-created_at defensive pattern elsewhere in this file.
+            # A malformed collaborator entry missing `login` shouldn't 500 the whole row.
             if "login" not in c:
                 continue
             login = c["login"]
@@ -400,11 +359,9 @@ def permission_audit(
 
 
 def _last_commit_for_author(client: GitHubClient, org_login: str, repo_name: str, login: str) -> tuple[str | None, bool]:
-    """Returns (last_commit_date, checked). `checked=False` means the GitHub call
-    itself failed (rate limit, network error, no repo visibility) -- that's an
-    unknown answer, not evidence the member has zero commits, and must not be
-    conflated with a real "checked, found nothing" result the way it silently was
-    before (a transient error could wrongly mark an active member as inactive)."""
+    """Returns (last_commit_date, checked). `checked=False` means the GitHub call itself
+    failed -- an unknown answer, not evidence of zero commits, and must not be conflated
+    with a real "checked, found nothing" result."""
     try:
         commits = client.request(
             "GET", f"/repos/{org_login}/{repo_name}/commits", params={"author": login, "per_page": 1}
@@ -418,13 +375,9 @@ def _last_commit_for_author(client: GitHubClient, org_login: str, repo_name: str
 
 
 def _inactive_members_from_ingested(db: Session, ctx: OrgContext, org_login: str, days: int) -> InactiveMembersResponse:
-    """Re-points both halves of this endpoint onto ingested tables for a connected org:
-    org_members for the member/role list (complete -- see _installation_connected's docstring)
-    and repo_events for last-push-per-member (S5's install-time backfill + gap-heal keep it
-    fresh, same as the Activity page). Strictly more accurate than the live path below, which
-    only samples _MAX_REPOS_SAMPLED_FOR_ACTIVITY repos per member via N live GitHub calls each --
-    this checks every repo with an ingested push event for the tenant in one query, and every
-    member gets a real verified answer (no per-repo GitHub call to fail)."""
+    """Uses ingested tables for a connected org: org_members for the roster, repo_events for
+    last-push-per-member. Strictly more accurate than the live path below, which only samples
+    a few repos per member -- this checks every repo with an ingested push event in one query."""
     members = _ingested_org_members(db, ctx.org.tenant_id, "all")
     logins = [m.login for m in members]
     now = datetime.now(timezone.utc)
@@ -461,9 +414,8 @@ def _inactive_members_from_ingested(db: Session, ctx: OrgContext, org_login: str
 
     return InactiveMembersResponse(
         org=org_login,
-        # Not a bounded sample here (unlike the live path) -- every repo with an ingested push
-        # event for this tenant was considered; this lists which ones actually contributed a
-        # member's most recent activity.
+        # Not a bounded sample here (unlike the live path) -- every repo with an ingested
+        # push event was considered; this lists which ones contributed a member's activity.
         sampled_repos=sorted({repo for repo, _ in last_push_by_login.values()}),
         members=inactive,
     )
@@ -477,9 +429,8 @@ def inactive_members(
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),
 ):
-    # Needs both cursors: the member/role list comes from org_members (_org_members_synced),
-    # last-activity comes from repo_events (_activity_synced) -- either one not yet having
-    # completed its first sync means this endpoint can't yet trust the ingested tables.
+    # Needs both cursors: roster from org_members, last-activity from repo_events -- either
+    # one not yet synced means this endpoint can't trust the ingested tables yet.
     if _org_members_synced(db, ctx) and _activity_synced(db, ctx):
         return _inactive_members_from_ingested(db, ctx, org_login, days)
 
@@ -507,10 +458,8 @@ def inactive_members(
                 verified = True
             if date:
                 return repo_name, date, True
-        # verified=True here means every sampled repo was successfully queried and
-        # genuinely had no commits from this member -- a real "no activity found"
-        # answer. verified=False means at least one lookup failed outright, so this
-        # member's activity is unknown rather than confirmed absent.
+        # verified=True means every sampled repo was queried and genuinely had no commits;
+        # verified=False means a lookup failed, so activity is unknown, not confirmed absent.
         return None, None, verified
 
     with ThreadPoolExecutor(max_workers=10) as pool:
@@ -520,8 +469,7 @@ def inactive_members(
     for member, (repo_name, date, verified) in zip(members_raw, results):
         login = member.get("login")
         if not login or not verified:
-            # Can't confirm this member's activity (missing login, or every sampled
-            # repo's commits call failed) -- don't claim inactivity we can't back up.
+            # Can't confirm this member's activity -- don't claim inactivity we can't back up.
             continue
         days_ago = None
         if date:

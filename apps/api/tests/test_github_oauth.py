@@ -47,13 +47,11 @@ def test_state_rejects_wrong_purpose():
 
 
 def test_state_rejects_missing_or_mismatched_cookie_nonce():
-    # Regression test for the OAuth login-CSRF gap: a validly-signed, unexpired state
-    # must still be rejected if it isn't paired with the browser's own nonce cookie.
+    # Login-CSRF: a valid state must still be rejected without the browser's own nonce cookie.
     state, nonce = github_oauth.sign_state()
     assert github_oauth.verify_state(state, cookie_nonce=None) is False
     assert github_oauth.verify_state(state, cookie_nonce="some-other-nonce") is False
-    # A state token minted for a *different* flow (different nonce) must not validate
-    # against this browser's cookie either.
+    # A state minted for a different flow (different nonce) must not validate either.
     other_state, _ = github_oauth.sign_state()
     assert github_oauth.verify_state(other_state, cookie_nonce=nonce) is False
 
@@ -169,8 +167,6 @@ def test_list_user_org_memberships_follows_pagination():
     assert client.get.call_count == 2
     assert [(m.login, m.role) for m in memberships] == [("acme", "admin"), ("other-org", "member")]
 
-
-# ── next-path threading (invite-link OAuth fix) ─────────────────────────────────
 
 def test_safe_next_path_accepts_relative_paths():
     assert github_oauth.safe_next_path("/invite/abc123") == "/invite/abc123"

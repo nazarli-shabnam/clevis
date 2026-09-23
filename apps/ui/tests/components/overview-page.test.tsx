@@ -81,8 +81,7 @@ describe("OverviewPage cockpit", () => {
     orgsMineMock.mockReset();
     orgsMineMock.mockResolvedValue([]);
     myViewMock.mockResolvedValue(EMPTY_MY_VIEW);
-    // Default: the Actions-usage query fails (App lacks the billing permission) so the
-    // card is absent -- matching the common self-hosted setup.
+    // Default: Actions-usage fails (App lacks billing permission), so the card is absent.
     actionsUsageMock.mockRejectedValue(new Error("GitHub API error: 400"));
     authUser = { id: 1 };
     localStorage.clear();
@@ -103,20 +102,16 @@ describe("OverviewPage cockpit", () => {
     expect(tokensResolveMock).not.toHaveBeenCalled();
     expect(cockpitMock).not.toHaveBeenCalled();
 
-    // Each card's "Configure →" must route to the page it actually represents, not all
-    // four piling onto Health & Security (a prior bug: LiveStatCard hardcoded /security).
+    // Each card's "Configure →" must route to the page it represents, not all to /security.
     const expectedHrefs: Record<string, string> = {
       Repositories: "/repos",
       "Open PRs": "/pulls",
       "Security Score": "/security",
-      // Issue #282: no org configured + no admin membership resolves to /settings
-      // (the /collaborators redirect stub was removed).
+      // No org configured + no admin membership resolves to /settings.
       "Team Members": "/settings",
     };
     for (const [label, href] of Object.entries(expectedHrefs)) {
-      // getByRole (not getByText) since "Security Score" also appears as a plain
-      // <span> chart heading further down the page -- the stat card's <a> is the only
-      // element whose accessible name (label + "Configure →") matches this regex.
+      // getByRole, since "Security Score" also appears as a plain chart heading.
       const card = screen.getByRole("link", { name: new RegExp(label) });
       expect(card).toHaveAttribute("href", href);
     }
@@ -148,8 +143,7 @@ describe("OverviewPage cockpit", () => {
     });
 
     expect(screen.queryAllByText("Configure →")).toHaveLength(0);
-    // A single cockpit call once the token-resolve fetch settles -- not a second
-    // waterfalled fetch for jobs/overview like the pre-cockpit page used to do.
+    // A single cockpit call once token-resolve settles, not a second waterfalled fetch.
     expect(cockpitMock).toHaveBeenCalledTimes(1);
   });
 
@@ -371,8 +365,7 @@ describe("OverviewPage cockpit", () => {
     expect(await screen.findByText(/999 min/)).toBeInTheDocument();
     unmount();
 
-    // A member (id 2) signs in on the same tab. Their query key differs, so the
-    // admin's cached row can't satisfy it; with billing now 403-ing the card is gone.
+    // A member (id 2) signs in on the same tab; their query key differs, and billing now 403s.
     authUser = { id: 2 };
     actionsUsageMock.mockRejectedValue(new Error("GitHub API error: 400"));
     render(
@@ -453,9 +446,7 @@ describe("OverviewPage cockpit", () => {
         {
           repo: "acme/api",
           title: "v2",
-          // relativeTime() renders anything within 60s (or in the future) as "just now" --
-          // computed relative to test execution time so this doesn't go stale as real time
-          // passes (a hardcoded near-future date drifted into "N days ago" here before).
+          // Computed relative to now so relativeTime() keeps rendering "just now".
           due_on: new Date(Date.now() + 60_000).toISOString(),
           open_issues: 2,
           closed_issues: 8,

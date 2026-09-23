@@ -2,10 +2,8 @@
 
 import { useEffect, useState } from "react"
 
-// Theme system — neutral "shade/vibe" palettes (whites/blacks and muted tints).
-// Colors are driven entirely by CSS variables in globals.css, keyed by the
-// `data-theme` attribute on <html>. The dark/light class is toggled alongside so
-// the few `dark:` Tailwind utilities (badge, input) keep working.
+// Colors come from CSS variables in globals.css keyed by <html data-theme>; the dark/light class
+// is toggled alongside so the few `dark:` Tailwind utilities keep working.
 
 export type ThemeName = "midnight" | "carbon" | "slate" | "dim" | "paper" | "ash"
 

@@ -19,9 +19,7 @@ const remediateMock = vi.fn();
 const installationsListMock = vi.fn();
 const installationsListForOrgMock = vi.fn();
 
-// A minimal reactive store standing in for Next's router-driven searchParams so a
-// tab click's router.replace(...) actually triggers a re-render in the test, the
-// same way real navigation would.
+// Minimal reactive store standing in for searchParams so router.replace() re-renders.
 let mockSearchParams = new URLSearchParams();
 const searchParamsListeners = new Set<() => void>();
 const routerReplaceMock = vi.fn((url: string) => {
@@ -122,9 +120,7 @@ describe("SecurityPage", () => {
   });
 
   it("hides the GitHub Token field when an installation covers the entered org with trailing whitespace", async () => {
-    // Regression test (CodeRabbit finding on PR #299): the personal-installation match
-    // compared account_login against raw owner state, so "acme " (untrimmed) never
-    // matched an "acme" installation and incorrectly left the token field visible.
+    // "acme " (untrimmed) must still match an "acme" installation and hide the token field.
     installationsListMock.mockResolvedValue([
       { id: 1, account_login: "acme", account_type: "Organization", installation_id: 42, created_at: "2026-07-20T00:00:00Z" },
     ]);
@@ -136,9 +132,7 @@ describe("SecurityPage", () => {
   });
 
   it("hides the GitHub Token field when an org-level installation covers the entered org", async () => {
-    // Regression test: api.installations.list() only ever returns the caller's *personal*
-    // installations -- an org's App installation must be checked via the separate
-    // org-scoped endpoint, or this would never hide the field for the primary (org) case.
+    // installations.list() is personal-only; org installs need the org-scoped endpoint.
     installationsListForOrgMock.mockResolvedValue([
       { id: 2, account_login: "acme", account_type: "Organization", installation_id: 99, created_at: "2026-07-20T00:00:00Z" },
     ]);

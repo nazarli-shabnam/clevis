@@ -1,9 +1,5 @@
 """add github identity columns to users; make password_hash nullable
 
-GitHub OAuth sign-in (S1) links a local user to a GitHub account and creates users who have
-no email/password credential, so password_hash becomes nullable and the user row carries the
-GitHub identity (unique github_user_id, login, avatar).
-
 Revision ID: 0007
 Revises: 0006
 Create Date: 2026-05-31

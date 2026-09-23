@@ -1,27 +1,9 @@
-"""Drop the legacy org_memberships table (issue #331).
+"""Drop the legacy org_memberships table.
 
-SCHEMA CHANGE -- this migration DROPs a table. It is not additive and not automatically
-reversible with data.
-
-Background: org_memberships (org_id-keyed) was the original org RBAC join table. Issue
-#190 moved org membership onto the tenant-scoped `memberships` table: reads cut over in
-step 6a (PR #326, every `require_org_role` call site) and writes were dual-written from
-step 4 (PR #322) onward. Since then org_memberships has been pure write-amplification --
-every membership change touched both tables, but nothing read org_memberships. #190's
-own rollout plan (Phase E) explicitly scoped this drop as a tracked follow-up.
-
-This PR removes the dual-write (org_membership_repo is now a thin org_id->tenant_id
-adapter over tenant_repo, writing only `memberships`) and drops the now-unreferenced
-table here.
-
-Data loss: the org_memberships rows are discarded. This is safe because `memberships`
-has held an equivalent row for every one of them since #190 PR 4's dual-write, and
-migration 0029's docstring carries the verification query that asserted that parity.
-Nothing else references org_memberships.id (it is a leaf join table).
-
-downgrade() recreates the table structure and its clevis_api grants but CANNOT restore
-the dropped rows -- it yields an empty table. A real rollback would additionally need to
-re-run #190 PR 4's backfill from `memberships`.
+SCHEMA CHANGE -- DROPs a table; not automatically reversible with data. Safe because
+`memberships` has held an equivalent row for every org_memberships row since the
+dual-write that superseded it, and nothing else references org_memberships.id.
+downgrade() recreates the table structure and grants but cannot restore the dropped rows.
 
 Revision ID: 0045
 Revises: 0044
@@ -38,11 +20,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # DROP TABLE cascades to the id sequence, the uq_org_memberships_org_user constraint,
-    # the org_id/user_id foreign keys, and every GRANT on the table / its sequence
-    # (migration 0032 and docker/provision-api-role-existing-deployment.sh both granted
-    # clevis_api DML here). No RLS policy to drop -- org_memberships was deliberately
-    # excluded from the RLS scaffolding in migration 0030.
+    # Cascades to its sequence, constraints, FKs and grants; it never had RLS policies.
     op.drop_table("org_memberships")
 
 
@@ -61,8 +39,7 @@ def downgrade() -> None:
         ),
         sa.UniqueConstraint("org_id", "user_id", name="uq_org_memberships_org_user"),
     )
-    # Restore the clevis_api grants migration 0032 gave this table, guarded by role
-    # existence (the role only exists when API_DB_PASSWORD is configured -- issue #330).
+    # The clevis_api role only exists when API_DB_PASSWORD is configured.
     op.execute(
         sa.text(
             """
@@ -77,4 +54,4 @@ def downgrade() -> None:
             """
         )
     )
-    # NOTE: the org_memberships rows themselves are not restored -- see module docstring.
+    # The org_memberships rows themselves are not restored.

@@ -86,10 +86,9 @@ def test_activity_summary_excludes_counts_outside_the_window(client, db, acme_or
 
 
 def test_activity_summary_cutoff_uses_utc_calendar_not_host_local_time(client, db, acme_org_with_installation, monkeypatch):
-    """Regression test (CodeRabbit finding on PR #349): RepoEventDailyCount.day is always
-    a UTC date, so the cutoff must be derived from the UTC calendar, not date.today()'s
-    host-local one -- a host running behind UTC could otherwise treat the newest UTC day's
-    row as not-yet-arrived and omit it."""
+    """RepoEventDailyCount.day is always a UTC date, so the cutoff must be derived from the
+    UTC calendar, not date.today()'s host-local one -- a host running behind UTC could
+    otherwise treat the newest UTC day's row as not-yet-arrived and omit it."""
     import src.routers.github as github_module
 
     fixed_now = datetime(2026, 1, 10, 0, 30, tzinfo=timezone.utc)
@@ -175,13 +174,9 @@ def test_activity_summary_non_member_forbidden(db, acme_org):
     assert resp.status_code == 403
 
 
-# ---------------------------------------------------------------------------
-# SSE stream -- tested against the generator function directly (not through
-# TestClient's own streaming, which would require a real multi-second wait per
-# poll interval); a tiny poll_interval keeps these tests fast. The generators are
-# async (the between-poll wait is `await asyncio.sleep`, not a blocking
-# `time.sleep` on a threadpool worker -- see _activity_summary_stream).
-# ---------------------------------------------------------------------------
+# SSE stream tested against the generator function directly (not through TestClient's own
+# streaming, which would require a real multi-second wait per poll interval); a tiny
+# poll_interval keeps these tests fast.
 
 
 async def _take(agen, n):
@@ -248,13 +243,11 @@ async def test_stream_reports_unconnected_for_a_legacy_pat_org(db, acme_org, rba
 
 @pytest.mark.asyncio
 async def test_stream_opens_and_tears_down_a_fresh_session_per_poll(monkeypatch):
-    """Regression test (CodeRabbit findings on PR #349 and #405): the SSE stream must not
-    reuse the request-scoped `Depends(get_db)` session (FastAPI 0.116.1 tears that down as
-    soon as the handler returns the StreamingResponse), and it must not hold ONE session
-    open across the whole <=15-min stream either -- an open Session pins a pooled
+    """The SSE stream must not reuse the request-scoped `Depends(get_db)` session (FastAPI
+    tears that down as soon as the handler returns the StreamingResponse), and it must not
+    hold ONE session open across the whole stream either -- an open Session pins a pooled
     connection, so a few idle streams would exhaust the pool. Each poll gets its own
-    SessionLocal(), with tenant context + a bounded statement_timeout set on it, and it's
-    closed before the next poll."""
+    SessionLocal(), closed before the next poll."""
     from types import SimpleNamespace
     from unittest.mock import MagicMock
 
@@ -293,10 +286,9 @@ async def test_stream_opens_and_tears_down_a_fresh_session_per_poll(monkeypatch)
 
 
 def test_teardown_stream_session_invalidates_connection_when_reset_fails():
-    """Regression (CodeRabbit finding on PR #405): app.tenant_id/app.user_id are set with
-    plain SET, so a teardown that fails partway (RESET or commit raises) must discard the
-    pooled connection rather than close() it back into the pool still tenant-scoped --
-    same contract as src.core.db.get_db's teardown."""
+    """app.tenant_id/app.user_id are set with plain SET, so a teardown that fails partway
+    (RESET or commit raises) must discard the pooled connection rather than close() it back
+    into the pool still tenant-scoped -- same contract as src.core.db.get_db's teardown."""
     from unittest.mock import MagicMock
 
     from src.routers.github import _teardown_stream_session

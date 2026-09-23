@@ -1,9 +1,8 @@
-"""Collaborators PR 2 of 3: enqueue a one-shot org membership reconciliation.
+"""Enqueue a one-shot org membership reconciliation.
 
-Mirrors backfill_service.enqueue exactly (Fernet-encrypt the token for the worker payload,
-insert a `jobs` row for the worker's existing poll loop to pick up) -- see that module's
-docstring. apps/worker/src/membership_reconcile.py + worker.py's
-_handle_reconcile_org_membership do the actual GitHub calls and DB writes.
+Mirrors backfill_service.enqueue (Fernet-encrypt the token for the worker payload, insert
+a `jobs` row for the worker's poll loop). apps/worker/src/membership_reconcile.py +
+worker.py's _handle_reconcile_org_membership do the actual GitHub calls and DB writes.
 """
 
 from sqlalchemy.orm import Session

@@ -7,10 +7,7 @@ interface StatCardProps {
   trend?: number[] // optional sparkline data, oldest first
 }
 
-/**
- * Compact stat card — label, a large tabular-nums value, and an optional
- * delta showing ↑/↓ trend vs last period, or a sparkline of recent history.
- */
+/** Compact stat card: label, large value, and an optional delta or sparkline. */
 export function StatCard({ label, value, delta, trend }: StatCardProps) {
   return (
     <div className="bg-card border border-border rounded-md px-4 py-4">

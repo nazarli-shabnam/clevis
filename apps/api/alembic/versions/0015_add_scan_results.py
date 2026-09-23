@@ -1,14 +1,5 @@
 """add scan_results
 
-Every /analytics/overview scan was previously a one-off snapshot with no
-history — there was no way to see a security score's trend over time. This
-adds a scan_results table that persists a row for every completed scan
-(owner, score, check counts, and the full checks payload as JSON text,
-matching the json-as-Text convention used by audit_logs.payload and
-jobs.payload/result elsewhere in this schema), plus a composite index on
-(owner, created_at) since every read of this table is "most recent N scans
-for this owner".
-
 Revision ID: 0015
 Revises: 0014
 Create Date: 2026-07-18

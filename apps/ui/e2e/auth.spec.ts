@@ -37,15 +37,13 @@ test.describe("Logout", () => {
     await loginAsAdmin(page)
     await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible()
 
-    // Sidebar header button shows the user's name (see components/app-sidebar.tsx);
-    // clicking it opens ProfileDropdown, whose "Sign out" button calls logout().
+    // Sidebar header button opens ProfileDropdown, whose "Sign out" calls logout().
     await page.getByRole("button", { name: /E2E Admin/i }).click()
     await page.getByRole("button", { name: "Sign out" }).click()
 
     await expect(page).toHaveURL(/\/login/)
 
-    // Session should actually be cleared, not just a client-side navigation — reloading a
-    // protected route must bounce back to /login rather than showing stale content.
+    // Reloading a protected route must bounce to /login, proving the session was actually cleared.
     await page.goto("/security")
     await expect(page).toHaveURL(/\/login/)
   })
@@ -56,17 +54,13 @@ test.describe("Mid-session 401", () => {
     await loginAsAdmin(page)
     await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible()
 
-    // Force the next API call to look like an expired/revoked session. /audit auto-fetches
-    // GET /audit on mount (see app/audit/page.tsx), so navigating there reliably triggers it.
-    // Scoped to the API host specifically — a bare "**/audit" pattern would also match the
-    // UI's own page navigation request to http://localhost:3000/audit. Trailing "**" so this
-    // still matches once query params (e.g. ?limit=100) are appended to the request.
+    // Simulate an expired session on /audit's on-mount fetch. Scoped to the API host so it doesn't
+    // match the UI's own /audit navigation; trailing "**" covers query params.
     await page.route(`${E2E_API_BASE}/audit**`, (route) => route.fulfill({ status: 401, body: "{}" }))
     await page.goto("/audit")
 
-    // Regression check for #75/#115: AuthGuard must call logout() (clearing local auth state)
-    // before redirecting, otherwise /login's "already authenticated" check bounces straight
-    // back to the protected page, which 401s again — an infinite redirect loop.
+    // AuthGuard must logout() before redirecting, or /login's "already authenticated" check
+    // bounces back to the protected page and 401s again (infinite redirect loop).
     await expect(page).toHaveURL(/\/login/, { timeout: 5000 })
     await page.waitForTimeout(1000)
     await expect(page).toHaveURL(/\/login/)

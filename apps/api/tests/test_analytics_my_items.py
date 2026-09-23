@@ -292,10 +292,8 @@ def test_non_dict_search_response_degrades_to_empty(http):
 
 def test_falls_back_to_client_supplied_token_header(http):
     with patch("src.routers.analytics.GitHubClient") as mock_client:
-        # 403 (not a bare network error) -- this test is exercising the client-supplied
-        # X-GitHub-Token header path (no 400 from a missing token), not /user's error
-        # handling, so it uses the "expected" degrade-to-empty case rather than a
-        # network failure that would now (correctly) propagate.
+        # 403 = the expected degrade-to-empty /user case; this test targets the
+        # X-GitHub-Token header path, not /user's error handling.
         mock_client.return_value.request.side_effect = httpx.HTTPStatusError(
             "boom",
             request=httpx.Request("GET", "https://api.github.com/user"),

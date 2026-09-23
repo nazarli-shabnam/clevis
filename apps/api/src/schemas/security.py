@@ -14,20 +14,14 @@ class RepoSecurityRow(BaseModel):
     code_scanning: bool
     force_push_allowed: bool
     score: int
-    # "aggregate" when dependabot and/or code_scanning came from security_alerts (post-S6
-    # PR 3) instead of a live per-repo GitHub call -- the two dimensions are gated
-    # independently (one can be aggregate-sourced while the other is still live, see
-    # _repo_row's docstring), so this is "aggregate" if either one was. branch_protection/
-    # force_push/secret_scanning have no ingested event covering them and stay live either
-    # way, so this only describes those two dimensions (dependabot_enabled is an
-    # approximation in the "aggregate" case too -- see _dependabot_from_aggregate's docstring).
+    # "aggregate" when dependabot and/or code_scanning came from security_alerts instead
+    # of a live per-repo GitHub call -- the two dimensions are gated independently, so
+    # this is "aggregate" if either one was. branch_protection/force_push/secret_scanning
+    # have no ingested event and stay live either way.
     alerts_source: Literal["github", "aggregate"] = "github"
-    # Dimension names ("branch_protection", "dependabot", "code_scanning") the token
-    # couldn't evaluate (403/429/network error) rather than genuinely observed as
-    # compliant or not -- excluded from `score`'s denominator so a repo the token
-    # can't see into isn't scored as if it were clean. Never includes a dimension
-    # whose GitHub answer was a genuine 404 ("this feature is off"), which is a real
-    # negative result, not an unknown.
+    # Dimension names the token couldn't evaluate (403/429/network error) rather than
+    # genuinely observed -- excluded from `score`'s denominator so an unseeable repo isn't
+    # scored as clean. Never includes a genuine 404 ("feature is off"), a real negative.
     unknown_dimensions: list[str] = []
 
 
@@ -62,8 +56,7 @@ class SecretAlert(BaseModel):
     resolved_at: datetime | None
     repo: str
     # None when no usable link exists -- the aggregate path (security_alerts) doesn't
-    # store GitHub's html_url (CodeRabbit finding on PR #352: returning "" made every
-    # aggregate-sourced alert render as a broken link instead of plain text).
+    # store GitHub's html_url; "" would render every such alert as a broken link.
     url: str | None
 
 

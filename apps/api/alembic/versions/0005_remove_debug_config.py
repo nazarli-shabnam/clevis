@@ -1,9 +1,5 @@
 """remove debug app_config key
 
-The `debug` setting only gated the API's interactive docs (/docs, /redoc,
-/openapi.json) and was read once at startup, so editing it live did nothing
-until a restart. Docs are now disabled unconditionally, so the key is removed.
-
 Revision ID: 0005
 Revises: 0004
 Create Date: 2026-05-30

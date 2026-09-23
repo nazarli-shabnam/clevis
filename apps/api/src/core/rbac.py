@@ -1,9 +1,6 @@
-"""
-Org-scoped RBAC dependencies.
+"""Org-scoped RBAC dependencies.
 
-Unlike require_auth/require_workspace_admin (JWT-only, no DB hit), these dependencies
-resolve role fresh from the DB on every request, because org membership and invite
-status can change while a 30-day JWT is still valid.
+Roles are resolved from the DB per request, since membership can change while a JWT is still valid.
 """
 
 from dataclasses import dataclass
@@ -32,31 +29,17 @@ class PersonalTenantContext:
 
 
 def set_tenant_session_context(db: Session, tenant_id: int, user_id: int) -> None:
-    # Plain SET (not SET LOCAL): a request's Session lifetime doesn't cleanly map to one
-    # transaction, so a transaction-scoped SET LOCAL could stop applying mid-request. Read
-    # by migration 0030's RLS policies (tenant_id match) and migration 0031's widened
-    # self-access clause (user_id match, via src.core.db.set_session_user -- this function's
-    # narrower sibling for write paths that know the acting user but not a single tenant).
-    #
-    # SET does not accept bind parameters (it's a configuration command, not a regular
-    # query) -- Postgres rejects `SET app.tenant_id = $1` with a syntax error. Both values
-    # are always int (SQLAlchemy-mapped primary keys, never caller-supplied strings), so
-    # formatting them directly into the statement is safe; int() here is a defensive type
-    # check, not a workaround.
+    # Plain SET, not SET LOCAL: a request can commit more than once. Read by the RLS policies.
+    # SET can't take bind params; both values are int PKs, so formatting them in is safe.
     db.execute(text(f"SET app.tenant_id = {int(tenant_id)}"))
     db.execute(text(f"SET app.user_id = {int(user_id)}"))
 
 
 def audit_tenant(db: Session, user_id: int, owner: str) -> int:
-    """The tenant an audit row for a ``/me/repos/{owner}/...`` write should be scoped
-    under, and set as the session context. If ``owner`` is a connected Clevis org the
-    caller is a member of, that's the org's tenant; otherwise (a bring-your-own-PAT
-    action against an account with no Clevis org) it's the caller's own personal tenant.
+    """Resolve, and set as session context, the tenant for a ``/me/repos/{owner}/...`` audit row.
 
-    Never ``None``: ``audit_logs``' RLS policy is strict equality against
-    ``app.tenant_id`` with no OR-NULL escape (issue #330), so a NULL-tenant insert fails
-    outright under the constrained API role — and the action still belongs in the trail
-    either way.
+    The owner's org tenant if the caller is a member, else the caller's personal tenant. Never
+    ``None``: audit_logs RLS is strict equality, so a NULL-tenant insert would fail.
     """
     org = org_repo.get_by_login_ci(db, owner)
     if org is not None:
@@ -70,26 +53,15 @@ def audit_tenant(db: Session, user_id: int, owner: str) -> int:
 
 
 def resolve_org_role(db: Session, org_login: str, user_id: int, min_role: Literal["member", "admin"]) -> OrgContext | None:
-    """Same resolution logic require_org_role's dependency raises on, but returns None
-    instead of raising when org_login doesn't exist or the membership doesn't meet
-    min_role. Shared by require_org_role itself and by installations.py's
-    sync_org_installation, which needs a non-raising check to decide whether to take its
-    known-admin fast path or fall through to first-time GitHub-verified bootstrap --
-    keeping the two checks from silently drifting apart (issue #190 CodeRabbit follow-up).
+    """Non-raising form of require_org_role's check: None on missing org or insufficient role.
 
-    Lookup is case-insensitive (issue #368): GitHub org logins are unique regardless of
-    case, and an Org row is stored under GitHub's canonical casing -- so a user who typed
-    "myorg" for an org GitHub canonicalises as "MyOrg" must still resolve to it, not 404."""
+    Shared with installations.sync_org_installation so the two can't drift. Case-insensitive,
+    since GitHub logins are unique regardless of case.
+    """
     org = org_repo.get_by_login_ci(db, org_login)
     if org is None:
         return None
-    # org.tenant_id is nullable (see db.py's Org.tenant_id docstring) -- a legacy row
-    # resolved here via get_by_login (not get_or_create) never gets org_repo's own
-    # self-healing dual-write, so reuse the exact same helper org_repo.get_or_create
-    # itself uses, rather than a separate hand-rolled copy of the same logic. Resolved
-    # ahead of the role check (issue #190 step 6a) so the role lookup itself can read
-    # from `memberships` (tenant_id-keyed), the new source of truth for org RBAC, instead
-    # of the legacy `org_memberships` table (org_id-keyed) it used to read.
+    # tenant_id is nullable on legacy rows; self-heal it before the role lookup reads `memberships`.
     org = org_repo.ensure_tenant_linked(db, org)
     membership = tenant_repo.get_membership(db, org.tenant_id, user_id)
     if membership is None or _ROLE_RANK.get(membership.role, -1) < _ROLE_RANK[min_role]:
@@ -129,10 +101,10 @@ def require_personal_tenant(
     db: Session = Depends(get_db),
     user: UserOut = Depends(require_auth),
 ) -> PersonalTenantContext:
-    """Dependency for routes unambiguously scoped to the caller's own personal tenant --
-    not for /me/... routes that can resolve to either an org or personal tenant depending
-    on an `owner` path param (see src.services.token_resolution.resolve_owner_token);
-    wiring those is a separate design decision, deferred out of issue #190's PR 5."""
+    """Dependency for routes scoped to the caller's own personal tenant.
+
+    Not for /me/... routes whose `owner` can resolve to an org tenant (see resolve_owner_token);
+    wiring those is deferred."""
     tenant = tenant_repo.ensure_personal_tenant(db, user.id)
     set_tenant_session_context(db, tenant.id, user.id)
     return PersonalTenantContext(tenant=tenant)

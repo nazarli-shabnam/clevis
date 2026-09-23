@@ -16,16 +16,11 @@ interface MyItemsListProps {
   page: number
   perPage: number
   onPageChange: (page: number) => void
-  /** True when the backend couldn't resolve who the signed-in user is on GitHub (an
-   * installation/App token can't call GET /user, and this account has no GitHub-OAuth
-   * login on file) -- render a distinct message instead of implying zero items exist. */
+  /** Backend couldn't resolve the user's GitHub login; render a distinct message, not "zero items". */
   identityUnresolved?: boolean
 }
 
-// Full-page generalization of the Overview widget's MyViewRow — same row shape
-// (title, `repo #number`, relative time), plus a Prev/Next footer driven by
-// total_count/page/per_page since dedicated pages aren't capped at the
-// glance widget's top-10.
+// Full-page version of the Overview's MyViewRow, with Prev/Next paging.
 export function MyItemsList({
   items,
   isLoading,

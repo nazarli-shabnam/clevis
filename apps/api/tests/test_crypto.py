@@ -11,8 +11,7 @@ _KEY = "test-job-secret-key"
 
 
 def _legacy_encrypt(token: str, key: str) -> str:
-    """Mirrors the pre-fix unsalted single-round SHA-256 derivation, to prove
-    already-encrypted (pre-migration) ciphertext still decrypts correctly."""
+    """Legacy unsalted single-round SHA-256 derivation, to prove old ciphertext still decrypts."""
     derived = base64.urlsafe_b64encode(hashlib.sha256(key.encode()).digest())
     return Fernet(derived).encrypt(token.encode()).decode()
 

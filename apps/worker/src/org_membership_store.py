@@ -1,54 +1,26 @@
-"""org_members + repo_collaborators write path (Collaborators PR 1 of 3).
+"""org_members + repo_collaborators write path (current state, not a log).
 
-Both tables represent current state, not a log -- upserted on add/edit, deleted on remove --
-unlike repo_events_store's insert-and-skip shape. Mirrors security_alerts_store.py's separation
-from event_consumer.py.
-
-Ordering: GitHub doesn't guarantee webhook delivery order, and this consumer's own reclaim path
-(event_consumer.py's _sweep_pending) can retry a crashed-then-recovered delivery well after a
-later delivery for the same login/repo already processed successfully -- so an "add" and a
-"remove" for the same key can be applied out of order. Every write here is guarded by the
-event's own received_at (the same ingestion-time signal repo_events uses for occurred_at) against
-the stored row's added_at/granted_at: an upsert only applies if it isn't older than what's
-already stored (CodeRabbit finding on Collaborators PR 1), and a removal only applies if the
-event that caused it isn't older than the row's last write -- so a stale "removed" can't delete a
-grant a newer "added" already re-established, and a stale "added" can't resurrect/overwrite a
-newer "removed". Residual gap, accepted rather than solved here: a "removed" that's processed
-*before* a still-older "added" for a login with no existing row at all has nothing to compare
-against (the row doesn't exist yet) and will still be clobbered by that late-arriving stale
-"added" -- closing that fully would need a tombstone (remembering removed logins even after
-deletion), not just a comparison against a row that no longer exists. Narrow window, not
-addressed in this PR.
+Webhook delivery order isn't guaranteed and reclaims can retry late, so every write is
+guarded by the event's received_at against the row's added_at/granted_at. Known gap: a
+"removed" processed before an older "added" for a login with no row is still clobbered by
+that late "added" (would need tombstones).
 """
 
 from datetime import datetime
 
 import psycopg
 
-# Namespace string for the tenant-membership advisory lock below -- hashed the same way
-# apps/api/src/services/sweep_lock.py hashes its own job_type namespace, so the two lock
-# families can't collide on the same bigint key space by coincidence.
+# Hashed the same way as apps/api's sweep_lock.py namespace so the lock families can't collide.
 _LOCK_NAMESPACE = "org_membership_reconcile"
 
 
 def acquire_tenant_lock(conn: psycopg.Connection, tenant_id: int) -> None:
-    """Session-level advisory lock serializing org-membership writes for one tenant across
-    processes and connections (issue #357): the periodic reconciliation job's full
-    roster-fetch-to-snapshot-apply window (worker.py's _handle_reconcile_org_membership) and
-    the webhook path's per-event write (event_consumer.py) block each other out instead of
-    interleaving. Without this, a webhook mutation landing between the reconcile job's roster
-    fetch and its snapshot write could be silently undone by that snapshot (a stale roster
-    resurrecting a just-removed member) or itself wipe a member the snapshot is about to write
-    (a stale removal racing a fresh add) -- comparing against added_at/granted_at alone (the
-    webhook path's own ordering guard, see this module's top docstring) can't catch this,
-    because the reconcile snapshot's DELETE has no per-row timestamp to compare against.
+    """Session-level advisory lock serializing one tenant's org-membership writes.
 
-    Same (hashtext(namespace), tenant_id) two-key convention as sweep_lock.py's
-    try_acquire_sweep_slot, but the blocking, session-scoped primitive (pg_advisory_lock, not
-    pg_try_advisory_xact_lock): the reconcile side must hold this across an HTTP round trip to
-    GitHub that happens before any transaction opens, so the lock's lifetime can't be tied to a
-    commit/rollback -- callers MUST release it explicitly via release_tenant_lock, in a
-    finally, regardless of which return path they take.
+    Keeps the webhook path from interleaving with the reconcile job's roster-fetch-to-snapshot
+    window, where a snapshot could resurrect or wipe members. Session-scoped (not xact) because
+    the reconcile side holds it across an HTTP call before any transaction; callers MUST call
+    release_tenant_lock in a finally.
     """
     with conn.cursor() as cur:
         cur.execute("SELECT pg_advisory_lock(hashtext(%s), %s)", (_LOCK_NAMESPACE, tenant_id))
@@ -56,9 +28,7 @@ def acquire_tenant_lock(conn: psycopg.Connection, tenant_id: int) -> None:
 
 
 def release_tenant_lock(conn: psycopg.Connection, tenant_id: int) -> None:
-    """Releases the lock acquired by acquire_tenant_lock. Safe to call after the same
-    connection's pending transaction was rolled back -- pg_advisory_lock's session-level hold
-    is independent of transaction state; only this (or the session ending) releases it."""
+    """Release acquire_tenant_lock's lock; safe after a rollback (session-level hold)."""
     with conn.cursor() as cur:
         cur.execute("SELECT pg_advisory_unlock(hashtext(%s), %s)", (_LOCK_NAMESPACE, tenant_id))
     conn.commit()
@@ -67,15 +37,10 @@ def release_tenant_lock(conn: psycopg.Connection, tenant_id: int) -> None:
 def upsert_org_member(
     cur: psycopg.Cursor, *, tenant_id: int, login: str, avatar_url: str, role: str, added_at: datetime
 ) -> None:
-    """Upserts an org_members row keyed on (tenant_id, login) -- migration 0040's
-    uq_org_members_tenant_login. `role` is only set on a true INSERT (first time this
-    login is seen for this tenant); a conflict (redelivered member_added, or a re-add
-    after a prior removal) leaves the existing row's role untouched -- a future
-    reconciliation poll (Collaborators PR 2) may have already corrected it since the
-    event this payload came from was generated, and blindly overwriting with a possibly
-    stale event-time snapshot would undo that correction. See migration 0040's docstring
-    for the full role-staleness rationale, and this module's own docstring for the
-    added_at ordering guard.
+    """Upsert an org_members row keyed on (tenant_id, login).
+
+    `role` is only set on INSERT: the reconciliation poll may have corrected it since this
+    event was generated, so a conflict must not overwrite it with a stale snapshot.
     """
     cur.execute(
         """
@@ -90,8 +55,7 @@ def upsert_org_member(
 
 
 def remove_org_member(cur: psycopg.Cursor, *, tenant_id: int, login: str, event_received_at: datetime) -> None:
-    """Deletes an org_members row, but only if the removal event isn't older than the
-    row's last write (`added_at`) -- see this module's own docstring for why."""
+    """Delete an org_members row unless the removal is older than its `added_at`."""
     cur.execute(
         "DELETE FROM org_members WHERE tenant_id = %(tenant_id)s AND login = %(login)s AND added_at <= %(event_received_at)s",
         {"tenant_id": tenant_id, "login": login, "event_received_at": event_received_at},
@@ -108,16 +72,10 @@ def upsert_repo_collaborator(
     is_outside_collaborator: bool | None,
     granted_at: datetime,
 ) -> None:
-    """Upserts a repo_collaborators row keyed on (tenant_id, repo, login) -- migration
-    0040's uq_repo_collaborators_tenant_repo_login. `source` is always 'direct' here --
-    this is only ever called from the `member` event branch (team-based access is
-    deferred, see migration 0040's docstring).
+    """Upsert a repo_collaborators row keyed on (tenant_id, repo, login); source is 'direct'.
 
-    `is_outside_collaborator` is only set on a true INSERT, same reasoning as
-    org_members.role in upsert_org_member: this ingestion path can't determine it (always
-    None from the `member` event alone), and a conflict (redelivered/edited event) must
-    not clobber a value the future reconciliation poll (Collaborators PR 2) may have
-    already filled in. See this module's own docstring for the granted_at ordering guard.
+    `is_outside_collaborator` is only set on INSERT so a conflict doesn't clobber a value
+    the reconciliation poll filled in.
     """
     cur.execute(
         """
@@ -141,8 +99,7 @@ def upsert_repo_collaborator(
 
 
 def remove_repo_collaborator(cur: psycopg.Cursor, *, tenant_id: int, repo: str, login: str, event_received_at: datetime) -> None:
-    """Deletes a repo_collaborators row, but only if the removal event isn't older than
-    the row's last write (`granted_at`) -- see this module's own docstring for why."""
+    """Delete a repo_collaborators row unless the removal is older than its `granted_at`."""
     cur.execute(
         "DELETE FROM repo_collaborators WHERE tenant_id = %(tenant_id)s AND repo = %(repo)s AND login = %(login)s "
         "AND granted_at <= %(event_received_at)s",
@@ -151,33 +108,12 @@ def remove_repo_collaborator(cur: psycopg.Cursor, *, tenant_id: int, repo: str, 
 
 
 def reconcile_org_members(cur: psycopg.Cursor, *, tenant_id: int, members: list[dict], synced_at: datetime) -> None:
-    """Full-roster reconciliation write (Collaborators PR 2 of 3) -- the counterpart to
-    upsert_org_member/remove_org_member above, called from the periodic poll instead of a
-    single webhook event. Unlike the webhook path (which deliberately leaves `role` untouched
-    on conflict so it doesn't clobber a correction this very function already made), this
-    treats every field the poll saw as authoritative: `role` and `avatar_url` are always
-    overwritten, since this poll IS the reconciliation for exactly the staleness
-    upsert_org_member's own docstring describes. `two_factor_enabled` uses COALESCE instead of
-    a blind overwrite -- the poll's 2FA overlay call is best-effort (see
-    membership_reconcile.py's fetch_org_roster) and a caller passes None for it when that
-    single call failed this cycle; COALESCE preserves a previously-known value instead of
-    losing it to one transient failure.
+    """Full-roster reconciliation write: the poll's view is authoritative.
 
-    Also removes any existing org_members row for this tenant whose login the poll did NOT
-    see -- a real departure the removal webhook missed (delivery lost, or arrived while this
-    tenant had no App installation to receive it). This is the actual reconciliation: the
-    webhook path alone can drift (this migration 0040's own docstring), and this poll is what
-    corrects it, not just fills gaps.
-
-    `added_at` is preserved for a login the poll already had a row for (its real
-    webhook-sourced join time); for a login the poll discovers with no existing row (a missed
-    member_added), added_at is set to `synced_at` -- the poll has no way to know the true join
-    time, and "first seen by reconciliation" is a better lower-bound guess than leaving it
-    unset. An empty `members` list is treated as a no-op, not "remove everyone" -- GitHub
-    always has at least one org owner, so an empty roster from a real API call would be a bug
-    somewhere upstream (a transient failure, a malformed response), not a genuine "this org now
-    has zero members" state; wiping the table on that basis would be worse than doing nothing
-    for one poll cycle."""
+    `role`/`avatar_url` are always overwritten; `two_factor_enabled` uses COALESCE since a
+    None means the best-effort overlay failed. Rows for logins not in `members` are deleted
+    (missed removals). `added_at` is preserved for existing rows, else set to `synced_at`.
+    An empty `members` list is a no-op, since an org always has an owner."""
     if not members:
         return
 
@@ -211,25 +147,13 @@ def reconcile_org_members(cur: psycopg.Cursor, *, tenant_id: int, members: list[
 def reconcile_repo_collaborator_outside_status(
     cur: psycopg.Cursor, *, tenant_id: int, member_logins: set[str], outside_logins: set[str]
 ) -> None:
-    """Fills in repo_collaborators.is_outside_collaborator for every row this tenant already
-    has from the webhook path (migration 0040 -- the `member` event alone can't determine
-    this, see that migration's docstring), using the exact same heuristic
-    apps/api/src/routers/collab.py's permission_audit already computes live: `is_outside =
-    login not in member_logins or login in outside_logins`. Implemented as "mark everyone
-    outside, then correct the ones who are actually direct members" rather than computing set
-    membership per row in Python, since this function only knows the org's member/outside
-    logins (from the GitHub roster), not the full set of logins already present in
-    repo_collaborators for this tenant -- the two-step UPDATE lets Postgres apply the formula
-    without that enumeration. Only ever updates existing rows -- this function creates no new
-    repo_collaborators rows (that's still the webhook path's job); a login this tenant has
-    never seen via a `member` event has no row to update here regardless of what GitHub's
-    roster says about it."""
+    """Fill in is_outside_collaborator on existing repo_collaborators rows.
+
+    Same heuristic as collab.py's permission_audit: outside iff not an org member or in
+    outside_logins. Two-step UPDATE (mark all outside, then correct members). Never creates rows."""
     if not member_logins:
-        # An empty roster is never legitimate (an org always has at least its owner as a
-        # member) -- bail out before the unconditional UPDATE below, which would otherwise mark
-        # every existing repo_collaborators row as outside on what's more likely a caller bug
-        # than a real 0-member org. reconcile_org_members already guards this same case for
-        # org_members; this mirrors that guard for repo_collaborators.
+        # An empty roster is never legitimate; bail before the unconditional UPDATE marks
+        # everyone outside.
         return
     cur.execute(
         "UPDATE repo_collaborators SET is_outside_collaborator = TRUE WHERE tenant_id = %(tenant_id)s",

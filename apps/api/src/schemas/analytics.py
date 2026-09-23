@@ -14,16 +14,13 @@ class AnalyticsInput(BaseModel):
 class CheckResult(BaseModel):
     """One security-check result as produced by ``checks.runner.run_all_checks``.
 
-    Typed so a shape drift in ``packages/checks`` fails fast at the API boundary with a
-    clear validation error instead of silently reaching the UI and crashing a render
-    (issue #370). ``value`` is deliberately a union of every shape the six checks and the
-    runner's error paths emit: a bare bool (MFA), a ``{str: int}`` counts dict (all the
-    repo-level checks), or a plain string (runner-level failure messages).
+    Typed so a shape drift in ``packages/checks`` fails fast at the API boundary instead
+    of silently reaching the UI and crashing a render. ``value`` is a union of every shape
+    the six checks and the runner's error paths emit.
 
-    ``severity`` stays a free ``str`` on purpose: it's the source-of-truth
-    ``CheckMetadata.severity`` (unconstrained), it's only a cosmetic chip in the UI, and
-    ``github_checks.py`` already uses a wider vocabulary ("critical") elsewhere -- pinning
-    it here would turn a new check's severity label into a 500 on the whole overview.
+    ``severity`` stays a free ``str`` on purpose: it's unconstrained upstream and only a
+    cosmetic UI chip -- pinning it here would turn a new check's severity label into a
+    500 on the whole overview.
     """
 
     id: str
@@ -53,12 +50,10 @@ class ScanHistoryEntry(BaseModel):
 
 
 class ScanExportEntry(ScanHistoryEntry):
-    """A scan-history row plus its full per-check breakdown, for the compliance
-    export (issue #293). ``checks`` is left as a permissive ``list[dict]`` on
-    purpose: this replays historical audit data, and a row persisted by an older
-    revision of the runner must not fail response validation and 500 the whole
-    export. New scans store the ``CheckResult`` shape (id/title/severity/status/
-    remediation/value)."""
+    """A scan-history row plus its full per-check breakdown, for the compliance export.
+    ``checks`` is left as a permissive ``list[dict]`` on purpose: this replays historical
+    audit data, and a row persisted by an older runner revision must not fail response
+    validation and 500 the whole export."""
 
     checks: list[dict] = []
 
@@ -196,19 +191,17 @@ class MyIssueListResponse(BaseModel):
 
 
 class ActionsUsageResponse(BaseModel):
-    """GitHub Actions minutes for the org's current billing month (issue #294),
-    shaped from ``GET /organizations/{org}/settings/billing/usage/summary?product=actions``
-    (GitHub's enhanced-billing usage API — the older ``/settings/billing/actions``
-    endpoint this used to call was retired on 2025-09-26).
+    """GitHub Actions minutes for the org's current billing month, shaped from
+    ``GET /organizations/{org}/settings/billing/usage/summary?product=actions`` (the
+    older ``/settings/billing/actions`` endpoint was retired on 2025-09-26).
 
-    Only ``minutes`` line items are counted; Actions **storage** (GB) is a separate
-    line and out of scope here. The usage API reports *consumption*, not the plan's
-    monthly allowance, so we surface what it can tell us:
+    Only ``minutes`` line items are counted; Actions storage (GB) is out of scope. The
+    usage API reports consumption, not the plan's allowance:
 
-    - ``total_minutes_used``   — all Actions minutes consumed this month
+    - ``total_minutes_used`` — all Actions minutes consumed this month
     - ``included_minutes_used`` — the slice covered by the plan's included allowance
       (GitHub's ``discountQuantity``)
-    - ``paid_minutes_used``    — the slice billed on top (GitHub's ``netQuantity``)
+    - ``paid_minutes_used`` — the slice billed on top (GitHub's ``netQuantity``)
     """
 
     total_minutes_used: float = 0

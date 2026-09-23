@@ -1,4 +1,4 @@
-"""Tests for the org-wide failed-runs and release-timeline routes (docs/plan.md Phase 17)."""
+"""Tests for the org-wide failed-runs and release-timeline routes."""
 
 from unittest.mock import patch
 

@@ -14,14 +14,11 @@ while _root != _root.parent:
 
 
 class Settings(BaseSettings):
-    # Secrets + the deploy-time GitHub API base (env). worker_poll_seconds stays in the
-    # app_config table so it can be tuned live without a restart.
+    # worker_poll_seconds lives in app_config so it can be tuned live.
     database_url: SecretStr
     job_secret_key: SecretStr
     github_api_base: str = "https://api.github.com"
-    # issue #191/S4 -- webhook_events Redis Stream consumer (event_consumer.py). Mirrors
-    # apps/api/src/core/config.py's redis_url exactly (same SecretStr reasoning: a
-    # production URL may embed AUTH credentials).
+    # SecretStr: a production URL may embed AUTH credentials.
     redis_url: SecretStr
 
     model_config = SettingsConfigDict(env_file=_env_file, extra="ignore")

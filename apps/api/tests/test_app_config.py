@@ -40,9 +40,8 @@ def test_get_config_falls_back_to_default_on_read_failure_with_no_cache():
 
 
 def test_get_config_serves_last_known_good_value_on_read_failure():
-    # Regression test for issue #414: a transient DB blip must not silently flip a
-    # security-posture setting (e.g. registration_enabled) back to its code default --
-    # it should keep serving the last value it successfully read.
+    # A transient DB blip must keep serving the last good value, not flip a security setting
+    # (e.g. registration_enabled) back to its code default.
     app_config._cache["registration_enabled"] = ("false", 0.0)  # timestamp 0 -> already stale
     with patch("src.core.db.SessionLocal", side_effect=RuntimeError("db down")):
         assert app_config.get_config("registration_enabled", "true") == "false"

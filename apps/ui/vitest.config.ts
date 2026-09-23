@@ -18,35 +18,21 @@ export default defineConfig({
     setupFiles: ["./vitest.setup.ts"],
     include: ["./tests/**/*.{test,spec}.{ts,tsx}"],
     passWithNoTests: false,
-    // Default (5000ms) is too tight once all ~43 files run concurrently -- CPU contention
-    // between jsdom environments intermittently pushes individual tests past it (a different
-    // file each run, not a real bug in any one of them). 20s gives headroom without masking a
-    // genuine hang; layout.test.tsx keeps its own higher override for its unusually slow import.
+    // 5000ms default is too tight under concurrent jsdom CPU contention (random file each run);
+    // 20s gives headroom without masking a real hang.
     testTimeout: 20000,
-    // Vitest's default is one worker fork per CPU core. On a memory-constrained dev machine
-    // (the pre-push hook is the common victim) ~45 concurrent jsdom + React environments
-    // exhaust RAM -> the OS swaps -> module-import times blow up into the minutes -> tinypool
-    // worker RPCs time out, which Vitest reports as "N errors" with zero test failures, a
-    // different set every run. Capping the pool bounds peak memory and makes local runs
-    // deterministic. CI runners are dedicated and adequately provisioned, so they keep full
-    // parallelism for speed. Raise the local cap with VITEST_MAX_WORKERS=<n> (Vitest honors
-    // that env var natively) if your machine has the headroom.
+    // Default one fork per core exhausts RAM on small dev machines (swap -> tinypool RPC timeouts
+    // reported as "N errors" with zero failures). CI keeps full parallelism; override with VITEST_MAX_WORKERS.
     ...(process.env.CI ? {} : { maxWorkers: 3, minWorkers: 1 }),
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov", "json-summary"],
       include: ["app/**", "components/**", "lib/**", "hooks/**"],
-      // An explicit `exclude` replaces v8's default list wholesale (which normally excludes
-      // test files itself) -- so test files co-located with source under lib/** etc. must be
-      // excluded here too, or diff-cover counts their own describe/it lines as "changed source"
-      // needing coverage and fails (e.g. members-href.test.ts scored 0%, see PR #424).
+      // An explicit `exclude` replaces v8's default list, so co-located test files must be excluded
+      // here too or diff-cover counts them as uncovered changed source.
       exclude: ["**/*.d.ts", "components/ui/**", "**/*.{test,spec}.{ts,tsx}"],
-      // Global floor is a regression guard, not an aspirational target — most `app/**` page
-      // components have no unit tests yet (large, integration-style route components; this
-      // repo's convention so far is unit-testing extracted logic/hooks/components, not full
-      // pages). Measured baseline: ~24.6%/18%/15.7%/23.7%. Set a few points below so normal
-      // fluctuation doesn't fail CI, while still catching a real drop. New/changed lines in a
-      // PR are separately held to a much higher bar by the diff-coverage check in CI.
+      // Regression guard set a few points below the measured baseline; most app/** pages have no
+      // unit tests yet. Changed lines are held to a higher bar by CI's diff-coverage check.
       thresholds: {
         statements: 22,
         branches: 16,

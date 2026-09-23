@@ -1,12 +1,7 @@
-"""DB fixture for worker tests that need a real Postgres connection (the reclaim sweep
-is raw SQL worth verifying end-to-end, not just mocked). The worker uses psycopg3
-directly (not SQLAlchemy), so this mirrors apps/api/tests/conftest.py's real-DB
-approach but with psycopg's own connection API.
+"""Real-Postgres fixture for worker tests.
 
-Unlike apps/api's db fixture, the functions under test (worker._reclaim_stale_jobs,
-worker.process_job) call conn.commit() themselves, so a single wrapping transaction
-can't be rolled back for isolation. Instead each test creates its own rows and the
-fixture deletes anything left over by id.
+The code under test commits itself, so isolation is by deleting leftover rows by id
+rather than rolling back a wrapping transaction.
 """
 
 import psycopg

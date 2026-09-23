@@ -120,8 +120,7 @@ def test_process_job_marks_failed_on_4xx_http_error():
 
 
 def test_process_job_marks_failed_with_status_code_only_when_error_body_is_not_json():
-    """_github_error_message must fall back to a bare status code (not crash) when
-    GitHub's error body isn't valid JSON."""
+    """_github_error_message falls back to a bare status code on a non-JSON body."""
     conn = _FakeConn()
 
     mock_response = MagicMock()
@@ -188,8 +187,7 @@ def test_process_job_requeues_on_5xx_http_error():
 
 
 def test_process_job_requeues_on_httpx_request_error():
-    """A genuine httpx.RequestError (what httpx actually raises for network failures) is
-    treated as transient and requeued, distinct from an unrecognized exception type."""
+    """An httpx.RequestError (network failure) is transient and requeued."""
     conn = _FakeConn()
 
     with patch("worker.httpx.Client") as mock_client_cls:
@@ -237,9 +235,7 @@ def test_process_job_fails_once_retry_cap_exceeded():
 
 
 def test_process_job_marks_failed_on_unrecognized_exception_safety_net():
-    """Something other than httpx.RequestError (a bug, an unanticipated exception type)
-    must still fail the job immediately rather than leaving it stuck in 'processing'
-    until the reclaim sweep eventually picks it up."""
+    """An unrecognized exception fails the job immediately instead of waiting for reclaim."""
     conn = _FakeConn()
 
     with patch("worker.httpx.Client") as mock_client_cls:
@@ -321,10 +317,7 @@ def test_process_job_rejects_empty_string_fields():
 
 
 def test_process_job_terminal_write_is_a_noop_if_reclaimed_out_from_under_it(worker_db):
-    """If the reclaim sweep resets this job back to 'queued' (or another worker later
-    claims it) while this call is still in flight, process_job's own terminal write
-    must not clobber that newer state — the WHERE status='processing' guard should
-    make it a no-op instead of a lost update."""
+    """A reclaim while this call is in flight must turn the terminal write into a no-op."""
     conn, created_ids = worker_db
     stale = datetime.now(timezone.utc) - timedelta(minutes=RECLAIM_TIMEOUT_MINUTES + 5)
     with conn.cursor() as cur:
@@ -370,13 +363,8 @@ def test_process_job_terminal_write_is_a_noop_if_reclaimed_out_from_under_it(wor
 
 
 def test_process_job_terminal_write_is_a_noop_if_a_second_worker_reclaimed_and_reprocessed_it(worker_db):
-    """Narrower race than the reclaim-to-'queued' case above (#253): the reclaim sweep
-    resets this job to 'queued' (bumping retry_count) AND a second worker's own
-    SELECT ... FOR UPDATE picks it back up, setting status back to 'processing' before
-    this (first) worker's stale terminal write runs. WHERE status='processing' alone
-    would then incorrectly match again -- the retry_count fence is what actually
-    prevents this worker's stale completion from clobbering the second worker's
-    in-flight row."""
+    """Reclaim plus a second worker re-claiming: the retry_count fence, not the status
+    check alone, keeps this worker's stale completion from clobbering the new row."""
     conn, created_ids = worker_db
     stale = datetime.now(timezone.utc) - timedelta(minutes=RECLAIM_TIMEOUT_MINUTES + 5)
     with conn.cursor() as cur:
@@ -440,8 +428,7 @@ def test_process_job_marks_unknown_job_type_failed_without_calling_github():
 
 
 def test_global_clear_lists_then_deletes_each_cache_by_id():
-    """A global clear (no key) must enumerate caches and DELETE each by id — never issue
-    a keyless DELETE on the collection (GitHub 422s that, which is the original bug)."""
+    """A global clear lists caches and DELETEs each by id, never a keyless DELETE (GitHub 422s it)."""
     conn = _FakeConn()
 
     get = MagicMock(return_value=_resp(200, {"actions_caches": [{"id": 1}, {"id": 2}]}))

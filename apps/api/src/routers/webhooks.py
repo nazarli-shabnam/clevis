@@ -1,9 +1,6 @@
-"""GitHub App webhook receiver.
-
-  POST /webhooks/github   verifies X-Hub-Signature-256, then handles installation
-                           lifecycle events to keep github_installations in sync, and
-                           durably queues a bounded set of event types (issue #191/S3)
-                           for the event-processor fleet (S4, apps/worker/src/event_consumer.py).
+"""GitHub App webhook receiver: POST /webhooks/github verifies X-Hub-Signature-256, keeps
+github_installations in sync on installation lifecycle events, and durably queues a
+bounded set of event types for apps/worker's event-processor fleet.
 """
 
 import hashlib
@@ -27,30 +24,18 @@ router = APIRouter()
 
 # Two families of durably-queued event types (X-GitHub-Event header names, not GitHub
 # Events API `type` strings, hence "create" not "CreateEvent"):
-#   - Activity Feed events (push/pull_request/issues/release/create) -- normalized by
-#     S4's event-processor fleet into repo_events/repo_event_daily_counts.
-#   - Security alert events (dependabot_alert/code_scanning_alert/secret_scanning_alert,
-#     added for the Security dashboard's per-repo compliance matrix + alerts panel,
-#     issue #191-follow-on) -- normalized into security_alerts as of post-S6 PR 2.
-#     Requires the Clevis GitHub App's own webhook subscriptions + permissions
-#     (Dependabot alerts: read, Code scanning alerts: read, Secret scanning alerts:
-#     read) to be turned on for GitHub to actually send these -- see
-#     docs/self-hosting.md.
-#   - Org membership / repo access events (member/organization, added for the
-#     Collaborators dashboard, post-S6 stage) -- normalized into
-#     org_members/repo_collaborators (see event_consumer.py). Requires the Clevis
-#     GitHub App's own webhook subscriptions + permissions (Members: read -- no write
-#     or Administration access needed) -- see docs/self-hosting.md.
-# Either way, an ingested event just accumulates in webhook_deliveries with
-# status="queued" until its consumer exists -- that's the expected handoff state, not
-# a bug.
+#   - Activity Feed events (push/pull_request/issues/release/create) -- normalized into
+#     repo_events/repo_event_daily_counts.
+#   - Security alert events (dependabot_alert/code_scanning_alert/secret_scanning_alert)
+#     -- normalized into security_alerts. Requires the App's Dependabot/Code scanning/
+#     Secret scanning alerts: read permissions -- see docs/self-hosting.md.
+#   - Org membership / repo access events (member/organization) -- normalized into
+#     org_members/repo_collaborators. Requires the App's Members: read permission.
+# An ingested event accumulates in webhook_deliveries with status="queued" until its
+# consumer exists -- that's the expected handoff state, not a bug.
 #
-# membership/team are deliberately NOT subscribed here (issue #411): team-based repo
-# access normalization doesn't exist yet (see event_consumer.py's
-# _NOT_YET_NORMALIZED_EVENT_TYPES / org_membership_store.py's module docstring), and
-# ingesting them anyway had no bound -- webhook_deliveries rows and Redis stream
-# entries accumulated forever with no consumer ever moving them past "queued". Re-add
-# membership/team here once that consumer actually exists.
+# membership/team are deliberately NOT subscribed: team-based repo access normalization
+# doesn't exist yet, and ingesting them anyway had no bound. Re-add once that consumer exists.
 _INGESTED_EVENT_TYPES = {
     "push",
     "pull_request",
@@ -64,26 +49,20 @@ _INGESTED_EVENT_TYPES = {
     "organization",
 }
 
-# Redis Stream key the ingestion path XADDs onto; a future S4 consumer group reads
+# Redis Stream key the ingestion path XADDs onto; the worker's consumer group reads
 # from this same key.
 _WEBHOOK_STREAM_KEY = "webhook_events"
 
-# Approximate cap (issue #440) so the stream can't grow unbounded if the consumer group
-# ever falls behind or stops entirely -- XADD's own MAXLEN ~ trimming, not a separate
-# sweep, so there's no new loop/config to keep in sync. `delivery_row_id` is the only
-# durable reference back to webhook_deliveries, but the row + its `status` there are the
-# real source of truth (trimming a stream entry doesn't delete anything, it just means
-# the consumer group's XREADGROUP won't see it anymore); webhook_requeue_sweep.py's
-# staleness check now also catches a row trimmed before consumption (still 'queued' well
-# past normal processing time), same recovery path as a 'queue_failed' row. 50k is
-# generous headroom over normal throughput -- the recovery sweep, not this trim, is what
-# actually protects against real data loss.
+# Approximate cap so the stream can't grow unbounded if the consumer group ever falls
+# behind or stops -- the webhook_deliveries row (not the stream entry) is the real
+# source of truth; webhook_requeue_sweep.py's staleness check recovers a row trimmed
+# before consumption. 50k is generous headroom; the recovery sweep protects against
+# real data loss, not this trim.
 _WEBHOOK_STREAM_MAXLEN = 50_000
 
 # GitHub caps webhook deliveries around 25MB; refuse anything larger long before that
 # so a body this endpoint (unauthenticated until the signature check passes) can't be
-# used to exhaust memory. Enforced by counting streamed bytes, not by trusting a
-# client-supplied Content-Length header.
+# used to exhaust memory. Enforced by counting streamed bytes, not Content-Length.
 _MAX_BODY_BYTES = 5 * 1024 * 1024
 
 
@@ -103,16 +82,13 @@ def _verify_signature(raw_body: bytes, signature_header: str | None, secret: str
         return False
     expected = hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
     provided = signature_header.removeprefix("sha256=")
-    # Compare as bytes, not str — hmac.compare_digest raises TypeError on a str
-    # containing non-ASCII characters, which an attacker fully controls via this
-    # header; encoding first keeps a malformed signature a clean 401, not a 500.
+    # Compare as bytes, not str — hmac.compare_digest raises TypeError on a str with
+    # non-ASCII characters (attacker-controlled here), which would otherwise 500.
     return hmac.compare_digest(expected.encode(), provided.encode("utf-8", errors="replace"))
 
 
-# Generous relative to the auth-endpoint default (10/60s): GitHub's webhook deliveries
-# for many customers' installations can share the same egress IP, so a strict per-IP
-# limit risks throttling legitimate traffic. Still bounds worst-case abuse from any
-# single source.
+# Generous relative to the auth-endpoint default: GitHub's webhook deliveries for many
+# installations can share the same egress IP, so a strict per-IP limit risks throttling.
 @router.post("/webhooks/github", dependencies=[Depends(rate_limit(max_requests=120, window_seconds=60))])
 async def github_webhook(request: Request, db: Session = Depends(get_db)):
     secret = settings.github_app_webhook_secret
@@ -136,28 +112,21 @@ async def github_webhook(request: Request, db: Session = Depends(get_db)):
     elif event == "installation" and payload.get("action") == "new_permissions_accepted":
         _handle_installation_permissions_accepted(db, payload)
     elif event == "installation" and payload.get("action") in {"suspend", "unsuspend"}:
-        # Not yet acted on (token_resolution already degrades gracefully when minting
-        # fails against a suspended install), but log it rather than silently 200 so a
-        # suspended install is at least visible in the API logs.
+        # Not yet acted on beyond logging (token_resolution already degrades gracefully
+        # against a suspended install) -- kept visible in API logs rather than a silent 200.
         logger.info(
             "installation.%s webhook for installation %s (not acted on yet)",
             payload.get("action"),
             (payload.get("installation") or {}).get("id"),
         )
     # installation.created is deliberately a no-op: rows are only ever written to
-    # github_installations by the authenticated /orgs/{org}/installations/sync and
-    # /me/installations/sync endpoints, which independently verify (via
-    # _verify_installation, see #141) that the installation_id genuinely belongs to
-    # the claimed account before persisting. Auto-creating a row straight from this
-    # webhook would mean trusting GitHub's payload to decide which clevis org/user it
-    # belongs to with no equivalent ownership check — that's a bigger trust-boundary
-    # decision than "keep an existing verified row in sync," so it's left to the
-    # explicit sync flow rather than done implicitly here.
+    # github_installations by the authenticated sync endpoints, which independently
+    # verify the installation_id genuinely belongs to the claimed account before
+    # persisting. Auto-creating a row from this webhook would trust GitHub's payload
+    # alone to decide which Clevis org/user it belongs to, with no ownership check.
     #
-    # installation_repositories (repo access added/removed within an existing
-    # installation) has nothing to sync yet — github_installations tracks the
-    # installation itself, not per-repo access, so there's no row-level change
-    # to make here today. Accepted (200) so GitHub doesn't retry.
+    # installation_repositories has nothing to sync yet -- github_installations tracks
+    # the installation itself, not per-repo access. Accepted (200) so GitHub doesn't retry.
     elif event in _INGESTED_EVENT_TYPES:
         _handle_ingested_event(db, event, delivery_id, raw_body, payload)
 
@@ -176,10 +145,8 @@ def _handle_ingested_event(db: Session, event: str, delivery_id: str, raw_body: 
 
     tenant_id = None
     if installation_id is not None:
-        # SECURITY DEFINER lookup (migration 0035), same as installation_repo's
-        # delete-under-RLS fix (issue #191/S3 PR 2) -- this receiver never has an
-        # authenticated session, so it never has app.tenant_id set to look this up
-        # the normal way.
+        # SECURITY DEFINER lookup -- this receiver never has an authenticated session,
+        # so it never has app.tenant_id set to look this up the normal way.
         tenant_id = db.execute(
             text("SELECT resolve_installation_tenant_id(:installation_id)"), {"installation_id": installation_id}
         ).scalar()
@@ -209,9 +176,8 @@ def _handle_ingested_event(db: Session, event: str, delivery_id: str, raw_body: 
             approximate=True,
         )
     except Exception:
-        # A transient Redis blip isn't GitHub's retry problem to solve -- the payload
-        # is already durably stored above. Mark it so a future re-enqueue sweep (out
-        # of scope here) can find it; still a 200 to GitHub either way.
+        # A transient Redis blip isn't GitHub's retry problem -- the payload is already
+        # durably stored above. Mark it so the re-enqueue sweep can find it; still 200 to GitHub.
         logger.exception("Failed to enqueue webhook_deliveries row %s onto Redis stream %s", row.id, _WEBHOOK_STREAM_KEY)
         row.status = "queue_failed"
         db.commit()
@@ -232,13 +198,9 @@ def _handle_installation_permissions_accepted(db: Session, payload: dict) -> Non
         return
 
     updated, changed = installation_repo.update_permissions(db, installation_id=installation_id, permissions=permissions)
-    # Only write an audit entry when the permissions actually changed -- GitHub redelivers
-    # webhooks on retry (and a redelivery can also be triggered manually from the GitHub
-    # UI), so without this check a redelivered new_permissions_accepted event -- carrying
-    # the identical permissions payload -- would write a second, duplicate audit row for
-    # what is really the same approval. permissions_synced_at is still bumped either way
-    # (update_permissions always does that), since re-observing the same permissions is
-    # itself a useful confirmation, just not one worth a second audit entry.
+    # Only write an audit entry when permissions actually changed -- GitHub redelivers
+    # webhooks on retry, and without this check a redelivery would write a duplicate audit
+    # row for the same approval. permissions_synced_at is still bumped either way.
     if updated and changed:
         # update_permissions already set the session tenant context via the SECURITY
         # DEFINER resolver; re-read it here so the audit row is attributed under RLS.

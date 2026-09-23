@@ -102,11 +102,8 @@ def test_removed_github_member_loses_clevis_membership_entirely(db):
 
 
 def test_unrelated_org_membership_untouched_when_other_org_reconciled(db):
-    # Issue #330: capture each org's id right after creation -- creating a later org
-    # commits its own tenant-link UPDATE, which expires SQLAlchemy's in-memory objects for
-    # earlier orgs (default expire_on_commit=True); a later lazy-reload of one under RLS
-    # with app.tenant_id now pointed at a different org's tenant would raise
-    # ObjectDeletedError instead of finding the (still-present) row.
+    # Capture ids now: a later org's commit expires earlier objects, and lazy-reloading them
+    # under another tenant's RLS context raises ObjectDeletedError.
     acme = org_repo.get_or_create(db, github_login="acme", github_org_id=1)
     acme_id = acme.id
     globex = org_repo.get_or_create(db, github_login="globex", github_org_id=2)

@@ -1,9 +1,7 @@
-"""Collaborators PR 2 of 3: periodic org-membership reconciliation sweep, wired via
-sweep_loop.run_sweep_loop. Started from src.main's lifespan alongside gap_heal_loop and
-digest_loop, as an independent task -- the sweeps are unrelated (activity sync vs. org
-membership vs. leadership digest) and each already tolerates a single iteration's
-exception without dying, so there's no reason to share one loop task. See sweep_loop.py
-for the shared loop/session/reset shape.
+"""Periodic org-membership reconciliation sweep, wired via sweep_loop.run_sweep_loop.
+Started from src.main's lifespan as an independent task from gap_heal_loop/digest_loop --
+the sweeps are unrelated and each already tolerates a single iteration's exception
+without dying. See sweep_loop.py for the shared loop/session/reset shape.
 """
 
 from src.services.membership_reconcile_sweep import run_membership_reconcile_sweep

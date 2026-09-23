@@ -1,26 +1,8 @@
-"""Redis Streams consumer for webhook_events (issue #191, S4).
+"""Redis Streams consumer: normalizes queued webhook deliveries into repo_events and friends.
 
-Normalizes each queued webhook delivery into the repo_events table, deduplicated by
-delivery_id, and upserts a per-tenant/repo/event_type/day count into
-repo_event_daily_counts in the same transaction (S4 PR 2) -- the materialized-aggregate
-half of S4, gated on the repo_events insert having actually happened (not a deduped
-redelivery), so a redelivered webhook can't double-count the rollup. That insert-then-
-upsert logic itself lives in repo_events_store.py, shared with backfill.py (S5 PR 1) --
-see that module's docstring. Runs as a second daemon thread in worker.py's run(),
-alongside the existing jobs-table poll loop -- not a separate process, so it shares the
-container's healthcheck/deploy story.
-
-Consumer-group semantics (XREADGROUP, group "event_processors") rather than a bare
-XREAD: today's docker-compose runs exactly one worker replica, but a bare XREAD has no
-way to resume after a restart without either replaying the whole stream or tracking a
-cursor somewhere else -- a consumer group's last-delivered-id and pending-entries-list
-already live in Redis and survive a consumer restart for free, and the same mechanism
-is what lets a second replica join safely whenever the worker is actually scaled (the
-issue's own "autoscaled consumers" framing). XPENDING + XCLAIM cover the case where a
-consumer dies mid-processing (mirrors worker.py's _reclaim_stale_jobs for the jobs
-table); a poison-pill entry that fails past _MAX_DELIVERY_ATTEMPTS is XACKed (dropped
-from the group) rather than reclaimed forever -- nothing is actually lost, since
-webhook_deliveries keeps the raw payload permanently for manual inspection/reprocessing.
+Uses a consumer group so restarts resume from Redis-held state; XPENDING + XCLAIM reclaim
+entries from a crashed consumer, and poison pills past _MAX_DELIVERY_ATTEMPTS are XACKed
+(webhook_deliveries keeps the raw payload).
 """
 
 import json
@@ -43,49 +25,29 @@ log = logging.getLogger(__name__)
 
 _DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg://", "postgresql://")
 
-# Must match apps/api/src/routers/webhooks.py's _WEBHOOK_STREAM_KEY -- the two services
-# don't share code (independently deployable per AGENTS.md), so this is a duplicated
-# constant, not an import; keep them in sync by hand if either ever changes.
+# Must match apps/api/src/routers/webhooks.py's _WEBHOOK_STREAM_KEY (no shared code).
 _STREAM_KEY = "webhook_events"
 _GROUP_NAME = "event_processors"
 _CONSUMER_NAME = f"worker-{os.getpid()}"
 
-# Security alert events (dependabot_alert/code_scanning_alert/secret_scanning_alert,
-# S6-follow-on PR 1) are durably queued by the receiver onto the same shared stream as
-# every other ingested event type, but normalize into security_alerts (post-S6 PR 2),
-# not repo_events -- their payload.alert shape and upsert-on-state-change semantics
-# don't fit repo_events's insert-once activity-log model. _process_entry branches on
-# this set before calling the repo_events path.
+# Security alert events normalize into security_alerts (upsert-on-state-change), not repo_events.
 _SECURITY_ALERT_EVENT_TYPES = {"dependabot_alert", "code_scanning_alert", "secret_scanning_alert"}
 
-# member/organization normalize into org_members/repo_collaborators (Collaborators PR 1 of 3).
-# membership/team have no normalizer yet -- team-based repo access is deferred, see
-# org_membership_store.py's module docstring -- so webhooks.py's _INGESTED_EVENT_TYPES no
-# longer subscribes to them at all (issue #411: ingesting with no consumer and no bound
-# meant unbounded accumulation in webhook_deliveries + the Redis stream). This handling
-# stays as a safety net for any already-queued backlog from before that change deploys,
-# same placeholder pattern PR #350 used for the security alerts before their own consumer
-# existed -- remove once membership/team are re-subscribed with a real normalizer.
+# member/organization normalize into org_members/repo_collaborators.
+# membership/team: safety net for already-queued events until a normalizer exists.
 _ORG_MEMBERSHIP_EVENT_TYPES = {"member", "organization"}
 _NOT_YET_NORMALIZED_EVENT_TYPES = {"membership", "team"}
 
-# How long a claimed-but-unacked entry sits idle before another pass reclaims it --
-# comfortably longer than any single event's normalize+insert should ever take.
+# Idle time before a claimed-but-unacked entry is reclaimed.
 _RECLAIM_IDLE_MS = 60_000
-# Shares the jobs table's MAX_RETRIES posture (worker.py): a repeatedly-failing entry
-# is dropped, not retried forever, since retrying can't fix a genuinely malformed
-# payload and a stuck poison pill would otherwise block reclaim of everything behind it.
+# A repeatedly-failing entry is dropped so a poison pill can't block reclaim forever.
 _MAX_DELIVERY_ATTEMPTS = 5
-# Blocks up to this long per XREADGROUP call so the loop still wakes regularly to touch
-# the heartbeat file and pick up a poison-pill sweep, even with no new stream entries.
+# Bounded block so the loop still wakes to touch the heartbeat and sweep pending.
 _BLOCK_MS = 5_000
 _BATCH_SIZE = 10
 
-# Separate heartbeat file from worker.py's HEARTBEAT_FILE -- both threads touch their
-# own file every loop iteration, and docker-compose.yml's worker healthcheck now checks
-# freshness of both files (Overview data-accuracy fix), so a hung consumer thread fails
-# the container healthcheck on its own instead of hiding behind the jobs-poll-loop
-# thread staying healthy.
+# Separate from worker.py's HEARTBEAT_FILE; the healthcheck checks both so a hung
+# consumer thread fails the container on its own.
 _HEARTBEAT_FILE = Path("/tmp/worker_event_consumer_heartbeat")
 
 _client: redis.Redis | None = None
@@ -98,9 +60,7 @@ def _redis_client() -> redis.Redis:
             settings.redis_url.get_secret_value(),
             decode_responses=True,
             socket_connect_timeout=2,
-            # Must exceed _BLOCK_MS: the client-side read timeout has to outlast the
-            # server-side XREADGROUP BLOCK duration it's waiting on, or redis-py raises
-            # a false-alarm TimeoutError on every idle poll (issue #367).
+            # Must exceed _BLOCK_MS, or redis-py raises a false TimeoutError on every idle poll.
             socket_timeout=(_BLOCK_MS / 1000) + 2,
         )
     return _client
@@ -122,14 +82,7 @@ def _ensure_group(client: redis.Redis) -> None:
 
 
 def _summarize(event_type: str, payload: dict) -> str:
-    """Per-event-type summary text. Mirrors apps/api/src/routers/github.py's
-    _summarize, adapted to the raw webhook body's shape (the top-level fields of a
-    GitHub webhook payload for these five event types are the same shape as the
-    Events API's nested `payload` object _summarize already handles -- e.g. a webhook
-    pull_request event's top-level `action`/`number`/`pull_request` match
-    payload.action/payload.number/payload.pull_request there) rather than a live
-    GitHub Events-API response, since this consumer only ever sees the raw webhook
-    body stored in webhook_deliveries.payload."""
+    """Per-event-type summary text from the raw webhook body."""
     if event_type == "push":
         commits = payload.get("commits") or []
         count = len(commits)
@@ -161,10 +114,9 @@ def _summarize(event_type: str, payload: dict) -> str:
 
 
 def _normalize(event_type: str, payload: dict, received_at: datetime) -> dict | None:
-    """Returns the repo_events column values for this webhook payload, or None if it
-    can't be normalized (missing repository/sender -- shouldn't happen for a real
-    GitHub delivery, but the receiver doesn't validate payload shape beyond JSON-ness,
-    so defend against a malformed/test payload rather than crash the consumer loop)."""
+    """Return repo_events column values, or None for a malformed payload.
+
+    The receiver only validates JSON-ness, so don't crash the loop on bad shapes."""
     repository = payload.get("repository") or {}
     sender = payload.get("sender") or {}
     repo_full_name = repository.get("full_name")
@@ -176,19 +128,12 @@ def _normalize(event_type: str, payload: dict, received_at: datetime) -> dict | 
         "actor_avatar": sender.get("avatar_url", ""),
         "repo": repo_full_name,
         "summary": _summarize(event_type, payload),
-        # No single canonical top-level timestamp exists across all five webhook payload
-        # shapes (e.g. push has no top-level timestamp at all) -- fall back to
-        # webhook_deliveries.received_at, the ingestion time, rather than parse a
-        # different nested field per event type for a v1 that isn't read by any UI yet.
+        # No common top-level timestamp across payload shapes; use ingestion time.
         "occurred_at": received_at,
     }
 
 
-# event_type -> security_alerts.kind. Kept separate from the event_type string itself
-# (rather than storing "dependabot_alert" verbatim) so a future consumer of this table
-# (PR 3's Security dashboard repoint) works with the same short vocabulary GitHub's own
-# REST API uses for these alert categories (dependabot/code-scanning/secret-scanning),
-# not webhook-specific event-type naming.
+# event_type -> security_alerts.kind, using GitHub REST API's alert vocabulary.
 _ALERT_KIND_BY_EVENT_TYPE = {
     "dependabot_alert": "dependabot",
     "code_scanning_alert": "code_scanning",
@@ -197,11 +142,9 @@ _ALERT_KIND_BY_EVENT_TYPE = {
 
 
 def _parse_alert_timestamp(value: str | None, fallback: datetime) -> datetime:
-    """GitHub sends alert.created_at/updated_at as ISO 8601 with a trailing 'Z', which
-    datetime.fromisoformat only accepts starting in Python 3.11 -- normalize by hand
-    rather than assume the runtime's exact minor version. Falls back to received_at
-    (webhook_deliveries ingestion time) for a missing/malformed value, same defensive
-    posture as _normalize's occurred_at fallback."""
+    """Parse GitHub's trailing-'Z' ISO 8601 (fromisoformat rejects it before 3.11).
+
+    Falls back to received_at for a missing/malformed value."""
     if not value:
         return fallback
     try:
@@ -211,10 +154,7 @@ def _parse_alert_timestamp(value: str | None, fallback: datetime) -> datetime:
 
 
 def _normalize_security_alert(event_type: str, payload: dict, received_at: datetime) -> dict | None:
-    """Returns the security_alerts column values for this alert webhook payload, or
-    None if it can't be normalized (missing repository/alert/number -- shouldn't happen
-    for a real GitHub delivery, but defend against a malformed/test payload rather than
-    crash the consumer loop, same posture as _normalize)."""
+    """Return security_alerts column values, or None for a malformed payload."""
     repository = payload.get("repository") or {}
     repo_full_name = repository.get("full_name")
     alert = payload.get("alert") or {}
@@ -243,9 +183,7 @@ def _normalize_security_alert(event_type: str, payload: dict, received_at: datet
             "action": payload.get("action"),
             "secret_type": alert.get("secret_type"),
             "secret_type_display_name": alert.get("secret_type_display_name"),
-            # Only present once the alert is resolved -- None on the initial "created"
-            # webhook. Needed by the Security dashboard's secret-scanning panel (post-S6
-            # PR 3) to show why an alert was closed, matching GitHub's own live API shape.
+            # Only present once the alert is resolved.
             "resolution": alert.get("resolution"),
         }
 
@@ -262,17 +200,11 @@ def _normalize_security_alert(event_type: str, payload: dict, received_at: datet
 
 
 def _normalize_member_event(payload: dict) -> dict | None:
-    """Returns repo_collaborators column values for a `member` event payload, or None if
-    it can't be normalized (missing repository/member.login). action is 'added'/'edited'/
-    'removed'; permission is read from changes.permission.to. Per GitHub's own webhook
-    payload schemas (octokit/webhooks' JSON schemas, the authoritative source -- the
-    prose docs don't spell this out clearly), `changes.permission` is *optional* on both
-    'added' and 'edited', not guaranteed on either -- so this can legitimately come back
-    None (falls back to "unknown" below) for a real delivery, not just a malformed test
-    payload. is_outside_collaborator can't be determined from this event alone (GitHub's
-    member payload doesn't carry org-membership status) -- None here (an honest "not yet
-    known", not a False claim), filled in by the future reconciliation poll
-    (Collaborators PR 2), same known-staleness posture as org_members.role."""
+    """Return repo_collaborators column values for a `member` event, or None if malformed.
+
+    `changes.permission` is optional on both 'added' and 'edited' per GitHub's schemas, so
+    "unknown" is a legitimate fallback. is_outside_collaborator is None: this event can't
+    determine it; the reconciliation poll fills it in."""
     repository = payload.get("repository") or {}
     repo_full_name = repository.get("full_name")
     member = payload.get("member") or {}
@@ -290,19 +222,10 @@ def _normalize_member_event(payload: dict) -> dict | None:
 
 
 def _normalize_organization_event(payload: dict) -> dict | None:
-    """Returns org_members column values for an `organization` event's member_added
-    payload, or None if it can't be normalized (missing membership.user.login) -- also
-    None (a no-op) for actions other than member_added/member_removed (member_invited/
-    renamed/deleted don't affect this table).
+    """Return org_members column values for member_added/member_removed, else None.
 
-    `role`/`avatar_url` use `or` fallbacks, not `dict.get(key, default)` -- a payload
-    can carry an explicit JSON `null` for either (GitHub doesn't guarantee non-null
-    here any more than it guarantees `changes.permission` on a `member` event, see
-    `_normalize_member_event`'s docstring), and `.get(key, default)` only applies the
-    default when the key is *missing*, not when it's present with a null value. Both
-    columns are NOT NULL on org_members (migration 0040), so an unguarded None would
-    crash the insert and leave the stream entry unacked forever (CodeRabbit finding on
-    Collaborators PR 1's fix commit)."""
+    `role`/`avatar_url` use `or` fallbacks: GitHub can send explicit nulls, and both
+    columns are NOT NULL, so a None would leave the entry unacked forever."""
     membership = payload.get("membership") or {}
     user = membership.get("user") or {}
     login = user.get("login")
@@ -336,19 +259,15 @@ def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry
 
     tenant_id, delivery_id, event_type, payload_bytes, received_at = row
     if tenant_id is None:
-        # Deliberate scope decision (see S4 PR 1's plan notes): an unresolved
-        # installation has no tenant to scope a normalized row to. Ack so this entry
-        # doesn't sit pending forever; the raw payload stays in webhook_deliveries.
+        # No tenant to scope a normalized row to. Ack so it doesn't sit pending forever;
+        # the raw payload stays in webhook_deliveries.
         log.warning("webhook_deliveries row %s has no tenant_id, skipping normalization", delivery_row_id)
         redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
         return
 
     if event_type in _NOT_YET_NORMALIZED_EVENT_TYPES:
-        # Team-based repo access (membership/team events) is explicitly deferred -- see
-        # org_membership_store.py's module docstring. Ack so this entry doesn't sit
-        # pending forever; leave webhook_deliveries.status as 'queued' (not 'processed')
-        # so a future consumer can still find it by event_type, same posture as PR #350's
-        # original placeholder for the security alerts.
+        # No normalizer for membership/team. Ack, but leave webhook_deliveries.status
+        # 'queued' so a future consumer can still find it.
         log.debug("webhook_deliveries row %s is a %s event with no consumer yet, leaving queued", delivery_row_id, event_type)
         redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
         return
@@ -361,9 +280,8 @@ def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry
         return
 
     if event_type in _ORG_MEMBERSHIP_EVENT_TYPES:
-        # Held for this event's whole write (issue #357) so it can't land between the
-        # reconciliation job's roster fetch and its snapshot apply -- see
-        # org_membership_store.acquire_tenant_lock's docstring for the race this closes.
+        # Held for the whole write so it can't land between the reconciliation job's roster
+        # fetch and snapshot apply.
         org_membership_store.acquire_tenant_lock(pg_conn, tenant_id)
         try:
             with pg_conn.cursor() as cur:
@@ -406,12 +324,8 @@ def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry
             redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
             return
         except psycopg.Error:
-            # Roll back before the finally's release_tenant_lock runs -- pg_advisory_unlock
-            # is a plain statement, not COMMIT/ROLLBACK, so issuing it against an aborted
-            # transaction (left that way by this exception) would itself fail with
-            # InFailedSqlTransaction, leaking the lock for the rest of this connection's
-            # lifetime. Re-raised so the caller's own except-block still does its normal
-            # "leave unacked, _sweep_pending reclaims it" handling.
+            # Roll back before release_tenant_lock: pg_advisory_unlock on an aborted
+            # transaction would fail and leak the lock. Re-raised for the caller's handling.
             pg_conn.rollback()
             raise
         finally:
@@ -425,8 +339,7 @@ def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry
             return
 
         with pg_conn.cursor() as cur:
-            # Mirrors src.core.rbac.set_tenant_session_context -- see the repo_events
-            # branch below for the full rationale, same mechanism applies here.
+            # Session context for RLS; see the repo_events branch below.
             cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
             security_alerts_store.upsert_security_alert(cur, tenant_id=tenant_id, **alert_normalized)
             cur.execute("UPDATE webhook_deliveries SET status = 'processed' WHERE id = %s", (delivery_row_id,))
@@ -441,11 +354,8 @@ def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry
         return
 
     with pg_conn.cursor() as cur:
-        # Mirrors src.core.rbac.set_tenant_session_context: a plain SET (not SET
-        # LOCAL) read by this table's RLS policy (migration 0036), scoped to this
-        # connection for the duration of the INSERT that follows -- a narrower,
-        # explicit mechanism than granting clevis_worker BYPASSRLS, same precedent as
-        # migration 0035's SECURITY DEFINER function.
+        # Plain SET (not SET LOCAL) read by this table's RLS policy, scoped to this
+        # connection -- narrower than granting clevis_worker BYPASSRLS.
         cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
         repo_events_store.insert_event_and_upsert_daily_count(cur, tenant_id=tenant_id, delivery_id=delivery_id, **normalized)
         cur.execute("UPDATE webhook_deliveries SET status = 'processed' WHERE id = %s", (delivery_row_id,))
@@ -454,11 +364,8 @@ def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry
 
 
 def _rollback_quietly(pg_conn: psycopg.Connection) -> None:
-    """Clear an aborted transaction after a failed entry so the shared connection is
-    usable for the rest of the batch. Without this, a psycopg error on one entry leaves
-    pg_conn in InFailedSqlTransaction and every subsequent entry in the same
-    xreadgroup/xclaim batch fails its first execute -- the per-entry isolation the
-    callers' comments claim doesn't actually hold at batch granularity."""
+    """Clear an aborted transaction after a failed entry so the shared connection stays
+    usable for the rest of the batch."""
     try:
         pg_conn.rollback()
     except Exception:  # noqa: BLE001 -- best effort; the outer loop reconnects on a dead conn
@@ -466,17 +373,15 @@ def _rollback_quietly(pg_conn: psycopg.Connection) -> None:
 
 
 def _sweep_pending(pg_conn: psycopg.Connection, redis_client: redis.Redis) -> None:
-    """Reclaims entries idle longer than _RECLAIM_IDLE_MS (a prior consumer likely
-    crashed mid-processing), or drops ones that have failed too many times."""
+    """Reclaim entries idle past _RECLAIM_IDLE_MS, or drop ones that failed too many times."""
     pending = redis_client.xpending_range(
         _STREAM_KEY, _GROUP_NAME, min="-", max="+", count=100, idle=_RECLAIM_IDLE_MS
     )
     if not pending:
         return
 
-    # >= / < , not > / <=: XCLAIM itself increments times_delivered before this entry is
-    # even processed, so an entry already at the limit would otherwise get a (limit + 1)th
-    # attempt instead of being dropped (CodeRabbit finding on PR #340).
+    # >= / <, not > / <=: XCLAIM increments times_delivered before processing, so
+    # otherwise an entry at the limit gets one extra attempt.
     to_drop = [p["message_id"] for p in pending if p["times_delivered"] >= _MAX_DELIVERY_ATTEMPTS]
     to_claim = [p["message_id"] for p in pending if p["times_delivered"] < _MAX_DELIVERY_ATTEMPTS]
 
@@ -496,11 +401,8 @@ def _sweep_pending(pg_conn: psycopg.Connection, redis_client: redis.Redis) -> No
 
 
 def run() -> None:
-    # Retried, not just attempted once: this runs on its own daemon thread (see
-    # start_background_thread) with nothing else supervising it -- an uncaught
-    # exception here (e.g. Redis not reachable yet at container startup) would
-    # otherwise kill the thread silently and leave the consumer dead until the whole
-    # worker process restarts (CodeRabbit finding on PR #340).
+    # Retried: this daemon thread has no supervisor, so an uncaught exception (e.g. Redis
+    # not up yet at startup) would kill the consumer silently.
     redis_client = None
     while redis_client is None:
         try:
@@ -526,12 +428,8 @@ def run() -> None:
                         try:
                             _process_entry(pg_conn, redis_client, entry_id, fields)
                         except Exception:
-                            # Left unacked on purpose -- _sweep_pending reclaims it next
-                            # pass once _RECLAIM_IDLE_MS has elapsed, same "one bad
-                            # entry doesn't take down the loop" posture as
-                            # worker.py's process_job. Roll back first so an aborted
-                            # transaction from this entry doesn't poison the rest of
-                            # the batch on the shared connection.
+                            # Left unacked on purpose; _sweep_pending reclaims it later. Roll back first so
+                            # an aborted transaction doesn't poison the rest of the batch.
                             log.exception("failed to process stream entry %s", entry_id)
                             _rollback_quietly(pg_conn)
         except (psycopg.OperationalError, redis.RedisError):

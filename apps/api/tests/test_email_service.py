@@ -1,4 +1,4 @@
-"""Tests for src.services.email (issue #217)."""
+"""Tests for src.services.email."""
 
 import ssl
 from unittest.mock import MagicMock, patch

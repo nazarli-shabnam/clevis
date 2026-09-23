@@ -1,5 +1,4 @@
-"""Tests for src.repositories.installation_repo.upsert, focused on the concurrent-sync
-race path (see apps/api/tests/test_installations.py for router-level coverage)."""
+"""Tests for installation_repo.upsert, focused on the concurrent-sync race path."""
 
 from unittest.mock import patch
 
@@ -78,11 +77,8 @@ def test_upsert_updates_existing_row(db):
 
 
 def test_upsert_falls_back_to_update_on_concurrent_sync_race(db):
-    # Simulates two near-simultaneous syncs for the same org/account: this call's initial
-    # existence check misses (the other request's row hasn't committed yet from this call's
-    # point of view), so it attempts an insert -- which collides on the real unique
-    # constraint once the other request's commit has actually landed. Must recover by
-    # updating the row that's actually there, not raise an unhandled IntegrityError.
+    # Simulates a concurrent sync: the existence check misses, the insert hits the unique
+    # constraint, and upsert must recover by updating the existing row.
     org_id = _acme_org_id(db)
     existing = installation_repo.upsert(
         db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=1, org_id=org_id
@@ -107,9 +103,7 @@ def test_upsert_falls_back_to_update_on_concurrent_sync_race(db):
 
 
 def test_upsert_reraises_when_the_integrity_error_was_not_actually_a_race(db):
-    # A different IntegrityError (here: a foreign-key violation from a nonexistent org_id)
-    # also lands in the except block, but the re-query genuinely finds nothing to fall back
-    # to (no row was ever inserted) -- must re-raise rather than silently swallow it.
+    # An FK-violation IntegrityError has no row to fall back to, so it must re-raise.
     with pytest.raises(IntegrityError):
         installation_repo.upsert(
             db,
@@ -122,11 +116,7 @@ def test_upsert_reraises_when_the_integrity_error_was_not_actually_a_race(db):
 
 
 def test_get_for_org_matches_regardless_of_login_casing(db):
-    # account_login is stored verbatim from GitHub's install payload; RBAC/ownership checks
-    # elsewhere (assert_owner_matches_org, _verify_installation) already compare logins
-    # case-insensitively, so this lookup must too -- otherwise a case mismatch (e.g. a
-    # renamed org, or a caller passing different casing) passes those checks but fails to
-    # find an installation that's actually there (#246).
+    # Ownership checks compare logins case-insensitively, so this lookup must too.
     org_id = _acme_org_id(db)
     installation_repo.upsert(
         db, account_login="Acme", account_type="Organization", auth_mode="app", installation_id=1, org_id=org_id

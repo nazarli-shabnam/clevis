@@ -1,10 +1,7 @@
-"""Tests for POST /orgs/{org_login}/branch-protection/bulk (issue #288).
+"""Tests for POST /orgs/{org_login}/branch-protection/bulk (org-admin only).
 
-Org-admin only. dry_run returns a per-repo diff and writes nothing; apply PUTs the
-merged body per repo, capturing per-repo failures. The merged body preserves every
-existing rule the preset doesn't touch (via check_remediation._preserving_put_body),
-and a branch whose protection restricts *who* can push is reported as an error and
-left alone. Faked GitHub via ``patch("src.routers.branch_protection.GitHubClient")``.
+dry_run returns a per-repo diff; apply PUTs a body preserving rules the preset doesn't touch.
+Branches with push restrictions are reported as errors and left alone.
 """
 
 from unittest.mock import patch

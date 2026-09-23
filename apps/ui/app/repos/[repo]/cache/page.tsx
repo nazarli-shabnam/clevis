@@ -1,7 +1,6 @@
 "use client"
 
-// URL: /repos/<owner~name>/cache. The [repo] folder name is Next.js dynamic segment
-// syntax (not a literal path); param holds owner and repo joined with "~" (see repos/page.tsx).
+// URL: /repos/<owner~name>/cache; param holds owner and repo joined with "~".
 
 import { useParams } from "next/navigation"
 import { PageHeader } from "@/components/page-header"

@@ -1,8 +1,6 @@
 """In-memory fixed-window rate limiter for auth endpoints.
 
-Per-process only: state lives in a module-level dict, so a multi-replica deployment
-would need a shared store (e.g. Redis) for this to be effective across instances. Fine
-for the current single-API-instance deployment; revisit if we ever scale out /auth.
+Per-process only: a multi-replica deployment would need a shared store (e.g. Redis).
 """
 
 import time
@@ -50,8 +48,7 @@ def rate_limit(max_requests: int = _DEFAULT_MAX_REQUESTS, window_seconds: int = 
 def check_account_rate_limit(
     key: str, *, max_requests: int = _DEFAULT_MAX_REQUESTS, window_seconds: int = _DEFAULT_WINDOW_SECONDS
 ) -> None:
-    """Same fixed-window limiter as rate_limit(), but keyed by a caller-supplied identifier
-    (e.g. the submitted login email, lowercased) instead of client IP. Closes the gap where
-    an attacker spread across many source IPs could brute-force a single account without
-    ever tripping the per-IP bucket. Same in-memory/per-process limitation as rate_limit()."""
+    """Same limiter as rate_limit(), keyed by a caller-supplied identifier (e.g. lowercased email).
+
+    Stops an attacker spread across many IPs brute-forcing one account."""
     _check_bucket(_account_buckets, key, max_requests, window_seconds)

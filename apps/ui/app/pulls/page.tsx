@@ -13,10 +13,8 @@ import { useActiveScope } from "@/lib/active-scope"
 import { relativeTime } from "@/lib/format"
 import type { PullSummary } from "@/lib/api/types"
 
-// This is the primary PR view (not a secondary tab like Activity's PR Board), so unlike
-// that tab's MAX_REPOS_FOR_PR_BOARD there's no hard cap on repo count -- instead requests
-// are fanned out in batches so an org with many repos doesn't fire dozens of simultaneous
-// requests at once.
+// No repo-count cap here; requests are fanned out in batches so large orgs don't fire
+// dozens of simultaneous requests.
 const REPO_BATCH_SIZE = 10
 
 interface PullRow extends PullSummary {
@@ -30,8 +28,6 @@ export default function PullRequestsPage() {
   const org = scope?.login ?? ""
   const hasOrg = org.trim().length > 0
 
-  // Activity's old "PR Board" tab was the same open-PRs data grouped by author (issue
-  // #284); it's a view toggle here now, and that tab is gone from Activity.
   const [groupBy, setGroupBy] = useState<GroupBy>("repo")
 
   const resolveQuery = useQuery({
@@ -41,9 +37,8 @@ export default function PullRequestsPage() {
     retry: false,
   })
   const token = resolveQuery.data?.token ?? ""
-  // Same reasoning as Activity: queries fire once token resolution has settled either
-  // way, so an org connected purely via GitHub App installation (no saved PAT) isn't
-  // permanently blocked (see #251).
+  // Queries fire once token resolution settles either way, so an App-only org (no saved PAT)
+  // isn't permanently blocked.
   const queriesEnabled = hasOrg && !resolveQuery.isLoading
 
   const reposQuery = useQuery({
@@ -80,9 +75,7 @@ export default function PullRequestsPage() {
   const pulls = pullsQuery.data ?? []
   const isLoading = reposQuery.isLoading || (reposQuery.isSuccess && pullsQuery.isLoading)
 
-  // Issue #289: on-demand "nudge stale PRs" sweep, fanned out over the org's repos.
-  // Two-step confirm (like the cache-clear / "Fix this" buttons) so a misclick can't
-  // fan public nudge comments across every repo at once.
+  // Two-step confirm so a misclick can't fan public nudge comments across every repo.
   const [nudgeMsg, setNudgeMsg] = useState<string | null>(null)
   const [nudgeArmed, setNudgeArmed] = useState(false)
   const nudge = useMutation({

@@ -1,4 +1,4 @@
-"""Tests for the repos router (Phase 8 groundwork)."""
+"""Tests for the repos router."""
 
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch
@@ -73,12 +73,7 @@ def test_list_repos_returns_paginated_results(repos_client):
 
 
 def test_list_repos_returns_the_full_org_list_spanning_multiple_github_pages(repos_client):
-    # Regression test for issue #220 ("repo name filter only searches the already-loaded
-    # first page"): request_paginated() already follows GitHub's Link header across every
-    # page before returning (see test_github_client.py::test_follows_link_header_across_pages
-    # for that mechanism in isolation) -- this asserts the repos router doesn't truncate that
-    # result on the way out, i.e. a 150-repo org (spanning two 100-per-page GitHub responses)
-    # comes back as all 150 repos in one response, not just the first page's worth.
+    # A 150-repo org (two GitHub pages) must come back as all 150 repos, not just the first page.
     repos = [
         {
             "name": f"repo-{i}",
@@ -145,9 +140,7 @@ def _stats_side_effect(
     release_error=None,
     repo_meta_error=None,
 ):
-    # The 5 stats calls now run concurrently (fix for sequential-latency finding), so
-    # unlike a plain ordered side_effect list, responses must be matched by URL --
-    # call order across threads isn't guaranteed.
+    # The 5 stats calls run concurrently, so responses are matched by URL, not call order.
     def fn(method, path, **kwargs):
         if path == "/repos/acme/demo/releases/latest":
             if release_error is not None:
@@ -217,8 +210,7 @@ def test_repo_stats_latest_release_is_null_when_repo_has_no_releases(repos_clien
 
 
 def test_repo_stats_latest_release_is_null_on_non_404_error_without_failing_the_request(repos_client):
-    # Regression test: a transient failure on the new latest_release call must not
-    # discard the commit_activity/participation/contributors data that succeeded.
+    # A transient latest_release failure must not discard the stats that succeeded.
     server_error = httpx.HTTPStatusError(
         "boom",
         request=httpx.Request("GET", "https://api.github.com/x"),
@@ -240,8 +232,7 @@ def test_repo_stats_latest_release_is_null_on_non_404_error_without_failing_the_
 
 
 def test_repo_stats_defaults_metadata_on_repo_meta_failure_without_failing_the_request(repos_client):
-    # Regression test: a transient failure on the new repo_meta call must not discard
-    # the commit_activity/participation/contributors data that succeeded.
+    # A transient repo_meta failure must not discard the stats that succeeded.
     server_error = httpx.HTTPStatusError(
         "boom",
         request=httpx.Request("GET", "https://api.github.com/x"),
@@ -285,9 +276,7 @@ def test_repo_stats_second_call_is_served_from_cache(repos_client):
 
 
 def test_repo_stats_evicts_expired_entries_from_the_cache(repos_client):
-    # Installation tokens rotate hourly, so a long-running instance would otherwise
-    # accumulate one stale entry per org x repo x hour forever -- a cache miss now sweeps
-    # any entry whose TTL has already elapsed (#247).
+    # Installation tokens rotate hourly, so a cache miss must sweep expired entries or they accumulate forever.
     import time as time_module
 
     stale_key = ("other-owner", "other-repo", "deadbeef")
@@ -327,13 +316,8 @@ def test_repo_stats_different_tokens_are_not_served_from_the_same_cache_entry(re
     assert mock_client.return_value.request.call_count == 10
 
 
-# ---------------------------------------------------------------------------
-# S6: commit_activity served from repo_event_daily_counts for orgs with a
-# connected GitHub App installation -- partial re-point, everything else in
-# RepoStatsResponse still comes from live GitHub calls (see repos.py's
-# _fetch_stats docstring and the plan.md status update for the accuracy
-# tradeoff -- push-event counts, not exact commit counts).
-# ---------------------------------------------------------------------------
+# commit_activity comes from repo_event_daily_counts (push-event counts) for App-connected orgs;
+# the rest of RepoStatsResponse stays live.
 
 
 @pytest.fixture()
@@ -357,11 +341,8 @@ def _insert_daily_count(db, tenant_id, *, repo, event_type, day, count):
 
 
 def test_repo_stats_cache_is_isolated_by_tenant_id(db, acme_org_with_installation):
-    # Defense in depth: orgs.github_login is unique, so two tenants can't legitimately
-    # share the same (owner, repo) through the normal org-resolution path today -- but the
-    # cache itself must not rely on that invariant. Bypasses the HTTP layer (owner==org_login
-    # is enforced there) to call _cached_stats directly with the same owner/repo/token for
-    # two different tenants, mirroring what the route handler's own tenant resolution does.
+    # Defense in depth: the cache must be tenant-keyed even though github_login uniqueness
+    # prevents shared (owner, repo) today, so _cached_stats is called directly for two tenants.
     from src.core.rbac import set_tenant_session_context
     from src.routers.repos import _cached_stats, _stats_cache
 
@@ -421,9 +402,7 @@ def test_repo_stats_uses_aggregate_commit_activity_when_installation_connected(r
 def test_repo_stats_aggregate_commit_activity_buckets_by_week_and_excludes_outside_window(
     repos_client, db, acme_org_with_installation
 ):
-    # A fixed Monday, not the real "today" -- if this test ran on a real Sunday,
-    # `today - timedelta(days=1)` would fall in the *previous* Sunday-starting week,
-    # breaking the "same week" assumption below.
+    # A fixed Monday: on a real Sunday, `today - 1 day` would fall in the previous week.
     today = date(2000, 1, 3)
     _insert_daily_count(db, acme_org_with_installation.tenant_id, repo="acme/demo", event_type="push", day=today, count=2)
     _insert_daily_count(
@@ -451,9 +430,7 @@ def test_repo_stats_aggregate_commit_activity_buckets_by_week_and_excludes_outsi
 
 
 def test_repo_stats_falls_back_to_github_when_the_installation_has_no_installation_id(repos_client, db, acme_org):
-    # Mirrors the same gap covered in test_github_events.py -- a row can exist with
-    # installation_id IS NULL (sync_org_installation's known-admin re-sync path) with no
-    # actual App installation, and therefore no repo_event_daily_counts rows, behind it.
+    # An installation row with installation_id NULL has no real App behind it, so no daily counts.
     installation_repo.create(
         db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=None, org_id=acme_org.id
     )
@@ -473,8 +450,7 @@ def test_repo_stats_falls_back_to_github_when_the_installation_has_no_installati
 
 
 def test_repo_stats_commit_activity_source_is_github_for_a_legacy_pat_org(repos_client):
-    # acme_org (no installation fixture) -- regression check that the fully unchanged
-    # live-GitHub path is still what a legacy PAT-only org gets.
+    # PAT-only org (no installation) uses the live-GitHub path.
     with patch("src.routers.repos.GitHubClient") as mock_client:
         mock_client.return_value.request.side_effect = _stats_side_effect(
             repo_meta=_REPO_META, commit_activity=[{"week": 1, "total": 5}], release_error=_not_found()
@@ -629,9 +605,8 @@ def test_repo_security_returns_unknown_when_branch_check_inconclusive(repos_clie
 
 
 def test_repo_security_returns_unknown_secret_scanning_when_field_is_absent(repos_client):
-    # GitHub only includes `security_and_analysis` for admin-scoped tokens; a lesser-
-    # privileged token gets a repo payload without the key at all, which must read as
-    # "unknown" rather than a confidently-wrong "disabled".
+    # GitHub only includes `security_and_analysis` for admin-scoped tokens; its absence must
+    # read as "unknown", not "disabled".
     with (
         patch("src.routers.repos.GitHubClient") as mock_client,
         patch(

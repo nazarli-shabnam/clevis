@@ -1,20 +1,9 @@
-"""GitHub OAuth — "Sign in with GitHub" helpers.
+"""GitHub OAuth — "Sign in with GitHub" helpers: sign_state/verify_state (CSRF state,
+HS256), build_authorize_url, exchange_code_for_token, fetch_identity.
 
-Stateless pieces of the OAuth web flow:
-  - `sign_state` / `verify_state` — a short-lived CSRF state token (HS256 with AUTH_SECRET), so we
-    don't need server-side session storage between the redirect and the callback. The state JWT
-    embeds a random nonce that the router also stores in a short-lived cookie on the browser
-    (see `src.routers.github_auth`); `verify_state` requires both to match, which binds the state
-    to the browser that started the flow -- without this, any validly-signed state token could be
-    replayed from a different browser (login-CSRF: an attacker completes their own OAuth flow,
-    then gets a victim to open the resulting callback URL, logging the victim into the attacker's
-    account).
-  - `build_authorize_url` — where we send the browser to start the flow.
-  - `exchange_code_for_token` — swap the callback `code` for a GitHub *user* access token.
-  - `fetch_identity` — read the user's profile + primary verified email.
-
-Find-or-create of the local `users` row lives in the router (it needs the DB). Requires
-GITHUB_APP_CLIENT_ID / GITHUB_APP_CLIENT_SECRET (see `src.core.config.Settings`).
+`verify_state` binds the signed state to a nonce cookie set on the browser that started
+the flow -- without this, a validly-signed state could be replayed from a different
+browser (login-CSRF). Find-or-create of the local `users` row lives in the router.
 """
 
 from __future__ import annotations

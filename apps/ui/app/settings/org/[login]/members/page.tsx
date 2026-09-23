@@ -20,8 +20,7 @@ const MEMBER_COLUMNS: DataTableColumn<GithubOrgMember>[] = [
     sortValue: (m) => m.login.toLowerCase(),
     render: (m) => (
       <div className="flex items-center gap-2">
-        {/* Decorative: the member login is the adjacent link text, so an empty alt
-            avoids a duplicate screen-reader announcement. */}
+        {/* Decorative: the login is the adjacent link text, so empty alt avoids a duplicate announcement. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={m.avatar_url} alt="" className="size-5 rounded-full" />
         <a
@@ -45,8 +44,7 @@ const MEMBER_COLUMNS: DataTableColumn<GithubOrgMember>[] = [
   {
     key: "two_factor_enabled",
     header: "2FA",
-    // Groups unknown (null) between the two known states rather than sorting it to an
-    // arbitrary end -- there's no natural "less/more 2FA" ordering for "we don't know".
+    // Groups unknown (null) between the two known states -- there's no natural order for "we don't know".
     sortValue: (m) => (m.two_factor_enabled === true ? 1 : m.two_factor_enabled === false ? -1 : 0),
     render: (m) => (
       <>
@@ -83,9 +81,8 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
     router.replace(`?${params.toString()}`, { scroll: false })
   }
 
-  // Falls back to a client-supplied PAT saved for this org when no GitHub App
-  // installation covers it — same resolve-then-use pattern as security/page.tsx.
-  // A missing/failed resolution just means the App installation (if any) is used.
+  // Falls back to a PAT saved for this org when no App installation covers it; a failed
+  // resolution just means the App installation (if any) is used.
   const tokenQuery = useQuery({
     queryKey: ["tokens.resolve", orgLogin],
     queryFn: () => api.tokens.resolve(orgLogin),
@@ -93,18 +90,16 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
   })
   const token = tokenQuery.data?.token
 
-  // Wait for the token resolution to settle before firing so a saved PAT isn't
-  // missed on the very first request (queryKey excludes token, so a late-arriving
-  // token wouldn't otherwise trigger a refetch of an already-errored query).
+  // Wait for token resolution to settle so a saved PAT isn't missed on the first request
+  // (queryKey excludes token, so a late token wouldn't trigger a refetch).
   const tokenSettled = !tokenQuery.isLoading
 
   const membersQuery = useQuery({
     queryKey: ["collab", "members", orgLogin, roleFilter],
     queryFn: () => api.collab.members(orgLogin, roleFilter, token),
     enabled: tab === "members" && tokenSettled,
-    // Keeps the previous role filter's rows on screen (with isFetching still true) while
-    // the new one loads, instead of flashing an empty table -- a role change now looks
-    // like a background refetch rather than a full reload, distinct from client-side search.
+    // Keep the previous role filter's rows on screen while the new one loads instead of
+    // flashing an empty table.
     placeholderData: keepPreviousData,
   })
   const outsideQuery = useQuery({
@@ -148,12 +143,10 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
   const filteredMembers = (membersQuery.data?.members ?? []).filter((m) =>
     m.login.toLowerCase().includes(search.toLowerCase()),
   )
-  // Derived from filteredMembers (not the unfiltered roster) so this count always matches
-  // what's actually visible in the table below it -- a stale org-wide total next to a
-  // filtered table reads as a data-integrity bug, especially for a 2FA-compliance number.
+  // Derived from filteredMembers so the count matches the visible table -- a stale org-wide
+  // total next to a filtered table reads as a data-integrity bug for a 2FA-compliance number.
   const membersWithout2fa = filteredMembers.filter((m) => m.two_factor_enabled === false).length
-  // roleFilter is part of membersQuery's queryKey (server-side refetch), while `search` is
-  // client-side -- distinguish the two so a role change doesn't look identical to typing.
+  // roleFilter is a server-side refetch (in the queryKey); `search` is client-side.
   const isRefetchingByRole = membersQuery.isFetching && !membersQuery.isLoading
 
   return (
@@ -208,10 +201,8 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
         )}
       </div>
 
-      {/* The audit tab renders two independently-fetched sections (permission audit,
-          inactive members) and gives each its own loading/error state below -- gating the
-          whole tab on permissionAuditQuery alone would hide inactive-members data that
-          loaded fine just because the audit call happened to fail (#252). */}
+      {/* Each audit section has its own loading/error state, so a failed permission audit
+          doesn't hide inactive-members data that loaded fine. */}
       {tab !== "audit" && activeQuery.isLoading ? (
         <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
           <CircleNotch className="size-3.5 animate-spin" /> Loading…
@@ -255,8 +246,7 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
                     <tr key={c.login}>
                       <td className="px-4 py-2.5">
                         <div className="flex items-center gap-2">
-                          {/* Decorative: the collaborator login is the adjacent text, so an
-                              empty alt avoids a duplicate screen-reader announcement. */}
+                          {/* Decorative: the login is the adjacent text, so empty alt avoids a duplicate announcement. */}
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img src={c.avatar_url} alt="" className="size-5 rounded-full" />
                           <span className="text-foreground/80">{c.login}</span>
@@ -376,9 +366,8 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
               <CircleNotch className="size-3.5 animate-spin" /> Loading…
             </div>
           ) : inactiveMembersQuery.error ? (
-            // Distinct from the "no inactive members" empty state below -- an error here
-            // must not silently read as "org is clean," which would be a false-negative
-            // access-risk signal.
+            // Distinct from the "no inactive members" empty state -- an error must not read as
+            // "org is clean" (a false-negative access-risk signal).
             <div className="px-4 py-6">
               <p className="text-xs text-destructive">{inactiveMembersQuery.error.message}</p>
             </div>

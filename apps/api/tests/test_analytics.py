@@ -1,4 +1,4 @@
-"""Tests for the analytics router — B-02: async handler, B-10: error logging."""
+"""Tests for the analytics router."""
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -134,16 +134,15 @@ def test_overview_unexpected_exception_logs_and_returns_500(http):
             json={"owner": "acme", "token": "ghp_test"},
         )
     assert resp.status_code == 500
-    # B-10: exception must be logged, not silently swallowed
+    # exception must be logged, not silently swallowed
     mock_logger.exception.assert_called_once_with("analytics_overview failed")
 
 
 # ── personal-account parity ─────────────────────────────────────────────────────
 
 def test_personal_overview_runs_checks_for_user_account(http):
-    """A personal (User-type) account is no longer rejected -- it gets a real scan,
-    with account_type threaded into get_overview so checks.runner can use the
-    personal-account repo-listing path and mark org-only checks not_applicable."""
+    """A personal (User-type) account gets a real scan, with account_type threaded into
+    get_overview so org-only checks come back not_applicable."""
     with (
         patch("src.routers.analytics.get_account_type", return_value="User") as mock_account_type,
         patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW) as mock_overview,

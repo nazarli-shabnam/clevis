@@ -1,17 +1,8 @@
-"""Bulk default-branch protection apply across an org's repos (issue #288).
+"""Bulk default-branch protection apply across an org's repos.
 
-``POST /orgs/{org_login}/branch-protection/bulk`` — org-admin only. With
-``dry_run=true`` it returns a per-repo diff and writes nothing; with ``dry_run=false``
-it PUTs the preset to each repo's default branch, capturing per-repo failures so one
-repo the token can't touch doesn't abort the rest.
-
-**Requires the ``administration`` repository permission at Read and write** on the
-connected GitHub App (or the pasted PAT). When every repo comes back 403 the whole
-call is turned into a 400 pointing at docs/self-hosting.md so the UI can show the
-"grant Administration: write" hint instead of a wall of per-repo errors.
-
-Optionally (``save_preset=true``) the applied preset is stored per repo in
-``automation_repo_settings`` (feature ``branch_protection``) so it can be reused.
+Org-admin only. dry_run=true returns a per-repo diff; dry_run=false applies it,
+capturing per-repo failures so one inaccessible repo doesn't abort the rest. Requires
+GitHub's ``Administration: Read and write`` permission.
 """
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -107,9 +98,8 @@ def bulk_branch_protection(
         {"repos": body.repos, "dry_run": body.dry_run}, tenant_id=ctx.org.tenant_id,
     )
 
-    # plan_bulk / apply_bulk capture every httpx error per repo onto the result — a
-    # whole-batch failure surfaces as every RepoResult/RepoDiff carrying an error, which
-    # _all_forbidden turns into the permission hint below.
+    # plan_bulk / apply_bulk capture every httpx error per repo -- a whole-batch failure
+    # surfaces as every result carrying an error, which _all_forbidden turns into the hint.
     client = GitHubClient(token)
     if body.dry_run:
         diffs = branch_protection_bulk.plan_bulk(client, owner, body.repos, body.preset)

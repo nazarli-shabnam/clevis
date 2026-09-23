@@ -22,11 +22,9 @@ def jobs(db: Session = Depends(get_db), _user: UserOut = Depends(require_workspa
 
 @router.get("/{job_id}", response_model=JobOut)
 def job(job_id: int, db: Session = Depends(get_db), user: UserOut = Depends(require_auth)):
-    # The cache-clear panel polls this to show a queued job's real terminal status
-    # (done/failed) instead of claiming success the moment it's enqueued. The `jobs` table
-    # has no owner/tenant column, so to avoid cross-tenant id enumeration this is scoped to
-    # the job's own `actor` (the email of the user who enqueued it) and to job types that
-    # record one. Anything else 404s -- workspace admins use the list endpoint above.
+    # The cache-clear panel polls this to show a queued job's real terminal status. The
+    # `jobs` table has no owner/tenant column, so to avoid cross-tenant id enumeration this
+    # is scoped to the job's own `actor` and to job types that record one.
     row = job_repo.get_job(db, job_id)
     if row is None or row.job_type not in _SELF_READABLE_JOB_TYPES:
         raise HTTPException(status_code=404, detail="Unknown job")

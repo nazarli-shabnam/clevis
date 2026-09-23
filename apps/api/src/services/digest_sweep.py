@@ -1,10 +1,9 @@
-"""Issue #292: per-tick work for the leadership-digest loop.
+"""Per-tick work for the leadership-digest loop.
 
-Mirrors gap_heal_sweep.py's shape (see that module's docstring). Scope: org-kind
-tenants only (a personal tenant has no leadership to summarise for). Opt-in and
-off by default -- controlled by the `digest_cadence` instance-config key
-(off | weekly | monthly). "Is a digest due" is derived from the newest
-`digest.sent` audit-log row for the tenant, so no new table is needed.
+Mirrors gap_heal_sweep.py's shape. Scope: org-kind tenants only (a personal tenant has
+no leadership to summarise for). Opt-in and off by default via `digest_cadence`. "Is a
+digest due" is derived from the newest `digest.sent` audit-log row, so no new table is
+needed.
 """
 
 import logging
@@ -77,9 +76,8 @@ def run_digest_sweep(db: Session) -> None:
             if not try_acquire_sweep_slot(db, _SWEEP_KEY, tenant_id):
                 continue
 
-            # Read the last-sent marker *after* taking the slot. Another replica may
-            # have sent and committed its digest.sent row between this tick's tenant
-            # query and now; checking before the lock lets both replicas past.
+            # Read the last-sent marker *after* taking the slot -- another replica may have
+            # sent and committed between this tick's tenant query and now.
             last_sent = _last_sent_at(db, tenant_id)
             if last_sent is not None:
                 if last_sent.tzinfo is None:
@@ -104,10 +102,9 @@ def run_digest_sweep(db: Session) -> None:
 
             subject = digest_service.render_subject(content)
             body = digest_service.render_text(content)
-            # is_configured() was checked at the top of the sweep. If SMTP drops
-            # mid-run a send just fails like any other error -- caught here so a
-            # partial success still records its digest.sent marker (otherwise the
-            # next tick re-sends to everyone, including admins already emailed).
+            # is_configured() was checked at the top; if SMTP drops mid-run a send just
+            # fails like any other error -- caught here so a partial success still records
+            # its digest.sent marker (otherwise the next tick re-sends to everyone).
             sent = 0
             for address in recipients:
                 try:

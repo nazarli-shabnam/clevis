@@ -1,27 +1,4 @@
-"""Add repo_event_daily_counts table + clevis_worker/clevis_api grants (issue #191, S4 PR 2 of N).
-
-Materialized aggregate half of S4: per-tenant/repo/event_type/day event counts, upserted by
-apps/worker's event_consumer.py (src/event_consumer.py) in the same transaction as each
-repo_events insert. Not read by the API yet -- that's S6's job, same deferral as repo_events
-itself (migration 0036).
-
-Composite primary key (tenant_id, repo, event_type, day) instead of a surrogate id: this table is
-purely a rollup keyed by those four values, an upsert target, never referenced by foreign key from
-elsewhere -- a surrogate key would add a sequence to grant/manage for no benefit.
-
-tenant_id is NOT NULL by the same reasoning as repo_events: the consumer never normalizes a
-null-tenant webhook_deliveries row, so it never has a null-tenant aggregate to upsert either. RLS
-policy reuses migration 0030's _TENANT_FILTER, ENABLE-only (no FORCE), same reasoning as 0036 --
-the table-owning migration role is unaffected either way, and no non-owner role reads this table
-yet.
-
-Grants mirror migration 0036 exactly, including clevis_api's grant: CI runs apps/worker's tests
-under DATABASE_URL=clevis_api (no clevis_worker CI provisioning exists), so the consumer's own
-tests need clevis_api access here too, same as repo_events. clevis_worker additionally gets UPDATE
-(not just INSERT) since upserting requires it.
-
-Upgrade is purely additive (one new table, two conditional grants) -- zero data-loss risk.
-Downgrade drops the table; safe since nothing reads it yet (S6 hasn't shipped).
+"""Add repo_event_daily_counts table + clevis_worker/clevis_api grants.
 
 Revision ID: 0037
 Revises: 0036

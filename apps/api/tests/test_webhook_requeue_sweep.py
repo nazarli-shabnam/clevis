@@ -1,4 +1,4 @@
-"""Tests for the webhook_deliveries re-enqueue sweep (issue #409)."""
+"""Tests for the webhook_deliveries re-enqueue sweep."""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
@@ -62,8 +62,7 @@ def test_sweep_requeues_a_recent_queue_failed_row(db):
 
 
 def test_sweep_leaves_row_at_queue_failed_when_xadd_still_fails(db):
-    # Regression test for issue #409's whole premise: before this sweep existed, a row
-    # stuck here was never retried at all.
+    # Before this sweep existed, a row stuck here was never retried at all.
     row = _make_row(db)
 
     mock_client = MagicMock()
@@ -122,9 +121,9 @@ def test_sweep_does_not_touch_rows_already_queued_or_abandoned(db):
 
 
 def test_sweep_reenqueues_a_queued_row_stuck_past_the_stuck_threshold(db):
-    # Issue #440: a row still 'queued' this long after receipt almost certainly had its
-    # stream entry trimmed (MAXLEN) before the consumer group ever read it -- the same
-    # recovery path as a failed XADD, just a different original cause.
+    # A row still 'queued' this long after receipt almost certainly had its stream entry
+    # trimmed (MAXLEN) before the consumer group ever read it -- same recovery path as a
+    # failed XADD, just a different original cause.
     tenant_id = _make_tenant(db, "webhook-sweep-stuck-queued@example.com")
     stuck = datetime.now(timezone.utc) - timedelta(minutes=45)
     row = _make_row(db, status="queued", received_at=stuck, tenant_id=tenant_id)

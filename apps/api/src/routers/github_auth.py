@@ -1,21 +1,11 @@
-"""GitHub OAuth sign-in router — /auth/github/*.
+"""GitHub OAuth sign-in router — /auth/github/*: login redirects to GitHub's authorize
+page with a CSRF state; callback verifies state, exchanges code, and finds-or-creates
+the local user (first-ever user becomes workspace admin).
 
-  GET /auth/github/login     -> 307 redirect to GitHub's authorize page (with a browser-bound
-                                CSRF state -- see src.services.github_oauth)
-  GET /auth/github/callback  -> verify state, exchange code, fetch identity, find-or-create the
-                                local user, sync verified GitHub org-admin memberships, set the
-                                httpOnly session cookie, redirect to the UI
-
-Find-or-create policy: link to an existing user by GitHub id; otherwise create a new user (the
-first-ever user becomes the workspace admin, mirroring the email/password setup flow). We
-deliberately do NOT fall back to matching by email -- self-registration (POST /auth/register)
-has no email-ownership verification anywhere in this app, so auto-linking onto an existing
-account by email match alone would let an attacker who pre-registers a victim's email silently
-inherit that victim's real GitHub identity (and whatever org-admin access it earns via
-src.services.org_provisioning) the next time the victim signs in with GitHub, while the attacker
-keeps their own password on the shared account. If GitHub reports an email that already belongs
-to a different local account, the callback redirects with an explanatory error instead of
-linking; the user needs to sign in with their password first.
+Deliberately does NOT link by email match: self-registration has no email-ownership
+verification, so auto-linking by email alone would let an attacker who pre-registers a
+victim's email silently inherit that victim's GitHub identity. A matching email on a
+different account redirects with an error instead of linking.
 """
 
 import logging
@@ -84,37 +74,30 @@ def find_or_create_user(db: Session, identity: github_oauth.GitHubIdentity) -> U
         github_user_id=identity.github_user_id,
         github_login=identity.login,
         avatar_url=identity.avatar_url,
-        # GitHub already vouches for this email -- fetch_identity() only ever returns a
-        # GitHub-verified address (github_oauth._primary_verified_email filters on
-        # verified=True; GitHub itself requires every email on an account to be verified
-        # before it can be used). Same trust basis as the first-run setup admin. Issue #217.
+        # GitHub already vouches for this email -- fetch_identity() only returns a
+        # GitHub-verified address. Same trust basis as the first-run setup admin.
         email_verified=True,
     )
     db.add(user)
     try:
         # flush (not commit): land the personal tenant/membership in the same transaction
-        # as this user, then commit once -- a failure between two separate commits could
-        # otherwise leave a User row with no personal tenant (#323 CodeRabbit finding).
+        # as this user, then commit once, avoiding an orphaned User with no personal tenant.
         db.flush()
     except IntegrityError:
-        # Two concurrent requests both passed the checks above before either flushed --
-        # same race /auth/setup and /auth/register guard against. Two different causes,
-        # two different recoveries:
+        # Two concurrent requests both passed the checks above before either flushed.
+        # Two different causes, two different recoveries:
         db.rollback()
-        # (1) Another OAuth callback for this same brand-new GitHub identity won the race.
-        # A login should recover gracefully instead of 409ing like those self-service
-        # flows: re-query for the winner's now-committed row and return it. Issue #464.
+        # (1) Another OAuth callback for this same GitHub identity won the race -- recover
+        # gracefully by re-querying the winner's now-committed row instead of 409ing.
         user = db.query(User).filter(User.github_user_id == identity.github_user_id).first()
         if user is not None:
             _refresh_profile(user, identity)
             db.commit()
             db.refresh(user)
             return user
-        # (2) Not a github_user_id collision, so the flush's unique-constraint violation
-        # must be on the email index instead -- some other account (e.g. a concurrent
-        # /auth/register) grabbed this identity's email in the gap between the check above
-        # and this flush. Same business rule as that check: refuse to link, redirect with
-        # an explanation instead of leaking a raw 500.
+        # (2) Not a github_user_id collision, so the violation is on the email index --
+        # some other account grabbed this email in the gap. Same rule as the check above:
+        # refuse to link, redirect with an explanation instead of a raw 500.
         if db.query(User).filter(func.lower(User.email) == identity.email.lower()).first() is not None:
             raise EmailAlreadyRegistered(identity.email) from None
         raise
@@ -138,8 +121,7 @@ def github_login(request: Request, next: str | None = None):
         return _ui_login_error_redirect("github_not_configured")
     response = RedirectResponse(url, status_code=307)
     # Binds `state` to this browser -- must be SameSite=Lax (not Strict) so it's still sent
-    # on the top-level GET redirect back from github.com, regardless of how the instance's
-    # main session_cookie_samesite is configured.
+    # on the top-level GET redirect back from github.com.
     response.set_cookie(
         key=github_oauth.STATE_COOKIE_NAME,
         value=nonce,

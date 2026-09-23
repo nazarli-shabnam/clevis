@@ -1,15 +1,6 @@
-"""Dependabot auto-triage endpoints (issue #290).
-
-``PUT  /orgs/{org}/repos/{owner}/{repo}/automation/dependabot-triage`` — per-repo
-opt-in + mode, stored in ``automation_repo_settings``. Default off; ``approve_only``
-unless an admin sets ``approve_and_merge``.
-
-``POST /orgs/{org}/dependabot-triage`` — run the sweep across the enabled repos (or a
-caller-supplied subset). Org-admin only. Every decision — acted on or skipped, with the
-reason — is written to ``audit_logs``. ``dry_run`` makes no GitHub writes.
-
-Approving needs ``pull_requests: write``; merging needs ``contents: write``. A 403 from
-GitHub becomes a 400 pointing at docs/self-hosting.md.
+"""Dependabot auto-triage endpoints: per-repo opt-in/mode (PUT) and sweep run (POST,
+org-admin only, dry_run makes no GitHub writes). Every decision is audit-logged.
+Approving needs ``pull_requests: write``; merging needs ``contents: write``.
 """
 
 import httpx
@@ -154,9 +145,8 @@ def run_triage(
                 dry_run=body.dry_run,
             )
         except httpx.HTTPStatusError as exc:
-            # 403 is almost always a missing scope — retrying the other repos is pointless,
-            # so surface the hint. Any other GitHub error is recorded against just this
-            # repo so the rest of the sweep still runs (and stays audited).
+            # 403 is almost always a missing scope -- surface the hint immediately. Any
+            # other GitHub error is recorded against just this repo so the sweep continues.
             if exc.response.status_code == 403:
                 raise HTTPException(status_code=400, detail=_PERMISSION_HINT) from exc
             decisions = [dependabot_triage.Decision(None, "", "error", f"GitHub API error: {exc.response.status_code}")]

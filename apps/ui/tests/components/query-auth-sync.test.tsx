@@ -93,11 +93,9 @@ describe("QueryAuthSync", () => {
   })
 
   it("does not re-render previous-user data for a query keyed on org alone", async () => {
-    // Regression: ["tokens.resolve", org] is not partitioned by user id, and the
-    // QueryClient outlives a same-tab account switch. QueryAuthSync empties the cache
-    // synchronously on the identity change; layout.tsx/AuthGuard additionally remount the
-    // authenticated subtree (mirrored here by the keyed Fragment) so a memoized
-    // QueryObserver result can't paint user A's resolved PAT for user B.
+    // ["tokens.resolve", org] isn't partitioned by user and the QueryClient outlives an account
+    // switch; the cache clear plus keyed remount (mirrored by the Fragment) must stop user A's
+    // resolved PAT painting for user B.
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
     let resolvedToken = "user-A-PAT"

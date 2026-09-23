@@ -4,11 +4,7 @@ interface PageHeaderProps {
   actions?: React.ReactNode
 }
 
-/**
- * Page header: title in the app's heading face at a calm scale, with an
- * optional description beneath. Bottom border separates the header zone
- * from page content. Actions slot for per-page CTAs (e.g. "Run Scan").
- */
+/** Page header: title, optional description, and an actions slot for per-page CTAs. */
 export function PageHeader({ title, description, actions }: PageHeaderProps) {
   return (
     <header className="flex items-end justify-between pb-4 mb-6 border-b border-border/60">

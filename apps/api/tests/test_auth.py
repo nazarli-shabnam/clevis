@@ -24,10 +24,7 @@ from src.routers.config import router as config_router
 
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter():
-    """/auth/login and /auth/register are rate-limited per client IP, and /auth/login is
-    additionally rate-limited per submitted email, both via module-level in-memory buckets
-    that persist across tests in the same process — reset both so one test's request
-    volume can't tip a later, unrelated test over the threshold."""
+    """Reset the process-wide per-IP and per-email auth rate-limit buckets between tests."""
     _rate_limit_buckets.clear()
     _account_rate_limit_buckets.clear()
     yield
@@ -106,9 +103,7 @@ def test_setup_rejects_short_password(auth_client):
 
 
 def test_setup_rejects_password_over_72_bytes(auth_client):
-    # Regression test: bcrypt silently truncates input past 72 bytes rather than raising
-    # (bcrypt==4.2.1 pinned here) -- unvalidated, two different passwords sharing the same
-    # first 72 bytes would hash identically. Must be a clean 422, not silent truncation.
+    # bcrypt silently truncates past 72 bytes, so an oversized password must be a clean 422.
     resp = auth_client.post("/auth/setup", json={"email": "a@b.com", "password": "x" * 73})
     assert resp.status_code == 422
 
@@ -122,8 +117,7 @@ def test_setup_rejects_duplicate(auth_client):
 
 
 def test_setup_applies_a_per_ip_rate_limit(auth_client):
-    # Regression test for issue #279: /auth/setup was missing the rate_limit() dependency
-    # applied to every sibling auth endpoint (register/login/verify-email/resend-verification).
+    # /auth/setup is rate-limited like its sibling auth endpoints.
     _setup_owner(auth_client)  # call 1 (201)
     for _ in range(9):  # calls 2-10 (409, setup already complete) -- still count toward the limit
         auth_client.post(
@@ -136,11 +130,8 @@ def test_setup_applies_a_per_ip_rate_limit(auth_client):
 
 
 def test_setup_advisory_lock_serializes_concurrent_holders(_engine):
-    # Regression test for issue #218: two concurrent /auth/setup calls with *different*
-    # emails both pass the count()==0 check before either commits, and (unlike the
-    # register-email race) there's no unique-constraint collision to catch it -- only a
-    # lock can. Verifies the lock primitive itself: a second connection can't acquire the
-    # same key while the first transaction holds it, and can once the first releases it.
+    # Concurrent setups with different emails both pass count()==0 and no unique constraint
+    # catches it, so only the advisory lock can: a second connection must block until released.
     with _engine.connect() as conn1, _engine.connect() as conn2:
         conn1.begin()
         conn2.begin()
@@ -165,12 +156,8 @@ def test_setup_advisory_lock_serializes_concurrent_holders(_engine):
 
 
 def test_setup_concurrent_duplicate_email_returns_409_not_500(auth_client, db):
-    # Regression test for issue #218: the try/except around setup()'s db.commit() is a
-    # second line of defense behind the advisory lock (which serializes the count()==0
-    # check but doesn't stop two callers from racing on the *same* email specifically) --
-    # same pattern as test_register_concurrent_same_email_returns_409_not_500: fake the
-    # count() check to a miss so the real insert hits the genuine users.email unique
-    # constraint and returns a clean 409 instead of an unhandled 500.
+    # Backstop behind the advisory lock for same-email racers: fake count() to a miss so the
+    # insert hits the users.email unique constraint and returns 409, not 500.
     _setup_owner(auth_client, email="owner@example.com")
     from src.core.db import User
 
@@ -246,12 +233,8 @@ def test_register_rejects_duplicate_email(auth_client):
 
 
 def test_register_concurrent_same_email_returns_409_not_500(auth_client, db):
-    # Regression test for issue #218: simulates two near-simultaneous /auth/register calls
-    # for the same email, same pattern as test_org_repo.py's concurrent-insert-race test --
-    # a row for this email is already committed (the "other request" that won the race),
-    # then the existence check is patched to fake a miss so this call proceeds to the real
-    # insert, which must collide on the genuine users.email unique constraint and return a
-    # clean 409 instead of an unhandled 500.
+    # Simulates a same-email register race: the winner's row is committed and the existence
+    # check faked to a miss, so the insert hits the unique constraint and must 409, not 500.
     _setup_owner(auth_client, email="owner@example.com")
     from src.core.db import User
 
@@ -270,9 +253,7 @@ def test_register_concurrent_same_email_returns_409_not_500(auth_client, db):
 
 
 def test_register_rejects_duplicate_email_different_case(auth_client):
-    # Regression test for issue #268: emails are effectively case-insensitive in real
-    # mailboxes -- "Dupe@Example.com" and "dupe@example.com" must not both be able to
-    # register, unlike before this fix where they'd create two independent accounts.
+    # Emails are case-insensitive: differently-cased duplicates must not both register.
     _setup_owner(auth_client, email="dupe@example.com")
     resp = auth_client.post(
         "/auth/register", json={"email": "Dupe@Example.com", "password": "supersecret1234"}
@@ -298,7 +279,7 @@ def test_register_disabled_returns_403(auth_client):
     assert resp.status_code == 403
 
 
-# email verification (issue #217)
+# email verification
 
 def test_setup_creates_a_verified_admin(auth_client, db):
     _setup_owner(auth_client, email="owner@example.com")
@@ -339,10 +320,7 @@ def test_register_logs_a_warning_but_does_not_fail_when_email_sending_raises(aut
 
 
 def test_register_still_succeeds_when_cors_origins_is_misconfigured_empty(auth_client):
-    # Regression test: verify_url construction (f"{settings.cors_origins[0]}/...") used to
-    # sit outside the try/except in _send_verification_email_best_effort, so an operator
-    # misconfiguring CORS_ORIGINS=[] would raise an uncaught IndexError there and break
-    # registration itself, not just the email send.
+    # A misconfigured CORS_ORIGINS=[] may break the verification email, never registration.
     from src.core.config import settings
 
     _setup_owner(auth_client)
@@ -430,8 +408,7 @@ def test_login_valid(auth_client):
 
 
 def test_login_valid_with_different_case_email(auth_client):
-    # Regression test for issue #268: login must match the stored (lowercased) email
-    # regardless of the case the client submits.
+    # login must match the stored (lowercased) email regardless of submitted case.
     _setup_owner(auth_client, email="owner@example.com")
     resp = auth_client.post(
         "/auth/login", json={"email": "Owner@Example.com", "password": "supersecret1234"}
@@ -449,10 +426,8 @@ def test_login_wrong_password(auth_client):
 
 
 def test_login_rejects_password_over_72_bytes(auth_client):
-    # Regression test: since setup()/register() now reject any password over 72 bytes,
-    # no real stored password can be that long -- an oversized login guess must always
-    # fail with 401. Without this, bcrypt's silent truncation (bcrypt==4.2.1 pinned here)
-    # would let an oversized guess match on nothing more than a shared 72-byte prefix.
+    # Stored passwords are <=72 bytes, so an oversized guess must 401 rather than match a
+    # shared 72-byte prefix via bcrypt truncation.
     _setup_owner(auth_client)
     resp = auth_client.post(
         "/auth/login", json={"email": "owner@example.com", "password": "x" * 200}
@@ -468,9 +443,7 @@ def test_login_unknown_email(auth_client):
 
 
 def test_login_unknown_email_still_pays_the_bcrypt_cost(auth_client):
-    # Regression test: a nonexistent email used to short-circuit before bcrypt ran, so
-    # response timing alone revealed whether an email was registered. Must now always
-    # run one bcrypt check, same as the real-account path.
+    # Unknown emails still run one bcrypt check so timing doesn't reveal registration.
     with patch("src.routers.auth.bcrypt.checkpw", wraps=bcrypt.checkpw) as mock_checkpw:
         resp = auth_client.post(
             "/auth/login", json={"email": "nobody@example.com", "password": "supersecret1234"}
@@ -503,11 +476,8 @@ def test_login_github_only_user_returns_401(auth_client, db):
 # pending invitations surfaced at register/login
 
 def test_register_never_surfaces_pending_invitation(auth_client, db):
-    """Registration has no email-verification step, so a self-asserted email is not proof
-    of inbox control. Even though the same email/lookup would find a real pending
-    invitation (confirmed below via list_pending_for_email directly), the register
-    response must never expose it — otherwise anyone who merely knows a victim's email
-    could learn whether/where they have a pending org invite by registering with it."""
+    """A just-registered email isn't proof of inbox control, so the register response must
+    never expose a matching pending invitation to someone who merely knows the email."""
     owner = _setup_owner(auth_client, email="owner@example.com")
     org = org_repo.get_or_create(db, github_login="acme")
     invitation_repo.create(db, org_id=org.id, email="newmember@example.com", invited_by_user_id=owner["user"]["id"])
@@ -543,17 +513,10 @@ def test_login_surfaces_pending_invitation(auth_client, db):
 
 
 def test_pending_invitations_for_batches_org_lookup_across_multiple_orgs():
-    """_pending_invitations_for batches the org lookup into one Org.id.in_(...) query
-    rather than looping per invitation -- assert each invitation still resolves to its
-    own org's login when invitations span multiple orgs.
+    """_pending_invitations_for's batched org lookup still maps each invitation to its own org.
 
-    Exercised as a direct unit test against a mocked Session, not a full login round
-    trip: invitations' RLS policy (migration 0030) is strict equality against the
-    single-valued app.tenant_id session variable, so a live query genuinely cannot see
-    two different orgs' rows in one call under CI's RLS-enforcing clevis_api role --
-    true for the original per-row loop just as much as this batched version. A live
-    multi-org round trip would flake on that pre-existing constraint, not on anything
-    this function does."""
+    Uses a mocked Session: invitations' RLS matches a single app.tenant_id, so a live query
+    under CI's clevis_api role can't see two orgs' rows at once."""
     acme = SimpleNamespace(id=1, github_login="acme")
     globex = SimpleNamespace(id=2, github_login="globex")
     now = datetime.now(timezone.utc)
@@ -777,7 +740,7 @@ def test_update_config_valid_worker_poll_seconds(config_client_owner):
     mock_set.assert_called_once_with("worker_poll_seconds", "10")
 
 
-# github_api_base and cors_origins moved to env vars — no longer runtime-editable.
+# github_api_base and cors_origins are env-only, not runtime-editable.
 @pytest.mark.parametrize("key", ["github_api_base", "cors_origins"])
 def test_update_config_removed_keys_rejected(config_client_owner, key):
     resp = config_client_owner.put(f"/config/{key}", json={"value": "https://x.com"})
@@ -841,10 +804,8 @@ def test_update_config_pr_nudge_stale_days_is_int_validated(config_client_owner)
 
 @pytest.mark.parametrize("key", ["membership_reconcile_poll_seconds", "membership_reconcile_stale_hours"])
 def test_update_config_membership_reconcile_keys_are_int_validated(config_client_owner, key):
-    # Regression test for issue #415: these two keys are in app_config's _ACCEPTED_KEYS
-    # but were missing from this router's _INT_KEYS, so a non-numeric value passed
-    # validation and got persisted -- the reconcile loop/sweep would then silently fall
-    # back to its default every iteration instead of surfacing a 422 at write time.
+    # These keys must be int-validated so a non-numeric value 422s at write time instead of
+    # silently falling back to the default on every loop iteration.
     resp = config_client_owner.put(f"/config/{key}", json={"value": "notanint"})
     assert resp.status_code == 422
 

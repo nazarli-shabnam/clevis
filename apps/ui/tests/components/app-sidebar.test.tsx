@@ -539,7 +539,6 @@ describe("AppSidebar scope switcher", () => {
     expect(screen.getByText("Switch account")).toBeInTheDocument();
   });
 
-  // Issue #371
   it("auto-selects the sole org membership as the active scope when nothing is persisted", async () => {
     orgMemberships = [{ org_login: "acme", role: "admin" }];
     installations = [];
@@ -577,8 +576,7 @@ describe("AppSidebar scope switcher", () => {
     installations = [];
     renderSidebar();
 
-    // Wait until the queries have resolved and rendered their scope options (both come from
-    // the same /me/orgs response), so the auto-select effect has definitely had its chance.
+    // Wait until both scope options render, so the auto-select effect has had its chance.
     fireEvent.click(screen.getByRole("button", { name: /user/i }));
     await waitFor(() => expect(screen.getAllByText(/globex/i).length).toBeGreaterThan(0));
     expect(localStorage.getItem("active_scope")).toBe(

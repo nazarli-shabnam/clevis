@@ -53,10 +53,7 @@ def test_leaves_recently_updated_processing_job_alone(worker_db):
 
 
 def test_leaves_a_stale_updated_at_job_alone_if_its_heartbeat_is_still_fresh(worker_db):
-    # Regression test for issue #215: a legitimately slow (not crashed) job's updated_at
-    # goes stale past RECLAIM_TIMEOUT_MINUTES since it's only set at claim time, but its
-    # heartbeat_at is touched every _JOB_HEARTBEAT_INTERVAL_SECONDS by _JobHeartbeat while
-    # the handler is actually running -- the reclaim sweep must check heartbeat_at too.
+    # A slow-but-alive job has stale updated_at but fresh heartbeat_at; must not be reclaimed.
     conn, created_ids = worker_db
     stale_updated_at = datetime.now(timezone.utc) - timedelta(minutes=RECLAIM_TIMEOUT_MINUTES + 5)
     fresh_heartbeat = datetime.now(timezone.utc) - timedelta(seconds=5)
@@ -87,9 +84,7 @@ def test_reclaims_a_stale_updated_at_job_with_a_stale_heartbeat_too(worker_db):
 
 
 def test_reclaims_a_stale_updated_at_job_with_a_null_heartbeat(worker_db):
-    # A job claimed before the heartbeat column existed, or whose handler hasn't ticked
-    # yet, has heartbeat_at IS NULL -- must still be reclaimed on updated_at staleness
-    # alone, same as before this feature existed.
+    # heartbeat_at IS NULL (never ticked): reclaim on updated_at staleness alone.
     conn, created_ids = worker_db
     stale = datetime.now(timezone.utc) - timedelta(minutes=RECLAIM_TIMEOUT_MINUTES + 5)
     job_id = _insert_job(conn, created_ids, status="processing", updated_at=stale, retry_count=0, heartbeat_at=None)

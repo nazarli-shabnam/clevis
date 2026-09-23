@@ -44,19 +44,16 @@ def _from_installation(installation: GitHubInstallation | None) -> str | None:
     try:
         return github_app.get_installation_token(installation.installation_id)
     except github_app.GitHubAppNotConfigured:
-        # Deployment-wide: the App isn't set up at all. Distinct from "no installation for
-        # this account" — worth a log line since every installation-backed request will hit
-        # this until an operator configures GITHUB_APP_ID/GITHUB_APP_PRIVATE_KEY.
+        # Deployment-wide: the App isn't set up at all -- worth a log line since every
+        # installation-backed request will hit this until an operator configures the App.
         logger.warning("GitHub App installation %s exists but the App is not configured", installation.installation_id)
         return None
     except (httpx.HTTPStatusError, httpx.RequestError):
-        # The installation row is stale (App uninstalled/suspended on GitHub's side), the
-        # App's private key was rotated/revoked, or GitHub's token-minting endpoint is
-        # briefly unreachable. Don't let this become an unhandled 500 -- fall back to a
-        # client-supplied token same as "no installation". `error`, not `warning`: unlike
-        # GitHubAppNotConfigured (routine until an operator sets the App up), this is an
-        # active installation that used to work and just failed, degrading every request
-        # through it to "paste a PAT" with only this log line as a signal.
+        # The installation row is stale (App uninstalled/suspended, key rotated/revoked)
+        # or GitHub's token-minting endpoint is briefly unreachable. Fall back to a
+        # client-supplied token same as "no installation". `error`, not `warning`: this is
+        # an active installation that just failed, degrading every request through it to
+        # "paste a PAT" with only this log line as a signal.
         logger.error("Failed to mint an installation token for installation %s", installation.installation_id, exc_info=True)
         return None
 
@@ -67,10 +64,9 @@ def _github_app_configured() -> bool:
 
 def _no_token_error(account_login: str, installation_exists: bool, *, personal: bool) -> NoGitHubTokenAvailable:
     if installation_exists:
-        # Distinct from "never installed" -- the installation row is there, minting just
-        # failed (stale/uninstalled on GitHub's side, or a transient API error; see the
-        # error _from_installation already logged). Telling the caller to "install" it
-        # sends them down the wrong path when, per the DB, it's already installed.
+        # Distinct from "never installed" -- the row is there, minting just failed (see
+        # the error _from_installation already logged). "Install" would send the caller
+        # down the wrong path when, per the DB, it's already installed.
         return NoGitHubTokenAvailable(
             f"A GitHub App installation exists for '{account_login}' but minting a token for it "
             "failed. The installation may need to be reinstalled, or the GitHub App may be "
@@ -139,27 +135,20 @@ def resolve_owner_token(
     min_role: Literal["member", "admin"] = "member",
 ) -> str:
     """Resolve a token for the "/me/*" endpoints, which accept an arbitrary `owner` (not
-    necessarily the caller's own account) -- e.g. Overview's cockpit/my-view widgets. If
-    `owner` is a Clevis org the caller has at least `min_role` in, prefer that org's
-    installation (same resolution the `/orgs/{org_login}/...` endpoints use) over a
-    personal-account installation, since an org-scoped install is the common case for
-    these widgets and resolve_personal_token's owner_user_id-scoped lookup can never
-    match it (this is why Overview showed "No GitHub App installation found" despite a
-    correctly connected org).
+    necessarily the caller's own account). If `owner` is a Clevis org the caller has at
+    least `min_role` in, prefer that org's installation over a personal-account one, since
+    resolve_personal_token's owner_user_id-scoped lookup can never match an org install.
 
     Role-gated, not just "org exists": without this, any authenticated user could pull
     another org's GitHub data through a /me/* endpoint merely by typing its login,
     bypassing the require_org_role check its /orgs/{org_login}/... equivalent enforces.
-    `min_role` defaults to "member" (read-only endpoints) but callers backing a
-    privileged action (e.g. cache clear, workflow dispatch) must pass "admin" to match
-    their org-scoped equivalent's requirement.
+    `min_role` defaults to "member"; privileged actions must pass "admin".
 
-    If the caller has no membership row for `owner` at all, this falls through to
-    resolve_personal_token (bring-your-own-token is fine here -- there's no Clevis org
-    relationship to bypass). But if a membership row exists and its role is below
-    `min_role`, this raises InsufficientOrgRole rather than falling through: silently
-    honoring a client-supplied token in that case would let a "member" trigger an
-    admin-only action just by pasting their own PAT, undermining the role gate above.
+    If the caller has no membership row for `owner`, this falls through to
+    resolve_personal_token (bring-your-own-token, no Clevis org relationship to bypass).
+    But if a membership row exists below `min_role`, this raises InsufficientOrgRole
+    rather than falling through -- honoring a client token there would let a "member"
+    trigger an admin-only action just by pasting their own PAT.
     """
     check_owner_role(db, user_id=user_id, owner=owner, min_role=min_role)
     org = org_repo.get_by_login_ci(db, owner)

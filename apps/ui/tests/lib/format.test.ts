@@ -67,7 +67,6 @@ describe("relativeTime", () => {
 
 describe("exactTime", () => {
   it("contains the date parts for a known timestamp", () => {
-    // NOW = 2026-05-26T12:00:00Z
     const result = exactTime(new Date(NOW).toISOString())
     expect(result).toContain("2026")
     expect(result).toContain("May")

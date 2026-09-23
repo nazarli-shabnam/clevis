@@ -1,7 +1,7 @@
-"""Covers run()'s single-iteration behavior end to end against a real Postgres instance,
-in particular that a claimed job gets wrapped in _JobHeartbeat (issue #215) -- run() itself
-is a `while True:` loop, so these tests break out after exactly one iteration by making
-time.sleep raise a sentinel exception."""
+"""run()'s single-iteration behavior against real Postgres, incl. _JobHeartbeat wrapping.
+
+The loop is broken after one iteration by making time.sleep raise a sentinel.
+"""
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -18,9 +18,7 @@ class _StopLoop(Exception):
 
 def _insert_queued_job(conn, created_ids) -> int:
     enc = encrypt_job_token("secret", settings.job_secret_key.get_secret_value())
-    # A key-scoped clear takes the single-DELETE path, which the mocked httpx.Client below
-    # stubs; a keyless (global) clear would first GET the cache list, which this test
-    # doesn't mock.
+    # Key-scoped clear: single DELETE path, which the mock below stubs (no cache-list GET).
     payload = json.dumps({"owner": "acme", "repo": "demo", "token": enc, "key": "build-cache"})
     with conn.cursor() as cur:
         cur.execute(
@@ -68,16 +66,13 @@ def test_run_wraps_a_claimed_job_in_a_job_heartbeat(worker_db, monkeypatch):
 
     status, heartbeat_at = _fetch(conn, job_id)
     assert status == "done"
-    # _JobHeartbeat.__enter__ ticks immediately, before process_job even starts -- proves
-    # run() actually wrapped the claimed job rather than calling process_job bare.
+    # _JobHeartbeat ticks immediately, proving run() wrapped the claimed job.
     assert heartbeat_at is not None
     assert heartbeat_at > datetime.now(timezone.utc) - timedelta(seconds=10)
 
 
 def test_run_logs_full_exception_on_generic_poll_error(monkeypatch, caplog):
-    # Regression test for issue #413: the generic `except Exception` branch used to log
-    # only type(error).__name__ -- a single word, no message/stack -- making a real
-    # handler bug indistinguishable from any other exception in production logs.
+    # The generic `except Exception` branch must log the full exception, not just its class name.
     monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 1)
     monkeypatch.setattr(worker, "_reclaim_stale_jobs", MagicMock(side_effect=RuntimeError("boom")))
     monkeypatch.setattr(worker.time, "sleep", MagicMock(side_effect=_StopLoop))

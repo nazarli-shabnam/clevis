@@ -1,4 +1,4 @@
-"""Tests for the org events feed router (Phase 9 groundwork)."""
+"""Tests for the org events feed router."""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -201,8 +201,7 @@ def test_events_different_tokens_are_not_served_from_the_same_cache_entry(events
 
 
 def test_events_evicts_expired_entries_from_the_cache(events_client):
-    # Same reasoning as test_repos.py's equivalent test: token_hash rotates hourly with
-    # each fresh installation token, so stale entries would otherwise never be pruned (#247).
+    # token_hash rotates hourly with each installation token, so stale entries must be pruned.
     import time as time_module
 
     stale_key = ("other-org", "deadbeef", 30)
@@ -274,12 +273,7 @@ def test_events_non_member_forbidden(db):
     assert resp.status_code == 403
 
 
-# ---------------------------------------------------------------------------
-# S6: repo_events-backed path for orgs with a connected GitHub App installation
-# (issue #191/#192's ingestion pipeline -- S3 webhooks + S4 normalization + S5
-# backfill/gap-healing -- all require one, so this is the signal used to decide
-# which path serves a given org; see org_events's own comment).
-# ---------------------------------------------------------------------------
+# repo_events-backed path: only orgs with a connected GitHub App installation get ingested events.
 
 
 def _insert_repo_event(db, tenant_id, *, delivery_id, event_type, actor, repo, summary, occurred_at):
@@ -385,11 +379,8 @@ def test_events_from_repo_events_maps_all_five_tracked_types_back_to_github_styl
 
 
 def test_events_falls_back_to_live_github_when_the_installation_has_no_installation_id(events_client, db, acme_org):
-    # sync_org_installation's known-admin path lets a caller re-sync org metadata without a
-    # real installation_id -- that row exists (get_for_org finds it) but there's no actual
-    # App installation behind it, so no webhook/backfill pipeline ever populated
-    # repo_events for this tenant. Must not be treated as "connected" (issue found on this
-    # PR's own review).
+    # An installation row with no installation_id has no real App behind it, so nothing ever
+    # populated repo_events; it must not count as "connected".
     installation_repo.create(db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=None, org_id=acme_org.id)
 
     with patch("src.routers.github.GitHubClient") as mock_client:
@@ -404,9 +395,7 @@ def test_events_falls_back_to_live_github_when_the_installation_has_no_installat
 def test_events_fall_back_to_live_github_when_installation_connected_but_repo_events_empty(
     events_client, db, acme_org_with_installation
 ):
-    # An App-connected org whose repo_events table is still empty (webhooks not yet
-    # subscribed, or the install-time backfill aged out). Instead of a permanently blank
-    # feed, org_events must fall through to the live-GitHub read.
+    # App-connected org with empty repo_events must fall through to live GitHub, not a blank feed.
     with patch("src.routers.github.GitHubClient") as mock_client:
         mock_client.return_value.request.return_value = [_PUSH_EVENT]
         resp = events_client.post(
@@ -419,8 +408,8 @@ def test_events_fall_back_to_live_github_when_installation_connected_but_repo_ev
 
 
 def test_events_falls_back_to_live_github_when_no_installation_is_connected(events_client, acme_org):
-    # acme_org (no installation fixture) -- confirms the hybrid still uses the unchanged
-    # live-GitHub path for a legacy PAT-only org, not an empty feed.
+    # PAT-only org (no installation) uses the live-GitHub path.
+
     with patch("src.routers.github.GitHubClient") as mock_client:
         mock_client.return_value.request.return_value = [_PUSH_EVENT]
         resp = events_client.post("/github/orgs/acme/events", json={"token": "ghp_testtoken123456789012345678901234"})

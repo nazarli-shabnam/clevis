@@ -1,4 +1,4 @@
-"""Tests for src.services.digest_service (issue #292)."""
+"""Tests for src.services.digest_service."""
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import text
@@ -83,12 +83,9 @@ def test_build_digest_tolerates_malformed_checks_json(db):
 
 
 def test_activity_window_is_seven_inclusive_days(db, monkeypatch):
-    # The window is today + the six days before it. An event 6 days old counts;
-    # one 7 days old (the 8th bucket) does not.
-    #
-    # Freeze the UTC clock: build_digest reads datetime.now(timezone.utc) itself,
-    # so without this a UTC-midnight rollover between here and the service call
-    # would shift the "6 days old" row to 7 days old and fail the test.
+    # Window is today + 6 prior days; a 6-day-old event counts, 7-day-old doesn't.
+    # Freeze the clock since build_digest reads datetime.now(timezone.utc) itself,
+    # to avoid a UTC-midnight rollover shifting the "6 days old" row during the test.
     fixed_now = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc)
 
     class _FrozenDatetime(datetime):

@@ -6,22 +6,20 @@ if [ -z "$DB_NAME" ] || [ -z "$JOB_SECRET_KEY" ] || [ -z "$REDIS_PASSWORD" ]; th
   exit 1
 fi
 
-# Percent-encodes a value so URI delimiters in it (@, :, /, %, #, ...) can't be
-# misparsed as part of the connection URL's structure (e.g. an "@" in a password
-# would otherwise be read as the userinfo/host separator).
+# Percent-encodes so URI delimiters in the value (@, :, /, %, #, ...) aren't
+# misparsed as part of the connection URL's structure.
 _urlenc() {
   python -c 'import sys, urllib.parse; sys.stdout.write(urllib.parse.quote_plus(sys.argv[1]))' "$1"
 }
 
 _db_name_enc=$(_urlenc "$DB_NAME")
 
-# issue #191/S4: webhook_events Redis Stream consumer (src/event_consumer.py). Built
-# here rather than left as a directly-set REDIS_URL, same reasoning as
-# apps/api/entrypoint.sh's REDIS_URL export -- the raw password only needs setting once.
+# Built here rather than a directly-set REDIS_URL so the raw password only needs
+# setting once (same as apps/api/entrypoint.sh's REDIS_URL export).
 export REDIS_URL="redis://:$(_urlenc "$REDIS_PASSWORD")@redis:6379/0"
 
-# Prefer a dedicated worker DB role (issue #190) over the credential shared with the
-# API -- see docker/postgres-init/01-create-worker-role.sh for how it's provisioned.
+# Prefer a dedicated worker DB role over the credential shared with the API -- see
+# docker/postgres-init/01-create-worker-role.sh for how it's provisioned.
 if [ -n "$WORKER_DB_PASSWORD" ]; then
   export DATABASE_URL="postgresql+psycopg://clevis_worker:$(_urlenc "$WORKER_DB_PASSWORD")@db:5432/${_db_name_enc}"
 elif [ -n "$DB_USER" ] && [ -n "$DB_PASSWORD" ]; then

@@ -1,8 +1,6 @@
-"""Tests for the file-as-GitHub-issue route (issue #286).
+"""Tests for the file-as-GitHub-issue route.
 
-Personal-scoped (`/me/repos/{owner}/{repo}/issues`), admin-gated when `owner` is a
-connected Clevis org, and the first Clevis endpoint that writes to GitHub -- so it needs
-a token with `Issues: write`, surfaced as a 400 when GitHub 403s.
+Admin-gated when `owner` is a connected Clevis org; needs `Issues: write` (GitHub 403 -> 400).
 """
 
 from unittest.mock import patch
@@ -91,9 +89,8 @@ def test_admin_creates_issue_and_writes_audit(client, db, user):
 
 
 def test_bring_your_own_pat_against_an_unconnected_owner_audits_under_the_personal_tenant(client, db, user):
-    # No Clevis org for "someone" -> resolve_owner_token falls through to the personal
-    # (BYO-PAT) path, and the audit row must land on the caller's personal tenant, never
-    # NULL (audit_logs' RLS policy rejects a NULL tenant_id under the constrained role).
+    # No Clevis org -> personal path; the audit row must land on the personal tenant, since
+    # audit_logs' RLS rejects a NULL tenant_id.
     from src.repositories import tenant_repo
 
     with patch("src.routers.issues.GitHubClient") as mock_client:

@@ -1,6 +1,5 @@
-"""Issue #409: periodic webhook_deliveries re-enqueue sweep, wired via
-sweep_loop.run_sweep_loop. Started from src.main's lifespan. See sweep_loop.py for the
-shared loop/session/reset shape.
+"""Periodic webhook_deliveries re-enqueue sweep, wired via sweep_loop.run_sweep_loop.
+Started from src.main's lifespan. See sweep_loop.py for the shared loop/session/reset shape.
 """
 
 from src.services.sweep_loop import run_sweep_loop

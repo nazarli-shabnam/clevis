@@ -3,9 +3,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import GlobalError from "@/app/global-error";
 
-// global-error.tsx renders its own <html>/<body> (it replaces the root layout). React
-// warns about that nesting under jsdom's container div; it's expected here, so silence it
-// so a real warning elsewhere still stands out.
+// global-error.tsx renders its own <html>/<body>; silence React's expected nesting warning.
 const originalError = console.error;
 beforeAll(() => {
   vi.spyOn(console, "error").mockImplementation((...args) => {

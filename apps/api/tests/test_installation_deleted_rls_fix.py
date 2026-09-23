@@ -1,24 +1,7 @@
-"""Regression test for issue #191/S3 PR 2: the GitHub webhook receiver's
-installation.deleted handler was silently no-op'ing under the real, non-superuser
-clevis_api role (issue #330) because it never set the app.tenant_id/app.user_id session
-vars migration 0031's RLS policy on github_installations reads -- see
-installation_repo.delete_by_installation_id's docstring and migration 0035's docstring
-for the full explanation.
+"""installation.deleted webhook must delete under the non-superuser clevis_api role with no RLS session context.
 
-Deliberately does NOT use the shared `db` fixture (conftest.py). That fixture joins an
-already-open outer transaction via SQLAlchemy's `join_transaction_mode="create_savepoint"`
--- each `Session.commit()` inside a test only releases a SAVEPOINT, it doesn't end the
-real Postgres transaction. Plain `SET` (used by set_tenant_session_context) is
-connection-scoped, so that's fine either way, but this test needs to prove the bug exists
-with NO session context carried over from an unrelated earlier write in the same test --
-using a real connection with real commits (mirroring production's one-connection-per-
-request lifecycle: get_db() hands out a brand-new session per request, so a webhook
-request's connection never inherits an admin request's app.tenant_id) makes that explicit
-rather than relying on savepoint semantics happening to keep it isolated.
-
-Same skip-when-unavailable convention as test_rls_isolation.py: reuses DATABASE_URL when
-the suite is already running as clevis_api (CI), or swaps credentials via API_DB_PASSWORD
-for an opt-in local run.
+Uses a real connection with real commits (not the savepoint `db` fixture) so no session
+context leaks in. Skips unless running as clevis_api or API_DB_PASSWORD is set.
 """
 
 import os
@@ -58,11 +41,7 @@ def test_installation_deleted_removes_the_row_with_no_session_context_set():
         user = org = tenant = installation = None
         try:
             try:
-                # Setup mirrors the real authenticated sync path (installations.py's
-                # sync_org_installation): an admin's request resolves the org's tenant and
-                # explicitly sets session context before writing github_installations,
-                # exactly like migration 0031's docstring documents as the one org-scoped
-                # write's fix.
+                # Mirrors sync_org_installation: resolve the tenant and set session context before writing.
                 user = User(
                     email="installation-rls-fix@test.local", name=None, password_hash=None, is_workspace_admin=False
                 )
@@ -73,10 +52,8 @@ def test_installation_deleted_removes_the_row_with_no_session_context_set():
                 session.add(org)
                 session.commit()
 
-                # org_repo.ensure_tenant_linked (not a direct org.tenant_id assignment):
-                # orgs' WITH CHECK (migration 0033) requires app.tenant_id to already match
-                # on any UPDATE, and this is the one call site allowed to set it to a
-                # brand-new tenant it just created -- see that function's own docstring.
+                # Not a direct org.tenant_id assignment: orgs' WITH CHECK policy requires app.tenant_id
+                # to match on UPDATE, and ensure_tenant_linked is the one path allowed to link a new tenant.
                 org = org_repo.ensure_tenant_linked(session, org)
                 tenant = session.query(Tenant).filter(Tenant.id == org.tenant_id).first()
 
@@ -91,13 +68,8 @@ def test_installation_deleted_removes_the_row_with_no_session_context_set():
                 )
                 assert installation.tenant_id == tenant.id
 
-                # This is the crux of the regression: reset session context to model the
-                # webhook receiver's actual runtime state -- an unauthenticated request on
-                # a connection that has never called set_tenant_session_context/
-                # set_session_user. Before the fix, delete_by_installation_id's own
-                # SELECT/DELETE against github_installations evaluated RLS's
-                # tenant_id/owner_user_id-equality policy to NULL OR NULL and silently
-                # matched zero rows.
+                # Model the unauthenticated webhook request: with no session context RLS's equality
+                # policy evaluates to NULL and would silently match zero rows.
                 session.execute(text("RESET app.tenant_id"))
                 session.execute(text("RESET app.user_id"))
 
@@ -106,25 +78,15 @@ def test_installation_deleted_removes_the_row_with_no_session_context_set():
                 assert removed == 1
                 assert resolved_tenant_id == tenant.id
 
-                # Confirm it's actually gone, not just miscounted -- re-resolve via the
-                # SECURITY DEFINER lookup (migration 0035), which bypasses RLS the same way
-                # the fix itself does, so this assertion isn't fooled by the same bug.
+                # Re-resolve via the RLS-bypassing SECURITY DEFINER lookup so this check isn't fooled by RLS.
                 still_present = session.execute(
                     text("SELECT resolve_installation_tenant_id(:installation_id)"), {"installation_id": 987654}
                 ).scalar()
                 assert still_present is None
             finally:
                 session.rollback()
-                # Restore context (if the test's own delete-under-test didn't already
-                # remove the row via the fix, e.g. when run against the pre-fix code) so
-                # this cleanup's own writes against RLS-protected github_installations/
-                # tenants aren't blocked by the very same gap this PR fixes --
-                # deliberately using the raw SET here, not the fix's SECURITY DEFINER
-                # path, since cleanup already has tenant/user in scope. Falls back to
-                # set_session_user alone when tenant resolution itself failed (tenant is
-                # still None) but user was created -- restoring at least the user-scoped
-                # half of RLS's self-access clause instead of skipping restoration
-                # entirely (CodeRabbit finding on PR #337).
+                # Restore session context so cleanup writes aren't blocked by RLS (user-only if
+                # tenant resolution failed).
                 if user is not None:
                     if tenant is not None:
                         set_tenant_session_context(session, tenant.id, user.id)
@@ -151,10 +113,7 @@ def test_installation_deleted_removes_the_row_with_no_session_context_set():
 
 
 def test_resolve_installation_tenant_id_bypasses_rls_with_no_session_context():
-    """Narrower unit check on migration 0035's function itself, isolated from the repo-
-    level delete flow above: it must resolve tenant_id purely from installation_id,
-    regardless of session context, since that's precisely the pre-authentication
-    condition it exists to handle."""
+    """The SECURITY DEFINER lookup resolves tenant_id from installation_id regardless of session context."""
     engine = _clevis_api_engine()
     with engine.connect() as conn:
         session = Session(bind=conn, expire_on_commit=False)
@@ -188,9 +147,7 @@ def test_resolve_installation_tenant_id_bypasses_rls_with_no_session_context():
                 session.execute(text("RESET app.tenant_id"))
                 session.execute(text("RESET app.user_id"))
 
-                # Sanity check: with no session context, a plain SELECT against the
-                # RLS-protected table itself is blocked (proving this test's "no context"
-                # state is real, not accidentally leaked).
+                # Sanity check: with no session context, a plain SELECT is blocked by RLS.
                 blocked = session.execute(
                     text("SELECT id FROM github_installations WHERE installation_id = :iid"), {"iid": 987655}
                 ).fetchall()

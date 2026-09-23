@@ -1,14 +1,6 @@
-"""
-Runtime configuration backed by the app_config DB table.
+"""Runtime config backed by the app_config table, cached in memory for 60s.
 
-Values are cached in memory for 60 seconds. The cache is deliberately simple
-(a module-level dict) to avoid circular imports. Thread safety is not critical
-here — a brief race on TTL expiry means at most one extra DB read.
-
-Usage:
-    from src.core.app_config import get_config
-
-    poll = get_config("worker_poll_seconds", "5")
+The cache is a module-level dict to avoid circular imports; a TTL race costs at most one extra DB read.
 """
 
 import logging
@@ -25,12 +17,10 @@ _ACCEPTED_KEYS = {
     "gap_heal_stale_hours",
     "membership_reconcile_poll_seconds",
     "membership_reconcile_stale_hours",
-    # Issue #289: stale-PR nudges (on-demand sweep)
     "pr_nudge_stale_days",
     "pr_nudge_mode",
     "digest_poll_seconds",
     "digest_cadence",
-    # Issue #409: webhook_deliveries re-enqueue sweep
     "webhook_requeue_poll_seconds",
 }
 _TTL = 60.0
@@ -55,11 +45,8 @@ def get_config(key: str, default: str = "") -> str:
             ).fetchone()
         val = row[0] if row else default
     except Exception:
-        # A transient DB blip or a missing SELECT grant (e.g. a constrained clevis_api
-        # role) shouldn't silently flip a security-posture setting like
-        # registration_enabled back to its code default -- serve the last-known-good
-        # cached value instead, if we have one. Don't refresh its timestamp: we want
-        # the next call to retry the DB rather than pin the stale value for a full TTL.
+        # On a DB error (blip or missing SELECT grant) serve the last-known-good value rather than
+        # flip a security setting like registration_enabled to its default. Don't refresh its timestamp.
         if key in _cache:
             logger.error("app_config read failed for key %r, serving last-known-good cached value", key)
             return _cache[key][0]
@@ -80,11 +67,7 @@ def read_all() -> dict[str, str]:
 
 
 def set_config(key: str, value: str) -> None:
-    """Persist *key* → *value* and invalidate its cache entry.
-
-    Uses an upsert so a missing row (e.g. manually deleted) is re-created rather
-    than silently ignored by a plain UPDATE.
-    """
+    """Upsert *key* → *value* (re-creating a missing row) and invalidate its cache entry."""
     if key not in _ACCEPTED_KEYS:
         raise ValueError(f"Unknown config key: {key!r}")
 

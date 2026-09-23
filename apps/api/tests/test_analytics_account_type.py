@@ -1,4 +1,4 @@
-"""Unit tests for analytics_service.get_account_type (issue #144)."""
+"""Unit tests for analytics_service.get_account_type."""
 
 from unittest.mock import MagicMock, patch
 

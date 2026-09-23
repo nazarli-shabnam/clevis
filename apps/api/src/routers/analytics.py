@@ -42,8 +42,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Bounds the per-repo fan-out in _safe_commit_activity_4w / _safe_total_cache_bytes --
-# each additional repo costs one more GitHub call, so large orgs are capped.
+# Caps the per-repo fan-out (one GitHub call per repo) for large orgs.
 _MAX_REPOS_FOR_AGGREGATES = 30
 _CACHE_JOB_TYPE = "github.clear_actions_cache"
 
@@ -83,17 +82,10 @@ def _persist_scan(db: Session, result: dict, tenant_id: int | None, scanned_by_u
 
 
 def _user_history_scope(db: Session, user: UserOut, owner: str) -> str | None:
-    """How much of `owner`'s scan history this user may read. Scan history isn't
-    gated by GitHub-side authorization the way a live scan is -- it's a local DB
-    read, so it needs its own check. Returns:
+    """How much of `owner`'s scan history this user may read (a local DB read, so it needs its own gate).
 
-    - ``"all"``  -- the user is a member of the matching workspace Org, or has a
-      personal GitHub App installation for that account login: they see every
-      scan of that owner.
-    - ``"own"``  -- the user's only claim is a personal (BYO-PAT) scan they ran
-      themselves against a login with no workspace Org/membership: they see only
-      their own scans (`scanned_by_user_id`).
-    - ``None``   -- no access.
+    ``"all"``: workspace Org member or personal installation for that login. ``"own"``: only their
+    own BYO-PAT scans (`scanned_by_user_id`). ``None``: no access.
     """
     org = org_repo.get_by_login(db, owner)
     if org is not None:
@@ -145,10 +137,8 @@ async def personal_analytics_overview(
         raise HTTPException(status_code=400, detail=str(exc))
     account_type = await _get_account_type(payload.owner, token)
     result = await _run_overview(payload.owner, token, account_type=account_type)
-    # payload.owner here can be any GitHub account the user has a token for (bring-your-own-
-    # token path), not necessarily a Clevis org -- the scan row is associated with the
-    # scanning user's own personal tenant, consistent with the existing scanned_by_user_id-
-    # based access-gating design (see ScanResult.tenant_id/scanned_by_user_id in db.py).
+    # owner can be any account the user has a token for (BYO-token), so the scan is recorded under
+    # the scanning user's personal tenant.
     personal_tenant = tenant_repo.ensure_personal_tenant(db, user.id)
     _persist_scan(db, result, tenant_id=personal_tenant.id, scanned_by_user_id=user.id)
     return result
@@ -163,9 +153,7 @@ def org_analytics_history(
 
 
 def _billing_num(value: object) -> float:
-    """Coerce a GitHub billing quantity to a float, defaulting a missing / non-numeric
-    field to 0.0 rather than raising (the usage API's numeric fields are documented as
-    required, but we don't want a shape drift to 500 the whole Overview)."""
+    """Coerce a GitHub billing quantity to float; missing/non-numeric becomes 0.0 so shape drift can't 500."""
     return float(value) if isinstance(value, (int, float)) else 0.0
 
 
@@ -176,18 +164,11 @@ def org_actions_usage(
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),
 ):
-    """GitHub Actions minutes used this billing month for the org (issue #294).
+    """GitHub Actions minutes used this billing month for the org.
 
-    **Needs a GitHub App permission Clevis does not request by default.** Reading
-    ``GET /organizations/{org}/settings/billing/usage/summary`` requires the org
-    **Administration** permission (read); billing was an explicitly deferred roadmap
-    area. Read-only. When the App lacks it GitHub returns 403, surfaced here as a 400
-    with a clear hint so the UI can hide the card rather than error the page.
-
-    This replaces the retired ``/orgs/{org}/settings/billing/actions`` endpoint
-    (GitHub shut it down on 2025-09-26). The response is billing data, so it's served
-    ``Cache-Control: no-store`` — it must never sit in a shared/browser cache where a
-    later, lower-privilege session could read it (CWE-525). No migration.
+    Needs the org Administration (read) permission, which Clevis doesn't request by default; a
+    GitHub 403 becomes a 400 with a hint so the UI can hide the card. Served ``Cache-Control:
+    no-store`` since billing data must never sit in a shared/browser cache (CWE-525).
     """
     try:
         token = resolve_org_token(
@@ -224,9 +205,8 @@ def org_actions_usage(
     for item in data["usageItems"]:
         if not isinstance(item, dict):
             raise HTTPException(status_code=502, detail="Unexpected response from GitHub billing API")
-        # The summary is already product-filtered, but it still carries Actions
-        # *storage* (unitType "GB") alongside minutes — count only the minutes.
-        # GitHub's casing for unit types isn't contractually fixed, so match loosely.
+        # The summary also carries Actions storage (unitType "GB"); count only minutes. GitHub's
+        # unit-type casing isn't contractually fixed, so match loosely.
         if str(item.get("unitType", "")).lower() != "minutes":
             continue
         gross = _billing_num(item.get("grossQuantity"))
@@ -256,12 +236,8 @@ def personal_analytics_history(
     return scan_results_repo.list_recent(db, owner=owner, limit=30)
 
 
-# ---------------------------------------------------------------------------
-# Compliance export (issue #293) -- the full scan-history rows *with* each
-# scan's per-check breakdown, over an optional [since, until] window, so an
-# auditor can pull a reporting period. Same access gating as the history
-# endpoints above; the CSV rendering itself is done client-side.
-# ---------------------------------------------------------------------------
+# Compliance export: scan history with per-check breakdown over an optional [since, until] window.
+# Same access gating as the history endpoints; CSV is rendered client-side.
 
 _EXPORT_MAX_ROWS = 5000
 
@@ -270,8 +246,7 @@ def _export_window(since: date | None, until: date | None) -> tuple[datetime | N
     if since is not None and until is not None and since > until:
         raise HTTPException(status_code=422, detail="`since` must not be after `until`")
     since_dt = datetime.combine(since, datetime.min.time(), tzinfo=timezone.utc) if since else None
-    # `until` is an inclusive calendar day: widen it to the end of that day so a
-    # scan run at 14:00 on the `until` date isn't silently dropped.
+    # `until` is an inclusive calendar day: widen to end of day.
     until_dt = (
         datetime.combine(until, datetime.max.time(), tzinfo=timezone.utc) if until else None
     )
@@ -279,8 +254,7 @@ def _export_window(since: date | None, until: date | None) -> tuple[datetime | N
 
 
 def _build_export_response(rows: list[dict], limit: int) -> ScanExportResponse:
-    # list_for_export fetches limit+1 so a full page is distinguishable from a
-    # truncated one -- a compliance export must never be silently partial.
+    # limit+1 distinguishes a full page from a truncated one; an export must never be silently partial.
     truncated = len(rows) > limit
     entries = rows[:limit]
     return ScanExportResponse(truncated=truncated, row_count=len(entries), entries=entries)
@@ -320,21 +294,14 @@ def personal_analytics_export(
         since=since_dt,
         until=until_dt,
         limit=limit,
-        # "own" scope: the caller only ever ran a personal BYO-PAT scan of this
-        # login -- don't hand them scans other users ran (or an org's own rows).
+        # "own" scope: don't hand over scans other users (or an org) ran.
         scanned_by_user_id=user.id if scope == "own" else None,
     )
     return _build_export_response(rows, limit)
 
 
-# ---------------------------------------------------------------------------
-# Overview cockpit (docs/plan.md Phase 12) -- aggregates DB reads plus several
-# independent GitHub calls into one response. Each GitHub-calling helper below
-# is best-effort except _safe_list_repos: a degraded cockpit (missing PR data
-# because search was rate-limited, say) is more useful to an org-health
-# dashboard than a 500/503 for the whole page, but nothing here is computable
-# without at least the repo list, so that one call is allowed to fail hard.
-# ---------------------------------------------------------------------------
+# Overview cockpit: DB reads plus independent GitHub calls. Every GitHub helper is best-effort
+# (degrading the response) except _safe_list_repos, since nothing is computable without repos.
 
 
 def _safe_list_repos(owner: str, token: str, account_type: str = "Organization") -> list[dict]:
@@ -343,18 +310,14 @@ def _safe_list_repos(owner: str, token: str, account_type: str = "Organization")
 
 
 def _owner_search_qualifier(owner: str, account_type: str) -> str:
-    # GitHub's search API needs `user:` rather than `org:` to scope a query to a
-    # personal (User-type) account's repos -- `org:` only matches organizations.
+    # GitHub search needs `user:` rather than `org:` to scope to a personal account's repos.
     return f"user:{owner}" if account_type == "User" else f"org:{owner}"
 
 
 def _safe_member_count(owner: str, token: str, account_type: str = "Organization") -> tuple[int | None, bool]:
-    """Returns (count, ok). count is None for a User-type owner -- personal accounts have no
-    "members" concept, so there's no GitHub equivalent to fall back to; ok=True there since
-    that's not a failure. Otherwise ok=False means the call failed and count is a fallback 0,
-    not a real zero. Callers must fold `not ok` into CockpitResponse.degraded rather than
-    trusting the bare count, which previously looked identical to "this org genuinely has zero
-    members." """
+    """Returns (count, ok). count is None for a User-type owner (no members concept; ok=True).
+
+    ok=False means the call failed and count is a fallback 0; callers must fold it into `degraded`."""
     if account_type == "User":
         return None, True
     try:
@@ -365,16 +328,9 @@ def _safe_member_count(owner: str, token: str, account_type: str = "Organization
 
 
 def _cockpit_connected_tenant(db: Session, user_id: int, owner: str) -> int | None:
-    # Unlike repos.py/github.py's org-scoped endpoints, the cockpit is a personal
-    # endpoint (require_auth only, no OrgContext/require_org_role) -- `owner` is
-    # whatever GitHub login the caller resolved a token for via resolve_owner_token,
-    # not necessarily a Clevis org the caller is a member of (bring-your-own-token is
-    # allowed here). Mirrors resolve_owner_token's own org-membership+role resolution
-    # (token_resolution.py) deliberately: without this membership check, any caller
-    # could read another org's repo_event_daily_counts/repo_events just by naming its
-    # login, the exact class of bug resolve_owner_token's own docstring says it guards
-    # against for token resolution -- "there exists a connected installation for this
-    # login" alone is not authorization to read its aggregate data.
+    # The cockpit is a personal endpoint (require_auth only), so `owner` may be any login the caller
+    # has a token for. Without this membership check any caller could read another org's aggregate
+    # data by naming its login; a connected installation alone isn't authorization.
     org = org_repo.get_by_login_ci(db, owner)
     if org is None:
         return None
@@ -384,12 +340,8 @@ def _cockpit_connected_tenant(db: Session, user_id: int, owner: str) -> int | No
     installation = installation_repo.get_for_org(db, org_id=org.id, account_login=owner)
     if installation is None or installation.installation_id is None:
         return None
-    # Sets RLS session context for this connection so the aggregate reads below (repo_events/
-    # repo_event_daily_counts, migrations 0036/0037, both ENABLE ROW LEVEL SECURITY with a
-    # strict tenant_id filter) are correctly tenant-scoped -- resolve_owner_token
-    # itself doesn't set this (a separate, pre-existing gap in that shared helper, out of
-    # scope here; see its own docstring), so this is the first point in the cockpit's
-    # request handling where it's safe to do so, now that real membership is confirmed.
+    # Set RLS context for the tenant-scoped aggregate reads below, now that membership is confirmed.
+    # resolve_owner_token itself doesn't set it (known gap in that helper).
     set_tenant_session_context(db, org.tenant_id, user_id)
     return org.tenant_id
 
@@ -397,8 +349,7 @@ def _cockpit_connected_tenant(db: Session, user_id: int, owner: str) -> int | No
 def _safe_recent_events(
     db: Session, owner: str, token: str, tenant_id: int | None
 ) -> tuple[list[OrgEventSummary], bool]:
-    """Returns (events, ok) -- ok=False means the underlying fetch failed and events is a fallback
-    [], not a real "no activity" answer."""
+    """Returns (events, ok); ok=False means the fetch failed and events is a fallback []."""
     try:
         if tenant_id is not None:
             events = _fetch_events_from_repo_events(db, owner, tenant_id, per_page=10).events
@@ -413,8 +364,7 @@ _ACTIVITY_STALE_HOURS_DEFAULT = 6
 
 
 def _activity_stale_hours() -> int:
-    # Mirrors gap_heal_sweep.py's own _read_stale_hours -- same config key, same clamp -- so
-    # "stale" means the same thing here as it does to the sweep that's supposed to fix it.
+    # Same config key and clamp as gap_heal_sweep._read_stale_hours, so "stale" means the same thing.
     raw = get_config("gap_heal_stale_hours", str(_ACTIVITY_STALE_HOURS_DEFAULT))
     try:
         return max(1, min(168, int(raw)))
@@ -423,10 +373,9 @@ def _activity_stale_hours() -> int:
 
 
 def _recent_events_staleness(db: Session, tenant_id: int) -> bool:
-    """True if this tenant's activity ingestion cursor is older than gap_heal_stale_hours (or has
-    never synced at all) -- surfaced to the UI so a stalled pipeline shows old data labeled as old,
-    instead of silently looking current. Tenant session context is already set by
-    _cockpit_connected_tenant before this runs, so this read is correctly RLS-scoped."""
+    """True if this tenant's activity cursor is older than gap_heal_stale_hours or never synced.
+
+    Lets the UI label stale data as stale. Tenant context is already set by _cockpit_connected_tenant."""
     row = db.execute(
         text("SELECT last_synced_at FROM activity_sync_cursors WHERE tenant_id = :tenant_id"),
         {"tenant_id": tenant_id},
@@ -443,10 +392,8 @@ def _recent_events_staleness(db: Session, tenant_id: int) -> bool:
 def _cockpit_events_and_commit_activity(
     db: Session, owner: str, token: str, tenant_id: int | None, repo_names: list[str]
 ) -> tuple[list[OrgEventSummary], bool, bool, tuple[list[int], list[int], bool]]:
-    # Bundled into one call, not two independent asyncio.gather entries, because both
-    # branches below read `db` when tenant_id is set -- a SQLAlchemy Session isn't safe
-    # to use concurrently from two threads at once, unlike every other helper in the
-    # cockpit's gather, which only ever touches the GitHub token/client.
+    # One call, not two gather entries: both branches read `db`, and a Session isn't safe to use
+    # from two threads at once.
     recent_events, recent_events_ok = _safe_recent_events(db, owner, token, tenant_id)
     recent_events_stale = _recent_events_staleness(db, tenant_id) if tenant_id is not None else False
     if tenant_id is not None:
@@ -457,12 +404,9 @@ def _cockpit_events_and_commit_activity(
 
 
 def _cockpit_commit_activity_from_aggregate(db: Session, tenant_id: int) -> tuple[list[int], list[int]]:
-    """Same {4w, 52w} shape _safe_commit_activity_4w_and_heatmap_52w returns, built from
-    repo_event_daily_counts' push-event counts summed across every repo in the tenant
-    (the cockpit's commit_activity_4w/commit_heatmap_52w are org-wide, unlike repos.py's
-    per-repo aggregate) instead of GitHub's actual per-repo commit counts -- an
-    approximation for the same reason repos.py's aggregate is: a push can carry multiple
-    commits. Callers must set CockpitResponse.commit_activity_source="aggregate"."""
+    """Same {4w, 52w} shape, approximated from repo_event_daily_counts' push counts across the tenant.
+
+    Approximate since a push can carry multiple commits. Callers must set commit_activity_source="aggregate"."""
     today = datetime.now(timezone.utc).date()
     current_week_start = today - timedelta(days=(today.weekday() + 1) % 7)
     oldest_week_start = current_week_start - timedelta(weeks=51)
@@ -529,14 +473,10 @@ def _safe_pr_merge_rate_4w(owner: str, token: str, account_type: str = "Organiza
 
 
 def _week_total(week: dict) -> int:
-    """Raises AttributeError (non-dict week) or TypeError (not a real non-negative commit count)
-    for the caller to treat as a per-repo failure -- a malformed nested record from GitHub must
-    not silently coerce into 0, which would look identical to a real zero-commit week. A commit
-    count is always a non-negative plain int on GitHub's side; explicitly excludes bool (`bool`
-    is a subclass of `int` in Python, so `isinstance(True, int)` is True) and rejects fractional/
-    negative values, which CockpitResponse's `commit_activity_4w: list[int]` can't represent
-    faithfully (a fraction would silently truncate on Pydantic coercion; a negative would pass
-    validation but produce a nonsensical metric)."""
+    """Return a commit_activity week's total; raise AttributeError/TypeError on a malformed record.
+
+    A malformed record must not coerce to 0 (looks like a real zero week). Rejects bool (an int
+    subclass), fractional and negative counts, which list[int] can't represent faithfully."""
     total = week.get("total", 0)
     if isinstance(total, bool) or not isinstance(total, int) or total < 0:
         raise TypeError(f"invalid week total: {total!r}")
@@ -546,17 +486,8 @@ def _week_total(week: dict) -> int:
 def _safe_commit_activity_4w_and_heatmap_52w(
     owner: str, token: str, repo_names: list[str]
 ) -> tuple[list[int], list[int], bool]:
-    # Both windows are slices of the exact same GitHub call
-    # (/repos/{owner}/{repo}/stats/commit_activity already returns 52 weeks), so this
-    # fetches each repo once and derives both aggregates from it -- fetching twice
-    # (once per aggregate) would double this endpoint's GitHub API cost for no reason.
-    #
-    # Each repo's future is resolved individually below: a failing repo is skipped (its
-    # commits just don't contribute) rather than zeroing the whole org's aggregate, and the
-    # returned `ok` flag tells the caller at least one repo's stats couldn't be fetched, so
-    # the resulting totals are a real partial sum, not a silent lie dressed up as "0 commits."
-    # No outer try/except: every future's result() is resolved inside the loop below, so a
-    # per-repo httpx failure is always caught there -- an outer catch here would be dead code.
+    # Both windows slice the same /stats/commit_activity response (52 weeks), so each repo is fetched once.
+    # A failing repo is skipped and flips `ok`, so totals are an honest partial sum rather than "0 commits".
     client = GitHubClient(token)
     totals_4w = [0, 0, 0, 0]
     totals_52w = [0] * 52
@@ -575,12 +506,8 @@ def _safe_commit_activity_4w_and_heatmap_52w(
             if not isinstance(weeks, list):
                 ok = False
                 continue
-            # A malformed nested record (a non-dict week, or a non-numeric "total") must not
-            # raise past this point -- an uncaught exception here would escape asyncio.gather
-            # and fail the whole cockpit request instead of just degrading this one repo's
-            # contribution, defeating the whole point of this per-repo isolation. Accumulated
-            # into a local delta first (not directly into totals_4w/52w) so a mid-repo failure
-            # can't leave this one repo's contribution half-applied across the two arrays.
+            # A malformed record must not escape asyncio.gather and fail the whole cockpit. Accumulate
+            # into a local delta so a mid-repo failure can't half-apply across the two arrays.
             try:
                 delta_4w = [_week_total(week) for week in weeks[-4:]] if len(weeks) >= 4 else [0, 0, 0, 0]
                 delta_52w = [_week_total(week) for week in weeks[-52:]] if len(weeks) >= 52 else [0] * 52
@@ -595,9 +522,7 @@ def _safe_commit_activity_4w_and_heatmap_52w(
 
 
 def _cache_entry_bytes(entry: dict) -> int:
-    """Same contract and non-negative-plain-int rationale as _week_total: raises for the caller
-    to treat as a per-repo failure instead of silently coercing a malformed entry into 0 bytes,
-    accepting a bool, or accepting a negative/fractional size."""
+    """Same contract as _week_total: raise on a malformed, bool, negative or fractional size."""
     size = entry.get("size_in_bytes", 0)
     if isinstance(size, bool) or not isinstance(size, int) or size < 0:
         raise TypeError(f"invalid cache entry size: {size!r}")
@@ -605,8 +530,7 @@ def _cache_entry_bytes(entry: dict) -> int:
 
 
 def _safe_total_cache_bytes(owner: str, token: str, repo_names: list[str]) -> tuple[int, bool]:
-    # See _safe_commit_activity_4w_and_heatmap_52w's comment -- no outer try/except needed here
-    # either, for the same reason.
+    # Per-repo failures are caught in the loop, so no outer try/except.
     client = GitHubClient(token)
     total = 0
     ok = True
@@ -624,9 +548,7 @@ def _safe_total_cache_bytes(owner: str, token: str, repo_names: list[str]) -> tu
             if not isinstance(data, dict):
                 ok = False
                 continue
-            # Same non-dict-entry/non-numeric-field guard as the commit-activity helper above --
-            # a malformed cache entry must degrade this one repo, not raise past future.result()
-            # and fail the whole cockpit request.
+            # A malformed cache entry must degrade this one repo, not fail the whole cockpit.
             try:
                 total += sum(_cache_entry_bytes(c) for c in data.get("actions_caches", []))
             except (AttributeError, TypeError):
@@ -650,9 +572,7 @@ def _milestone_state(due_on: str | None, progress_pct: float) -> str:
 
 
 def _safe_milestones(owner: str, token: str, repo_names: list[str]) -> tuple[list[MilestoneSummary], list[AtRiskRepo]]:
-    """Fetches each repo's open milestones, best-effort per repo (one slow/broken repo
-    doesn't blank out every other repo's milestones, unlike _safe_commit_activity_4w's
-    all-or-nothing contract -- milestone data is naturally per-repo and independent)."""
+    """Each repo's open milestones, best-effort per repo so one broken repo doesn't blank the rest."""
     client = GitHubClient(token)
     milestones: list[MilestoneSummary] = []
 
@@ -708,12 +628,8 @@ def _safe_milestones(owner: str, token: str, repo_names: list[str]) -> tuple[lis
 
 
 def _week_pr_cycle_time(client: GitHubClient, owner: str, start: date, account_type: str = "Organization") -> PrCycleTimeWeek:
-    # closed_at approximates merge time for a merged PR (search API's issues endpoint
-    # doesn't expose merged_at directly) -- an approximation, same spirit as Phase 18's
-    # documented "last activity" sampling elsewhere in this codebase.
-    # GitHub's search API date qualifiers are inclusive on both ends at day granularity,
-    # so the window end is `+6 days` (a 7-day span) not `+7` -- otherwise a PR merged
-    # exactly on a week-boundary day would double-count into both adjacent weeks.
+    # closed_at approximates merge time (the search issues endpoint doesn't expose merged_at).
+    # Search date qualifiers are inclusive at day granularity, so +6 days avoids double-counting.
     qualifier = _owner_search_qualifier(owner, account_type)
     result = client.request(
         "GET",
@@ -747,9 +663,7 @@ def _safe_pr_cycle_time_8w(owner: str, token: str, account_type: str = "Organiza
 
 
 def _safe_release_cadence_4w(owner: str, token: str, repo_names: list[str]) -> list[int]:
-    """Weekly release counts across the org's repos for the last 4 weeks -- a coarse
-    KPI signal for the CEO cockpit, distinct in shape/purpose from the full per-release
-    timeline docs/plan.md Phase 17 adds separately."""
+    """Weekly release counts across the org's repos for the last 4 weeks."""
     week_starts = [_week_start(weeks_ago) for weeks_ago in range(3, -1, -1)]
     totals = [0, 0, 0, 0]
 
@@ -802,16 +716,12 @@ async def personal_analytics_cockpit(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    # Establish tenant/RLS session context BEFORE any tenant-scoped DB read below.
-    # _cockpit_connected_tenant calls set_tenant_session_context once it has confirmed
-    # membership; scan_results is FORCE ROW LEVEL SECURITY, so reading it first (as this
-    # used to) returns nothing under an enforced-RLS deployment -- only tenant_id IS NULL
-    # rows match an unset app.tenant_id, and real scans always carry a tenant.
+    # Establish tenant context BEFORE any tenant-scoped read: scan_results is FORCE RLS, so reading it
+    # first returns nothing under enforced RLS.
     connected_tenant_id = await anyio.to_thread.run_sync(lambda: _cockpit_connected_tenant(db, user.id, owner))
 
-    # Scan history is a local DB read, not a GitHub-authorized one, so it needs its own
-    # access gate -- the same one /me/analytics/history and /me/analytics/export use.
-    # A caller with no claim at all still gets the rest of the cockpit, just no trend.
+    # Scan history is a local DB read, so it needs its own access gate (same as /me/analytics/history).
+    # A caller with no claim still gets the rest of the cockpit, just no trend.
     history_scope = await anyio.to_thread.run_sync(lambda: _user_history_scope(db, user, owner))
     scans = (
         scan_results_repo.list_recent(
@@ -887,13 +797,8 @@ async def personal_analytics_cockpit(
     )
 
 
-# ---------------------------------------------------------------------------
-# My View (docs/plan.md Phase 14) -- a single GitHub-scoped account's own open PRs,
-# review queue, assigned issues, and recent workflow runs, resolved via the same
-# per-owner token as the cockpit. GitHub's search API works across every repo the
-# token can see (not just `owner`'s), so my_open_prs/review_requests/assigned_issues
-# aren't scoped to `owner` -- only the token-resolution step is.
-# ---------------------------------------------------------------------------
+# My View: the token owner's open PRs, review queue, assigned issues and recent runs. Search spans
+# every repo the token can see, so only token resolution is scoped to `owner`.
 
 _MAX_REPOS_FOR_RUN_LOOKUP = 15
 
@@ -904,15 +809,11 @@ def _my_login(client: GitHubClient, fallback_login: str | None = None) -> str | 
         return data.get("login") if isinstance(data, dict) else None
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code != 403:
-            # Not the expected "installation token can't call /user" case -- a real
-            # auth/server failure (401/404/5xx). Let it propagate rather than silently
-            # masquerading as "this user has zero PRs/issues".
+            # A real auth/server failure (not the expected installation-token 403); propagate rather
+            # than masquerade as zero PRs/issues.
             raise
-        # Installation (App) tokens aren't user-to-server tokens and get a 403 here --
-        # fall back to the signed-in Clevis user's own GitHub OAuth-linked login (if any)
-        # instead of silently returning zero PRs/issues for someone who really has some.
-        # Still None (caller degrades to an empty response) if the user never linked
-        # GitHub OAuth -- there's no other way to know who they are on GitHub.
+        # Installation tokens get a 403 on /user; fall back to the Clevis user's OAuth-linked login.
+        # None (empty response) if they never linked GitHub.
         return fallback_login
 
 
@@ -1023,18 +924,10 @@ async def my_view(
     )
 
 
-# ---------------------------------------------------------------------------
-# My PRs / My Reviews / My Issues -- dedicated paginated lists behind the "My
-# PRs"/"My Reviews"/"My Issues" pages. Deliberately separate from my_view above:
-# my_view is a fixed top-10 "glance" widget for the Overview page, while these
-# support real Prev/Next pagination via GitHub search's total_count. Kept as
-# their own functions/routes rather than reusing _search_items so my_view's
-# existing behavior and tests aren't disturbed.
-# ---------------------------------------------------------------------------
+# My PRs / My Reviews / My Issues: paginated lists (via search total_count), separate from
+# my_view's fixed top-10 widget.
 
-# GitHub's search API only ever returns the first 1000 results for a query
-# (regardless of total_count) -- page*per_page beyond that always 422s, so we
-# short-circuit to an empty page instead of passing that error through.
+# GitHub search only returns the first 1000 results; pages beyond that 422, so short-circuit to empty.
 _MAX_SEARCH_RESULTS = 1000
 
 
@@ -1071,14 +964,12 @@ async def _my_items_list(
     if login is None:
         return response_cls(page=page, per_page=per_page, identity_unresolved=True)
     if page * per_page > _MAX_SEARCH_RESULTS:
-        # Beyond GitHub's reachable window -- report the capped total (not 0) so
-        # page/lastPage math stays consistent instead of regressing to "Page N of 1".
+        # Beyond the reachable window: report the capped total (not 0) so page math stays consistent.
         return response_cls(total_count=_MAX_SEARCH_RESULTS, page=page, per_page=per_page)
 
     query = query_template.format(login=login)
     items_raw, total_count = await anyio.to_thread.run_sync(lambda: _search_items_page(client, query, page, per_page))
-    # Cap the reported total to what's actually reachable, so the UI's Next button
-    # disables at the true boundary instead of this branch ever being hit from normal paging.
+    # Cap the reported total to what's reachable so the UI's Next button disables at the true boundary.
     return response_cls(
         items=mapper(items_raw), total_count=min(total_count, _MAX_SEARCH_RESULTS), page=page, per_page=per_page
     )

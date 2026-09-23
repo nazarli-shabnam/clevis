@@ -1,4 +1,4 @@
-"""Tests for the compliance scan-history export endpoints (issue #293)."""
+"""Tests for the compliance scan-history export endpoints."""
 from datetime import datetime, timedelta, timezone
 
 import pytest

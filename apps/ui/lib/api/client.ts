@@ -50,9 +50,7 @@ import type {
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
 
-// ── Token accessor ────────────────────────────────────────────────────────────
-// The auth context writes the JWT to localStorage under this key.
-// The client reads it on each request so it's always fresh after login.
+// The auth context writes the JWT here; read per request so it's fresh after login.
 const _TOKEN_KEY = "clevis:token"
 
 function getAuthHeaders(): Record<string, string> {
@@ -61,11 +59,8 @@ function getAuthHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-// ── HTTP helpers ──────────────────────────────────────────────────────────────
 
-// Hard ceiling on every request. Without this, a fetch to an unreachable/hanging
-// API never settles, leaving callers (e.g. React Query) stuck in a loading state
-// forever instead of surfacing an error.
+// Hard ceiling so a hanging API surfaces an error instead of leaving callers loading forever.
 const REQUEST_TIMEOUT_MS = 15000
 
 async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
@@ -151,7 +146,6 @@ async function del(path: string): Promise<void> {
   }
 }
 
-// ── Check value normalization ─────────────────────────────────────────────────
 
 function normalizeCheckValue(id: string, raw: unknown): CheckValue {
   if (id === "organization_members_mfa_required") {
@@ -187,12 +181,10 @@ function normalizeCheckValue(id: string, raw: unknown): CheckValue {
   return null
 }
 
-// ── API surface ───────────────────────────────────────────────────────────────
 
 export const api = {
   analytics: {
-    // token is optional — the API falls back to a connected GitHub App installation
-    // token when one exists for this owner, so an empty field is fine to send.
+    // token is optional — the API falls back to a connected GitHub App installation.
     overview: async (owner: string, token: string): Promise<AnalyticsOverviewResponse> => {
       const data = await post<AnalyticsOverviewResponse>("/me/analytics/overview", { owner, token: token || undefined })
       return {
@@ -202,24 +194,21 @@ export const api = {
     },
     history: (owner: string) =>
       get<AnalyticsHistoryResponse>(`/me/analytics/history?owner=${encodeURIComponent(owner)}`),
-    // Issue #294: GitHub Actions minutes for the org's billing cycle. Org-scoped +
-    // admin-only; needs an App permission Clevis doesn't request by default, so a
-    // missing-permission 403 comes back as a 400 (the Overview card hides itself on error).
+    // Admin-only; needs an App permission not requested by default, so a missing-permission
+    // 403 comes back as a 400 (the Overview card hides itself on error).
     actionsUsage: (org: string, token?: string) =>
       get<ActionsUsageResponse>(
         `/orgs/${encodeURIComponent(org)}/usage/actions`,
         githubTokenHeader(token),
       ),
-    // Compliance export (issue #293): full scan history with per-check detail, for
-    // an optional [since, until] day window. The caller renders CSV from this.
+    // Full scan history with per-check detail for an optional [since, until] window; caller renders CSV.
     exportHistory: (owner: string, since?: string, until?: string) => {
       const params = new URLSearchParams({ owner })
       if (since) params.set("since", since)
       if (until) params.set("until", until)
       return get<ScanExportResponse>(`/me/analytics/export?${params.toString()}`)
     },
-    // token is optional — same App-or-PAT fallback as the rest of this namespace,
-    // carried via header since this is a GET (see githubTokenHeader).
+    // token is optional (App-or-PAT fallback), sent via header since this is a GET.
     cockpit: (owner: string, token?: string) =>
       get<CockpitResponse>(`/me/analytics/cockpit/${encodeURIComponent(owner)}`, githubTokenHeader(token)),
     myView: (owner: string, token?: string) =>
@@ -251,10 +240,8 @@ export const api = {
         `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/secret-scanning`,
         githubTokenHeader(token),
       ),
-    // "Fix this" (issue #287): apply the automated fix for a failing check in
-    // {owner}/{repo}. Needs the resolved token to carry the relevant write scope;
-    // a 403 from GitHub comes back as a 400 with a permission hint. Admin-gated
-    // when `owner` is a connected Clevis org.
+    // Needs a write-scoped token; a GitHub 403 comes back as a 400 with a permission hint.
+    // Admin-gated when `owner` is a connected Clevis org.
     remediate: (owner: string, repo: string, checkId: string, token?: string) =>
       post<{ check_id: string; repo: string; remediated: boolean }>(
         `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/security/checks/${encodeURIComponent(checkId)}/remediate`,
@@ -262,9 +249,7 @@ export const api = {
       ),
   },
   issues: {
-    // Create a GitHub issue from a Clevis finding (issue #286). Needs the resolved
-    // token (App installation or PAT) to carry `Issues: write`; a 403 from GitHub
-    // surfaces here as a 400. Admin-gated when `owner` is a connected Clevis org.
+    // Needs `Issues: write`; a GitHub 403 surfaces as a 400. Admin-gated when `owner` is a connected Clevis org.
     create: (owner: string, repo: string, body: { title: string; body: string }, token?: string) =>
       post<CreateIssueResponse>(
         `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues`,
@@ -272,8 +257,7 @@ export const api = {
       ),
   },
   prNudges: {
-    // Nudge stale PRs in {owner}/{repo} (issue #289). Needs `Pull requests: write`
-    // on the App/PAT; a 403 from GitHub surfaces here as a 400. Org-admin gated.
+    // Needs `Pull requests: write`; a GitHub 403 surfaces as a 400. Org-admin gated.
     sweep: (org: string, owner: string, repo: string, token?: string) =>
       post<PrNudgeResponse>(
         `/orgs/${encodeURIComponent(org)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pr-nudges`,
@@ -320,8 +304,7 @@ export const api = {
     get: (jobId: number) => get<JobOut>(`/jobs/${jobId}`),
   },
   automation: {
-    // token is optional — same App-or-PAT fallback as the rest of the API, carried
-    // via header since these are GETs (see githubTokenHeader).
+    // token is optional (App-or-PAT fallback), sent via header since these are GETs.
     workflows: (owner: string, repo: string, token?: string) =>
       get<WorkflowsResponse>(
         `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/workflows`,
@@ -349,9 +332,8 @@ export const api = {
       ),
   },
   branchProtection: {
-    // Bulk-apply a branch-protection preset across an org's repos (issue #288). Org-admin
-    // only; needs `Administration: write`. dry_run returns a per-repo diff and writes
-    // nothing. A 400 with a docs pointer means the App is missing the permission.
+    // Org-admin only; needs `Administration: write`. dry_run returns a per-repo diff and writes nothing.
+    // A 400 with a docs pointer means the App is missing the permission.
     bulk: (
       org: string,
       body: {
@@ -368,11 +350,8 @@ export const api = {
       ),
   },
   workflowLint: {
-    // Lint {owner}/{repo}'s .github/workflows (issue #291). Personal route, matching the
-    // rest of the Automation page: an arbitrary free-text owner via App-or-PAT. A scan
-    // needs only membership (or a PAT); open_pr: true needs org-admin when owner is a
-    // connected Clevis org, and opens a fix PR (returns its URL). A 400 with a docs
-    // pointer means the App is missing a write scope.
+    // A scan needs only membership (or a PAT); open_pr needs org-admin for a connected org and
+    // returns the fix PR URL. A 400 with a docs pointer means the App is missing a write scope.
     scan: (owner: string, repo: string, body: { open_pr: boolean }, token?: string) =>
       post<WorkflowLintResponse>(
         `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/workflow-lint`,
@@ -380,9 +359,8 @@ export const api = {
       ),
   },
   dependabotTriage: {
-    // Per-repo opt-in + mode for Dependabot auto-triage (issue #290). Default off; only
-    // patch-level dependabot[bot] bumps with all checks green and no pending human
-    // review are ever acted on. approve_and_merge is the only mode that merges.
+    // Default off; only patch-level dependabot[bot] bumps with green checks and no pending human
+    // review are acted on. approve_and_merge is the only mode that merges.
     getRepo: (org: string, owner: string, repo: string) =>
       get<{ enabled: boolean; mode: "approve_only" | "approve_and_merge"; merge_method: string }>(
         `/orgs/${encodeURIComponent(org)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/automation/dependabot-triage`,
@@ -421,10 +399,8 @@ export const api = {
       }),
   },
   audit: {
-    // limit mirrors the backend's own default/cap (Query(default=100, le=500)) --
-    // callers bump it to page further back through recent history rather than the
-    // backend supporting a true offset/cursor (it only ever returns the N most recent
-    // rows, filtered by action).
+    // No offset/cursor on the backend (it returns the N most recent rows, cap 500);
+    // callers raise limit to page further back.
     list: (action?: string, limit = 100) => {
       const params = new URLSearchParams({ limit: String(limit) })
       if (action) params.set("action", action)
@@ -433,11 +409,8 @@ export const api = {
   },
   installations: {
     list: () => get<InstallationMeta[]>("/me/installations"),
-    // Org-connected installations, not personal ones -- list() above only ever returns
-    // the caller's personal (User-type) installations (GET /me/installations), never an
-    // org's. Requires the caller to already be a recognized Clevis org member (404 if the
-    // org isn't connected yet, 403 if not a member) -- callers should treat either as
-    // "not installed" rather than surfacing the error.
+    // Org-connected installation (list() only returns personal ones). 404 = org not connected,
+    // 403 = not a member -- callers should treat either as "not installed".
     listForOrg: (orgLogin: string) => get<InstallationMeta[]>(`/orgs/${encodeURIComponent(orgLogin)}/installations`),
     lookup: (installationId: number) =>
       get<InstallationLookup>(`/me/installations/lookup/${installationId}`),
@@ -451,8 +424,7 @@ export const api = {
             `/orgs/${encodeURIComponent(target.orgLogin)}/installations/sync`,
             body,
           ),
-    // Disconnect: uninstalls the App on GitHub's side (a real revocation), then removes
-    // the local row -- see apps/api/src/routers/installations.py's module docstring.
+    // Uninstalls the App on GitHub's side (a real revocation), then removes the local row.
     remove: (
       target: { scope: "me" } | { scope: "org"; orgLogin: string },
       installationId: number,
@@ -474,8 +446,7 @@ export const api = {
     accept: (token: string) => post<{ org_login: string; role: string }>(`/invitations/${encodeURIComponent(token)}/accept`, {}),
   },
   collab: {
-    // token is optional — the API falls back to a connected GitHub App installation
-    // token when one exists for this org; only orgs without one need it supplied.
+    // token is optional — only orgs without a connected App installation need it.
     members: (orgLogin: string, role: "all" | "member" | "admin" = "all", token?: string) =>
       get<GithubOrgMembersResponse>(
         `/github/orgs/${encodeURIComponent(orgLogin)}/members?role=${role}`,

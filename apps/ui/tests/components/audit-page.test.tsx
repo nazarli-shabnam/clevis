@@ -56,14 +56,12 @@ describe("AuditPage", () => {
   });
 
   it("shows a retry option instead of a fake empty state when the query fails", async () => {
-    // Regression test: this page used to default logs to [] on any query error and never
-    // checked isError, so a real 403/500 rendered identically to "genuinely zero rows".
+    // A real 403/500 must not render identically to "genuinely zero rows".
     auditListMock.mockRejectedValue(new Error("Workspace admin access required"));
     renderPage();
     await waitFor(() => expect(screen.getByText("Workspace admin access required")).toBeInTheDocument());
     expect(screen.queryByText(/No audit events/)).not.toBeInTheDocument();
-    // Regression test (CodeRabbit finding): a misleading "0 entries" chip must not
-    // render alongside the error message.
+    // A misleading "0 entries" chip must not render alongside the error.
     expect(screen.queryByText(/entries$/)).not.toBeInTheDocument();
 
     auditListMock.mockResolvedValueOnce([]);
@@ -113,8 +111,7 @@ describe("AuditPage", () => {
 
     renderPage();
 
-    // "cache.clear.queued" also appears as a static <option> in the action filter
-    // dropdown, so waiting on it directly would false-positive before the rows load.
+    // "cache.clear.queued" is also a static <option>, so waiting on it would false-positive.
     await waitFor(() => expect(screen.getByText("2 entries")).toBeInTheDocument());
     expect(screen.getAllByText("—").length).toBe(2);
   });

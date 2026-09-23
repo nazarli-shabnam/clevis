@@ -1,12 +1,4 @@
-"""Add audit_logs.tenant_id, nullable, no backfill (issue #190, PR 3 of 7).
-
-audit_logs.actor/target are free text (not FKs), so pre-migration rows
-can't be reliably attributed to a tenant -- per the design decision
-recorded on #190, these stay visible only through a require_workspace_admin
--gated view once RLS lands, never to ordinary tenant members. No backfill
-attempted here, unlike scan_results/saved_tokens (0027) which at least
-have a best-effort join available; audit_logs has no comparable joinable
-field at all.
+"""Add audit_logs.tenant_id, nullable, no backfill.
 
 Revision ID: 0028
 Revises: 0027

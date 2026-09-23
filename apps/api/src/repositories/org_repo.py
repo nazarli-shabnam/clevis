@@ -10,15 +10,8 @@ def ensure_tenant_linked(db: Session, org: Org) -> Org:
     if org.tenant_id is not None:
         return org
     tenant = tenant_repo.get_or_create_org_tenant(db, org.id)
-    # Issue #330: under RLS, this UPDATE's WITH CHECK requires tenant_id to match
-    # app.tenant_id (see migration 0033) -- but no request-scoped caller could have set
-    # app.tenant_id to this value yet, since tenant.id was only just created above. Safe
-    # to set it here directly: it's this exact org's own brand-new tenant, not a
-    # caller-supplied value. SET LOCAL (not the plain SET rbac.py's
-    # set_tenant_session_context uses) scopes this to only the transaction this commit
-    # is about to close, so it doesn't leak into whatever the caller's session does next
-    # (e.g. a 403 rejection right after must leave no tenant context behind -- see
-    # test_rbac.py's test_require_org_role_does_not_set_session_vars_on_403).
+    # RLS WITH CHECK requires tenant_id = app.tenant_id, which no caller could have set for a
+    # brand-new tenant. SET LOCAL (not plain SET) so no tenant context leaks past this commit.
     db.execute(text(f"SET LOCAL app.tenant_id = {int(tenant.id)}"))
     org.tenant_id = tenant.id
     db.commit()
@@ -31,11 +24,8 @@ def get_by_login(db: Session, github_login: str) -> Org | None:
 
 
 def get_by_login_ci(db: Session, github_login: str) -> Org | None:
-    # Case-insensitive: callers taking an arbitrary user-typed/query-param login (not a
-    # URL path segment already known to match) need this, same reasoning as
-    # installation_repo.get_for_org's case-insensitive match (#246) -- a casing variant
-    # of a connected org's login must still resolve to it, not silently miss and fall
-    # through to a different (personal) resolution path.
+    # Case-insensitive: callers pass arbitrary user-typed logins, and a casing variant of a
+    # connected org must still resolve to it rather than fall through to personal resolution.
     return db.query(Org).filter(func.lower(Org.github_login) == github_login.lower()).first()
 
 
@@ -57,9 +47,8 @@ def get_or_create(db: Session, github_login: str, github_org_id: int | None = No
         return ensure_tenant_linked(db, org)
 
     if github_org_id is not None:
-        # The org may have been renamed on GitHub since we last saw it -- github_org_id
-        # is the stable identity, github_login isn't. Resolve by id and update the login
-        # in place rather than trying (and failing) to insert a second row for the same id.
+        # The org may have been renamed on GitHub; github_org_id is the stable identity, so
+        # update the login in place.
         org = get_by_org_id(db, github_org_id)
         if org is not None:
             if org.github_login != github_login:

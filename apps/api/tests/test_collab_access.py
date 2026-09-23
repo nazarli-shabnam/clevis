@@ -1,4 +1,4 @@
-"""Tests for permission-audit and inactive-members routes (docs/plan.md Phase 18)."""
+"""Tests for permission-audit and inactive-members routes."""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch

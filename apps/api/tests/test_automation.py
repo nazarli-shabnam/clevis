@@ -1,4 +1,4 @@
-"""Tests for the Automation router (docs/plan.md Phase 13)."""
+"""Tests for the Automation router."""
 
 from unittest.mock import patch
 
@@ -152,9 +152,7 @@ def test_personal_list_runs_no_token_returns_400(automation_client):
 
 
 def test_personal_list_runs_rejects_out_of_range_per_page(automation_client):
-    # Regression test for issue #224 item 2: per_page had no Query(le=...) bound, so an
-    # arbitrary/negative value produced an opaque upstream GitHub 400 instead of a clean
-    # 422 at the boundary, unlike audit.py's equivalent limit param.
+    # per_page is bounded so bad values 422 at the boundary instead of an opaque GitHub 400.
     resp = automation_client.get(
         "/me/repos/acme/demo/actions/runs",
         params={"per_page": 1000},
@@ -171,9 +169,7 @@ def test_personal_list_runs_rejects_out_of_range_per_page(automation_client):
 
 
 def test_personal_dispatch_rejects_oversized_ref(automation_client):
-    # Regression test for issue #224 item 3: DispatchInput.ref/inputs had no max_length,
-    # letting a caller bloat the jobs/audit_logs payload columns with an arbitrarily large
-    # value via a legitimate authenticated endpoint.
+    # ref/inputs are length-capped so callers can't bloat the jobs/audit_logs payload columns.
     resp = automation_client.post(
         "/me/repos/acme/demo/workflows/1/dispatch",
         json={"token": "ghp_testtoken123456789012345678901234", "ref": "x" * 300},
@@ -218,10 +214,7 @@ def test_personal_dispatch_no_token_returns_400_and_still_no_github_call(automat
 
 
 def test_personal_dispatch_rejects_org_member_supplying_own_token(automation_client, db):
-    # Regression test (CodeRabbit finding on PR #264): a plain "member" of a connected
-    # org must not be able to dispatch its workflows through the personal endpoint by
-    # supplying their own PAT -- that would bypass the admin-only gate this endpoint is
-    # supposed to enforce via resolve_owner_token(min_role="admin").
+    # A plain org member supplying their own PAT must not bypass the admin-only gate.
     db.add(User(id=_USER.id, email=_USER.email, name=None, password_hash=None, is_workspace_admin=False))
     db.commit()
     org = org_repo.get_or_create(db, github_login="acme")

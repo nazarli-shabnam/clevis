@@ -1,9 +1,6 @@
-"""Read/write helpers for ``automation_repo_settings`` — the per-(tenant, repo, feature)
-opt-in + options store shared by bulk branch protection (#288) and Dependabot triage
-(#290).
+"""Read/write helpers for ``automation_repo_settings`` (per-(tenant, repo, feature) opt-in + options).
 
-RLS scopes every row by ``tenant_id``; callers must have set the tenant session context
-(``rbac.set_tenant_session_context``) before these run under the constrained API role.
+Callers must set the tenant session context first; RLS scopes every row by ``tenant_id``.
 """
 
 from __future__ import annotations
@@ -48,10 +45,8 @@ def upsert(
     mode: str | None = None,
     extra: dict | None = None,
 ) -> AutomationRepoSetting:
-    # Single-statement upsert on the (tenant_id, repo, feature) composite PK — avoids the
-    # get-then-add race where two concurrent callers both miss the row and one INSERT
-    # then fails on the PK. `extra` is only overwritten when a value is supplied, so
-    # passing `extra=None` retains whatever is already stored.
+    # Single-statement upsert avoids the get-then-add race on the composite PK. `extra` is only
+    # overwritten when supplied, so `extra=None` keeps the stored value.
     values = {
         "tenant_id": tenant_id,
         "repo": repo,
@@ -59,8 +54,7 @@ def upsert(
         "enabled": enabled,
         "mode": mode,
     }
-    # Core on_conflict_do_update bypasses the ORM, so `updated_at`'s `onupdate` won't
-    # fire — bump it explicitly.
+    # Core upsert bypasses the ORM, so `updated_at`'s `onupdate` won't fire; bump it explicitly.
     set_ = {"enabled": enabled, "mode": mode, "updated_at": func.now()}
     if extra is not None:
         values["extra"] = extra

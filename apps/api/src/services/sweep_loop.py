@@ -1,15 +1,11 @@
 """Shared shape for the API's periodic background sweep loops (gap-heal, membership
-reconcile, leadership digest). The API is already a long-running uvicorn process (unlike
-a request-scoped handler), so an asyncio while-True-plus-sleep loop is the smallest thing
-that satisfies "runs periodically" without pulling in APScheduler/Celery/cron or a new
-container -- mirrors apps/worker/src/worker.py's own poll loop, in-process instead.
+reconcile, leadership digest): an asyncio while-True-plus-sleep loop, the smallest thing
+that satisfies "runs periodically" without pulling in APScheduler/Celery/cron.
 
-Each loop's per-tick session bypasses get_db()'s own finally-block reset (a request-scoped
-session's lifetime doesn't fit here), so _run_sweep resets app.tenant_id/app.user_id itself
-after the sweep runs -- the sweep sets them via plain SET (not SET LOCAL) and commits, which
-makes the SET durable on the physical connection, not just the Session. Without this reset,
-the connection pool would hand the next checkout (a real request via get_db(), or the next
-sweep iteration) a connection with a leftover tenant context.
+Each loop's per-tick session bypasses get_db()'s finally-block reset, so _run_sweep resets
+app.tenant_id/app.user_id itself after the sweep runs -- the sweep sets them via plain SET
+(not SET LOCAL) and commits, making it durable on the physical connection. Without this
+reset, the pool would hand the next checkout a connection with a leftover tenant context.
 """
 
 import asyncio

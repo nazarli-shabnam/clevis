@@ -17,8 +17,7 @@ def _make_user(db, email: str) -> User:
 
 
 def _acme_org_id(db) -> int:
-    # org_repo.get_or_create already dual-writes a tenant -- create the org row directly
-    # instead so these tests exercise tenant_repo's own get-or-create behavior in isolation.
+    # org_repo.get_or_create already creates a tenant; insert the org directly to test tenant_repo alone.
     from src.core.db import Org
 
     org = Org(github_login="acme")
@@ -110,10 +109,7 @@ def test_ensure_personal_tenant_falls_back_on_concurrent_insert_race(db):
 
 
 def test_ensure_personal_tenant_commit_false_flushes_without_committing(db):
-    # commit=False is for auth.py/github_auth.py's brand-new-user registration flows: the
-    # tenant/membership must be visible to the still-open transaction (so a caller-side
-    # query against `db` sees them) without db having committed anything yet, so the
-    # caller can commit once, atomically, alongside its own User row.
+    # commit=False lets registration commit the tenant/membership atomically with its User row.
     user = _make_user(db, "dawn@example.com")
 
     tenant = tenant_repo.ensure_personal_tenant(db, user.id, commit=False)
@@ -128,11 +124,7 @@ def test_ensure_personal_tenant_commit_false_flushes_without_committing(db):
 
 
 def test_ensure_personal_tenant_commit_false_is_atomic_with_the_caller(db):
-    # Regression test for a CodeRabbit finding on #323: ensure_personal_tenant used to
-    # always commit internally, separately from the caller's own User commit -- a failure
-    # between the two commits could leave a User row with no personal tenant. With
-    # commit=False, a failure before the caller's single commit must roll back the User
-    # row too, not just leave the tenant/membership missing.
+    # With commit=False, a failure before the caller's commit must roll back the User row too.
     user = User(email="edith@example.com", name=None, password_hash=None, is_workspace_admin=False)
     db.add(user)
     db.flush()
@@ -146,8 +138,7 @@ def test_ensure_personal_tenant_commit_false_is_atomic_with_the_caller(db):
         else:
             raise AssertionError("expected the simulated failure to propagate")
 
-    # The caller never got to its own db.commit() -- the User row must not be visible
-    # either, proving the two are atomic rather than the tenant failure leaving a stray user.
+    # The caller never committed, so the User row must not be visible either.
     assert db.query(User).filter(User.id == user_id).first() is None
 
 
@@ -243,10 +234,7 @@ def test_upsert_membership_fixes_a_stale_role(db):
 
 
 def test_upsert_membership_recreates_a_row_deleted_between_its_two_internal_lookups(db):
-    # Regression test: upsert_membership's internal update_membership_role call can find
-    # nothing if a concurrent delete_membership races in between its get-or-create and its
-    # role-reconciliation step. Must recreate the row rather than returning None despite
-    # the function's non-Optional Membership return type.
+    # A concurrent delete between get-or-create and the role update must recreate the row, not return None.
     org_id = _acme_org_id(db)
     tenant = tenant_repo.get_or_create_org_tenant(db, org_id)
     user = _make_user(db, "laura@example.com")
@@ -265,7 +253,7 @@ def test_upsert_membership_recreates_a_row_deleted_between_its_two_internal_look
     assert membership.role == "admin"
 
 
-# ── commit=False: keep the write in the caller's transaction (issue #334) ──────
+# ── commit=False: keep the write in the caller's transaction ──────────────────
 
 def test_get_or_create_org_tenant_commit_false_flushes_without_committing(db):
     org_id = _acme_org_id(db)

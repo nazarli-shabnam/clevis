@@ -11,9 +11,7 @@ import { useActiveScope } from "@/lib/active-scope"
 
 const PER_PAGE = 25
 
-// The three "My …" views were separate near-identical pages (issue #283); they're one
-// tabbed page now, with the tab in `?tab=` so a link/bookmark still lands on the right
-// view. `prs` is the default and omits the param.
+// Tab lives in `?tab=` so links/bookmarks land on the right view; `prs` is the default and omits it.
 const TABS = [
   {
     id: "prs",
@@ -60,8 +58,7 @@ export default function MyWorkPage() {
   useEffect(() => {
     setOrgChecked(true)
   }, [])
-  // Switching accounts or tabs changes the query key but not the page number — reset to
-  // page 1 so a stale offset doesn't query the new list out of range.
+  // Reset to page 1 on account/tab change so a stale offset doesn't query the new list out of range.
   useEffect(() => {
     setPage(1)
   }, [org, activeTab])

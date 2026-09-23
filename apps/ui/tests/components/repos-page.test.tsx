@@ -86,9 +86,7 @@ describe("ReposPage", () => {
   it("shows a 'no account selected' prompt when no active scope is set, without blocking manual org entry", async () => {
     renderPage();
     expect(await screen.findByText(/No account selected/)).toBeInTheDocument();
-    // Unlike the fully scope-driven pages (My PRs, etc.), this page's org field is a
-    // manual search tool that works independent of the active scope -- the prompt is
-    // informational only, not a replacement for the form.
+    // This page's org field is a manual search that works without a scope; the prompt is informational.
     expect(screen.getByPlaceholderText("e.g. octocat")).toBeInTheDocument();
   });
 
@@ -111,9 +109,7 @@ describe("ReposPage", () => {
   });
 
   it("hides the GitHub Token field when an installation covers the entered org with trailing whitespace", async () => {
-    // Regression test (CodeRabbit finding on PR #299): the personal-installation match
-    // compared account_login against raw owner state, so "acme " (untrimmed) never
-    // matched an "acme" installation and incorrectly left the token field visible.
+    // "acme " (untrimmed) must still match an "acme" installation and hide the token field.
     installationsListMock.mockResolvedValue([
       { id: 1, account_login: "acme", account_type: "Organization", installation_id: 42, created_at: "2026-07-20T00:00:00Z" },
     ]);
@@ -125,9 +121,7 @@ describe("ReposPage", () => {
   });
 
   it("hides the GitHub Token field when an org-level installation covers the entered org", async () => {
-    // Regression test: api.installations.list() only ever returns the caller's *personal*
-    // installations -- an org's App installation must be checked via the separate
-    // org-scoped endpoint, or this would never hide the field for the primary (org) case.
+    // installations.list() is personal-only; org installs need the org-scoped endpoint.
     installationsListForOrgMock.mockResolvedValue([
       { id: 2, account_login: "acme", account_type: "Organization", installation_id: 99, created_at: "2026-07-20T00:00:00Z" },
     ]);
@@ -225,12 +219,8 @@ describe("ReposPage", () => {
   });
 
   it("filters against the full org repo list, not just a first page of results (issue #220 regression)", async () => {
-    // The backend's /orgs/{org}/repos endpoint already exhausts every GitHub API page
-    // (see apps/api/src/services/github_client.py request_paginated) before responding, so
-    // listMutation.data.repos here represents the org's *complete* repo list in one shot --
-    // there's no separate "load more" page for the client-side filter to miss. Simulate an
-    // org large enough to have spanned multiple 100-per-page GitHub responses by including a
-    // repo past index 100, and assert the name filter still finds it.
+    // The backend already exhausts every GitHub page, so the list is complete; include a repo
+    // past index 100 and assert the name filter still finds it.
     const repos = Array.from({ length: 150 }, (_, i) => ({
       name: `repo-${i}`,
       full_name: `acme/repo-${i}`,
@@ -253,8 +243,7 @@ describe("ReposPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /load repositories/i }));
     await waitFor(() => expect(screen.getByText("repo-0")).toBeInTheDocument());
 
-    // repo-149 would only exist on GitHub's second 100-per-page response -- confirms the
-    // filter searches the entire fetched list, not a truncated first page of it.
+    // repo-149 would only be on GitHub's second 100-per-page response.
     fireEvent.change(screen.getByPlaceholderText("Filter by name…"), { target: { value: "repo-149" } });
 
     await waitFor(() => expect(screen.getByText("repo-149")).toBeInTheDocument());
@@ -472,8 +461,7 @@ describe("ReposPage", () => {
 
     await waitFor(() => expect(screen.getByText("demo")).toBeInTheDocument());
     await waitFor(() => expect(screen.queryByText(/no recent activity/i)).not.toBeInTheDocument());
-    // Visible, not just a hover-only title -- touch/keyboard users must be able to see
-    // the estimate label too.
+    // Visible, not hover-only, so touch/keyboard users see the estimate label too.
     expect(screen.getByText("(est.)")).toBeInTheDocument();
     expect(screen.getByTitle(/estimated from stored push events/i)).toBeInTheDocument();
   });
@@ -555,8 +543,7 @@ describe("ReposPage", () => {
     reposStatsMock.mockClear();
     reposPullsMock.mockClear();
 
-    // Edit the org field without clicking "Load repositories" again — the still-rendered
-    // "acme" row must keep using "acme" for its lazy fetches and cache link, not "other-org".
+    // Edit the org field without reloading: the "acme" row must keep using "acme", not "other-org".
     fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "other-org" } });
 
     expect(screen.getByRole("link", { name: /cache/i })).toHaveAttribute("href", "/repos/acme~demo/cache");
@@ -721,7 +708,7 @@ describe("ReposPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /load repositories/i }));
     await waitFor(() => expect(screen.getByText("demo")).toBeInTheDocument());
 
-    // Regression: a failed fetch must not render identically to "no activity"/"0 PRs".
+    // A failed fetch must not render identically to "no activity"/"0 PRs".
     await waitFor(() => expect(screen.getAllByText(/failed to load/i).length).toBeGreaterThan(0));
     expect(screen.queryByText(/no recent activity/i)).not.toBeInTheDocument();
   });

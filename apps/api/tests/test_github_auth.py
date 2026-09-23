@@ -57,8 +57,6 @@ def _identity(**kw) -> GitHubIdentity:
     return GitHubIdentity(**base)
 
 
-# ── find_or_create_user ─────────────────────────────────────────────────────────
-
 def test_first_user_becomes_owner(db):
     user = find_or_create_user(db, _identity())
     assert user.is_workspace_admin is True
@@ -97,10 +95,9 @@ def test_returning_user_does_not_duplicate_the_personal_tenant(db):
 
 
 def test_refuses_to_auto_link_an_existing_email_registered_account(db):
-    # Regression test for the account-takeover fix: self-registration has no email
-    # verification anywhere in this app, so silently linking a GitHub identity onto an
-    # existing account by email match alone would let an attacker who pre-registered a
-    # victim's email inherit the victim's real GitHub identity. Must raise, not link.
+    # Self-registration has no email verification, so silently linking a GitHub identity
+    # onto an existing account by email match alone would let an attacker who
+    # pre-registered a victim's email inherit their real GitHub identity.
     existing = User(email="owner@example.com", name="Owner", password_hash="x", is_workspace_admin=True)
     db.add(existing)
     db.commit()
@@ -115,8 +112,8 @@ def test_refuses_to_auto_link_an_existing_email_registered_account(db):
 
 
 def test_refuses_to_auto_link_when_existing_email_differs_only_by_case(db):
-    # Regression test for issue #268: the email-collision check must be case-insensitive,
-    # same as the users.email uniqueness constraint itself.
+    # The email-collision check must be case-insensitive, same as the users.email
+    # uniqueness constraint itself.
     existing = User(email="owner@example.com", name="Owner", password_hash="x", is_workspace_admin=True)
     db.add(existing)
     db.commit()
@@ -144,22 +141,17 @@ def test_idempotent_by_github_id(db):
 
 
 def test_new_github_user_is_created_already_verified(db):
-    # Regression test for issue #217: GitHub already vouches for the identity's email
-    # (fetch_identity only ever returns a GitHub-verified address), so a GitHub-created
-    # account shouldn't need to click an emailed verification link too.
+    # GitHub already vouches for the identity's email, so a GitHub-created account
+    # shouldn't need to click an emailed verification link too.
     user = find_or_create_user(db, _identity())
     assert user.email_verified is True
 
 
 def test_concurrent_oauth_callback_for_same_identity_recovers_the_winner(db):
-    # Regression test for issue #464: simulates two near-simultaneous OAuth callbacks for
-    # the same brand-new GitHub identity, same pattern as test_auth.py's
-    # test_register_concurrent_same_email_returns_409_not_500 -- a row for this identity is
-    # already committed (the "other request" that won the race), then the two pre-insert
-    # existence checks (by github_user_id, then by email) are patched to fake a miss so
-    # this call proceeds to the real insert, which must collide on the genuine
+    # Simulates two near-simultaneous OAuth callbacks for the same new GitHub identity:
+    # the winner's row is already committed, and the loser's insert collides on the
     # github_user_id unique constraint. Unlike /auth/register, login should recover
-    # gracefully: the loser re-queries for the winner's row instead of 500ing or 409ing.
+    # gracefully by re-querying for the winner's row instead of 500ing or 409ing.
     winner = find_or_create_user(db, _identity())
 
     real_first = Query.first
@@ -179,11 +171,9 @@ def test_concurrent_oauth_callback_for_same_identity_recovers_the_winner(db):
 
 
 def test_concurrent_identity_vs_existing_email_raises_email_already_registered(db):
-    # Regression test: the flush's IntegrityError isn't always a github_user_id collision
-    # -- a different concurrent request (e.g. a competing /auth/register) can grab this
-    # identity's email in the gap between the upfront email check and the flush. Recovery
-    # must fall back to the same EmailAlreadyRegistered business rule the upfront check
-    # enforces, not leak a raw IntegrityError as an unhandled 500.
+    # The flush's IntegrityError isn't always a github_user_id collision -- a competing
+    # request can grab this identity's email in the gap between the upfront check and the
+    # flush. Recovery must fall back to EmailAlreadyRegistered, not leak a raw 500.
     existing = User(email="shared@example.com", name="Existing", password_hash="x", is_workspace_admin=True)
     db.add(existing)
     db.commit()
@@ -203,8 +193,6 @@ def test_concurrent_identity_vs_existing_email_raises_email_already_registered(d
 
     assert db.query(User).filter(User.github_user_id == 9999).count() == 0
 
-
-# ── endpoints ─────────────────────────────────────────────────────────────────
 
 def test_login_redirects_to_github(gh_client, oauth_configured):
     resp = gh_client.get("/auth/github/login", follow_redirects=False)
@@ -285,8 +273,6 @@ def test_callback_redirects_to_ui_on_oauth_error(gh_client):
     assert resp.headers["location"].endswith("/login?error=github_oauth_failed")
 
 
-# ── state cookie binding (regression tests for the OAuth login-CSRF fix) ────────
-
 def _extract_state(login_resp) -> str:
     return parse_qs(urlparse(login_resp.headers["location"]).query)["state"][0]
 
@@ -319,8 +305,6 @@ def test_replaying_a_captured_state_from_a_different_browser_is_rejected(gh_clie
     assert resp.headers["location"].endswith("/login?error=github_invalid_state")
     assert db.query(User).count() == 0
 
-
-# ── next-path threading (invite-link OAuth fix) ─────────────────────────────────
 
 def test_login_embeds_next_into_state(gh_client, oauth_configured):
     login_resp = gh_client.get("/auth/github/login?next=/invite/abc123", follow_redirects=False)

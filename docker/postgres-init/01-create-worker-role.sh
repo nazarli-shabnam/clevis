@@ -2,16 +2,13 @@
 set -e
 
 # Creates a dedicated Postgres login role for the worker so a future migration can grant
-# it Row-Level Security's BYPASSRLS independently of the API's role (issue #190) -- once
-# RLS lands, granting BYPASSRLS to a role shared with the API would make RLS a no-op for
-# the API too.
+# it BYPASSRLS independently of the API's role -- granting BYPASSRLS to a role shared
+# with the API would make RLS a no-op for the API too.
 #
-# Runs via docker-entrypoint-initdb.d, so it only executes once, on a completely fresh
-# data volume. Existing deployments (pgdata already initialized) must create this role
-# manually -- see docs/self-hosting.md.
+# Runs via docker-entrypoint-initdb.d, so it only executes once, on a fresh data volume.
+# Existing deployments must create this role manually -- see docs/self-hosting.md.
 #
-# No-op if WORKER_DB_PASSWORD isn't set, so deployments that haven't opted in keep
-# today's shared-credential behavior untouched.
+# No-op if WORKER_DB_PASSWORD isn't set, keeping the shared-credential fallback untouched.
 if [ -z "$WORKER_DB_PASSWORD" ]; then
   exit 0
 fi

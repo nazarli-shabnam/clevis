@@ -22,10 +22,7 @@ def _client(router, db, user, prefix=""):
     app.include_router(router, prefix=prefix)
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[require_auth] = lambda: user
-    # Issue #330: overriding require_auth for tests bypasses its real body, including the
-    # SET app.user_id side effect (src.core.db.set_session_user) RLS's self-access clauses
-    # (migration 0031) depend on -- set it here directly so tests exercise the same session
-    # context a real authenticated request would have.
+    # Overriding require_auth skips its SET app.user_id side effect that RLS depends on; set it directly.
     db.execute(text(f"SET app.user_id = {user.id}"))
     return TestClient(app)
 
@@ -121,10 +118,7 @@ def test_tokens_resolve_non_owner_forbidden(db):
 def test_tokens_resolve_writes_audit_log(db):
     from src.core.db import AuditLog
 
-    # No org "acme" exists yet, so upsert_token's best-effort tenant lookup finds nothing
-    # and resolve_token's own fallback needs a real personal tenant for _OWNER -- that
-    # requires an actual users row (tenants.personal_user_id FK), which the require_auth
-    # override alone doesn't provide.
+    # No org "acme", so the token falls back to _OWNER's personal tenant, which needs a real users row.
     db.add(User(id=_OWNER.id, email=_OWNER.email, name=None, password_hash=None, is_workspace_admin=True))
     db.commit()
 

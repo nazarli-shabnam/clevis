@@ -2,8 +2,7 @@
 
 SMTP is optional (see src.core.config.Settings). If unconfigured, send_email raises
 EmailNotConfigured and callers are expected to degrade gracefully -- neither account
-creation (issue #217) nor the leadership digest (issue #292) may fail because email
-sending isn't set up.
+creation nor the leadership digest may fail because email sending isn't set up.
 """
 
 import smtplib
@@ -37,9 +36,8 @@ def send_email(to_email: str, subject: str, text_body: str, html_body: str | Non
         message.add_alternative(html_body, subtype="html")
 
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
-        # Verify the server cert + hostname on the STARTTLS upgrade -- without a
-        # context, smtplib skips validation and an intercepted connection could
-        # capture SMTP credentials and the digest's tenant security data.
+        # Verify the server cert + hostname on the STARTTLS upgrade -- without a context,
+        # smtplib skips validation and an intercepted connection could capture credentials.
         smtp.starttls(context=ssl.create_default_context())
         if settings.smtp_user and settings.smtp_password:
             smtp.login(settings.smtp_user, settings.smtp_password.get_secret_value())

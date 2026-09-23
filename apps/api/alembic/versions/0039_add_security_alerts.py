@@ -1,47 +1,10 @@
-"""Add security_alerts table + clevis_worker/clevis_api grants (post-S6, PR 2 of 3).
+"""Add security_alerts table + clevis_worker/clevis_api grants.
 
-Normalized store for the three Security-alert webhook event types durably queued since
-PR #350 (dependabot_alert/code_scanning_alert/secret_scanning_alert) -- populated by
-apps/worker's event_consumer.py once it gains a real handler for these event types
-(this PR), replacing the ack-but-skip guard (_NOT_YET_NORMALIZED_EVENT_TYPES) that PR
-#350 added as a placeholder. Read by a future Security-dashboard re-point (PR 3) instead
-of that dashboard's current per-request live GitHub API fan-out.
-
-One polymorphic table, not three: dependabot/code-scanning/secret-scanning alerts share
-enough shape (a per-repo `number`, a `state` that transitions over the alert's lifetime,
-`created_at`/`updated_at`, an optional `severity`) that a per-repo "give me all open
-alerts" query is naturally one table. `kind` discriminates the three; `details` (JSONB)
-holds the kind-specific remainder GitHub sends (dependency/security_advisory for
-dependabot; rule/tool for code_scanning; secret_type/secret_type_display_name for
-secret_scanning) rather than three near-duplicate tables a future dashboard query would
-otherwise have to UNION.
-
-Dedup/upsert key is (tenant_id, repo, kind, number) -- the alert-level analog of
-repo_events's delivery_id uniqueness. Unlike repo_events (an immutable activity log,
-ON CONFLICT DO NOTHING), an alert's state legitimately changes over its lifetime (e.g.
-open -> dismissed/fixed) and a redelivered webhook for the same alert must update the
-existing row's state/severity/details/updated_at, not just dedupe it away -- the
-consumer upserts with ON CONFLICT ... DO UPDATE, not DO NOTHING.
-
-tenant_id is NOT NULL by design, same reasoning as migration 0036: the consumer skips
-normalizing any webhook_deliveries row whose tenant_id is null (an unresolved
-installation), so this table's RLS policy stays in the simpler "Group A" (strict
-equality) shape from migration 0030, no OR-NULL clause needed.
-
-RLS is ENABLE-only, no FORCE -- same reasoning as migrations 0036/0037/0038: the
-table-owning migration role is unaffected either way, and this only starts enforcing
-for a non-owner role once that role is actually granted access to it (this migration).
-
-Grants mirror migration 0036/0037/0038 exactly: clevis_worker gets SELECT+INSERT+UPDATE
-(it upserts, not just inserts, unlike repo_events) and clevis_api also gets the same
-grant, not because the API writes this table, but because CI's "Run Python tests" step
-runs apps/worker's tests under DATABASE_URL=clevis_api (no clevis_worker CI
-provisioning exists) -- without this, the new consumer's own tests would fail in CI
-with the same InsufficientPrivilege class of bug migrations 0035/0036 already
-documented. Both guarded by the same `IF EXISTS (SELECT FROM pg_roles ...)` pattern.
-
-Upgrade is purely additive (one new table, two conditional grants) -- zero data-loss
-risk. Downgrade drops the table; safe since nothing reads it yet (PR 3 hasn't shipped).
+One polymorphic table for dependabot/code-scanning/secret-scanning alerts (`kind`
+discriminates, `details` JSONB holds the kind-specific remainder) rather than three,
+since a per-repo "all open alerts" query naturally wants one table. Upsert key is
+(tenant_id, repo, kind, number); unlike repo_events's ON CONFLICT DO NOTHING, an alert's
+state changes over its lifetime, so a redelivered webhook does ON CONFLICT DO UPDATE.
 
 Revision ID: 0039
 Revises: 0038

@@ -1,4 +1,4 @@
-"""Tests for the webhook_events Redis Streams consumer (issue #191/S4)."""
+"""Tests for the webhook_events Redis Streams consumer."""
 
 import json
 from datetime import datetime, timezone
@@ -17,34 +17,19 @@ _DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg:/
 @pytest.fixture()
 def pg_conn():
     conn = psycopg.connect(_DB_URL, autocommit=False)
-    # Only webhook_deliveries rows get cleaned up: clevis_api/clevis_worker are
-    # deliberately not granted DELETE on repo_events (migration 0036 -- the consumer
-    # only ever inserts a normalized row, never updates/deletes one), so a test
-    # connection running as either role can't clean those up even if it wanted to.
-    # Deleting the shared test tenant/user (see the tenant_id fixture below) would
-    # also fail on repo_events's tenant_id FK for the same reason -- so that tenant is
-    # never deleted either, just reused across runs. Harmless: every test here uses a
-    # delivery_id unique to itself, and CI's Postgres service container is ephemeral
-    # per run, so nothing accumulates across CI runs -- only repeated local runs
-    # against a persistent dev volume leave a few small rows behind.
+    # Only webhook_deliveries rows are cleaned up: the DB roles lack DELETE on repo_events,
+    # so the shared test tenant is reused rather than deleted. Tests use unique delivery_ids.
     state = {"delivery_ids": []}
     try:
         yield conn, state
     finally:
-        # A failed assertion inside a `with conn.cursor()` block can leave the
-        # connection's transaction aborted (INERROR) -- rollback first so the cleanup
-        # DELETE below doesn't itself silently no-op on an already-broken transaction.
+        # A failed assertion can leave the transaction aborted; roll back before cleanup.
         conn.rollback()
         with conn.cursor() as cur:
             if state["delivery_ids"]:
                 cur.execute("DELETE FROM webhook_deliveries WHERE id = ANY(%s)", (state["delivery_ids"],))
-            # Unlike repo_events/security_alerts, clevis_api/clevis_worker ARE granted
-            # DELETE on org_members/repo_collaborators (migration 0040 -- the consumer
-            # deletes a row on member_removed/removed, so it needs the privilege anyway)
-            # -- clean up test rows scoped to the shared tenant rather than letting them
-            # accumulate across local runs, since there's no per-row id to track like
-            # delivery_ids. find-or-create's own SELECT (below) can return no row on a
-            # fresh DB where no test in this session has run yet -- guard against that.
+            # org_members/repo_collaborators do grant DELETE, so clean up the shared tenant's rows.
+            # The tenant may not exist yet on a fresh DB.
             cur.execute(
                 "SELECT tenants.id FROM tenants JOIN users ON users.id = tenants.personal_user_id "
                 "WHERE lower(users.email) = lower(%s)",
@@ -194,9 +179,7 @@ def test_normalizes_a_push_event(pg_conn, tenant_id):
 )
 def test_normalizes_each_ingested_event_type(pg_conn, tenant_id, event_type, payload, expected_summary):
     conn, state = pg_conn
-    # Two pull_request cases share event_type ("opened" vs "closed"/merged) -- a
-    # payload-derived suffix keeps every case's delivery_id unique regardless of how
-    # many share the same event_type.
+    # A payload-derived suffix keeps delivery_ids unique across cases sharing an event_type.
     delivery_id = f"d-{event_type}-{abs(hash(expected_summary))}"
     payload = {**payload, "repository": {"full_name": "acme/widgets"}, "sender": {"login": "octocat", "avatar_url": ""}}
     row_id = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id=delivery_id, event_type=event_type, payload=payload)
@@ -291,10 +274,8 @@ def test_aggregates_separate_days_produce_separate_rows(pg_conn, tenant_id):
 
 def test_aggregates_use_the_utc_day_regardless_of_session_timezone(pg_conn, tenant_id):
     conn, state = pg_conn
-    # 00:30 UTC on Aug 21 is still Aug 20 in America/Los_Angeles (UTC-7 in August) -- the
-    # aggregate's "day" must bucket by UTC, not whatever timezone this Postgres session
-    # happens to be in (CodeRabbit finding on #341: psycopg returns timestamptz values in
-    # the session's TimeZone, not UTC, so a naive .date() call would misbucket this).
+    # 00:30 UTC Aug 21 is Aug 20 in America/Los_Angeles; the day must bucket by UTC, not
+    # the session TimeZone psycopg returns timestamptz in.
     received_at = datetime(2026, 8, 21, 0, 30, tzinfo=timezone.utc)
     payload = {"repository": {"full_name": "acme/agg-tz"}, "sender": {"login": "octocat", "avatar_url": ""}, "ref_type": "tag", "ref": "v1"}
     row_id = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-agg-tz-1", event_type="create", payload=payload, received_at=received_at)
@@ -326,9 +307,7 @@ def test_null_tenant_delivery_is_skipped_not_normalized(pg_conn):
 
     assert len(redis_client.acked) == 1  # acked so it doesn't sit pending forever
     with conn.cursor() as cur:
-        # Asserting absence, not presence -- no row was ever inserted for this
-        # delivery, so the count is 0 regardless of what app.tenant_id (unset here)
-        # would otherwise restrict under RLS.
+        # Absence check, so the unset app.tenant_id under RLS doesn't matter.
         cur.execute("SELECT count(*) FROM repo_events WHERE delivery_id = %s", ("d-no-tenant-1",))
         assert cur.fetchone()[0] == 0
         cur.execute("SELECT status FROM webhook_deliveries WHERE id = %s", (row_id,))
@@ -498,9 +477,7 @@ def test_out_of_order_security_alert_delivery_does_not_overwrite_newer_state(pg_
     row_id = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-alert-fresh", event_type="dependabot_alert", payload=fresh_payload)
     event_consumer._process_entry(conn, _FakeRedis(), "1-0", _entry_fields(row_id, "dependabot_alert", tenant_id))
 
-    # GitHub doesn't guarantee webhook delivery order -- this "open" state has an OLDER
-    # updated_at than the "dismissed" row already stored, simulating a late/redelivered
-    # stale payload arriving after a newer one already landed.
+    # Simulates a late, stale "open" arriving after a newer "dismissed".
     stale_payload = {**fresh_payload, "action": "created", "alert": {**fresh_payload["alert"], "state": "open", "updated_at": "2026-08-20T09:00:00Z"}}
     row_id_2 = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-alert-stale", event_type="dependabot_alert", payload=stale_payload)
     event_consumer._process_entry(conn, _FakeRedis(), "2-0", _entry_fields(row_id_2, "dependabot_alert", tenant_id))
@@ -549,13 +526,11 @@ def test_full_loop_reads_from_redis_and_reclaims_a_crashed_consumers_entry(pg_co
     event_consumer._ensure_group(redis_client)
     redis_client.xadd(event_consumer._STREAM_KEY, _entry_fields(row_id, "create", tenant_id))
 
-    # Simulate a crashed consumer: read (claims the entry, delivery count -> 1) but
-    # never ack.
+    # Simulate a crashed consumer: read (claims it) but never ack.
     resp = redis_client.xreadgroup(event_consumer._GROUP_NAME, "dead-consumer", {event_consumer._STREAM_KEY: ">"}, count=10)
     assert len(resp) == 1
 
-    # _sweep_pending with idle=0 reclaims it immediately (no need to actually wait
-    # _RECLAIM_IDLE_MS in a test) and processes it under this test's own connection.
+    # idle=0 reclaims it immediately instead of waiting _RECLAIM_IDLE_MS.
     original_idle = event_consumer._RECLAIM_IDLE_MS
     event_consumer._RECLAIM_IDLE_MS = 0
     try:
@@ -691,8 +666,7 @@ def test_redelivered_member_added_does_not_overwrite_role(pg_conn, tenant_id):
     row_id = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-org-role-1", event_type="organization", payload=payload)
     event_consumer._process_entry(conn, _FakeRedis(), "1-0", _entry_fields(row_id, "organization", tenant_id))
 
-    # Redelivery (or a re-add with a stale role snapshot) must not clobber a role a
-    # future reconciliation poll may have already corrected -- see org_membership_store.py.
+    # A redelivery must not clobber a role the reconciliation poll may have corrected.
     redelivered_payload = {"action": "member_added", "membership": {"role": "member", "user": {"login": "stable-role", "avatar_url": "https://example.com/b.png"}}}
     row_id_2 = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-org-role-2", event_type="organization", payload=redelivered_payload)
     event_consumer._process_entry(conn, _FakeRedis(), "2-0", _entry_fields(row_id_2, "organization", tenant_id))
@@ -702,9 +676,8 @@ def test_redelivered_member_added_does_not_overwrite_role(pg_conn, tenant_id):
 
 
 def test_out_of_order_member_removed_does_not_delete_a_newer_repo_collaborator(pg_conn, tenant_id):
-    # Simulates a reclaimed/retried "removed" delivery (received_at earlier) processed
-    # AFTER a later "added" delivery already landed -- the stale removal must not delete
-    # the newer grant. See org_membership_store.py's module docstring.
+    # Simulates a stale (earlier received_at) "removed" processed after a newer "added";
+    # it must not delete the newer grant.
     conn, state = pg_conn
     earlier = datetime(2026, 8, 20, 10, 0, tzinfo=timezone.utc)
     later = datetime(2026, 8, 20, 11, 0, tzinfo=timezone.utc)
@@ -810,9 +783,7 @@ def test_member_removed_deletes_repo_collaborator(pg_conn, tenant_id):
 
 @pytest.mark.parametrize("event_type", ["membership", "team"])
 def test_membership_and_team_events_are_acked_but_not_normalized(event_type, pg_conn, tenant_id):
-    # Team-based repo access is explicitly deferred (org_membership_store.py's module
-    # docstring) -- these event types are durably queued (webhooks.py) but have no
-    # consumer yet, same placeholder posture PR #350 used for the security alerts.
+    # These event types have no normalizer: acked but left 'queued'.
     conn, state = pg_conn
     row_id = _make_delivery(
         conn, state, tenant_id=tenant_id, delivery_id=f"d-{event_type}-1", event_type=event_type,
@@ -857,10 +828,8 @@ def test_organization_member_added_with_missing_login_is_dropped_not_crashed(pg_
 
 
 def test_organization_event_db_error_still_releases_the_tenant_lock(pg_conn, tenant_id, monkeypatch):
-    # Regression test: a psycopg.Error mid-write used to leave pg_conn's transaction
-    # aborted, and release_tenant_lock's plain SELECT pg_advisory_unlock (not a
-    # COMMIT/ROLLBACK) would then itself fail with InFailedSqlTransaction -- leaking the
-    # lock for the rest of this connection's lifetime (issue #357 follow-up).
+    # A psycopg.Error mid-write must be rolled back before pg_advisory_unlock, or the
+    # unlock fails with InFailedSqlTransaction and leaks the lock.
     conn, state = pg_conn
 
     def _raise(*args, **kwargs):
@@ -877,8 +846,7 @@ def test_organization_event_db_error_still_releases_the_tenant_lock(pg_conn, ten
     with pytest.raises(psycopg.errors.UniqueViolation):
         event_consumer._process_entry(conn, _FakeRedis(), "1-0", _entry_fields(row_id, "organization", tenant_id))
 
-    # A second connection can immediately acquire the same tenant's lock -- if it had
-    # leaked, this would return False instead.
+    # A second connection can acquire the lock only if it wasn't leaked.
     other_conn = psycopg.connect(_DB_URL, autocommit=True)
     try:
         with other_conn.cursor() as cur:
@@ -970,12 +938,11 @@ def test_sweep_pending_drops_entries_past_max_delivery_attempts(pg_conn, tenant_
     event_consumer._ensure_group(redis_client)
     entry_id = redis_client.xadd(event_consumer._STREAM_KEY, _entry_fields(row_id, "create", tenant_id))
     redis_client.xreadgroup(event_consumer._GROUP_NAME, "c1", {event_consumer._STREAM_KEY: ">"}, count=10)
-    # xclaim increments the delivery counter each call -- push it past _MAX_DELIVERY_ATTEMPTS.
+    # xclaim increments the delivery counter each call; push it past _MAX_DELIVERY_ATTEMPTS.
     for _ in range(event_consumer._MAX_DELIVERY_ATTEMPTS + 1):
         redis_client.xclaim(event_consumer._STREAM_KEY, event_consumer._GROUP_NAME, "c1", min_idle_time=0, message_ids=[entry_id])
 
-    # _sweep_pending only considers entries idle at least _RECLAIM_IDLE_MS -- these were
-    # just claimed, so drop it to 0 for this test rather than sleep for real.
+    # Drop the idle threshold to 0 rather than sleep for real.
     original_idle = event_consumer._RECLAIM_IDLE_MS
     event_consumer._RECLAIM_IDLE_MS = 0
     try:
@@ -1022,9 +989,7 @@ def test_run_processes_a_stream_entry_then_stops(pg_conn, tenant_id, redis_clien
 
     monkeypatch.setattr(event_consumer, "_redis_client", lambda: redis_client)
     monkeypatch.setattr(event_consumer, "_BLOCK_MS", 100)
-    # _touch_heartbeat is called first thing every loop iteration -- no-op on the first
-    # call (let the iteration actually run), raise on the second so run()'s `while True`
-    # stops after processing exactly one batch.
+    # No-op on the first call, raise on the second so run() stops after one batch.
     monkeypatch.setattr(event_consumer, "_touch_heartbeat", MagicMock(side_effect=[None, _StopLoop]))
 
     with pytest.raises(_StopLoop):
@@ -1037,11 +1002,8 @@ def test_run_processes_a_stream_entry_then_stops(pg_conn, tenant_id, redis_clien
 
 
 def test_run_recovers_from_a_connection_error(monkeypatch, caplog):
-    # psycopg.connect raising is caught *inside* run()'s own try/except (by design --
-    # it must never let a connection blip kill the loop), so a sentinel raised there
-    # would just be swallowed by that same except, not reach this test. Use the
-    # _touch_heartbeat hook (called once per iteration, outside the try) to stop the
-    # loop instead, and assert connect() was retried across iterations.
+    # run() swallows connect() errors by design, so stop the loop via _touch_heartbeat
+    # (called outside the try) and assert connect() was retried.
     monkeypatch.setattr(event_consumer, "_redis_client", lambda: MagicMock())
     monkeypatch.setattr(event_consumer, "_ensure_group", MagicMock())
     monkeypatch.setattr(event_consumer.psycopg, "connect", MagicMock(side_effect=psycopg.OperationalError("refused")))
@@ -1052,20 +1014,13 @@ def test_run_recovers_from_a_connection_error(monkeypatch, caplog):
         event_consumer.run()
 
     assert event_consumer.psycopg.connect.call_count == 2  # retried instead of crashing after the first failure
-    # Regression test for issue #413: this used to log only type(error).__name__ (a
-    # single word, no message/stack), making a real bug indistinguishable from this
-    # expected retry-forever connection error. log.exception must record the actual
-    # exception message and traceback.
+    # log.exception must record the message and traceback, not just the class name.
     assert any("refused" in r.exc_text for r in caplog.records if r.exc_info)
 
 
 def test_run_recovers_from_a_generic_loop_error(monkeypatch, caplog):
-    # Same as test_run_recovers_from_a_connection_error, but for the catch-all `except
-    # Exception` branch (not the narrower psycopg/redis one) -- e.g. a bug in
-    # _sweep_pending itself, rather than a connection blip. Uses psycopg.ProgrammingError
-    # rather than a bare RuntimeError: it's a real psycopg exception type, but NOT a
-    # subclass of OperationalError, so it proves the narrow/generic except split actually
-    # routes a psycopg-raised-but-non-connection error to the generic branch.
+    # Same, but for the catch-all `except Exception` branch. ProgrammingError is a psycopg
+    # error that isn't an OperationalError, proving the narrow/generic split.
     monkeypatch.setattr(event_consumer, "_redis_client", lambda: MagicMock())
     monkeypatch.setattr(event_consumer, "_ensure_group", MagicMock())
     monkeypatch.setattr(event_consumer.psycopg, "connect", MagicMock(side_effect=psycopg.ProgrammingError("boom")))
@@ -1076,17 +1031,13 @@ def test_run_recovers_from_a_generic_loop_error(monkeypatch, caplog):
         event_consumer.run()
 
     assert event_consumer.psycopg.connect.call_count == 2  # retried instead of crashing after the first failure
-    # Regression test for issue #413: this used to log only type(error).__name__ (a
-    # single word, no message/stack), making a real bug indistinguishable from any
-    # other exception. log.exception must record the actual exception message and
-    # traceback.
+    # log.exception must record the message and traceback, not just the class name.
     assert any("boom" in r.exc_text for r in caplog.records if r.exc_info)
 
 
 def test_run_retries_initialization_instead_of_dying_on_a_startup_redis_error(monkeypatch, caplog):
-    # A Redis error constructing the client or creating the consumer group used to be
-    # completely uncaught -- run() would raise straight out, silently killing the
-    # daemon thread it's started on forever (CodeRabbit finding on PR #340).
+    # A Redis error building the client or consumer group must be retried, not kill the
+    # daemon thread.
     attempts = {"n": 0}
 
     def _flaky_redis_client():
@@ -1104,8 +1055,7 @@ def test_run_retries_initialization_instead_of_dying_on_a_startup_redis_error(mo
         event_consumer.run()
 
     assert attempts["n"] == 2  # retried after the first failure instead of raising out of run()
-    # Regression test for issue #413: same class-name-only logging gap on the
-    # Redis-init retry path, which used to retry forever on a single one-word line.
+    # The Redis-init retry path must also log the full exception.
     assert any("not ready yet" in r.exc_text for r in caplog.records if r.exc_info)
 
 

@@ -129,10 +129,8 @@ describe("ActivityPage", () => {
 
     renderPage();
 
-    // An org connected purely via GitHub App installation has no saved PAT, so
-    // resolveQuery resolves to an empty token -- the feed must still query (letting the
-    // API resolve an installation token server-side) instead of showing the "not
-    // configured" prompt, which would be a false negative for App-only orgs.
+    // An App-only org resolves to an empty token; the feed must still query (the API mints an
+    // installation token) rather than show the "not configured" prompt.
     await waitFor(() => expect(githubEventsMock).toHaveBeenCalledWith("acme", ""));
     expect(screen.queryByText(/No account selected yet/)).not.toBeInTheDocument();
     expect(await screen.findByText(/no events yet/)).toBeInTheDocument();
@@ -220,8 +218,7 @@ describe("ActivityPage", () => {
     expect(await screen.findByText("(estimated)")).toBeInTheDocument();
   });
 
-  // Issue #284: the "PR Board" tab is gone from Activity -- that view (open PRs grouped
-  // by author) is now a toggle on /pulls. Activity just links there.
+  // The PR Board view is a toggle on /pulls; Activity just links there.
   it("has no PR Board tab and links to the Pull Requests page instead", async () => {
     localStorage.setItem("default_org", "acme");
     tokensResolveMock.mockResolvedValue({ token: "ghp_test" });

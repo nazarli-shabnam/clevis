@@ -1,7 +1,6 @@
 "use client"
 
-// URL: /repos/<owner~name>. The [repo] folder name is Next.js dynamic segment syntax
-// (not a literal path); param holds owner and repo joined with "~" (see repos/page.tsx).
+// URL: /repos/<owner~name>; param holds owner and repo joined with "~".
 
 import { useEffect, useRef, useState } from "react"
 import { useParams } from "next/navigation"
@@ -126,8 +125,7 @@ export default function RepoDetailPage() {
     enabled: !!owner && !!repo,
   })
 
-  // Per-repo branch-protection/secret-scanning status — still gated on the Security
-  // tab actually being opened, so visiting the Overview/Cache tabs never fires it.
+  // Gated on the Security tab being opened, so the Overview/Cache tabs never fire it.
   const securityQuery = useQuery({
     queryKey: ["repo-detail-security", owner, repo, token],
     queryFn: () => api.repos.security(owner, owner, repo, token),

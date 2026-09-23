@@ -83,7 +83,6 @@ def test_check_account_rate_limit_resets_after_the_window_elapses():
     with patch("src.core.rate_limit.time.monotonic", return_value=30.0):
         with pytest.raises(HTTPException):
             check_account_rate_limit("acct-window", max_requests=1, window_seconds=60)
-    # Past the window -- the bucket resets instead of continuing to accumulate,
-    # so this must succeed rather than 429 again.
+    # Past the window the bucket resets, so this must succeed.
     with patch("src.core.rate_limit.time.monotonic", return_value=61.0):
         check_account_rate_limit("acct-window", max_requests=1, window_seconds=60)

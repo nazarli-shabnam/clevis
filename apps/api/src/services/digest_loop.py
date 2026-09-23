@@ -1,7 +1,6 @@
-"""Issue #292: periodic leadership-digest sweep, wired via sweep_loop.run_sweep_loop.
-Started from src.main's lifespan. The sweep itself is a no-op unless the `digest_cadence`
-instance-config key is set to weekly or monthly. See sweep_loop.py for the shared
-loop/session/reset shape.
+"""Periodic leadership-digest sweep, wired via sweep_loop.run_sweep_loop. Started from
+src.main's lifespan. A no-op unless the `digest_cadence` instance-config key is set to
+weekly or monthly. See sweep_loop.py for the shared loop/session/reset shape.
 """
 
 from src.services.digest_sweep import run_digest_sweep

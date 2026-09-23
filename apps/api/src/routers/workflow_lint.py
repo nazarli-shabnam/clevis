@@ -1,15 +1,9 @@
-"""GitHub Actions workflow policy lint + optional auto-fix PR (issue #291).
+"""GitHub Actions workflow policy lint + optional auto-fix PR.
 
-``POST /me/repos/{owner}/{repo}/workflow-lint`` (and the org-scoped variant) always
-returns the findings. With ``open_pr=true`` and a fixable finding, Clevis opens a PR
-that flips a dangerous ``pull_request_target`` trigger to ``pull_request`` (only when
-the workflow uses no secrets) and returns its URL.
-
-**Requires write scopes Clevis does not request by default** — ``contents: write``,
-``pull_requests: write``, and ``workflows: write`` (GitHub blocks pushing changes to
-``.github/workflows/**`` without the last). A 403 from GitHub becomes a 400 pointing
-at docs/self-hosting.md. Read-only scanning (``open_pr=false``) still needs the
-Actions/Contents *read* the rest of Clevis already uses.
+Always returns findings. With ``open_pr=true`` and a fixable finding, opens a PR
+flipping a dangerous ``pull_request_target`` trigger to ``pull_request`` (only when the
+workflow uses no secrets). Requires ``contents``/``pull_requests``/``workflows: write``
+scopes Clevis doesn't request by default; a 403 becomes a 400 pointing at the docs.
 """
 
 import httpx
@@ -134,8 +128,7 @@ def workflow_lint_org(
     x_github_token: str | None = Header(default=None),
 ) -> LintResponse:
     # Opening a PR writes to GitHub, so it needs org-admin when open_pr=true; a read-only
-    # scan only needs membership -- same grading as workflow_lint_personal's
-    # resolve_owner_token call above.
+    # scan only needs membership -- same grading as workflow_lint_personal above.
     ctx: OrgContext = require_org_role(min_role="admin" if body.open_pr else "member")(org_login, db, user)
     assert_owner_matches_org(owner, ctx)
     try:

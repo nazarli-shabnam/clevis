@@ -3,11 +3,8 @@ import { buttonVariants } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
 /**
- * Empty state variants — no icons, no centered layouts, just text.
- *
- * <EmptyStateInline>    — inside a card/table where data would be
- * <EmptyStatePage>      — when a whole feature section has no data yet
- * <EmptyStateNoAccount> — no org/personal account selected in the profile menu
+ * Empty state variants: Inline (inside a card/table), Page (whole section has no data),
+ * NoAccount (no org/personal account selected).
  */
 
 interface EmptyStateInlineProps {
@@ -54,9 +51,7 @@ export function EmptyStatePage({ message, action }: EmptyStatePageProps) {
 interface EmptyStateNoAccountProps {
   /** Skip the outer card wrapper -- for use inside a panel that's already a card. */
   bare?: boolean
-  /** Override the default "this page has nothing to query" copy -- for pages (like
-   * Repos) where a manual search still works without an active scope, so the default
-   * wording would be misleading. */
+  /** Override the default copy, e.g. for Repos where manual search works without a scope. */
   message?: string
 }
 

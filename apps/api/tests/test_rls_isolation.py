@@ -1,24 +1,7 @@
-"""End-to-end proof that RLS (migrations 0030/0031) actually blocks cross-tenant access
-under the real, non-superuser clevis_api role -- not just against a hand-built throwaway
-test role. This is the concrete claim issue #190's closing comment promised and, before
-this test existed, had only ever been checked by hand (see docs/self-hosting.md and the
-migration 0032/0033 verification notes) rather than as a standing regression test.
+"""End-to-end proof that RLS blocks cross-tenant access under the non-superuser clevis_api role.
 
-Deliberately does NOT use the shared `db` fixture (conftest.py) -- that fixture is bound
-to whatever settings.database_url the rest of the suite runs under, which is the
-bootstrap superuser DB_USER in most local/dev runs (superuser unconditionally bypasses
-RLS, so this test would silently prove nothing if it ran that way). Instead this test
-opens its own connection explicitly as clevis_api: reused as-is when the suite is already
-running under clevis_api (CI's python job, after issue #330's verification wiring), or
-built by swapping credentials onto the same host/port/db when a local run sets
-API_DB_PASSWORD to opt in. Skips (not fails) when neither is true, so a plain local
-`pytest -q` run without API_DB_PASSWORD configured still passes -- that's the documented,
-optional "Recommended" setup per AGENTS.md, not a hard requirement.
-
-audit_logs is used as the RLS-protected table under test: it gets the simple strict
-tenant_isolation equality policy (migration 0030), with none of memberships'/
-github_installations' widened self-access carve-out (migration 0031) that would
-complicate a minimal two-tenant isolation check.
+Doesn't use the `db` fixture: it usually runs as the superuser, which bypasses RLS. Connects as
+clevis_api (CI) or via API_DB_PASSWORD, else skips. Uses audit_logs for its plain equality policy.
 """
 
 import os
@@ -53,14 +36,9 @@ def _clevis_api_engine():
 def test_rls_blocks_cross_tenant_audit_log_access():
     engine = _clevis_api_engine()
     with engine.connect() as conn:
-        # expire_on_commit=False: default expire-then-refresh-on-next-access behavior would
-        # try to re-SELECT log_a by identity after switching the session to tenant B's
-        # context, which correctly fails (RLS makes it invisible) but raises
-        # ObjectDeletedError instead of just leaving the already-fetched attributes alone.
+        # expire_on_commit=False: a refresh under tenant B's context would raise ObjectDeletedError.
         session = Session(bind=conn, expire_on_commit=False)
-        # Initialized up front and only ever deleted in the finally block if non-None, so a
-        # failure partway through setup (e.g. after users commit but before tenants do) still
-        # cleans up whatever was actually committed instead of leaking rows into a local DB.
+        # Initialized up front so a partial setup failure still cleans up whatever committed.
         user_a = user_b = tenant_a = tenant_b = log_a = log_b = None
         try:
             try:
@@ -74,10 +52,7 @@ def test_rls_blocks_cross_tenant_audit_log_access():
                 session.add_all([tenant_a, tenant_b])
                 session.commit()
 
-                # Each insert happens under its own tenant's session context, since Group A's
-                # strict equality policy has no separate WITH CHECK -- it defaults to the
-                # USING clause, so a row is only insertable when it's already visible under
-                # the session's current tenant_id.
+                # Insert under each tenant's own context: with no WITH CHECK, the USING clause gates inserts.
                 set_tenant_session_context(session, tenant_a.id, user_a.id)
                 log_a = AuditLog(actor="tester", action="test", target="a", payload="{}", tenant_id=tenant_a.id)
                 session.add(log_a)
@@ -109,9 +84,7 @@ def test_rls_blocks_cross_tenant_audit_log_access():
                 visible_ids = {row[0] for row in session.execute(text("SELECT id FROM audit_logs")).all()}
                 assert visible_ids == {log_b.id}
             finally:
-                # Cleanup must happen per-tenant context too -- RLS applies to DELETE just
-                # like SELECT, so a single DELETE can't remove both rows at once. A prior
-                # exception may leave the session mid-transaction, so roll back first.
+                # RLS applies to DELETE too, so clean up per tenant; roll back first in case of a prior error.
                 session.rollback()
                 if log_a is not None:
                     set_tenant_session_context(session, tenant_a.id, user_a.id)
@@ -137,11 +110,7 @@ def test_rls_blocks_cross_tenant_audit_log_access():
     engine.dispose()
 
 
-# Every table FORCE-enabled RLS ever added to, across 0031 (memberships/
-# github_installations/scan_results) and 0046 (issue #412's completion of the S3-S6
-# rollout). Plain pg_catalog metadata -- unlike test_rls_blocks_cross_tenant_audit_log_access
-# above, this needs no non-superuser role and never skips, so it's the one RLS regression
-# check that always runs on a default `pytest -q`.
+# Every table with FORCE RLS. Plain pg_catalog metadata, so this check never skips.
 _EXPECTED_FORCE_RLS_TABLES = {
     "memberships",
     "github_installations",

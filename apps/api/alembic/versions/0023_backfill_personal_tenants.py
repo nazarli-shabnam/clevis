@@ -1,11 +1,4 @@
-"""Backfill one personal tenant/membership per existing user (issue #190, PR 3 of 7).
-
-Every user gets an implicit personal tenant (kind='personal') so
-personal-scope resources (scan_results, saved_tokens, personal
-github_installations) get real DB-level isolation once RLS lands, not just
-owner_user_id filtering. The membership role for a user's own personal
-tenant is 'admin' -- there's no concept of a personal-tenant member who
-isn't its owner.
+"""Backfill one personal tenant/membership per existing user.
 
 Revision ID: 0023
 Revises: 0022

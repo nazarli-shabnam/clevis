@@ -1,4 +1,4 @@
-"""Tests for the Overview cockpit aggregate endpoint (docs/plan.md Phase 12)."""
+"""Tests for the Overview cockpit aggregate endpoint."""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -169,7 +169,6 @@ def test_cockpit_shows_own_byo_pat_scans_when_caller_has_no_org_membership(http,
     # An org row for "acme" exists but the caller has no membership and no installation
     # -- their only claim to its history is a scan they ran themselves, so
     # _user_history_scope is "own" and only their own scan rows feed the trend.
-    # Mirrors test_analytics_history.py::test_personal_history_returns_seeded_rows_newest_first.
     org = org_repo.get_or_create(db, github_login="acme")
     other = User(email="other-cockpit@example.com", name=None, is_workspace_admin=False)
     db.add(other)
@@ -322,9 +321,7 @@ def test_cockpit_falls_back_to_client_supplied_token_header(http, db, mock_user)
 
 
 def test_cockpit_threads_account_type_for_personal_account(http, db, mock_user):
-    """A personal (User-type) owner must resolve repos via the non-org path -- see
-    list_owner_repos in github_client.py. Regression test for the cockpit previously
-    always calling /orgs/{owner}/repos regardless of account type."""
+    """A personal (User-type) owner must resolve repos via the non-org path (list_owner_repos)."""
     patchers = _patch_all({"src.routers.analytics.get_account_type": {"return_value": "User"}})
     _start_all(patchers)
     try:
@@ -341,12 +338,8 @@ def test_cockpit_threads_account_type_for_personal_account(http, db, mock_user):
 
 
 # ---------------------------------------------------------------------------
-# S6: commit_activity_4w/commit_heatmap_52w + recent_events served from
-# repo_event_daily_counts/repo_events (not live GitHub) for an org the caller is
-# a member of with a connected GitHub App installation -- partial re-point,
-# everything else in CockpitResponse still comes from live GitHub calls (see
-# analytics.py's _cockpit_commit_activity_from_aggregate docstring and the
-# plan.md status update for the accuracy tradeoff).
+# commit_activity_4w/commit_heatmap_52w + recent_events come from repo_event_daily_counts/
+# repo_events (not live GitHub) for a member of an org with a connected App installation.
 # ---------------------------------------------------------------------------
 
 
@@ -478,8 +471,7 @@ def test_cockpit_connected_org_uses_repo_events_for_recent_events_not_live_githu
 def test_cockpit_falls_back_to_github_when_the_installation_has_no_installation_id(
     http, db, mock_user, acme_org_with_installation
 ):
-    # Same sync_org_installation known-admin gap covered elsewhere (org_events,
-    # repos.py's _repo_org_connected): a row can exist with installation_id IS NULL.
+    # Known sync_org_installation gap: a row can exist with installation_id IS NULL.
     inst = installation_repo.get_for_org(db, org_id=acme_org_with_installation.id, account_login="acme")
     inst.installation_id = None
     db.commit()
@@ -523,9 +515,7 @@ def test_cockpit_does_not_read_aggregate_for_org_the_caller_is_not_a_member_of(h
 
 
 # ---------------------------------------------------------------------------
-# recent_events staleness (data-accuracy fix): a connected org's Recent Activity card must
-# say so when the ingestion cursor hasn't advanced recently, instead of silently showing old
-# data as if it were current.
+# recent_events staleness: flagged when the ingestion cursor hasn't advanced recently.
 # ---------------------------------------------------------------------------
 
 
@@ -737,10 +727,8 @@ def test_safe_commit_activity_4w_and_heatmap_52w_one_bad_repo_sums_the_rest_but_
 
 @pytest.mark.parametrize("bad_total", [True, 1.5, -1])
 def test_week_total_rejects_bool_fractional_and_negative(bad_total):
-    """CodeRabbit finding: a plain isinstance(x, (int, float)) check accepts bool (bool is an
-    int subclass in Python), fractional values, and negatives -- none of which are a real
-    GitHub commit count. Must raise so the caller degrades this repo instead of adding a
-    nonsensical value to the org-wide total."""
+    """isinstance(x, (int, float)) accepts bool, fractional and negative values -- none a real
+    commit count. Must raise so the caller degrades this repo instead of corrupting the total."""
     from src.routers.analytics import _week_total
 
     with pytest.raises(TypeError):
@@ -813,8 +801,7 @@ def test_safe_total_cache_bytes_partial_aggregation_rejects_bad_size(bad_size):
 
 def test_safe_commit_activity_4w_and_heatmap_52w_malformed_week_entry_degrades_not_raises():
     """A non-dict week (or a week whose "total" isn't numeric) must be treated as a per-repo
-    failure, not raise past future.result() and fail the whole cockpit request -- this is
-    exactly the escape-asyncio.gather scenario CodeRabbit flagged on this PR."""
+    failure, not raise past future.result() and fail the whole cockpit request."""
     from src.routers.analytics import _safe_commit_activity_4w_and_heatmap_52w
 
     weeks_good = [{"total": 2} for _ in range(52)]
@@ -953,7 +940,7 @@ def test_cache_job_success_rate_ignores_other_job_types(db):
 
 
 # ---------------------------------------------------------------------------
-# Milestones / at-risk repos (docs/plan.md Phase 14)
+# Milestones / at-risk repos
 # ---------------------------------------------------------------------------
 
 
@@ -1052,7 +1039,7 @@ def test_safe_milestones_multiple_overdue_milestones_same_repo_collect_both_reas
 
 
 # ---------------------------------------------------------------------------
-# PR cycle time / release cadence (docs/plan.md Phase 14)
+# PR cycle time / release cadence
 # ---------------------------------------------------------------------------
 
 

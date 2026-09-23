@@ -1,9 +1,7 @@
-"""Tests for Dependabot auto-triage (issue #290).
+"""Tests for Dependabot auto-triage (org-admin only, per-repo opt-in).
 
-Org-admin only. Per-repo opt-in (default off); approve_only unless approve_and_merge is
-set. A PR is acted on only when it's a patch-level dependabot[bot] bump with all checks
-green and no pending/blocking human review. Every decision is audited. Faked GitHub via
-``patch("src.routers.dependabot_triage.GitHubClient")``.
+Only patch-level dependabot[bot] bumps with green checks and no blocking review are acted on;
+every decision is audited.
 """
 
 from unittest.mock import patch

@@ -1,9 +1,6 @@
-"""Issue #368: saving a legacy PAT best-effort connects the org to Clevis, so the
-org-scoped dashboard pages (Repositories/Activity/...) work afterwards, not just Overview.
+"""Saving a legacy PAT best-effort connects the org to Clevis.
 
-Authorization policy mirrors the OAuth provisioning path (``sync_org_admin_memberships``):
-only a GitHub **admin/owner** of the org is auto-connected from a pasted PAT. A plain GitHub
-member still goes through the explicit invite-accept flow.
+Only a GitHub admin/owner is auto-connected; plain members still use the invite flow.
 """
 from unittest.mock import patch
 
@@ -19,8 +16,6 @@ from src.repositories import org_repo, tenant_repo
 from src.routers.tokens import router as tokens_router
 from src.services.github_oauth import GitHubOrgMembership
 
-# The PAT -> org-membership resolution moved out of the router into
-# org_provisioning.connect_admin_org_from_token, so that's where github_oauth is imported.
 _PATCH_TARGET = "src.services.org_provisioning.github_oauth.list_user_org_memberships"
 
 
@@ -53,7 +48,7 @@ def test_pat_for_admin_org_creates_org_and_membership(db, admin):
 
     org = org_repo.get_by_login_ci(db, "acme")
     assert org is not None and org.github_org_id == 42
-    # RBAC reads the tenant-keyed mirror -- it must have been dual-written.
+    # RBAC reads the tenant-scoped memberships table.
     membership = tenant_repo.get_membership(db, org.tenant_id, admin.id)
     assert membership is not None and membership.role == "admin"
 
@@ -94,8 +89,7 @@ def test_pat_without_matching_membership_saves_token_only(db, admin):
 
 
 def test_pat_for_plain_member_saves_token_but_does_not_connect_org(db, admin):
-    """A GitHub *member* (not admin) pasting a PAT must not back-door around the
-    invite-accept flow -- token is saved, but no Org / membership is created."""
+    """A GitHub member (not admin) pasting a PAT gets the token saved but no Org / membership."""
     client = _admin_client(db, admin)
     memberships = [GitHubOrgMembership(github_org_id=99, login="Acme", role="member")]
     with patch(_PATCH_TARGET, return_value=memberships):
@@ -106,8 +100,7 @@ def test_pat_for_plain_member_saves_token_but_does_not_connect_org(db, admin):
 
 
 def test_existing_member_row_is_promoted_when_github_says_admin(db, admin):
-    """If the caller already has a 'member' row for the org and GitHub now reports them
-    an admin, saving a PAT promotes the row (CodeRabbit: sync existing role)."""
+    """An existing 'member' row is promoted when GitHub now reports the caller as admin."""
     org = org_repo.get_or_create(db, github_login="Acme", github_org_id=55)
     from src.repositories import org_membership_repo
 

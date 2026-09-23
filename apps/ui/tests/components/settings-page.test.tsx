@@ -15,13 +15,8 @@ const configUpdateMock = vi.fn();
 const routerReplace = vi.fn();
 let searchParams = new URLSearchParams();
 
-// AuthProvider (wrapping SettingsPage below) calls the real global `fetch` directly
-// (not the mocked api client) to confirm the session against /auth/me. Left unmocked,
-// every test attempts a real network call to localhost:8080; on the first failure it
-// waits a real 2s before retrying (see auth-context.tsx's checkMe), which is slow and,
-// worse, timing-dependent on this machine's TCP-refusal latency -- rendering
-// `waitFor`'s default 1s timeout unreliable for anything else the test is waiting on.
-// Stub it to resolve immediately so tests don't pay for or depend on that retry.
+// AuthProvider calls the real global `fetch` for /auth/me; unmocked, each failure waits a real
+// 2s before retrying, making `waitFor` timing-dependent. Stub it to resolve immediately.
 const fetchMock = vi.fn();
 
 vi.mock("next/navigation", () => ({
@@ -142,9 +137,7 @@ describe("SettingsPage", () => {
     await waitFor(() => {
       expect(screen.getByText("Failed to load organizations.")).toBeInTheDocument();
     });
-    // Two independent cards read the same failed "my-orgs" query -- OrgMembershipsSection
-    // and ConnectedOrgsSection (which also needs it to know which orgs the caller admins) --
-    // so each surfaces its own retry affordance.
+    // Two cards read the same failed "my-orgs" query, so each surfaces its own retry.
     expect(screen.getAllByRole("button", { name: "Retry" }).length).toBeGreaterThanOrEqual(1);
 
     await waitFor(() => {
@@ -262,8 +255,7 @@ describe("SettingsPage", () => {
 
     renderPage();
 
-    // The label is programmatically tied to the control (htmlFor / id), so
-    // getByLabelText resolves it, and the persisted value is what shows.
+    // Label is tied to the control (htmlFor/id), so getByLabelText resolves it.
     const cadence = (await screen.findByLabelText("Leadership Digest")) as HTMLSelectElement;
     expect(cadence.tagName).toBe("SELECT");
     expect(cadence.value).toBe("monthly");
@@ -306,7 +298,6 @@ describe("SettingsPage", () => {
     await waitFor(() => expect(localStorage.getItem(TOKEN_KEY)).toBeNull());
   });
 
-  // ── Connected accounts (installation-connect-disconnect-ux) ────────────────
 
   it("shows an unconfigured message instead of the install button when the App slug isn't set", async () => {
     orgsMineMock.mockResolvedValue([]);
@@ -391,11 +382,8 @@ describe("SettingsPage", () => {
 
     renderPage();
 
-    // "acme" also appears in the separate "Your organizations" membership card (which
-    // resolves independently, from orgsMineMock alone) -- waiting on that text alone
-    // would race ahead of the "Connected GitHub accounts" table's own org-scoped
-    // installation row, which only appears once orgInstallQueries (chained after
-    // membershipsQuery) settles. Wait on the actual two Disconnect buttons instead.
+    // "acme" also appears in the membership card, which resolves earlier; wait on the two
+    // Disconnect buttons so the org-scoped installation row has settled.
     await waitFor(() => {
       expect(screen.getAllByRole("button", { name: /disconnect/i })).toHaveLength(2);
     });
@@ -494,8 +482,7 @@ describe("SettingsPage", () => {
     await waitFor(() => {
       expect(installationsRemoveMock).toHaveBeenCalled();
     });
-    // The row's own button goes back to plain "Disconnect" while the confirm dialog
-    // shows a busy state instead of a second confirm click.
+    // Row button reverts to "Disconnect" while the dialog shows the busy state.
     expect(screen.queryByRole("button", { name: "Disconnect" })).not.toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: /working/i })).toBeDisabled();
 
@@ -523,8 +510,7 @@ describe("SettingsPage", () => {
     await waitFor(() => {
       expect(screen.getByRole("alert")).toHaveTextContent("GitHub API unreachable");
     });
-    // The row is still there (not silently removed) and can be retried immediately --
-    // the dialog was closed on error, not left stuck open.
+    // Row is still there and retryable; the dialog closed on error rather than sticking open.
     expect(screen.getByText("shabnam")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Disconnect" })).toBeInTheDocument();
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();

@@ -45,15 +45,13 @@ _cors_origins = settings.cors_origins
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     setup_logging()
-    # Independent background sweep loops -- each one is an unrelated concern, and each
-    # already tolerates a single iteration's exception without dying, so there's no
-    # reason to share one task.
+    # Separate tasks: unrelated concerns, each tolerating its own iteration errors.
     tasks = [
         asyncio.create_task(gap_heal_loop()),
         asyncio.create_task(membership_reconcile_loop()),
-        # Issue #292: leadership digest. A no-op unless digest_cadence is configured.
+        # No-op unless digest_cadence is configured.
         asyncio.create_task(digest_loop()),
-        # Issue #409: retry webhook_deliveries rows a transient Redis blip left at queue_failed.
+        # Retries webhook_deliveries rows left at queue_failed.
         asyncio.create_task(webhook_requeue_loop()),
     ]
     try:
@@ -72,8 +70,7 @@ app = FastAPI(
     title="clevis API",
     version="0.1.0",
     lifespan=lifespan,
-    # Interactive docs are intentionally disabled in all environments so the API
-    # surface is never published. Use Postman/curl for manual endpoint testing.
+    # Docs intentionally disabled in all environments so the API surface is never published.
     openapi_url=None,
     docs_url=None,
     redoc_url=None,
@@ -82,9 +79,8 @@ app.add_middleware(RequestIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    # Required so the browser sends the httpOnly session cookie on cross-origin (UI->API)
-    # requests. Note: credentialed CORS is incompatible with a "*" origin — CORS_ORIGINS must
-    # list explicit UI origins in any deployment that relies on the cookie session.
+    # Needed for the httpOnly session cookie cross-origin; credentialed CORS rejects "*", so
+    # CORS_ORIGINS must list explicit UI origins.
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

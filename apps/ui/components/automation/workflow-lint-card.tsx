@@ -5,10 +5,8 @@ import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api/client"
 import type { WorkflowLintResponse } from "@/lib/api/types"
 
-// Workflow-policy lint (issue #291). Scans {owner}/{repo}'s .github/workflows for a
-// dangerous `pull_request_target` + PR-head-checkout pattern (and untrusted input in
-// `run:`). "Open fix PR" is org-admin only and needs Contents/Pull requests/Workflows
-// write on the App; a 400 with a docs pointer means it's missing.
+// Workflow-policy lint for dangerous `pull_request_target` + PR-head-checkout patterns.
+// "Open fix PR" is org-admin only; a 400 with a docs pointer means App write perms are missing.
 
 interface Props {
   owner: string

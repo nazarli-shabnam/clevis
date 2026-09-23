@@ -1,12 +1,4 @@
-"""Add github_installations.tenant_id, backfilled, nullable (issue #190, PR 3 of 7).
-
-github_installations.org_id/owner_user_id are already mutually exclusive
-(ck_github_installations_org_xor_owner), so the backfill join picks the
-org's tenant when org_id is set, the owner's personal tenant otherwise.
-NOT NULL is deferred to migration 0029, run only after a verification
-query confirms zero NULLs in the target environment -- this table's
-backfill correctness depends on migrations 0022/0023 having already run
-cleanly there, which this migration can't itself guarantee.
+"""Add github_installations.tenant_id, backfilled, nullable.
 
 Revision ID: 0025
 Revises: 0024

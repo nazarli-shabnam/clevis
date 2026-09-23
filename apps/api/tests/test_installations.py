@@ -38,10 +38,7 @@ def _client(db, user):
     app.include_router(inst_router)
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[require_auth] = lambda: user
-    # Issue #330: overriding require_auth for tests bypasses its real body, including the
-    # SET app.user_id side effect (src.core.db.set_session_user) RLS's self-access clauses
-    # (migration 0031) depend on -- set it here directly so tests exercise the same session
-    # context a real authenticated request would have.
+    # Overriding require_auth skips its SET app.user_id side effect that RLS depends on; set it directly.
     db.execute(text(f"SET app.user_id = {user.id}"))
     return TestClient(app)
 
@@ -110,9 +107,7 @@ def test_sync_org_installation_admin_ok(db, acme_org):
 
 
 def test_sync_org_installation_writes_audit_log(db, acme_org):
-    # Regression test: connecting a GitHub App installation used to write no audit
-    # entry at all, so the Audit page stayed empty even for a workspace admin who'd
-    # genuinely connected an org.
+    # Connecting an installation must write an audit entry.
     with _mock_installation("acme", "Organization"):
         _client(db, acme_org["admin"]).post(
             "/orgs/acme/installations/sync",
@@ -127,10 +122,8 @@ def test_sync_org_installation_writes_audit_log(db, acme_org):
 
 
 def test_sync_org_installation_enqueues_a_backfill_job_when_a_token_is_available(db, acme_org):
-    # Issue #191/S5 PR 1: a successful sync should kick off a one-shot activity backfill.
-    # No GitHub App is configured in test settings, so resolve_org_token itself is mocked
-    # directly (patched where installations.py imported it) rather than relying on real
-    # installation-token minting.
+    # A successful sync enqueues a one-shot activity backfill. No App is configured in tests,
+    # so resolve_org_token is mocked where installations.py imported it.
     with _mock_installation("acme", "Organization"), patch(
         "src.routers.installations.resolve_org_token", return_value="tok_acme"
     ):
@@ -149,9 +142,7 @@ def test_sync_org_installation_enqueues_a_backfill_job_when_a_token_is_available
 
 
 def test_sync_org_installation_still_succeeds_when_no_backfill_token_is_available(db, acme_org):
-    # No GitHub App configured (the default in test settings) -> resolve_org_token raises
-    # NoGitHubTokenAvailable -- the install itself must still succeed (issue #191/S5 PR 1:
-    # backfill is best-effort enrichment, not a precondition of a working install).
+    # No App configured -> NoGitHubTokenAvailable; the install must still succeed since backfill is best-effort.
     with _mock_installation("acme", "Organization"):
         resp = _client(db, acme_org["admin"]).post(
             "/orgs/acme/installations/sync",
@@ -162,10 +153,8 @@ def test_sync_org_installation_still_succeeds_when_no_backfill_token_is_availabl
 
 
 def test_sync_org_installation_survives_a_db_error_during_backfill_enqueue(db, acme_org):
-    # A DB-level error from resolve_token()/enqueue() (not NoGitHubTokenAvailable) used
-    # to leave the shared Session's transaction aborted, so the install response's own
-    # row.token_ref access (a post-commit lazy reload) would itself raise and turn an
-    # already-successful install into a 500.
+    # A DB error in resolve_token()/enqueue() must not leave the Session aborted, or the
+    # response's post-commit lazy reload of row.token_ref turns a successful install into a 500.
     def _boom(*args, **kwargs):
         db.execute(text("SELECT 1/0"))  # forces a real, session-aborting Postgres error
 
@@ -339,10 +328,7 @@ def test_sync_org_installation_returns_503_on_github_network_error(db, acme_org)
 
 
 def test_sync_org_installation_bootstraps_new_org_for_live_github_admin(db):
-    """No Clevis Org/OrgMembership exists yet for 'acme' -- this is the org's first-ever
-    connection. The caller has a linked GitHub account and the App's installation
-    reports them as a live GitHub org admin, so the sync should create the Org +
-    admin OrgMembership itself instead of 404ing."""
+    """First-ever connection by a live-verified GitHub org admin creates the Org + admin membership instead of 404ing."""
     me = _make_user(db, "founder@e.com", github_login="founder")
     with (
         _mock_installation("acme", "Organization"),
@@ -364,12 +350,8 @@ def test_sync_org_installation_bootstraps_new_org_for_live_github_admin(db):
 
 
 def test_bootstrap_org_admin_advisory_lock_serializes_concurrent_holders(_engine):
-    # Regression test for #249: two concurrent installation syncs for the same org_login
-    # (different installation_id's) both live-verify the caller as admin before either
-    # commits its Org/OrgMembership rows -- only a lock closes that window, same pattern
-    # as auth.py's /auth/setup lock (test_setup_advisory_lock_serializes_concurrent_holders).
-    # Verifies the lock primitive itself: a second connection can't acquire the same
-    # hashtext(org_login) key while the first transaction holds it, and can once released.
+    # Two concurrent syncs for the same org_login could both bootstrap Org/membership rows;
+    # a second connection must not acquire the hashtext(org_login) lock until the first releases it.
     from sqlalchemy import text
 
     with _engine.connect() as conn1, _engine.connect() as conn2:
@@ -396,9 +378,7 @@ def test_bootstrap_org_admin_advisory_lock_serializes_concurrent_holders(_engine
 
 
 def test_sync_org_installation_rejects_live_non_admin(db):
-    """The org already exists in Clevis (someone else connected it), the caller has no
-    local membership, and the live GitHub check says they're a "member" not "admin" --
-    must not bootstrap an admin membership for them."""
+    """An existing org must not bootstrap admin membership for a caller GitHub reports as only a "member"."""
     org_repo.get_or_create(db, github_login="acme")
     me = _make_user(db, "regular@e.com", github_login="regular")
     with (
@@ -486,8 +466,7 @@ def test_sync_org_installation_bootstrap_returns_503_on_github_network_error(db)
 
 
 def test_sync_org_installation_requires_admin_unlinked_github_account_no_network_call(db, acme_org):
-    """A non-admin member with no linked GitHub account can't be live-verified at all --
-    must fail fast with 403 and never attempt a GitHub call."""
+    """A non-admin with no linked GitHub account gets 403 without any GitHub call."""
     with patch("src.routers.installations.github_app.get_installation_token") as mock_token:
         resp = _client(db, acme_org["member"]).post(
             "/orgs/acme/installations/sync",
@@ -603,11 +582,6 @@ def test_lookup_installation_returns_503_when_app_not_configured(db):
     assert resp.status_code == 503
 
 
-# ---------------------------------------------------------------------------
-# Disconnect (DELETE) -- installation-connect-disconnect-ux
-# ---------------------------------------------------------------------------
-
-
 def test_delete_org_installation_admin_disconnects(db, acme_org):
     installation_repo.create(
         db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=acme_org["org"].id
@@ -646,8 +620,7 @@ def test_delete_org_installation_nonexistent_installation_id_404s(db, acme_org):
 
 
 def test_delete_org_installation_cannot_delete_another_orgs_installation(db, acme_org):
-    """An admin of acme must not be able to disconnect an installation belonging to a
-    different org just by naming its installation_id in the URL."""
+    """An acme admin can't disconnect another org's installation by naming its installation_id."""
     other_admin = _make_user(db, "other-admin@e.com")
     other_org = org_repo.get_or_create(db, github_login="other-org")
     org_membership_repo.get_or_create(db, org_id=other_org.id, user_id=other_admin.id, role="admin")
@@ -657,21 +630,15 @@ def test_delete_org_installation_cannot_delete_another_orgs_installation(db, acm
     resp = _client(db, acme_org["admin"]).delete("/orgs/acme/installations/42")
     assert resp.status_code == 404
 
-    # Verified through the real API as other-org's own admin, not installation_repo
-    # directly: acme's request above set RLS session context (app.tenant_id) to acme's
-    # tenant, which would make a same-session repo-level lookup of other-org's row
-    # silently return None (RLS hiding it, not the row being gone) and pass for the wrong
-    # reason under CI's RLS-enforcing clevis_api role -- a fresh authenticated request as
-    # other-org's admin re-sets the correct tenant context instead.
+    # Verify via a request as other-org's admin: acme's RLS context would hide the row in a
+    # same-session lookup and pass for the wrong reason.
     list_resp = _client(db, other_admin).get("/orgs/other-org/installations")
     assert list_resp.status_code == 200
     assert any(i["installation_id"] == 42 for i in list_resp.json())
 
 
 def test_delete_org_installation_github_error_leaves_row_intact(db, acme_org):
-    """If GitHub's uninstall call fails for a real reason (not 404), the local row must
-    survive so a retry is straightforward and Clevis's own record doesn't silently drift
-    out of sync with a GitHub-side installation that's still actually there."""
+    """If GitHub's uninstall fails (not 404), the local row must survive so a retry works."""
     installation_repo.create(
         db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=acme_org["org"].id
     )
@@ -723,12 +690,8 @@ def test_delete_personal_installation_cannot_delete_another_users_installation(d
     resp = _client(db, me).delete("/me/installations/7")
     assert resp.status_code == 404
 
-    # Verified through the real API as the actual owner, not installation_repo directly:
-    # `me`'s request above set RLS session context (app.user_id) to `me`'s id, which would
-    # make a same-session repo-level lookup of `other`'s row silently return None (RLS
-    # hiding it, not the row being gone) and pass for the wrong reason under CI's
-    # RLS-enforcing clevis_api role -- a fresh authenticated request as `other` re-sets
-    # the correct context instead.
+    # Verify via a request as `other`: `me`'s RLS context would hide the row in a same-session
+    # lookup and pass for the wrong reason.
     list_resp = _client(db, other).get("/me/installations")
     assert list_resp.status_code == 200
     assert any(i["installation_id"] == 7 for i in list_resp.json())
@@ -754,8 +717,6 @@ def test_delete_org_installation_returns_503_when_github_unreachable(db, acme_or
     assert resp.status_code == 503
     assert installation_repo.get_by_installation_id_for_org(db, org_id=acme_org["org"].id, installation_id=42) is not None
 
-
-# ── Permission drift (GitHub App re-consent) ─────────────────────────────────
 
 def test_sync_org_installation_captures_granted_permissions(db, acme_org):
     with patch(
