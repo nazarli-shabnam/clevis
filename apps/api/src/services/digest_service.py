@@ -1,9 +1,6 @@
-"""Issue #292: build the leadership digest for one org tenant.
-
-A scheduled summary (security score movement, current open risk items, recent
-team activity) aimed at leadership who want visibility without opening the
-dashboard. Uses only data Clevis already stores -- no new GitHub scope, no new
-table. Delivery + scheduling live in digest_sweep.py / digest_loop.py.
+"""Build the leadership digest for one org tenant: a scheduled summary (security score
+movement, open risk items, recent team activity) using only data Clevis already stores.
+Delivery + scheduling live in digest_sweep.py / digest_loop.py.
 """
 
 import json
@@ -73,9 +70,8 @@ def build_digest(db: Session, *, tenant_id: int, org_login: str, period_label: s
                 if isinstance(c, dict) and c.get("status") in ("fail", "error")
             ][:_MAX_RISK_ITEMS]
 
-    # Inclusive lower bound: the window is _ACTIVITY_WINDOW_DAYS calendar days
-    # counting today, i.e. today and the six days before it -- subtracting the full
-    # 7 would span 8 daily buckets and overreport.
+    # Inclusive lower bound: the window is _ACTIVITY_WINDOW_DAYS days counting today --
+    # subtracting the full 7 would span 8 daily buckets and overreport.
     since = (datetime.now(timezone.utc) - timedelta(days=_ACTIVITY_WINDOW_DAYS - 1)).date()
     push_count = db.execute(
         text(

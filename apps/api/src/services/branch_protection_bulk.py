@@ -1,20 +1,15 @@
-"""Bulk branch-protection apply across many repos (issue #288).
+"""Bulk branch-protection apply across many repos.
 
 An org admin picks a small preset (required approvals, enforce-on-admins,
 block-force-push, block-deletion) and a set of repos, previews a per-repo diff, then
-applies it to each repo's default branch in one action.
+applies it to each repo's default branch in one action. Requires ``administration:
+Read and write``.
 
-**Requires the ``administration`` repository permission at Read and write** (a 403
-becomes a 400 pointing at docs/self-hosting.md).
-
-The preset only controls those four knobs. GitHub's ``PUT .../protection`` *replaces*
-the whole protection object, so for an already-protected branch Clevis rebuilds the
-full body from the existing rules (via ``check_remediation._preserving_put_body``) and
-overlays only the knobs — required status checks, linear-history, code-owner reviews,
-conversation-resolution, etc. are carried across untouched, and the dry-run diff shows
-every key that would actually change. A branch whose protection restricts *who* can
-push (a users/teams/apps allowlist) can't be round-tripped safely through the API, so
-that repo is reported as an error and left alone — same guard as "Fix this" (#287).
+GitHub's ``PUT .../protection`` replaces the whole protection object, so for an
+already-protected branch Clevis rebuilds the full body from the existing rules and
+overlays only the four preset knobs -- everything else is carried across untouched. A
+branch whose protection restricts who can push can't be round-tripped safely, so that
+repo is reported as an error and left alone.
 """
 
 from __future__ import annotations
@@ -33,8 +28,8 @@ from src.services.check_remediation import (
 from src.services.github_client import GitHubClient
 
 # GitHub repo names: letters, digits, ``.  _  -``; 1–100 chars; never "." or "..".
-# ``owner`` is always the trusted org login; only ``repos[]`` is caller-supplied, so a
-# name with a slash or ".." could otherwise walk the API path to another repo/org.
+# ``repos[]`` is caller-supplied, so a name with a slash or ".." could otherwise walk
+# the API path to another repo/org.
 _REPO_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 
 # The knob keys a preset controls (flattened form). Everything else is preserved.

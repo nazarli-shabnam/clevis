@@ -1,11 +1,5 @@
-"""Regression test for get_db()'s tenant-session-context reset on connection checkin
-(issue #190, PR 5a). require_org_role/require_personal_tenant set app.tenant_id/
-app.user_id via plain SET (not SET LOCAL, since a request can commit more than once) --
-SET persists for the life of the physical connection, not just one request's Session, so
-without an explicit reset it would leak into whatever unrelated request reuses the same
-pooled connection next. Uses the real engine/pool directly (not the savepoint-per-test
-`db` fixture), since the bug is specifically about connection *reuse* across separate
-get_db() calls."""
+"""get_db() must reset app.tenant_id/app.user_id on checkin: plain SET persists on the pooled
+connection and would leak into the next request. Uses the real pool, not the `db` fixture."""
 
 from unittest.mock import patch
 
@@ -36,18 +30,14 @@ def test_get_db_resets_tenant_context_before_connection_checkin():
     assert db.execute(text("SELECT current_setting('app.tenant_id', true)")).scalar() == "555555"
     gen.close()  # triggers get_db()'s finally: block
 
-    # A fresh get_db() call may or may not reuse the exact same physical connection
-    # depending on pool state, so poll a handful of connections -- if the reset didn't
-    # happen, the leaked value would show up on at least one of them (LIFO pools strongly
-    # favor immediate reuse of the just-returned connection in a single-threaded test).
+    # Reuse of the same physical connection isn't guaranteed, so poll a few; a missed reset
+    # shows up on at least one of them.
     seen = {_session_context_via_new_connection() for _ in range(5)}
     assert seen == {(None, None)}, f"session context leaked into a reused connection: {seen}"
 
 
 def test_get_db_invalidates_the_connection_if_the_reset_itself_fails():
-    # If RESET/commit fails partway through, closing normally would return a connection
-    # to the pool whose reset status is uncertain -- get_db() must invalidate it instead
-    # of risking a dirty connection reaching an unrelated later request.
+    # If RESET/commit fails, get_db() must invalidate the connection, not return it dirty.
     original_commit = Session.commit
     calls = {"n": 0}
 

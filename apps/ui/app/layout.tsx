@@ -10,20 +10,20 @@ import { AuthGuard } from "@/components/auth-guard"
 import { ShellRouter } from "@/components/shell-router"
 import { IconProvider } from "@/components/icon-provider"
 
-// Body / UI — Geist replaces Inter (an AI default per the design skills).
+// Body / UI
 const geist = Geist({
   subsets: ["latin"],
   variable: "--font-sans",
 })
 
-// Macro-typography — heavy neo-grotesque for telemetry headers (Archivo Black-ish).
+// Display headers
 const archivo = Archivo({
   subsets: ["latin"],
   weight: ["500", "600", "700", "800", "900"],
   variable: "--font-heading",
 })
 
-// Data / telemetry — JetBrains Mono for stat values, IDs, timestamps, code.
+// Data / telemetry: stat values, IDs, timestamps, code.
 const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
   variable: "--font-jetbrains-mono",
@@ -34,8 +34,7 @@ export const metadata = {
   description: "GitHub analytics and cache management",
 }
 
-// Applied before paint so the persisted theme is set without a flash of the
-// default. Kept in sync with apps/ui/lib/theme.ts (default + dark theme list).
+// Applied before paint to avoid a theme flash. Keep in sync with lib/theme.ts (default + dark theme list).
 const themeScript = `(function(){try{var t=localStorage.getItem('clevis:theme')||'midnight';var dark=['midnight','carbon','slate','dim'].indexOf(t)!==-1;var r=document.documentElement;r.setAttribute('data-theme',t);r.classList.toggle('dark',dark);r.classList.toggle('light',!dark);}catch(e){}})();`
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

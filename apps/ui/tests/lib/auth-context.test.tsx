@@ -130,9 +130,8 @@ describe("AuthProvider mount /auth/me race", () => {
   });
 
   it("does not overwrite a concurrent login even if the stale response's body resolves after the login completes", async () => {
-    // Headers resolve before login() runs, but res.json() only resolves after —
-    // this exercises the epoch re-check *after* the `await res.json()` in the
-    // /auth/me handler, distinct from the epoch check at the top of the handler.
+    // Headers resolve before login() but res.json() after, exercising the epoch re-check
+    // after `await res.json()` in the /auth/me handler.
     let resolveJson!: () => void;
     const jsonPromise = new Promise<unknown>((resolve) => {
       resolveJson = () => resolve(cookieUser);
@@ -496,9 +495,8 @@ describe("AuthProvider authUnconfirmed", () => {
         const url = String(input);
         if (url.endsWith("/auth/me")) {
           meCallCount += 1;
-          // Mount attempt (1) and its retry (2) both fail, so authUnconfirmed
-          // becomes true; the online-triggered call (3) is held open so a
-          // concurrent login can race it.
+          // Mount attempt and its retry fail (authUnconfirmed); the online-triggered call is held
+          // open so a concurrent login can race it.
           if (meCallCount <= 2) return Promise.reject(new Error("network down"));
           return onlineDeferred.promise;
         }
@@ -521,15 +519,13 @@ describe("AuthProvider authUnconfirmed", () => {
     });
     await waitFor(() => expect(result.current.authUnconfirmed).toBe(true));
 
-    // Connectivity returns, firing the online handler's /auth/me check —
-    // its response is held open via onlineDeferred.
+    // Connectivity returns; the online handler's /auth/me response is held open.
     await act(async () => {
       window.dispatchEvent(new Event("online"));
     });
     await waitFor(() => expect(meCallCount).toBe(3));
 
-    // A password login happens while that online-triggered fetch is still
-    // in flight.
+    // A password login happens while that fetch is still in flight.
     await act(async () => {
       await result.current.login("password@example.com", "supersecret1234");
     });

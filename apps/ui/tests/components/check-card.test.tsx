@@ -109,10 +109,7 @@ describe("CheckCard", () => {
       <CheckCard
         check={{
           ...baseCheck,
-          // severity is a "high" | "medium" | "low" union at the type level,
-          // but the component defends against unmapped values at runtime
-          // (e.g. a future backend severity level) via `?? "text-muted-foreground"`.
-          // Cast through unknown to exercise that fallback branch.
+          // Cast through unknown to exercise the runtime fallback for an unmapped severity.
           severity: "critical" as unknown as CheckResult["severity"],
         }}
       />,

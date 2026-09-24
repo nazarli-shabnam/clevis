@@ -200,20 +200,15 @@ def test_installation_new_permissions_accepted_redelivery_does_not_duplicate_aud
 
 
 def test_update_permissions_serializes_concurrent_redeliveries():
-    """CodeRabbit finding on #400: the compare-then-update in
-    installation_repo.update_permissions wasn't atomic -- two genuinely concurrent
-    new_permissions_accepted deliveries for the same installation could both read the
-    same pre-update permissions, both compute changed=True, and both tell the webhook
-    handler to write an audit row. Needs two real separate connections (not the
-    savepoint-per-test `db` fixture -- same reasoning as
-    test_org_membership_repo.py's own concurrency test), since the race only exists
+    """The compare-then-update in installation_repo.update_permissions wasn't atomic --
+    two genuinely concurrent new_permissions_accepted deliveries could both read the same
+    pre-update permissions and both write an audit row. Needs two real separate
+    connections (not the savepoint-per-test `db` fixture), since the race only exists
     across genuinely concurrent transactions.
 
-    Session A manually takes the same FOR UPDATE lock update_permissions takes
-    internally and holds it open, simulating "another delivery is mid-update" right as
-    session B's real update_permissions call starts. B must block until A commits, then
-    -- since A already wrote the exact permissions B is about to write -- B's own
-    comparison must see no change.
+    Session A takes the same FOR UPDATE lock update_permissions takes internally and
+    holds it open; session B's real update_permissions call must block until A commits,
+    then see no change since A already wrote the same permissions.
     """
     # A generated id, not a fixed constant -- installation_id is unique, and a fixed
     # value could collide with a leftover row from a previous failed run of this same
@@ -226,16 +221,12 @@ def test_update_permissions_serializes_concurrent_redeliveries():
     try:
         org = org_repo.get_or_create(setup, github_login=login)
         # A genuinely separate SessionLocal() commits for real (unlike the savepoint-per-test
-        # `db` fixture, where a nested db.commit() never actually ends the outer transaction,
-        # so a SET LOCAL from an earlier commit -- ensure_tenant_linked's own -- stays in
-        # effect for the rest of the test almost by accident). Real inserts need the same
-        # explicit tenant context the router itself sets before writing a row.
+        # `db` fixture). Real inserts need the same explicit tenant context the router
+        # itself sets before writing a row.
         set_tenant_session_context(setup, org.tenant_id, 0)
         # A direct insert, not installation_repo.create()/upsert() -- that helper's own
-        # db.commit() + db.refresh() immediately after can itself hit issue #330's documented
-        # nested-commit/RLS-timing flakiness under genuine thread concurrency (same class as
-        # test_org_membership_repo.py's xfail'd tests), which is no part of what this test
-        # means to exercise. Nothing after this needs the row's server-generated defaults.
+        # commit()+refresh() can itself hit nested-commit/RLS-timing flakiness under
+        # genuine thread concurrency, which is no part of what this test exercises.
         setup.add(
             GitHubInstallation(
                 account_login=login, account_type="Organization", auth_mode="app",
@@ -491,9 +482,8 @@ def test_ingested_event_without_installation_still_queues_with_null_tenant(db, w
 
 @pytest.mark.parametrize("event", ["dependabot_alert", "code_scanning_alert", "secret_scanning_alert"])
 def test_security_alert_event_writes_webhook_delivery_row_and_queues_it(event, db, webhook_client, redis_client):
-    # These are normalized by event_consumer.py into security_alerts (post-S6 PR 2) -- this
-    # only proves the receiver durably lands them via the same generic path push/issues
-    # already use, same as test_push_event_writes_webhook_delivery_row_and_queues_it.
+    # These are normalized by event_consumer.py into security_alerts -- this only proves
+    # the receiver durably lands them via the same generic path push/issues already use.
     org = org_repo.get_or_create(db, github_login="acme")
     installation_repo.create(
         db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id
@@ -521,7 +511,7 @@ def test_security_alert_event_writes_webhook_delivery_row_and_queues_it(event, d
 
 @pytest.mark.parametrize("event", ["member", "organization"])
 def test_collaborators_event_writes_webhook_delivery_row_and_queues_it(event, db, webhook_client, redis_client):
-    # member/organization are normalized by event_consumer.py (post-S6 Collaborators PR 1).
+    # member/organization are normalized by event_consumer.py.
     org = org_repo.get_or_create(db, github_login="acme")
     installation_repo.create(
         db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id
@@ -549,10 +539,9 @@ def test_collaborators_event_writes_webhook_delivery_row_and_queues_it(event, db
 
 @pytest.mark.parametrize("event", ["membership", "team"])
 def test_membership_and_team_events_are_not_ingested(event, db, webhook_client, redis_client):
-    # Regression test for issue #411: team-based repo access has no normalizer yet, and
-    # ingesting these with nothing to ever consume them meant unbounded accumulation in
-    # webhook_deliveries and the Redis stream. Must behave exactly like an unrecognized
-    # event type -- no row, no stream entry -- not like a durably-queued one.
+    # team-based repo access has no normalizer yet, and ingesting these with nothing to
+    # ever consume them meant unbounded accumulation. Must behave exactly like an
+    # unrecognized event type -- no row, no stream entry.
     org = org_repo.get_or_create(db, github_login="acme")
     installation_repo.create(
         db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id

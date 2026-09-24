@@ -8,12 +8,10 @@ name: clevis
 #            docker compose up --build       → full stack
 
 services:
-  # mem_limit values below are tuned for a 4GB host, leaving headroom for the OS and
-  # Traefik -- without a per-container cap, one service creeping up in RSS (e.g. the
-  # unbounded-pagination OOM risk fixed in issue #214) has nothing stopping it from
-  # starving the others, and the kernel OOM-killer's victim selection isn't necessarily
-  # the actual offender, so failures present as an unrelated service crashing. Revisit
-  # these if the host's RAM budget changes.
+  # mem_limit values are tuned for a 4GB host, leaving headroom for the OS and Traefik --
+  # without a per-container cap, one service creeping up in RSS starves the others via the
+  # kernel OOM-killer, which doesn't necessarily pick the actual offender. Revisit if the
+  # host's RAM budget changes.
   db:
     container_name: db
     image: postgres:17
@@ -22,12 +20,11 @@ services:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
-      # Consumed by docker/postgres-init/01-create-worker-role.sh on first init only
-      # (see issue #190) -- unset means the worker keeps sharing DB_USER/DB_PASSWORD.
+      # Consumed by docker/postgres-init/01-create-worker-role.sh on first init only --
+      # unset means the worker keeps sharing DB_USER/DB_PASSWORD.
       WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD:-}
-      # Consumed by docker/postgres-init/02-create-api-role.sh on first init only
-      # (see issue #330) -- unset means the API keeps connecting as the DB_USER
-      # superuser role, unaffected by this change.
+      # Consumed by docker/postgres-init/02-create-api-role.sh on first init only --
+      # unset means the API keeps connecting as the DB_USER superuser role.
       API_DB_PASSWORD: ${API_DB_PASSWORD:-}
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -42,16 +39,12 @@ services:
     networks:
       - clevis
 
-  # Issue #191/S3: managed queue for webhook ingestion (Redis Streams), plus the
-  # cache/token-broker role docs/architecture/clevis-architecture.md already earmarks
-  # Redis for under S1 -- this is the first consumer to actually need it.
-  # --appendonly yes: stream entries must survive a container restart, since a lost
-  # entry here is a lost/delayed webhook event, not just a cache miss.
-  # --requirepass: every other stateful service in this file (Postgres) requires a
-  # credential; leaving Redis open would let any other compromised container on the
-  # shared `clevis` network read, delete, or inject stream entries (e.g. spoofing a
-  # fake tenant_id into the future S4 consumer's input). REDIS_PASSWORD is required
-  # (apps/api/entrypoint.sh's "must all be set" check), mirroring DB_PASSWORD.
+  # Managed queue for webhook ingestion (Redis Streams).
+  # --appendonly yes: stream entries must survive a container restart -- a lost entry
+  # here is a lost/delayed webhook event, not just a cache miss.
+  # --requirepass: leaving Redis open would let any other compromised container on the
+  # shared `clevis` network read, delete, or inject stream entries. REDIS_PASSWORD is
+  # required, mirroring DB_PASSWORD.
   redis:
     container_name: redis
     image: redis:7-alpine
@@ -113,14 +106,10 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      # worker.py's jobs-poll-loop thread and event_consumer.py's Redis-Streams-consumer
-      # thread each touch their own heartbeat file once per loop iteration -- a hung-but-
-      # alive thread (e.g. blocked on a network call) stops updating its file, so this
-      # catches hangs that `restart: unless-stopped` alone wouldn't (that only fires on a
-      # hard crash). Previously only worker_heartbeat was checked here, so a hung event
-      # consumer (which silently stalls repo_events/repo_event_daily_counts ingestion --
-      # see the Overview data-accuracy fix this accompanies) could report healthy
-      # indefinitely; both threads' files must now be fresh.
+      # worker.py's jobs-poll-loop thread and event_consumer.py's Redis-Streams-consumer thread
+      # each touch a heartbeat file per loop iteration -- catches a hung-but-alive thread that
+      # `restart: unless-stopped` alone wouldn't (that only fires on a hard crash); both files
+      # must stay fresh.
       test: ["CMD", "python", "-c", "import time,sys,os; now=time.time(); sys.exit(0 if all(now - os.path.getmtime(f) < 60 for f in ('/tmp/worker_heartbeat', '/tmp/worker_event_consumer_heartbeat')) else 1)"]
       interval: 15s
       timeout: 5s

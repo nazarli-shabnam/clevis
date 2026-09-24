@@ -1,5 +1,5 @@
-"""Tests that digest_loop wires src.services.sweep_loop.run_sweep_loop correctly (issue
-#292). Loop/session/reset behavior itself is covered once, in test_sweep_loop.py."""
+"""Tests that digest_loop wires src.services.sweep_loop.run_sweep_loop correctly.
+Loop/session/reset behavior itself is covered once, in test_sweep_loop.py."""
 
 from unittest.mock import AsyncMock, patch
 

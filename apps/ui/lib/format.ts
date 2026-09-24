@@ -1,7 +1,4 @@
-/**
- * Pure formatting utilities — no React deps, no side effects.
- * Used across cache page, activity list, check cards, and job queue.
- */
+/** Pure formatting utilities — no React deps, no side effects. */
 
 /** "just now" | "3 minutes ago" | "2 days ago" | "1 month ago" */
 export function relativeTime(iso: string): string {
@@ -67,12 +64,7 @@ export function jobTypeLabel(slug: string): string {
 
 export type Staleness = "fresh" | "stale" | "old"
 
-/**
- * Classify how stale a last-accessed timestamp is.
- * < 7 days  → "fresh"
- * 7–30 days → "stale"
- * > 30 days → "old"
- */
+/** Classify a last-accessed timestamp: < 7 days "fresh", 7–30 "stale", > 30 "old". */
 export function classifyStaleness(iso: string): Staleness {
   const diffMs = Date.now() - new Date(iso).getTime()
   if (isNaN(diffMs)) return "old"

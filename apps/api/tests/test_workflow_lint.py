@@ -1,4 +1,4 @@
-"""Tests for workflow-policy lint + auto-fix PR (issue #291).
+"""Tests for workflow-policy lint + auto-fix PR.
 
 `lint()` is a pure function tested directly; the routes are tested with a faked
 GitHubClient (`patch("src.routers.workflow_lint.GitHubClient")`) that serves the
@@ -56,9 +56,6 @@ jobs:
       - uses: actions/checkout@v4
       - run: npm test
 """
-
-
-# ── lint() unit tests ─────────────────────────────────────────────────────
 
 
 def test_flags_pull_request_target_checking_out_pr_head_and_offers_a_fix():
@@ -160,9 +157,6 @@ def test_does_not_auto_fix_when_the_workflow_declares_write_permissions():
     assert result.findings and not result.fixable
 
 
-# ── route tests ──────────────────────────────────────────────────────────
-
-
 def _make_user(db, email):
     user = User(email=email, name=None, password_hash=None, is_workspace_admin=False)
     db.add(user)
@@ -256,10 +250,8 @@ def test_org_scan_returns_findings(client, db, user):
 
 
 def test_org_member_can_run_a_read_only_scan_without_admin(client, db, user):
-    # Regression test for issue #469: a read-only scan (open_pr=false) through the
-    # org-scoped route should need only membership, same as its personal-route sibling
-    # (test_personal_route_scan_needs_only_membership_and_audits_under_personal_tenant) --
-    # not admin.
+    # A read-only scan (open_pr=false) through the org-scoped route should need only
+    # membership, same as its personal-route sibling, not admin.
     _member_org(db, user)
     with patch("src.routers.workflow_lint.GitHubClient") as mock:
         _github(mock, workflows={"bad.yml": _BAD_PRT})
@@ -270,9 +262,8 @@ def test_org_member_can_run_a_read_only_scan_without_admin(client, db, user):
 
 
 def test_org_open_pr_requires_admin_of_the_org(client, db, user):
-    # Regression test for issue #469: opening a fix PR writes to GitHub, so it should
-    # require org-admin even through the org-scoped route, same as
-    # test_personal_open_pr_requires_admin_of_a_connected_org's personal-route check.
+    # Opening a fix PR writes to GitHub, so it should require org-admin even through the
+    # org-scoped route, same as the personal-route check.
     _member_org(db, user)
     resp = client.post(
         "/orgs/acme/repos/acme/api/workflow-lint",

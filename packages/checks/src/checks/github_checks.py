@@ -7,40 +7,26 @@ from checks.base import Check, CheckMetadata
 
 logger = logging.getLogger(__name__)
 
-# Hard cap on pages fetched by _get_all_pages -- at per_page=100 this is 5,000 items max.
-# Without this, a large enough org (thousands of repos/members/workflow runs) can pull an
-# unbounded number of objects into one in-memory list during a scan, which is a plausible
-# direct cause of OOM crashes in the api process (see issue #214). Truncating with a warning
-# degrades a scan's completeness rather than crashing the whole run_all_checks() call, since
-# the runner.py prefetch that calls this isn't wrapped in try/except.
+# Page cap (5,000 items at per_page=100) so a huge org can't OOM the api process;
+# truncating with a warning degrades completeness instead of crashing the scan.
 _MAX_PAGES = 50
 
 
 def _is_secondary_rate_limit(r: httpx.Response) -> bool:
-    """GitHub's secondary/abuse rate limit commonly returns 403 (not 429), often with a
-    Retry-After header -- especially under this codebase's concurrent ThreadPoolExecutor
-    fan-out. Without this, a 403 that would succeed on retry raises immediately instead of
-    backing off like the 429 case already does."""
+    """GitHub's secondary rate limit returns 403 (not 429), usually with Retry-After."""
     if r.status_code != 403:
         return False
     return "Retry-After" in r.headers or r.headers.get("X-RateLimit-Remaining") == "0"
 
-# Cap on honoring a server-supplied Retry-After value, so a single malformed/huge value
-# can't block a scan for an unreasonable amount of time -- GitHub's real rate-limit
-# Retry-After values are ordinarily well under this.
+# Cap on a server-supplied Retry-After so a huge value can't stall a scan.
 _MAX_RETRY_AFTER_SECONDS = 60
 
 
 def _retry_delay_seconds(r: httpx.Response, attempt: int) -> float:
-    """Prefer the server's own Retry-After value (GitHub's rate-limit responses include
-    one) over a blind exponential backoff -- retrying before the window it asked for just
-    burns the fixed attempt budget hitting the same limit again. Falls back to
-    X-RateLimit-Reset (epoch seconds) when Retry-After is absent -- GitHub's docs say to
-    wait until that reset time when X-RateLimit-Remaining is 0 but no Retry-After was sent.
-    If neither header is usable, a 429 or a secondary-limit 403 waits the full cap
-    (GitHub's documented minimum rate-limit backoff) rather than a fast exponential retry
-    that would just hit the same limit again; any other status (a plain 5xx) still uses
-    exponential backoff. Ported from apps/worker/src/backfill.py's copy of this contract."""
+    """Delay before retrying: Retry-After, then X-RateLimit-Reset, then a fallback.
+
+    Rate-limit responses with neither header wait the full cap (GitHub's documented
+    minimum backoff); other statuses (5xx) use exponential backoff."""
     raw = r.headers.get("Retry-After")
     if raw is not None:
         try:
@@ -61,10 +47,8 @@ def _retry_delay_seconds(r: httpx.Response, attempt: int) -> float:
 
 
 def _get_with_retry(client: httpx.Client, url: str, headers: dict) -> httpx.Response:
-    # Same retry/backoff contract as GitHubClient.request (apps/api/src/services/github_client.py):
-    # 3 attempts, exponential backoff on connection errors, a 429, or a rate-limit-flavored 403 --
-    # plus a 5xx, which is presumed transient (GitHub-side issue) same as everywhere else in this
-    # codebase that talks to the GitHub API.
+    # Same retry contract as GitHubClient.request: 3 attempts on connection errors, 429,
+    # rate-limit 403, or 5xx.
     for attempt in range(3):
         try:
             r = client.get(url, headers=headers)
@@ -93,9 +77,9 @@ def _get(url: str, token: str) -> dict | list:
 
 
 def _get_all_pages(base_url: str, path: str, token: str, items_key: str | None = None) -> list:
-    """Paginate a GitHub list endpoint. `items_key` is for endpoints like
-    /installation/repositories that nest the array under a field instead of
-    returning it bare (unlike /orgs/{owner}/repos)."""
+    """Paginate a GitHub list endpoint.
+
+    `items_key` is for endpoints like /installation/repositories that nest the array."""
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
@@ -132,11 +116,8 @@ def _branch_protection_status(exc: httpx.HTTPStatusError) -> str:
     code = exc.response.status_code
     if code == 404:
         return "unprotected"
-    # 403/429 (no access / rate-limited) and any other unexpected status (a transient
-    # 5xx, most notably) all mean branch-protection status genuinely can't be evaluated
-    # right now -- falling through to "unprotected" here previously flipped an org's
-    # entire branch-protection check to "fail" on a flaky GitHub 5xx even when every
-    # real repo was protected.
+    # 403/429/5xx mean status can't be evaluated; treating them as "unprotected" would
+    # fail the whole check on a flaky GitHub response.
     return "unknown"
 
 
@@ -157,11 +138,8 @@ class OrgMFARequired(Check):
         account_type: str = "Organization",
     ) -> dict:
         if account_type == "User":
-            # GitHub has no org-style MFA-requirement setting for a personal account, and
-            # a personal-install token can't read /user's own 2FA status either (that field
-            # is only visible to a user-to-server token, not an installation token) --
-            # there's no reliable equivalent to check, so this is excluded from scoring
-            # rather than guessed at.
+            # No MFA-requirement setting exists for personal accounts, and an installation
+            # token can't read /user's 2FA status, so exclude from scoring.
             return {
                 "status": "not_applicable",
                 "value": "MFA requirement doesn't apply to personal accounts",
@@ -279,10 +257,8 @@ class DependabotAlertsCheck(Check):
                     f"{base_url}/repos/{owner}/{repo['name']}/dependabot/alerts?state=open", token
                 )
             except httpx.HTTPStatusError as exc:
-                # 404 means Dependabot alerts are genuinely disabled for this repo --
-                # a real "no alerts" answer. 403 means the token lacks the
-                # security-events scope for it -- the alert count for that repo is
-                # unknown, not zero, so it must not silently count toward "clear".
+                # 404 = alerts disabled (a real "no alerts"). 403 = missing scope, so the
+                # count is unknown, not zero.
                 if exc.response.status_code == 404:
                     continue
                 if exc.response.status_code == 403:
@@ -297,11 +273,8 @@ class DependabotAlertsCheck(Check):
             return {"status": "error", "value": counts}
         compliant = counts["critical"] == 0 and counts["high"] == 0
         if compliant and forbidden > 0:
-            # 403 means unknown, not zero -- a clean result from only the *reachable*
-            # repos must not be reported as "pass" while some repos' real alert counts
-            # are still unknown. A "fail" from repos we could actually see stays valid
-            # regardless (a real problem was found), so only the false-clean case needs
-            # downgrading here.
+            # A clean result from only the reachable repos must not be reported as "pass";
+            # a "fail" from visible repos stays valid.
             return {"status": "error", "value": counts}
         return {"status": "pass" if compliant else "fail", "value": counts}
 
@@ -336,9 +309,8 @@ class CodeScanningCheck(Check):
                     f"{base_url}/repos/{owner}/{repo['name']}/code-scanning/alerts?state=open", token
                 )
             except httpx.HTTPStatusError as exc:
-                # 404 means code scanning is genuinely not enabled for this repo -- a
-                # real "no alerts" answer. 403 means no access -- that repo's alert
-                # count is unknown, not zero, so it must not silently count as clear.
+                # 404 = code scanning not enabled (a real "no alerts"). 403 = no access,
+                # so the count is unknown, not zero.
                 if exc.response.status_code == 404:
                     continue
                 if exc.response.status_code == 403:
@@ -353,9 +325,7 @@ class CodeScanningCheck(Check):
             return {"status": "error", "value": value}
         compliant = open_count == 0
         if compliant and forbidden > 0:
-            # Same reasoning as DependabotAlertsCheck: a clean result from only the
-            # reachable repos must not be reported as "pass" while some repos' real
-            # alert status is still unknown (403 means unknown, not zero).
+            # Same as DependabotAlertsCheck: don't report "pass" while some repos are unknown.
             return {"status": "error", "value": value}
         return {"status": "pass" if compliant else "fail", "value": value}
 
@@ -386,31 +356,21 @@ class DefaultBranchNoForcePushCheck(Check):
         for repo in repos:
             branch = repo.get("default_branch")
             try:
-                # The dedicated branch-protection sub-resource -- the plain
-                # /repos/{owner}/{repo}/branches/{branch} response only carries a reduced
-                # `protection` object (enabled + required_status_checks) and never
-                # `allow_force_pushes`, so reading force-push status off it always saw
-                # None and this check could never return "fail" for a protected branch.
+                # The plain /branches/{branch} response never includes
+                # `allow_force_pushes`; only the protection sub-resource does.
                 details = _get(
                     f"{base_url}/repos/{owner}/{repo['name']}/branches/{branch}/protection", token
                 )
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 404:
-                    # 404 here means "Branch not protected" -- no protection rules at all,
-                    # so force pushes are unambiguously allowed, not merely "unknown".
-                    # Bucketing this with the genuine unknowns below meant an org where
-                    # every repo's default branch had no protection reported checked == 0
-                    # -> "error", never the "fail" this check exists to catch.
+                    # 404 = branch not protected, so force pushes are allowed (not unknown).
                     checked += 1
                     force_push_allowed += 1
                     continue
-                # 403/429 (no access / rate-limited) -- force-push status genuinely
-                # can't be evaluated, so exclude the repo from the denominator rather
-                # than counting it as compliant.
+                # 403/429: can't evaluate, so exclude from the denominator.
                 unknown += 1
                 continue
             except httpx.HTTPError:
-                # Network error -- same reasoning as the 403/429 case above.
                 unknown += 1
                 continue
             checked += 1

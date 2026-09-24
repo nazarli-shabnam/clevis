@@ -3,9 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useSyncExternalStore } from "react";
 
-// A minimal reactive store standing in for Next's router-driven searchParams so a
-// tab click's router.replace(...) actually triggers a re-render in the test, the
-// same way real navigation would (matches the pattern in security-page.test.tsx).
+// Minimal reactive store standing in for searchParams so router.replace() re-renders.
 let mockSearchParams = new URLSearchParams();
 const searchParamsListeners = new Set<() => void>();
 const routerReplaceMock = vi.fn((url: string) => {
@@ -421,9 +419,7 @@ describe("GithubRoster (Collaborators page)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Audit" }));
 
-    // Previously the whole Audit tab collapsed into a single generic error line whenever
-    // permissionAuditQuery failed, hiding the independently-fetched (and successfully
-    // loaded) inactive-members section entirely -- both must render their own state.
+    // A failed permission audit must not hide the independently loaded inactive-members section.
     await waitFor(() => {
       expect(screen.getByText("GitHub rate limit exceeded")).toBeInTheDocument();
     });

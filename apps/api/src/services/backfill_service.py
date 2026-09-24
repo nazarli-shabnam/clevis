@@ -1,11 +1,9 @@
-"""S5 PR 1: enqueue a one-shot install-time activity backfill.
+"""Enqueue a one-shot install-time activity backfill.
 
-Mirrors cache_service.clear()'s exact job-enqueue pattern: Fernet-encrypt the token for
-the worker payload (apps/worker decrypts via its own _crypto.py thin wrapper, matching
-issue #190/#191's established convention), then insert a `jobs` row for the worker's
-existing SELECT ... FOR UPDATE SKIP LOCKED poll loop to pick up. See
-apps/worker/src/backfill.py and worker.py's _handle_backfill_repo_events for the
-worker-side handler.
+Mirrors cache_service.clear()'s job-enqueue pattern: Fernet-encrypt the token for the
+worker payload, then insert a `jobs` row for the worker's SELECT ... FOR UPDATE SKIP
+LOCKED poll loop. See apps/worker/src/backfill.py and worker.py's
+_handle_backfill_repo_events for the worker-side handler.
 """
 
 from sqlalchemy.orm import Session

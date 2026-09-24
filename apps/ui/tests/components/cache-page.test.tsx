@@ -81,7 +81,7 @@ describe("CachePage", () => {
 
     renderPage();
 
-    // The Actor field is gone — the API attributes the action to the signed-in user.
+    // No Actor field: the API attributes the action to the signed-in user.
     expect(screen.queryByPlaceholderText("actor")).not.toBeInTheDocument();
 
     const dryRunButton = screen.getByRole("button", { name: /dry run/i });

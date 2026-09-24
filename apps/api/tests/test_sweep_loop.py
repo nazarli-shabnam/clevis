@@ -1,7 +1,4 @@
-"""Behavioral tests for the shared sweep-loop shape (src.services.sweep_loop), used by
-gap_heal_loop, membership_reconcile_loop, and digest_loop. Each of those modules' own tests
-only need to check they wire run_sweep_loop with the right label/config_key/bounds/sweep_fn --
-see test_gap_heal_loop.py, test_membership_reconcile_loop.py, test_digest_loop.py."""
+"""Behavioral tests for the shared sweep loop (src.services.sweep_loop); per-loop tests only check wiring."""
 
 import asyncio
 from unittest.mock import patch
@@ -60,10 +57,7 @@ class _FakeSession:
 
 
 def test_run_sweep_resets_the_tenant_session_context_even_when_the_sweep_raises():
-    # _run_sweep uses SessionLocal() directly, bypassing get_db()'s own finally-block
-    # reset -- without this, a connection returned to the pool after processing tenant N
-    # would leak tenant N's app.tenant_id into whichever request or sweep iteration checks
-    # that connection out next.
+    # _run_sweep bypasses get_db()'s reset, so it must clear app.tenant_id or it leaks via the pool.
     fake_db = _FakeSession()
     failing_sweep = lambda db: (_ for _ in ()).throw(RuntimeError("boom"))  # noqa: E731
 
@@ -121,6 +115,5 @@ async def test_loop_survives_an_exception_from_the_sweep_and_still_sleeps():
             label="test", sweep_fn=lambda db: None, config_key="k", default_seconds=900, min_seconds=60, max_seconds=3600
         )
 
-    # The loop must reach its sleep even after the sweep itself raised -- otherwise a
-    # single bad iteration would kill the loop forever instead of just logging and retrying.
+    # The loop must still sleep and retry after the sweep raised, not die.
     assert calls == {"sweep": 1, "sleep": 1}

@@ -43,9 +43,7 @@ describe("LoginPage GitHub OAuth button", () => {
       }),
     );
 
-    // jsdom throws "Not implemented: navigation" if window.location.href is actually
-    // assigned to a non-blank-page URL -- redefine it as a plain writable object so the
-    // button's onClick can be exercised without a real navigation attempt.
+    // jsdom throws "Not implemented: navigation" on a real href assignment; make it a plain writable object.
     Object.defineProperty(window, "location", {
       writable: true,
       value: { href: "" },

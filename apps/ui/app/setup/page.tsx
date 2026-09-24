@@ -20,7 +20,6 @@ export default function SetupPage() {
   const [error, setError] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  // Redirect away if already logged in or setup is complete
   useEffect(() => {
     if (isLoading) return
     if (user) {

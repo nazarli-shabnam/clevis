@@ -1,13 +1,6 @@
-"""Stale-PR / stale-review nudge endpoints (issue #289).
-
-Personal-scoped (``/me/repos/{owner}/{repo}/pr-nudges``) and org-scoped
-(``/orgs/{org_login}/repos/{owner}/{repo}/pr-nudges``), same shape as issues.py /
-remediation.py: a POST (this writes to GitHub), token resolved via
-``resolve_owner_token(min_role="admin")`` for the personal route and
-``resolve_org_token`` for the org route, audit row written before the GitHub call.
-
-**Requires ``pull_requests: write``** on the App / PAT. A 403 from GitHub is turned
-into a 400 with a docs pointer.
+"""Stale-PR / stale-review nudge endpoints, personal- and org-scoped. POST (writes to
+GitHub); token resolved via resolve_owner_token/resolve_org_token, audit row written
+before the GitHub call. Requires ``pull_requests: write`` on the App / PAT.
 """
 
 import httpx
@@ -61,9 +54,8 @@ def _settings() -> tuple[int, str]:
     mode = get_config(pr_nudge.MODE_KEY, pr_nudge.DEFAULT_MODE)
     if mode not in pr_nudge.MODES:
         mode = pr_nudge.DEFAULT_MODE
-    # Clamp: the value is DB-editable (Settings page) and only the PUT route bounds it
-    # below at 1 — an absurd upper value would make every PR "not stale" and waste a
-    # full paginated PR crawl. 365d is well past any real review-SLA threshold.
+    # Clamp: the value is DB-editable and only the PUT route bounds it at 1 -- an
+    # absurd upper value would waste a full paginated PR crawl.
     return min(365, max(1, stale_days)), mode
 
 

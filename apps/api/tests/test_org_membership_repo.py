@@ -1,10 +1,6 @@
-"""Tests for src.repositories.org_membership_repo.
+"""Tests for org_membership_repo, a thin org_id->tenant_id adapter over tenant_repo's `memberships`.
 
-Since #331 dropped the legacy org_memberships table, this module is a thin org_id->
-tenant_id adapter over tenant_repo: every create/update/delete lands in the tenant-scoped
-`memberships` table, keyed off the org's tenant. The write paths still take a
-SELECT ... FOR UPDATE on the memberships row and commit once (issue #334), so a concurrent
-grant and revoke for the same (org, user) stay serialized.
+Writes take SELECT ... FOR UPDATE and commit once, so concurrent grant/revoke stay serialized.
 """
 
 import threading
@@ -115,8 +111,7 @@ def test_delete_is_a_noop_for_an_unprovisioned_org(db):
 
 
 def test_get_or_create_recreates_a_row_deleted_out_of_band(db):
-    # org_provisioning.py's reconcile loop calls get_or_create on every login; if the
-    # membership row went missing out of band it must be recreated, not skipped.
+    # Called on every login; a row that went missing out of band must be recreated.
     org = org_repo.get_or_create(db, github_login="acme")
     user = _make_user(db, "grace@example.com")
     org_membership_repo.get_or_create(db, org_id=org.id, user_id=user.id, role="member")
@@ -159,26 +154,21 @@ def test_dual_write_uses_the_same_tenant_for_every_membership_in_an_org(db):
 
 # ── Concurrency: the FOR UPDATE lock serializes a grant against a concurrent revoke ──
 #
-# These use two or three genuinely separate SessionLocal() connections (not the
-# savepoint-per-test `db` fixture) because the race only exists across real concurrent
-# transactions. They pause a tenant_repo helper *inside* org_membership_repo's locked
-# section (after get_membership(for_update=True), before the single commit) and assert a
-# concurrent delete()/get_or_create() blocks on the row until that commit lands.
+# Uses real separate SessionLocal() connections (the race needs real concurrent transactions),
+# pausing inside the locked section and asserting a concurrent write blocks until commit.
 
 
 def _cleanup(session, org_id: int, user_id: int) -> None:
     session.rollback()
     tenant = session.query(Tenant).filter(Tenant.kind == "org", Tenant.org_id == org_id).first()
     if tenant is not None:
-        # memberships has FORCE row-level security (migration 0031); under the non-superuser
-        # clevis_api role this bulk delete matches nothing unless a tenant context is set.
-        # SET LOCAL, not SET: transaction-scoped so it can't leak onto the pooled connection.
+        # memberships has FORCE RLS: under clevis_api this delete matches nothing without tenant
+        # context. SET LOCAL so it can't leak onto the pooled connection.
         session.execute(text(f"SET LOCAL app.tenant_id = {tenant.id}"))
         session.query(Membership).filter(Membership.tenant_id == tenant.id).delete()
         org_row = session.query(Org).filter(Org.id == org_id).first()
         if org_row is not None:
-            # orgs.tenant_id and tenants.org_id reference each other (composite reciprocal
-            # FK) -- null the org side first so either row can then be deleted freely.
+            # orgs and tenants reference each other; null the org side first so both can be deleted.
             org_row.tenant_id = None
             session.commit()
         session.query(Tenant).filter(Tenant.id == tenant.id).delete()
@@ -256,8 +246,7 @@ def test_update_role_blocks_a_concurrent_delete_until_it_commits():
         assert update_result.get("finished") is True
         assert delete_result.get("finished") is True
 
-        # The delete landed after update_role's commit released the lock -- final state
-        # must reflect the delete.
+        # The delete landed after update_role's commit released the lock.
         assert _membership_after(session_a, org_id, user_id) is None
     finally:
         _cleanup(session_a, org_id, user_id)
@@ -317,8 +306,7 @@ def test_delete_blocks_a_concurrent_get_or_create_until_it_commits():
         assert delete_result.get("finished") is True
         assert recreate_result.get("finished") is True
 
-        # get_or_create() ran after delete()'s commit released the lock, legitimately
-        # re-creating the membership.
+        # get_or_create() ran after delete()'s commit released the lock, re-creating the membership.
         recreated = _membership_after(session_a, org_id, user_id)
         assert recreated is not None
         assert recreated.role == "member"
@@ -327,12 +315,8 @@ def test_delete_blocks_a_concurrent_get_or_create_until_it_commits():
 
 
 def test_concurrent_get_or_create_and_delete_on_a_fresh_row_end_consistently():
-    # With no pre-existing row there is nothing for get_or_create to FOR UPDATE lock, so
-    # it and a concurrent delete() aren't strictly serialized -- but the whole get_or_create
-    # is one transaction and upsert_membership's own IntegrityError/SAVEPOINT recovery means
-    # the outcome is always consistent: the row is present with the granted role, or absent.
-    # Never a half-written row, never an exception. (Supersedes the pre-#331 test that relied
-    # on get_or_create's now-removed commit-then-mirror-sync gap.)
+    # No existing row means nothing to FOR UPDATE lock, but get_or_create is one transaction with
+    # IntegrityError/SAVEPOINT recovery: the row is either fully present or absent, never an exception.
     setup = SessionLocal()
     org = org_repo.get_or_create(setup, github_login="acme-lock-test-3")
     user = User(email="judy@example.com", name=None, password_hash=None, is_workspace_admin=False)

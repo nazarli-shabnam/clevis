@@ -108,15 +108,10 @@ def get_installation(installation_id: int) -> dict:
 
 
 def delete_installation(installation_id: int) -> None:
-    """Uninstall the App from an account/org via GitHub's App API (DELETE /app/installations/{id}),
-    using the App's own JWT -- this is a real revocation, not just removing our own DB row, so a
-    user who disconnects in Clevis's UI actually stops granting Clevis repo access, the same as if
-    they'd uninstalled it from github.com/settings/installations themselves. A 404 (already
-    uninstalled -- e.g. the user beat us to it on GitHub's side) is treated as success, not an
-    error, since the end state either way is "no installation." Raises httpx.HTTPStatusError for
-    any other GitHub error or GitHubAppNotConfigured; callers must not delete the local DB row on
-    those, so a failed uninstall doesn't leave Clevis's own record silently out of sync with a
-    GitHub-side installation that's still actually there."""
+    """Uninstall the App via GitHub's App API -- a real revocation, not just removing our
+    own DB row. A 404 (already uninstalled) is treated as success, since the end state is
+    "no installation" either way. Raises for any other error; callers must not delete the
+    local DB row on those, or Clevis's record could silently go out of sync."""
     app_jwt = generate_app_jwt()
     url = f"{settings.github_api_base}/app/installations/{installation_id}"
     headers = {
@@ -168,12 +163,10 @@ def get_installation_token(installation_id: int) -> str:
 
 def get_org_membership_role(installation_token: str, org_login: str, username: str) -> str | None:
     """Ask GitHub, authenticated as the App installation (not a user token), what role
-    `username` currently holds in `org_login` -- "admin" | "member" -- or None if they
-    have no active membership visible to the installation (404, or a non-"active" state
-    like a pending invite). Requires the App's installation to have at least read access
-    to the org's "Members" permission (already part of the documented required grants,
-    see docs/self-hosting.md). Used to bootstrap a brand-new Org/OrgMembership at
-    install-sync time without needing the caller's (never-persisted) OAuth user token."""
+    `username` holds in `org_login` -- "admin" | "member" -- or None if they have no
+    active membership visible to the installation. Requires the App's "Members: read"
+    permission. Used to bootstrap a brand-new Org/OrgMembership at install-sync time
+    without needing the caller's OAuth user token."""
     url = f"{settings.github_api_base}/orgs/{org_login}/memberships/{username}"
     headers = {
         "Authorization": f"Bearer {installation_token}",

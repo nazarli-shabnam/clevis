@@ -1,18 +1,9 @@
-"""Canonical map of the GitHub App permissions Clevis needs.
+"""Canonical map of the GitHub App permissions Clevis needs: compares what an
+installation was granted against what a feature requires, and flags which optional
+automations are blocked.
 
-Until now this lived only as prose in ``docs/self-hosting.md`` and as duplicated hint
-strings in each write-feature router. Centralising it here lets us:
-
-  - compare what an installation was *granted* (GitHub's ``permissions`` dict, stored on
-    ``github_installations.granted_permissions``) against what a feature *requires*, and
-  - tell an org admin exactly which optional automations are currently blocked, with a
-    single "Review on GitHub" link to re-approve.
-
-The permission keys and levels are GitHub's own (see the REST "Get an installation"
-response ``permissions`` object): ``administration``/``issues``/``pull_requests``/
-``contents``/``vulnerability_alerts`` (Dependabot alerts)/``security_events`` (code
-scanning)/``secret_scanning_alerts``/``members``/``actions`` accept ``read``|``write``;
-``workflows`` is ``write``-only.
+Permission keys/levels are GitHub's own (REST "Get an installation" ``permissions``
+object): most accept ``read``|``write``; ``workflows`` is ``write``-only.
 """
 
 from __future__ import annotations
@@ -24,9 +15,9 @@ from dataclasses import dataclass, field
 _RANK: dict[str, int] = {"read": 1, "write": 2, "admin": 3}
 
 
-# What every installation needs for the core security checks + dashboards to work. Sourced
-# from docs/self-hosting.md step 3 ("Grant read access to … contents, metadata,
-# administration, members" plus the three alert-read grants for webhook ingestion).
+# What every installation needs for the core security checks + dashboards to work.
+# Sourced from docs/self-hosting.md's setup step (contents/metadata/administration/
+# members read, plus the three alert-read grants for webhook ingestion).
 BASELINE_PERMISSIONS: dict[str, str] = {
     "metadata": "read",
     "contents": "read",

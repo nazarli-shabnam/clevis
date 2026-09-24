@@ -42,7 +42,6 @@ def upgrade() -> None:
         ),
     )
 
-    # Seed defaults — these are the only accepted config keys
     op.execute(
         sa.text(
             "INSERT INTO app_config (key, value) VALUES "

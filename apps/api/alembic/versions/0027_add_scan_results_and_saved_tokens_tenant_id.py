@@ -1,13 +1,4 @@
-"""Add tenant_id to scan_results and saved_tokens, best-effort backfill, stays nullable (issue #190, PR 3 of 7).
-
-Unlike orgs/invitations/github_installations, neither table has a real FK to
-join through: scan_results.owner and saved_tokens.org are free-text GitHub
-login strings, matched against orgs.github_login on a best-effort basis.
-Legacy rows that don't match any known org (renamed/deleted org, or a
-personal-endpoint scan where owner is a user's own login rather than an
-org) are left with tenant_id NULL rather than guessed at or dropped --
-documented here, not chased. scan_results additionally falls back to the
-scanning user's personal tenant via scanned_by_user_id when set.
+"""Add tenant_id to scan_results and saved_tokens, best-effort backfill, stays nullable.
 
 Revision ID: 0027
 Revises: 0026

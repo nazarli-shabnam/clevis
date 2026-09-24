@@ -51,8 +51,7 @@ function MyViewRow({ item }: { item: MyViewPRSummary | MyViewIssueSummary }) {
 const quickActions = [
   { label: "Run Security Scan",  href: "/security" },
   { label: "Manage Caches",      href: "/repos" },
-  // "/collaborators" is a sentinel resolved to the scope's org members page at
-  // render time (issue #282) — the standalone /collaborators route was removed.
+  // "/collaborators" is a sentinel resolved to the scope's org members page at render time.
   { label: "View Collaborators", href: "/collaborators" },
 ]
 
@@ -85,11 +84,8 @@ export default function OverviewPage() {
   const { user } = useAuth()
   const org = scope?.login ?? ""
 
-  // Resolves the "Team Members" card and "View Collaborators" quick action to the
-  // members page of an org the user admins (issue #282). Same ["my-orgs"] key as
-  // the sidebar so TanStack Query dedupes the request. While it's still loading,
-  // hold at /settings rather than briefly resolving off an empty [] (same guard
-  // the sidebar applies).
+  // Resolves members links to an org the user admins; same ["my-orgs"] key as the sidebar so the
+  // request dedupes. Holds at /settings while loading rather than resolving off an empty [].
   const { data: memberships = [], isLoading: membershipsLoading } = useQuery<MyOrgMembership[]>({
     queryKey: ["my-orgs"],
     queryFn: () => api.orgs.mine(),
@@ -100,9 +96,7 @@ export default function OverviewPage() {
     setOrgChecked(true)
   }, [])
 
-  // Not chained to the cockpit query below — both fire on mount. This one only
-  // drives the "not configured yet" CTA-card branch, matching the pre-cockpit
-  // behavior, so that empty state doesn't regress.
+  // Fires in parallel with the cockpit query; only drives the "not configured yet" CTA branch.
   const resolveQuery = useQuery({
     queryKey: ["tokens.resolve", org],
     queryFn: () => api.tokens.resolve(org),
@@ -111,11 +105,8 @@ export default function OverviewPage() {
   })
   const configured = !!resolveQuery.data?.token
 
-  // Both queries fire as soon as `org` is known (no waterfall) — cockpit just
-  // waits for resolveQuery's fetch to settle (not to finish loading data through
-  // a dependent chain) so a saved PAT isn't missed on the very first request
-  // (queryKey excludes token, so a later-arriving token wouldn't otherwise
-  // trigger a refetch of an already-fired query).
+  // Cockpit waits for resolveQuery to settle so a saved PAT isn't missed on the first request
+  // (queryKey excludes token, so a later-arriving token wouldn't trigger a refetch).
   const cockpitQuery = useQuery({
     queryKey: ["analytics.cockpit", org],
     queryFn: () => api.analytics.cockpit(org, resolveQuery.data?.token),
@@ -125,14 +116,9 @@ export default function OverviewPage() {
   })
   const cockpit = cockpitQuery.data
 
-  // Issue #294: Actions-minutes usage. Org-scoped + admin-only, and needs a GitHub App
-  // permission Clevis doesn't request by default -- so this is best-effort: `retry: false`
-  // and the card only renders on a *successful* query (never on stale data).
-  //
-  // The query key is partitioned by the signed-in user: this is org billing data, and
-  // the QueryClient outlives a logout/login on the same tab, so keying on `org` alone
-  // would let a member inherit an admin's cached usage (CWE-200). Gate on
-  // `resolveQuery.isFetched` so the request always carries the resolved token.
+  // Best-effort: needs an App permission not requested by default, so retry: false and the card
+  // renders only on success. Keyed by user because the QueryClient outlives logout/login, so keying
+  // on org alone would let a member inherit an admin's cached billing data (CWE-200).
   const isOrgScope = scope?.kind === "org"
   const actionsUsageQuery = useQuery({
     queryKey: ["analytics.actions-usage", org, user?.id ?? "anon"],
@@ -270,9 +256,8 @@ export default function OverviewPage() {
                 const used = usage.total_minutes_used || 0
                 const included = usage.included_minutes_used || 0
                 const paid = usage.paid_minutes_used || 0
-                // GitHub's usage API reports consumption, not the plan's monthly
-                // allowance — so the bar splits what was used into included vs billed,
-                // it isn't a "% of quota" gauge.
+                // GitHub reports consumption, not the monthly allowance, so the bar splits usage into
+                // included vs billed rather than showing a "% of quota".
                 const paidPct = used > 0 ? Math.min(100, Math.round((paid / used) * 100)) : 0
                 return (
                   <>

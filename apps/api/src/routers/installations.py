@@ -1,28 +1,9 @@
-"""GitHub App installation router.
+"""GitHub App installation router: connect/list/disconnect installations for orgs
+(``/orgs/{org_login}/installations*``) and personal accounts (``/me/installations*``).
 
-  GET  /orgs/{org_login}/installations       member: list installations connected to this org
-  POST /orgs/{org_login}/installations/sync  admin: re-sync installation metadata for this org.
-                                              If the caller isn't already a known Clevis org
-                                              admin (e.g. this is the org's first-ever
-                                              installation, or their Clevis membership is stale),
-                                              this bootstraps the Org/OrgMembership rows itself by
-                                              live-checking the caller's GitHub org role via the
-                                              installation's own token -- see
-                                              _bootstrap_org_admin_from_installation below. This
-                                              doesn't need the caller's OAuth user token (Clevis
-                                              never persists it -- see src.services.org_provisioning)
-                                              because the just-installed App can check org
-                                              membership on its own behalf.
-  GET  /me/installations                     list the current user's personal installations
-  POST /me/installations/sync                connect a personal (User-type) GitHub installation
-  GET  /me/installations/lookup/{id}          resolve an installation_id to the account it belongs
-                                              to, so the post-install UI callback (which only gets
-                                              installation_id/setup_action from GitHub) knows
-                                              whether to call the /me or /orgs sync endpoint next.
-  DELETE /orgs/{org_login}/installations/{installation_id}   admin: disconnect -- uninstalls the
-                                              App on GitHub's side (a real revocation, not just
-                                              removing our own row) then deletes the local row.
-  DELETE /me/installations/{installation_id}  same, for the caller's own personal installation.
+``sync`` bootstraps Org/OrgMembership rows via a live GitHub role check when the caller
+isn't yet a known admin. ``DELETE`` uninstalls the App on GitHub's side, not just the
+local row.
 """
 
 import logging
@@ -109,22 +90,18 @@ def _capture_permissions_best_effort(db: Session, installation_id: int | None, i
 
 
 def _enqueue_backfill_best_effort(db: Session, *, tenant_id: int, account_login: str, account_type: str, resolve_token) -> None:
-    """S5 PR 1: best-effort install-time activity backfill. Must never fail the install
-    response itself -- the install already succeeded (its own audit log entry is already
-    written by the time this runs), and backfill is enrichment, not a precondition of a
-    working install. `resolve_token` is a zero-arg callable so the org/personal callers
-    can each pass their own resolve_org_token/resolve_personal_token call without this
-    helper needing to know which one applies."""
+    """Best-effort install-time activity backfill. Must never fail the install response
+    itself -- the install already succeeded, and backfill is enrichment, not a
+    precondition. `resolve_token` is a zero-arg callable so org/personal callers can each
+    pass their own resolve_*_token call."""
     try:
         token = resolve_token()
         backfill_service.enqueue(db, tenant_id=tenant_id, account_login=account_login, account_type=account_type, token=token)
     except NoGitHubTokenAvailable as exc:
         logger.warning("skipping activity backfill for %s: %s", account_login, exc)
     except Exception:
-        # A DB-level error here (e.g. from job_repo.enqueue's own commit) leaves the
-        # shared request Session's transaction aborted -- roll it back so the response
-        # this handler still has to build (row.token_ref) doesn't itself 500 trying to
-        # use a poisoned session.
+        # A DB-level error here leaves the shared Session's transaction aborted -- roll it
+        # back so the response this handler still has to build doesn't 500 on a poisoned session.
         db.rollback()
         logger.exception("failed to enqueue activity backfill for %s", account_login)
 
@@ -132,10 +109,9 @@ def _enqueue_backfill_best_effort(db: Session, *, tenant_id: int, account_login:
 def _to_installation_out(row) -> InstallationOut:
     """Map a GitHubInstallation row to the API shape, computing which optional write
     automations are currently blocked by a missing permission."""
-    # Only report blocked features once we've actually observed the install's permissions.
-    # A never-checked row (pre-tracking, or before the first accept webhook / reconnect)
-    # would otherwise show every feature as blocked; the UI renders a "not yet checked"
-    # state off permissions_synced_at instead.
+    # Only report blocked features once permissions have actually been observed -- a
+    # never-checked row would otherwise show everything blocked; the UI shows "not yet
+    # checked" off permissions_synced_at instead.
     blocked = (
         app_permissions.blocked_features(row.granted_permissions)
         if row.permissions_synced_at is not None
@@ -202,9 +178,8 @@ def delete_org_installation(
 
     _uninstall_on_github(installation_id)
 
-    # require_org_role already set tenant session context for ctx.org.tenant_id above --
-    # delete_by_installation_id's own resolve-then-set is for its other caller (the
-    # unauthenticated webhook receiver), a no-op re-set here for this authenticated path.
+    # require_org_role already set tenant session context above -- delete_by_installation_id's
+    # own resolve-then-set is for its other caller (the unauthenticated webhook receiver).
     count, tenant_id = installation_repo.delete_by_installation_id(db, installation_id)
     audit_repo.write(
         db,
@@ -219,20 +194,12 @@ def delete_org_installation(
 def _bootstrap_org_admin_from_installation(db: Session, db_user: User, org_login: str, installation_id: int) -> Org:
     """No Clevis Org exists for org_login yet, or the caller isn't a known admin of it --
     live-verify the caller is actually a GitHub admin of this org right now, using the
-    just-installed App's own installation token (never the caller's unverified say-so),
-    then get-or-create the Org/OrgMembership rows. Callers must already have confirmed
-    db_user.github_login is set and installation_id is not None. Raises HTTPException on
-    any failure to verify (GitHub API error, or the live check saying the caller isn't an
-    admin).
+    just-installed App's own installation token, then get-or-create the Org/OrgMembership
+    rows. Raises HTTPException on any verification failure.
 
-    Serialized per org_login via pg_advisory_xact_lock (transaction-scoped, released at
-    the end of this request) -- without it, two concurrent installation syncs for the
-    same org_login (e.g. two admins racing to connect the same brand-new org with
-    different installation_id's) could both pass the live-admin check before either
-    commits, then race to attach to (or duplicate) the same Org row. Matches the pattern
-    /auth/setup uses for its own check-then-insert race (see auth.py's _SETUP_LOCK_KEY).
-    hashtext() maps the arbitrary org_login string to the int4 key pg_advisory_xact_lock
-    expects."""
+    Serialized per org_login via pg_advisory_xact_lock -- without it, two concurrent syncs
+    for the same org_login could both pass the live-admin check before either commits, then
+    race to attach to (or duplicate) the same Org row."""
     db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:org_login))"), {"org_login": org_login})
     try:
         installation_token = github_app.get_installation_token(installation_id)
@@ -263,17 +230,15 @@ def sync_org_installation(
     if payload.account_login.lower() != org_login.lower():
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="owner must match the org in the URL")
 
-    # Issue #190 CodeRabbit follow-up: this reuses rbac.resolve_org_role -- the same
-    # non-raising resolution logic require_org_role's dependency itself calls -- so the
-    # known-admin fast-path check here can't silently drift from what require_org_role
-    # considers a valid org admin.
+    # Reuses rbac.resolve_org_role -- the same non-raising resolution logic
+    # require_org_role's dependency calls -- so this fast-path check can't drift from
+    # what require_org_role considers a valid org admin.
     ctx: OrgContext | None = resolve_org_role(db, org_login, user.id, "admin")
     is_known_admin = ctx is not None
     org: Org | None = ctx.org if ctx is not None else org_repo.get_by_login(db, org_login)
 
     # Only a caller who ISN'T already a confirmed local admin needs the extra checks below
-    # (linked GitHub account, installation_id present) -- resolved before any GitHub call
-    # so an unauthorized request fails fast instead of paying for a network round-trip.
+    # -- resolved before any GitHub call so an unauthorized request fails fast.
     db_user: User | None = None
     if not is_known_admin:
         db_user = db.query(User).filter(User.id == user.id).first()
@@ -290,11 +255,9 @@ def sync_org_installation(
     if not is_known_admin:
         org = _bootstrap_org_admin_from_installation(db, db_user, org_login, payload.installation_id)
 
-    # Issue #190 step 6c: github_installations' org-scoped rows have no per-row user column,
-    # so migration 0031's self-access clause (owner_user_id match) can't cover this write the
-    # way it covers personal installations -- org.tenant_id is already resolved by this point
-    # (ensure_tenant_linked above, or _bootstrap_org_admin_from_installation's own
-    # org_repo.get_or_create), so set the real tenant context explicitly instead.
+    # github_installations' org-scoped rows have no per-row user column, so the RLS
+    # self-access clause (owner_user_id match) can't cover this write like it does for
+    # personal installations -- set the real tenant context explicitly instead.
     set_tenant_session_context(db, org.tenant_id, user.id)
     row = installation_repo.create(
         db,

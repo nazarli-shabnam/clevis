@@ -1,5 +1,4 @@
-"""Tests for the API lifespan's background task wiring: gap-heal (issue #192/S5 PR 2) and
-org-membership reconciliation (Collaborators PR 2 of 3), two independent loops."""
+"""Tests for the API lifespan's background task wiring: gap-heal and org-membership reconciliation loops."""
 
 import asyncio
 from unittest.mock import patch

@@ -1,24 +1,13 @@
-"""Auto-triage low-risk Dependabot PRs (issue #290).
+"""Auto-triage low-risk Dependabot PRs.
 
-**The highest-risk item on the write-access roadmap** — approving, and especially
-merging, is hard to undo — so every safety rail is on by default:
+High-risk (approving/merging is hard to undo), so every safety rail is on by default:
+per-repo opt-in (default disabled), ``mode`` defaults to ``approve_only``, and a PR is
+only acted on when all of: author is dependabot[bot], not draft, patch-level bump only,
+all checks green, and no pending/requested human review. Capped per-run (default 5);
+every decision is audit-logged by the router.
 
-- **per-repo opt-in** via ``automation_repo_settings`` (feature ``dependabot_triage``),
-  default **disabled** — the sweep touches nothing until an admin turns it on for a
-  specific repo;
-- ``mode`` defaults to ``approve_only``; ``approve_and_merge`` must be set explicitly
-  per repo;
-- a PR is acted on only when **all** of: author is ``dependabot[bot]``, not a draft,
-  the bump is **patch-level** (parsed from the PR body; unparseable → skip), every
-  check on the head SHA is a completed success *and* the combined commit status is
-  success, and there is no pending/requested human review and no
-  ``CHANGES_REQUESTED``;
-- a per-run cap (default 5);
-- **every** decision — act or skip, with the reason — is written to ``audit_logs`` by
-  the router.
-
-Requires ``pull_requests: write`` (approve) + ``contents: write`` (merge); documented
-in docs/self-hosting.md. A 403 from GitHub becomes a 400 pointing there.
+Requires ``pull_requests: write`` (approve) + ``contents: write`` (merge); a 403 becomes
+a 400 pointing at docs/self-hosting.md.
 """
 
 from __future__ import annotations
@@ -45,9 +34,8 @@ _BUMP_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Any "Bumps/Updates ... from X to Y" line. Used to catch update lines whose targets
-# `_BUMP_RE` can't classify (pre-release, 4-part, or bare "from 3 to 4" Action bumps):
-# those must fail the PR closed, not be silently dropped.
+# Any "Bumps/Updates ... from X to Y" line, to catch update lines `_BUMP_RE` can't
+# classify (pre-release, 4-part, bare Action bumps) -- those must fail closed, not drop.
 _UPDATE_LINE_RE = re.compile(r"\b(?:bumps|updates)\b.+?\bfrom\s+\S+\s+to\s+\S+", re.IGNORECASE)
 
 
@@ -60,12 +48,10 @@ class Decision:
 
 
 def _bump_is_patch(body: str) -> bool | None:
-    """``True`` only when **every** "from X.Y.Z to X.Y.Z" line in the body is a
-    same-major, same-minor, non-decreasing patch bump. ``None`` when the body has no
-    recognisable bump line at all (caller skips — fail closed). A grouped Dependabot PR
-    that bundles a minor/major bump alongside a patch one returns ``False``, not
-    ``True``. Pre-release / 4-part target versions aren't matched by ``_BUMP_RE``, so a
-    body containing only those yields ``None``."""
+    """``True`` only when every "from X.Y.Z to X.Y.Z" line in the body is a same-major,
+    same-minor, non-decreasing patch bump. ``None`` when the body has no recognisable
+    bump line at all (caller skips — fail closed). A grouped PR that bundles a minor/
+    major bump alongside a patch one returns ``False``, not ``True``."""
     seen_update_line = False
     seen_patch = False
     seen_non_patch = False  # a line we could parse and know is not a patch bump
@@ -90,19 +76,18 @@ def _bump_is_patch(body: str) -> bool | None:
         return None
     if seen_non_patch:
         return False
-    # An unparseable line (pre-release / 4-part / bare "from 3 to 4") bundled alongside a
-    # real patch bump must reject the PR, not ride along on the patch line. On its own it's
-    # just "undeterminable" -> caller skips.
+    # An unparseable line bundled alongside a real patch bump must reject the PR, not ride
+    # along on the patch line. On its own it's just "undeterminable" -> caller skips.
     if seen_unparseable:
         return False if seen_patch else None
     return True if seen_patch else None
 
 
 def _checks_all_green(client: GitHubClient, owner: str, repo: str, sha: str) -> bool:
-    """Every check-run *and* every classic commit status on ``sha`` is a completed
-    success. Requires at least one signal — a head SHA with no CI at all is treated as
-    not-green (this feature does not auto-merge unverified code). If GitHub reports more
-    check-runs than the one page we fetched, we can't verify them all, so → not green."""
+    """Every check-run and every classic commit status on ``sha`` is a completed success.
+    Requires at least one signal -- a head SHA with no CI at all is not-green. If GitHub
+    reports more check-runs than the one page fetched, they can't all be verified, so
+    not green."""
     runs = client.request(
         "GET", f"/repos/{owner}/{repo}/commits/{sha}/check-runs", params={"per_page": 100}
     )
@@ -205,9 +190,8 @@ def triage(
                 )
                 decisions.append(Decision(number, title, "merged"))
             except (httpx.HTTPStatusError, httpx.RequestError) as exc:
-                # The approval already landed on GitHub — record it as its own decision
-                # (so the router audits it) and report the merge failure separately
-                # rather than letting the exception discard the completed approval.
+                # The approval already landed on GitHub -- record it as its own decision
+                # and report the merge failure separately, rather than discarding it.
                 if isinstance(exc, httpx.HTTPStatusError):
                     detail = f"the merge request failed: {exc.response.status_code}"
                 else:

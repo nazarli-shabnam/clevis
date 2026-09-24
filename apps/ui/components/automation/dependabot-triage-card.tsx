@@ -6,11 +6,9 @@ import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api/client"
 import type { DependabotTriageResponse } from "@/lib/api/types"
 
-// Dependabot auto-triage (issue #290) — the highest-risk automation, so the UI leads
-// with the guardrails. Per-repo opt-in (default off). approve_only just approves;
-// approve_and_merge is the only mode that merges, and "Run for real" is two-step. Only
-// patch-level dependabot[bot] bumps with every check green and no pending human review
-// are ever acted on.
+// Dependabot auto-triage: highest-risk automation. Per-repo opt-in; only approve_and_merge
+// merges, "Run for real" is two-step, and only green patch-level dependabot[bot] bumps with
+// no pending human review are acted on.
 
 type Mode = "approve_only" | "approve_and_merge"
 

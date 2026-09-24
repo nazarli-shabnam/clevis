@@ -20,7 +20,6 @@ function segmentsFrom(pathname: string): string[] {
   const parts = pathname.split("/").filter(Boolean)
   if (parts.length === 0) return ["overview"]
 
-  // Try exact match first
   const exact = ROUTE_LABELS[pathname]
   if (exact) return [exact]
 

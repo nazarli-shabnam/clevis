@@ -9,8 +9,7 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            // One retry, capped backoff — a failing request settles into an error
-            // quickly instead of spinning through long default retries.
+            // One retry, capped backoff, so failures settle into an error quickly.
             retry: 1,
             retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
             staleTime: 30_000,

@@ -7,9 +7,7 @@ afterEach(() => {
   cleanup();
 });
 
-// Base UI's className prop accepts either a plain string or a callback that receives
-// the component's state (e.g. invalid/touched/dirty) -- these wrappers must merge
-// default classes with both forms rather than only handling the string case.
+// Base UI's className accepts a string or a state callback; wrappers must merge defaults with both.
 
 describe("Field", () => {
   it("merges a string className with the wrapper's own classes", () => {

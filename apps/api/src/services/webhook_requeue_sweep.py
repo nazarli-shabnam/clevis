@@ -1,13 +1,11 @@
-"""Issue #409: periodically re-XADD webhook_deliveries rows stuck at status='queue_failed'.
-Issue #440: also re-XADD a row still at status='queued' well past normal processing time --
-the recovery path for one whose stream entry was trimmed (see routers/webhooks.py's
-_WEBHOOK_STREAM_MAXLEN) before the consumer group ever read it, not just for a failed XADD.
+"""Periodically re-XADD webhook_deliveries rows stuck at status='queue_failed', and also
+a row still at status='queued' well past normal processing time -- the recovery path for
+one whose stream entry was trimmed (see routers/webhooks.py's _WEBHOOK_STREAM_MAXLEN)
+before the consumer group ever read it, not just for a failed XADD.
 
-A transient Redis blip at receive time (routers/webhooks.py's _handle_ingested_event)
-durably stores the verified payload but never gets a second chance onto the stream
-without this -- the row just sits there forever, silently absent from every downstream
-pipeline. Mirrors gap_heal_sweep.py's shape: called from an asyncio background loop
-(webhook_requeue_loop.py) started in main.py's lifespan.
+A transient Redis blip at receive time durably stores the verified payload but never
+gets a second chance onto the stream without this -- the row would sit there forever,
+silently absent from every downstream pipeline. Mirrors gap_heal_sweep.py's shape.
 """
 
 import logging
@@ -21,40 +19,28 @@ from src.core.redis_client import get_redis_client
 logger = logging.getLogger(__name__)
 
 # Must match routers/webhooks.py's own _WEBHOOK_STREAM_KEY/_WEBHOOK_STREAM_MAXLEN --
-# duplicated constants, same reasoning as that module's note on why (independently
-# deployable services, no shared code).
+# duplicated since these are independently deployable services with no shared code.
 _STREAM_KEY = "webhook_events"
 _STREAM_MAXLEN = 50_000
 # A row this old is treated as permanently lost rather than retried forever -- an outage
 # lasting longer than this needs an operator, not an indefinite silent background retry.
 _MAX_AGE_HOURS = 24
-# issue #440: a row still 'queued' this long after receipt is well past any normal
-# XREADGROUP pickup latency (seconds) -- either its stream entry was trimmed by
-# _WEBHOOK_STREAM_MAXLEN before the consumer group read it, or the original XADD's
-# success was never actually durable. We can't tell that apart from "consumer group is
-# just genuinely backlogged and will still get to the original entry" (no lag/watermark
-# tracking against the stream exists here), so under sustained backlog this can add a
-# second stream entry for a delivery that was going to be processed anyway -- the
-# normalizer in apps/worker/src/event_consumer.py then runs twice for the same
-# delivery_row_id. That's safe ONLY because every currently-ingested event type's DB
-# write there is a genuine idempotent upsert, not because it can't happen: repo_events
-# (ON CONFLICT ... DO NOTHING, enforced by
-# test_processing_the_same_delivery_twice_is_idempotent), security_alerts (ON CONFLICT
-# ... DO UPDATE guarded by updated_at, enforced by
-# test_redelivered_security_alert_updates_state_instead_of_duplicating), org_members and
-# repo_collaborators (guarded upserts, enforced by
-# test_redelivered_member_added_does_not_overwrite_role and
-# test_out_of_order_member_removed_does_not_delete_a_newer_repo_collaborator) -- all in
-# apps/worker/tests/test_event_consumer.py. A new ingested event type that skips a
-# matching idempotency test would make re-XADD here unsafe for it -- issue #462.
+# A row still 'queued' this long after receipt is well past any normal XREADGROUP pickup
+# latency -- either its stream entry was trimmed by _WEBHOOK_STREAM_MAXLEN before the
+# consumer group read it, or the original XADD's success was never actually durable. We
+# can't tell that apart from "consumer group is just genuinely backlogged," so under
+# sustained backlog this can add a second stream entry for a delivery already in flight --
+# the normalizer in apps/worker/src/event_consumer.py then runs twice for the same
+# delivery_row_id. Safe only because every currently-ingested event type's DB write there
+# is a genuine idempotent upsert: repo_events (ON CONFLICT DO NOTHING), security_alerts
+# (ON CONFLICT DO UPDATE guarded by updated_at), org_members and repo_collaborators
+# (guarded upserts) -- enforced by apps/worker/tests/test_event_consumer.py. A new
+# ingested event type that skips a matching idempotency test would make re-XADD unsafe for it.
 #
-# Excludes rows event_consumer.py deliberately leaves 'queued' forever on purpose (not
-# stuck): a null tenant_id (no tenant to scope a normalized row to) or an event_type with
-# no normalizer yet (membership/team, see event_consumer.py's
-# _NOT_YET_NORMALIZED_EVENT_TYPES). Without this exclusion, this sweep would re-XADD
-# those every tick forever -- the consumer re-acks without ever changing their status, so
-# they'd cross this threshold again next tick and repeat indefinitely, defeating the
-# whole point of bounding the stream.
+# Excludes rows event_consumer.py deliberately leaves 'queued' forever (not stuck): a
+# null tenant_id, or an event_type with no normalizer yet (membership/team). Without this
+# exclusion, this sweep would re-XADD those every tick forever -- the consumer re-acks
+# without ever changing their status, defeating the whole point of bounding the stream.
 _STUCK_QUEUED_MINUTES = 30
 _NOT_YET_NORMALIZED_EVENT_TYPES = ("membership", "team")
 # Cap per tick so a large backlog can't block the loop indefinitely; the next tick picks
@@ -66,9 +52,8 @@ def run_webhook_requeue_sweep(db: Session) -> None:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=_MAX_AGE_HOURS)
     stuck_queued_cutoff = datetime.now(timezone.utc) - timedelta(minutes=_STUCK_QUEUED_MINUTES)
     # FOR UPDATE SKIP LOCKED so concurrent API replicas each claim a disjoint set of rows
-    # instead of racing to re-XADD (and double-enqueue) the same one -- same idiom
-    # apps/worker/src/worker.py's own job-queue poll uses for the same reason. Held for the
-    # whole batch (single commit at the end), not released mid-loop.
+    # instead of racing to re-XADD the same one. Held for the whole batch (single commit
+    # at the end), not released mid-loop.
     rows = db.execute(
         text(
             "SELECT id, tenant_id, event_type, received_at, status FROM webhook_deliveries "
@@ -87,9 +72,8 @@ def run_webhook_requeue_sweep(db: Session) -> None:
     if not rows:
         return
 
-    # The 24h abandon cutoff only ever applies to 'queue_failed' rows -- a stuck 'queued'
-    # row hasn't failed anything, it just needs another XADD, so it's always retryable
-    # here regardless of age.
+    # The 24h abandon cutoff only applies to 'queue_failed' rows -- a stuck 'queued' row
+    # hasn't failed anything, it just needs another XADD, so it's always retryable.
     stale_ids = [row.id for row in rows if row.status == "queue_failed" and row.received_at < cutoff]
     retryable = [row for row in rows if row.id not in stale_ids]
 
@@ -121,9 +105,8 @@ def run_webhook_requeue_sweep(db: Session) -> None:
                     approximate=True,
                 )
             except Exception:
-                # Redis is still down (or newly down again) -- leave this and every
-                # remaining row in this tick's batch at queue_failed rather than hammering
-                # a dead Redis once per row; the next tick retries them all.
+                # Redis is still down -- leave this and every remaining row in this
+                # tick's batch at queue_failed rather than hammering a dead Redis.
                 logger.exception(
                     "webhook requeue sweep failed to re-enqueue row %d, aborting this tick's remaining retries", row.id
                 )

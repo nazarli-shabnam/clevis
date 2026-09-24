@@ -22,8 +22,6 @@ from src.services import org_provisioning
 router = APIRouter()
 
 
-# ── schemas ────────────────────────────────────────────────────────────────
-
 class TokenMeta(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     org: str
@@ -45,8 +43,6 @@ class VerifyTokenResponse(BaseModel):
     token: str
 
 
-# ── routes ─────────────────────────────────────────────────────────────────
-
 @router.get("", response_model=list[TokenMeta])
 def list_tokens(
     db: Session = Depends(get_db),
@@ -66,33 +62,29 @@ def upsert_token(
 ) -> TokenMeta:
     """Save or update the token for an org (encrypted at rest). Workspace admin only.
 
-    Also best-effort connects the org to Clevis using the pasted PAT (issue #368) so the
-    org-scoped dashboard pages work afterwards, not just Overview.
+    Also best-effort connects the org to Clevis using the pasted PAT so the org-scoped
+    dashboard pages work afterwards, not just Overview.
     """
     encrypted = encrypt_job_token(
         body.token.get_secret_value(),
         settings.job_secret_key.get_secret_value(),
     )
-    # Best-effort tenant_id resolution (issue #330): this legacy fallback lets an admin
-    # save a PAT for any org string, including one Clevis has never connected -- if a
-    # matching Org row exists, link its tenant now so RLS's WITH CHECK (strict equality,
-    # no OR-NULL escape -- see migration 0030's docstring) can accept the write; if not,
-    # tenant_id stays NULL (migration 0033 loosens WITH CHECK for exactly this case).
+    # Best-effort tenant_id resolution: this legacy fallback lets an admin save a PAT for
+    # any org string, including one Clevis has never connected -- if a matching Org row
+    # exists, link its tenant now so RLS's WITH CHECK can accept the write; if not,
+    # tenant_id stays NULL.
     existing_org = org_repo.get_by_login_ci(db, org)
 
-    # Skip the auto-connect path (a paginated GitHub crawl) only when there's nothing it
-    # could do: the caller already has an *admin* membership for this org. A missing row
-    # -- or a "member" row GitHub might now report as "admin" -- still goes through the
-    # helper so a first connection / promotion isn't missed on token save.
+    # Skip the auto-connect path (a paginated GitHub crawl) only when the caller already
+    # has an *admin* membership for this org; a missing/stale row still goes through it.
     nothing_to_do = False
     if existing_org is not None:
         existing_org = org_repo.ensure_tenant_linked(db, existing_org)
         membership = tenant_repo.get_membership(db, existing_org.tenant_id, user.id)
         nothing_to_do = membership is not None and membership.role == "admin"
 
-    # Issue #368: if this admin can't already reach the org, try to establish the Org +
-    # admin membership from the pasted PAT -- otherwise every /orgs/{org}/... page 404s
-    # with "not connected" despite a fully valid token.
+    # If this admin can't already reach the org, try to establish the Org + admin
+    # membership from the pasted PAT -- otherwise every /orgs/{org}/... page 404s.
     if not nothing_to_do:
         connected_org = org_provisioning.connect_admin_org_from_token(
             db, user, org, body.token.get_secret_value()
@@ -130,9 +122,8 @@ def resolve_token(
         row.encrypted_token,
         settings.job_secret_key.get_secret_value(),
     )
-    # row.tenant_id is best-effort (see upsert_token) -- falls back to the acting admin's
-    # own personal tenant when the saved token predates a matching Org, or never had one,
-    # so this write always has a real tenant_id to satisfy audit_logs' strict RLS policy.
+    # row.tenant_id is best-effort -- falls back to the acting admin's own personal tenant
+    # when the saved token predates a matching Org, so this write always has a real tenant_id.
     tenant_id = row.tenant_id or tenant_repo.ensure_personal_tenant(db, user.id).id
     audit_repo.write(db, user.email, "token.resolve", body.org, {}, tenant_id=tenant_id)
     return VerifyTokenResponse(token=raw)

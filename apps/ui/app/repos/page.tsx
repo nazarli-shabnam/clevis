@@ -197,9 +197,7 @@ export default function ReposPage() {
     setOwner(scopeOrgLogin)
   }, [scopeOrgLogin])
 
-  // Same pattern as the other pages that gate on useActiveScope() (see app/page.tsx,
-  // app/my/prs/page.tsx, etc.) -- deferred a tick so this doesn't flash before
-  // useActiveScope's first read of localStorage resolves.
+  // Deferred a tick so this doesn't flash before useActiveScope's first localStorage read resolves.
   const [scopeChecked, setScopeChecked] = useState(false)
   useEffect(() => {
     setScopeChecked(true)
@@ -209,11 +207,8 @@ export default function ReposPage() {
     queryKey: ["installations"],
     queryFn: () => api.installations.list(),
   })
-  // list() above only covers the caller's *personal* installations -- an org's App
-  // installation requires the separate org-scoped endpoint. Errors (403/404, e.g. the
-  // org isn't a recognized Clevis org yet) are treated as "not installed" rather than
-  // surfaced, matching this query's only purpose here (a soft signal to hide the token
-  // field, not something the user needs an error for).
+  // Org installs need the org-scoped endpoint (list() is personal-only). 403/404 is treated as
+  // "not installed": this is only a soft signal to hide the token field.
   const orgInstallsQuery = useQuery<InstallationMeta[]>({
     queryKey: ["installations.org", owner.trim()],
     queryFn: () => api.installations.listForOrg(owner.trim()),
@@ -226,10 +221,8 @@ export default function ReposPage() {
   const resolveMutation = useMutation({
     mutationFn: (org: string) => api.tokens.resolve(org),
     onSuccess: (data, org) => {
-      // Skip applying a legacy saved token once an installation covers this owner --
-      // otherwise it'd be silently used (the token field, and its "saved" indicator,
-      // are hidden in that case) and could override the installation-token path the
-      // hidden field implies is now authoritative.
+      // Skip a legacy saved token once an installation covers this owner, or the hidden token
+      // would silently override the installation-token path.
       if (shouldApplyResolvedToken(org, owner) && !hasInstallationForOwner) {
         setToken(data.token)
         setTokenSaved(true)
@@ -250,13 +243,9 @@ export default function ReposPage() {
     onSuccess: () => setTokenSaved(true),
   })
 
-  // Frozen at the moment "Load repositories" is triggered — otherwise editing the org or
-  // token fields after a list is loaded would point already-rendered rows at the wrong
-  // scope (per-row requests for the new org against the old org's repo names) or refetch
-  // every row on each keystroke. Passed as mutate()'s per-call onSuccess rather than the
-  // hook-level one: TanStack Query re-binds hook-level callbacks on every render, so if the
-  // user edits owner/token again *while the request is still in flight*, a hook-level
-  // onSuccess would use the edited (wrong) values instead of the ones actually requested.
+  // Frozen when "Load repositories" fires so later owner/token edits don't retarget rendered rows.
+  // Passed as mutate()'s per-call onSuccess: hook-level callbacks re-bind each render and would
+  // see the edited values if the user types while the request is in flight.
   const [loadedOrg, setLoadedOrg] = useState("")
   const [loadedToken, setLoadedToken] = useState("")
 
@@ -292,7 +281,6 @@ export default function ReposPage() {
       )}
 
       <div className="grid gap-4 lg:grid-cols-3">
-        {/* Config panel */}
         <div className="card">
           <div className="px-4 py-3 border-b border-border">
             <span className="section-title">Organization</span>
@@ -360,7 +348,6 @@ export default function ReposPage() {
           </div>
         </div>
 
-        {/* Repo table */}
         {(listMutation.data || listMutation.isPending) && (
           <div className="card lg:col-span-2">
             <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">

@@ -62,7 +62,6 @@ export default function LoginPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Redirect if already authenticated or setup is needed
   useEffect(() => {
     if (isLoading) return
     if (user) {

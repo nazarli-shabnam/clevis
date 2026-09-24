@@ -1,4 +1,4 @@
-"""Tests for _JobHeartbeat / _touch_job_heartbeat (issue #215)."""
+"""Tests for _JobHeartbeat / _touch_job_heartbeat."""
 
 import time
 from datetime import datetime, timedelta, timezone
@@ -53,10 +53,7 @@ def test_touch_job_heartbeat_is_a_noop_for_a_job_that_is_no_longer_processing(wo
 
 
 def test_touch_job_heartbeat_swallows_a_db_connection_failure(monkeypatch, tmp_path):
-    # The DB heartbeat write is non-fatal by design (see the comment in
-    # _touch_job_heartbeat) -- a DB hiccup mid-job must not crash the job handler. Also
-    # verifies the container-level file heartbeat still gets touched even when the DB
-    # write fails, since it sits outside the try/except.
+    # A DB heartbeat failure is non-fatal, and the file heartbeat (outside the try) still gets touched.
     def boom(*args, **kwargs):
         raise psycopg.OperationalError("connection refused")
 
@@ -70,9 +67,7 @@ def test_touch_job_heartbeat_swallows_a_db_connection_failure(monkeypatch, tmp_p
 
 
 def test_touch_job_heartbeat_also_refreshes_the_container_heartbeat_file(worker_db, tmp_path, monkeypatch):
-    # Regression test: run()'s poll loop only touches HEARTBEAT_FILE once per iteration,
-    # before a job is even claimed -- without this, a job handler running past the
-    # healthcheck's 60s staleness threshold gets the worker marked unhealthy mid-job.
+    # run() only touches HEARTBEAT_FILE once per iteration, so a long handler must refresh it.
     heartbeat_file = tmp_path / "worker_heartbeat"
     monkeypatch.setattr(worker, "HEARTBEAT_FILE", heartbeat_file)
     conn, created_ids = worker_db

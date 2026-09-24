@@ -1,4 +1,4 @@
-"""Tests for the security compliance matrix and secret-scanning routes (docs/plan.md Phase 16)."""
+"""Tests for the security compliance matrix and secret-scanning routes."""
 
 import json
 from datetime import datetime, timezone
@@ -33,10 +33,7 @@ def mock_user(db):
 
 @pytest.fixture()
 def acme_org_with_installation(db, mock_user):
-    """Same connected-tenant fixture pattern as test_analytics_cockpit.py's -- a
-    personal endpoint (require_auth only), gated by the same org-membership +
-    installation_id-presence check _security_connected_tenant mirrors from
-    analytics.py's _cockpit_connected_tenant."""
+    """Connected tenant: caller is an org member and the org has an installation_id."""
     org = org_repo.get_or_create(db, github_login="acme")
     org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
     installation_repo.create(
@@ -68,10 +65,7 @@ def _insert_security_alert(db, tenant_id, *, repo, kind, number, state, severity
 
 @pytest.fixture(autouse=True)
 def _default_account_type():
-    # _build_matrix resolves account_type before choosing an org vs. personal repo-listing
-    # path (see list_owner_repos) -- default every test in this file to "Organization" (the
-    # existing behavior) unless a test overrides it, so the org-repos mocking below doesn't
-    # need touching just to account for the new personal-account branch.
+    # _build_matrix branches on account_type; default to "Organization" unless a test overrides it.
     with patch("src.routers.security.get_account_type", return_value="Organization"):
         yield
 
@@ -141,10 +135,10 @@ def test_security_matrix_computes_rows_and_summary(client):
 
 
 def test_security_matrix_excludes_unknown_dimensions_from_score(client):
-    """A 403/network error must not be scored as if the dimension were compliant --
-    see the DependabotAlertsCheck false-pass fix (packages/checks, 3184c76) this
-    mirrors. Every GitHub call fails here, so only secret_scanning (read from the
-    already-fetched repo list, no extra call) is evaluable."""
+    """A 403/network error must not score the dimension as compliant.
+
+    Every GitHub call fails, so only secret_scanning (from the repo list) is evaluable.
+    """
     with patch("src.routers.security.GitHubClient") as mock_client:
         mock_client.return_value.request_paginated.return_value = [
             {"name": "api", "default_branch": "main", "security_and_analysis": {}},
@@ -161,8 +155,7 @@ def test_security_matrix_excludes_unknown_dimensions_from_score(client):
 
 
 def test_security_matrix_403_on_dependabot_is_unknown_not_clean(client):
-    """A 403 (missing security-events scope) must not read as 'no critical/high
-    alerts' -- that's the exact bug fixed for DependabotAlertsCheck in 3184c76."""
+    """A 403 (missing security-events scope) must not read as 'no critical/high alerts'."""
     forbidden = httpx.HTTPStatusError(
         "boom", request=httpx.Request("GET", "https://api.github.com/x"),
         response=httpx.Response(403, request=httpx.Request("GET", "https://api.github.com/x")),
@@ -191,8 +184,7 @@ def test_security_matrix_403_on_dependabot_is_unknown_not_clean(client):
 
 
 def test_security_matrix_404_on_dependabot_is_genuinely_disabled(client):
-    """Unlike a 403, a 404 is a real 'Dependabot is off for this repo' answer and
-    should count as a real (non-unknown) 'no alerts' pass."""
+    """Unlike a 403, a 404 means Dependabot is off and counts as a real 'no alerts' pass."""
     not_found = httpx.HTTPStatusError(
         "boom", request=httpx.Request("GET", "https://api.github.com/x"),
         response=httpx.Response(404, request=httpx.Request("GET", "https://api.github.com/x")),
@@ -279,8 +271,7 @@ def test_security_matrix_uses_aggregate_when_installation_connected(connected_cl
         db, acme_org_with_installation.tenant_id, repo="acme/api", kind="code_scanning", number=2,
         state="open", severity="error", details={"rule": {}},
     )
-    # A dismissed alert must not count toward critical_count/code_scanning -- only 'open'
-    # rows are live findings, mirroring the live path's own state=open GitHub query param.
+    # Only 'open' rows are live findings, matching the live path's state=open query.
     _insert_security_alert(
         db, acme_org_with_installation.tenant_id, repo="acme/api", kind="dependabot", number=3,
         state="dismissed", severity="critical", details={"dependency": {}},
@@ -309,9 +300,7 @@ def test_security_matrix_uses_aggregate_when_installation_connected(connected_cl
 
 
 def test_security_matrix_aggregate_dependabot_enabled_with_only_dismissed_alerts(connected_client, db, acme_org_with_installation):
-    """CodeRabbit finding on PR #352: dependabot_enabled must consider every state, not
-    just 'open' -- a repo whose only Dependabot alert has been dismissed still has
-    Dependabot enabled, and must not read identically to one with it disabled."""
+    """dependabot_enabled considers every state: a repo with only dismissed alerts still has Dependabot enabled."""
     _insert_security_alert(
         db, acme_org_with_installation.tenant_id, repo="acme/api", kind="dependabot", number=1,
         state="dismissed", severity="critical", details={"dependency": {}},
@@ -331,10 +320,7 @@ def test_security_matrix_aggregate_dependabot_enabled_with_only_dismissed_alerts
 
 
 def test_security_matrix_falls_back_to_live_for_a_repo_with_no_ingested_alert_rows(connected_client, db, acme_org_with_installation):
-    """No security_alerts rows for this repo at all -- ambiguous (genuinely clean vs. not-yet-
-    ingested, security_alerts has no completeness cursor) so this repo must fall back to the
-    live GitHub path rather than trusting an empty aggregate result as authoritative
-    (CodeRabbit finding on PR #356)."""
+    """No security_alerts rows is ambiguous (clean vs. not yet ingested), so fall back to live GitHub."""
     def _request_side_effect(method, path, params=None):
         if path.endswith("/branches/main"):
             return {"protected": True, "protection": {"allow_force_pushes": {"enabled": False}}}
@@ -358,9 +344,7 @@ def test_security_matrix_falls_back_to_live_for_a_repo_with_no_ingested_alert_ro
 
 
 def test_security_matrix_uses_aggregate_only_for_repos_with_ingested_rows(connected_client, db, acme_org_with_installation):
-    """A connected tenant can have one repo with real ingested alert rows and another (e.g.
-    added to the org after this tenant connected) with none yet -- each repo's alerts_source
-    is decided independently, not once for the whole tenant."""
+    """Each repo's alerts_source is decided independently, not once per tenant."""
     _insert_security_alert(
         db, acme_org_with_installation.tenant_id, repo="acme/api", kind="dependabot", number=1,
         state="open", severity="critical", details={"dependency": {}},
@@ -391,13 +375,10 @@ def test_security_matrix_uses_aggregate_only_for_repos_with_ingested_rows(connec
 
 
 def test_security_matrix_gates_dependabot_and_code_scanning_independently(connected_client, db, acme_org_with_installation):
-    """Regression test for CodeRabbit's round-2 finding on PR #356: a repo can have ingested
-    dependabot_alert webhooks but never a code_scanning_alert webhook (or vice versa).
-    Trusting the aggregate for one kind must not silently mark the *other* kind clean -- here
-    the repo has only a dependabot row ingested, and live GitHub has a real open code-scanning
-    alert that was never ingested. The old (buggy) per-repo-only gate would have reported
-    code_scanning=True (clear) purely because repo_alert_rows was non-empty; the fix must
-    still hit live GitHub for code_scanning and report the real open alert."""
+    """Ingested rows for one alert kind must not mark the other kind clean.
+
+    Only a dependabot row is ingested, so code_scanning must still come from live GitHub.
+    """
     _insert_security_alert(
         db, acme_org_with_installation.tenant_id, repo="acme/api", kind="dependabot", number=1,
         state="open", severity="high", details={"dependency": {}},
@@ -426,8 +407,7 @@ def test_security_matrix_gates_dependabot_and_code_scanning_independently(connec
 
 
 def test_security_matrix_connected_org_with_no_repos_is_empty(connected_client, db, acme_org_with_installation):
-    """No repos returned from the org repo listing -- _open_alerts_by_repo's
-    empty-input short-circuit must not error out on an empty IN (...) query."""
+    """No repos: _open_alerts_by_repo must not error on an empty IN (...) query."""
     with patch("src.routers.security.GitHubClient") as mock_client:
         mock_client.return_value.request_paginated.return_value = []
         resp = connected_client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
@@ -437,9 +417,7 @@ def test_security_matrix_connected_org_with_no_repos_is_empty(connected_client, 
 
 
 def test_security_matrix_falls_back_to_github_when_caller_lacks_membership(client, db):
-    """Org exists and has an installation, but the caller (_USER) has no OrgMembership
-    row -- _security_connected_tenant must return None (not silently trust `owner`
-    naming a real org) so the matrix falls back to the live path."""
+    """Without an OrgMembership, _security_connected_tenant returns None and the matrix uses the live path."""
     org = org_repo.get_or_create(db, github_login="acme")
     installation_repo.create(
         db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=7, org_id=org.id
@@ -463,8 +441,7 @@ def test_security_matrix_falls_back_to_github_when_caller_lacks_membership(clien
 
 
 def test_security_matrix_falls_back_to_github_when_org_has_no_installation(connected_client, db, mock_user):
-    """Org exists and the caller is a member, but no GitHub App installation is
-    connected -- _security_connected_tenant must return None."""
+    """Member of an org with no App installation: _security_connected_tenant returns None."""
     org = org_repo.get_or_create(db, github_login="acme")
     org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
 
@@ -486,8 +463,7 @@ def test_security_matrix_falls_back_to_github_when_org_has_no_installation(conne
 
 
 def test_security_matrix_unconnected_org_still_uses_live_github(client, db):
-    """No installation for this owner -- _security_connected_tenant returns None, so the
-    matrix must fall back to the pre-existing live-GitHub path unchanged."""
+    """No installation for this owner: the matrix uses the live-GitHub path."""
     def _request_side_effect(method, path, params=None):
         if path.endswith("/branches/main"):
             return {"protected": True, "protection": {"allow_force_pushes": {"enabled": False}}}
@@ -534,15 +510,12 @@ def test_secret_scanning_uses_aggregate_when_installation_connected(connected_cl
     assert alerts[2]["resolved_reason"] == "revoked"
     assert alerts[2]["resolved_at"] is not None
     assert "secret" not in alerts[1]
-    # CodeRabbit finding on PR #352: url must be None (not a fake ""), since
-    # security_alerts doesn't store GitHub's html_url.
+    # url is None (not ""): security_alerts doesn't store GitHub's html_url.
     assert alerts[1]["url"] is None
 
 
 def test_secret_scanning_falls_back_to_live_when_aggregate_has_no_rows(connected_client, db, acme_org_with_installation):
-    # security_alerts has no backfill/sync-cursor -- only webhook events populate it, so an
-    # empty aggregate result is ambiguous (genuinely no alerts vs. not-yet-ingested) and must
-    # not be trusted as authoritative (CodeRabbit finding on PR #356).
+    # security_alerts is webhook-only (no sync cursor), so an empty aggregate isn't authoritative.
     with patch("src.routers.security.GitHubClient") as mock_client:
         mock_client.return_value.request.return_value = [
             {"number": 7, "state": "open", "secret_type": "aws_access_key_id", "created_at": "2026-08-01T00:00:00Z"},
@@ -559,8 +532,7 @@ def test_secret_scanning_falls_back_to_live_when_aggregate_has_no_rows(connected
 # ── personal (User-type) account support ────────────────────────────────────────
 
 def test_security_matrix_personal_account_uses_installation_repos_endpoint(client):
-    """A personal account's repo list must come from /installation/repositories, not
-    /orgs/{owner}/repos (which 404s for a User account) -- see list_owner_repos."""
+    """A personal account's repos come from /installation/repositories; /orgs/{owner}/repos 404s for Users."""
     with (
         patch("src.routers.security.get_account_type", return_value="User"),
         patch("src.routers.security.GitHubClient") as mock_client,
@@ -579,8 +551,7 @@ def test_security_matrix_personal_account_uses_installation_repos_endpoint(clien
 
 
 def test_security_matrix_personal_account_falls_back_to_user_repos_on_auth_mismatch(client):
-    """If the token resolved for a personal account is a legacy PAT (not a GitHub App
-    installation token), /installation/repositories 401s/403s -- fall back to /user/repos."""
+    """A legacy PAT gets 401/403 from /installation/repositories, so fall back to /user/repos."""
     forbidden = httpx.HTTPStatusError(
         "boom", request=httpx.Request("GET", "https://api.github.com/installation/repositories"),
         response=httpx.Response(403, request=httpx.Request("GET", "https://api.github.com/installation/repositories")),

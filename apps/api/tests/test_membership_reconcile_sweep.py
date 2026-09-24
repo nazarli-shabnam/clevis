@@ -1,4 +1,4 @@
-"""Tests for the scheduled org-membership reconciliation sweep (Collaborators PR 2 of 3)."""
+"""Tests for the scheduled org-membership reconciliation sweep."""
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -27,9 +27,7 @@ def _reconcile_jobs(db):
 
 
 def test_sweep_enqueues_for_a_never_synced_org_tenant(db):
-    # No cursor row at all -- unlike gap-heal (where a missing row means "install-time
-    # backfill never completed, deliberately skipped"), a brand-new org-kind tenant should
-    # be reconciled on the very first sweep tick that finds it.
+    # Unlike gap-heal, a missing cursor row means reconcile on the first tick.
     org = org_repo.get_or_create(db, github_login="acme-reconcile-never-synced")
 
     with patch("src.services.membership_reconcile_sweep.resolve_org_token", return_value="tok"):
@@ -94,12 +92,8 @@ def test_sweep_does_not_double_enqueue_while_a_reconcile_job_is_still_active(db)
 
 
 def test_sweep_skips_a_tenant_whose_lock_is_held_by_another_connection(db, _engine):
-    # Regression test: the sweep's check-then-enqueue is only safe within a single sweep
-    # pass. Two concurrent passes (e.g. two API replicas) could both see "no active job"
-    # before either commits and both enqueue -- proven here with a second real connection
-    # holding the (job_type, tenant_id) advisory lock for the whole call, which the running
-    # sweep must lose and skip this tenant entirely (not just avoid enqueueing twice within
-    # one connection, which the dedupe test above already covers).
+    # Concurrent sweeps (e.g. two replicas) could both enqueue; a second connection holds the
+    # (job_type, tenant_id) advisory lock, so this sweep must skip the tenant.
     org = org_repo.get_or_create(db, github_login="acme-reconcile-locked")
 
     with _engine.connect() as other_conn:

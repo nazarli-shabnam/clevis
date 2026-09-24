@@ -59,8 +59,7 @@ def upsert(
     try:
         db.commit()
     except IntegrityError:
-        # Lost a race with a concurrent sync for the same org/account (unique constraint) --
-        # fall back to updating the row the other request just inserted.
+        # Lost a race with a concurrent sync (unique constraint); update the row it just inserted.
         db.rollback()
         existing = query.first()
         if existing is None:
@@ -98,10 +97,8 @@ def create(
 
 
 def get_for_org(db: Session, org_id: int, account_login: str) -> GitHubInstallation | None:
-    # Case-insensitive: account_login is stored verbatim from GitHub's install payload,
-    # but RBAC/ownership checks elsewhere (assert_owner_matches_org, _verify_installation)
-    # already compare logins case-insensitively -- an exact match here could pass those
-    # checks yet fail to find an installation that's actually there (#246).
+    # Case-insensitive: account_login is stored verbatim from GitHub, and the RBAC/ownership checks
+    # elsewhere compare case-insensitively, so an exact match could miss a real installation.
     return (
         db.query(GitHubInstallation)
         .filter(
@@ -124,9 +121,7 @@ def get_for_user(db: Session, owner_user_id: int, account_login: str) -> GitHubI
 
 
 def get_by_installation_id_for_org(db: Session, org_id: int, installation_id: int) -> GitHubInstallation | None:
-    """Scoped lookup for the disconnect endpoint -- confirms installation_id genuinely belongs
-    to this org before anything (a GitHub-side uninstall call, a DB delete) acts on it, so an
-    org admin can't disconnect another tenant's installation by guessing its id."""
+    """Lookup scoped to this org, so an org admin can't disconnect another tenant's installation by id."""
     return (
         db.query(GitHubInstallation)
         .filter(GitHubInstallation.org_id == org_id, GitHubInstallation.installation_id == installation_id)
@@ -135,8 +130,7 @@ def get_by_installation_id_for_org(db: Session, org_id: int, installation_id: in
 
 
 def get_by_installation_id_for_user(db: Session, owner_user_id: int, installation_id: int) -> GitHubInstallation | None:
-    """Same contract as get_by_installation_id_for_org, for the personal-installation
-    disconnect endpoint."""
+    """Same contract as get_by_installation_id_for_org, for personal-installation disconnect."""
     return (
         db.query(GitHubInstallation)
         .filter(GitHubInstallation.owner_user_id == owner_user_id, GitHubInstallation.installation_id == installation_id)
@@ -164,20 +158,10 @@ def list_for_user(db: Session, owner_user_id: int) -> list[GitHubInstallation]:
 
 def delete_by_installation_id(db: Session, installation_id: int) -> tuple[int, int | None]:
     """Remove every row referencing a GitHub installation_id (e.g. on uninstall).
-    Returns (rows deleted, tenant_id of the first deleted row) -- the tenant_id lets the
-    webhook handler's audit_repo.write call attribute the deletion under RLS (issue #330);
-    every row here already has tenant_id populated by upsert's _resolve_tenant_id, so this
-    is just reading back what's already there before the rows are gone.
 
-    Called from the unauthenticated webhook receiver (issue #191/S3), which never sets
-    app.tenant_id/app.user_id -- under RLS (migration 0031's FORCE ROW LEVEL SECURITY on
-    this table) that made both the SELECT and DELETE below silently see zero rows, every
-    time (issue #191/S3 PR 2 fix). resolve_installation_tenant_id() (migration 0035, a
-    SECURITY DEFINER function) resolves tenant_id first, bypassing RLS for that one lookup
-    the same way the table owner already does; once resolved, set_session_tenant supplies
-    the session context RLS expects so the actual SELECT/DELETE that follows are evaluated
-    normally, under a session that now legitimately satisfies the tenant_id-equality
-    policy branch -- not a second RLS bypass."""
+    Returns (rows deleted, tenant_id of the first deleted row) for audit attribution. Called from
+    the unauthenticated webhook receiver, so the tenant is resolved first via the SECURITY DEFINER
+    resolve_installation_tenant_id() and set as session context; otherwise RLS hides every row."""
     tenant_id = db.execute(
         text("SELECT resolve_installation_tenant_id(:installation_id)"), {"installation_id": installation_id}
     ).scalar()
@@ -196,30 +180,12 @@ def update_permissions(
 ) -> tuple[int, bool]:
     """Record GitHub's installation `permissions` object on every row for `installation_id`.
 
-    Returns `(rows_updated, changed)`. `rows_updated` is 0 if the installation isn't
-    connected in Clevis (e.g. a new_permissions_accepted webhook for an install nobody has
-    synced yet). `changed` is True if any updated row's `granted_permissions` differed from
-    `permissions` beforehand -- callers that log an audit entry on change (the webhook
-    handler) use this so a GitHub webhook redelivery of the same new_permissions_accepted
-    event (retries, or a manual redelivery from the GitHub UI) re-confirms
-    `permissions_synced_at` without writing a second identical audit row. `synced_at` is
-    still bumped either way, since "we just reconfirmed this" is true regardless.
-
-    Reuses the same RLS handling as delete_by_installation_id: this is called from the
-    unauthenticated webhook receiver, which never sets app.tenant_id, so resolve the
-    tenant via the SECURITY DEFINER function first, then set the session context the
-    tenant_isolation policy expects before the UPDATE runs. Updating an already-connected
-    row's permissions column is safe from the webhook — the row's ownership was
-    established by the authenticated sync flow; only *creating* rows from a webhook would
-    cross a trust boundary (see webhooks.py's installation.created comment).
-
-    The compare-then-update below is made atomic with `with_for_update()`: without it, two
-    overlapping calls for the same installation_id (GitHub redelivers webhooks on retry,
-    and a redelivery can also be triggered manually from the GitHub UI) could both read the
-    same pre-update `granted_permissions`, both compute `changed=True`, and both commit --
-    writing two audit rows for what the webhook handler intends to treat as one. Locking the
-    row here means the second call blocks until the first's transaction commits, then reads
-    the now-current (already-updated) value, so its own comparison correctly yields False.
+    Returns `(rows_updated, changed)`: `rows_updated` is 0 if the installation isn't connected;
+    `changed` lets the webhook handler skip a duplicate audit row on redelivery. `synced_at` is
+    bumped either way. Resolves the tenant for RLS the same way as delete_by_installation_id.
+    Updating an already-connected row is safe from the webhook; only creating rows would cross
+    a trust boundary. `with_for_update()` keeps concurrent redeliveries from both seeing
+    `changed=True`.
     """
     tenant_id = db.execute(
         text("SELECT resolve_installation_tenant_id(:installation_id)"), {"installation_id": installation_id}

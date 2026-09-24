@@ -1,4 +1,4 @@
-"""Tests for the "Fix this" auto-remediation route (issue #287)."""
+"""Tests for the "Fix this" auto-remediation route."""
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -90,7 +90,7 @@ def test_admin_enables_secret_scanning_and_audits(client, db, user):
 
 def test_bring_your_own_pat_against_an_unconnected_owner_audits_under_the_personal_tenant(client, db, user):
     # "someone" isn't a connected Clevis org -> BYO-PAT path; the audit row must be
-    # scoped to the caller's personal tenant, never NULL (audit_logs RLS, issue #330).
+    # scoped to the caller's personal tenant, never NULL (audit_logs RLS).
     from src.repositories import tenant_repo
 
     with patch("src.routers.remediation.GitHubClient") as mock_client:

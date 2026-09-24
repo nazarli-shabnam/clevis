@@ -1,6 +1,4 @@
-"""Tests for the org-membership reconciliation poll (Collaborators PR 2 of 3): the pure
-GitHub-roster fetch (membership_reconcile.py) and the worker.py job handler that writes it
-into org_members/repo_collaborators."""
+"""Tests for the org-membership reconciliation roster fetch and its worker job handler."""
 
 import json
 from datetime import datetime, timezone
@@ -16,11 +14,6 @@ from _crypto import encrypt_job_token
 from config import settings
 
 _DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg://", "postgresql://")
-
-
-# ---------------------------------------------------------------------------
-# membership_reconcile.py: pure unit tests (no DB, no worker.py job machinery)
-# ---------------------------------------------------------------------------
 
 
 class _FakeResponse:
@@ -40,9 +33,7 @@ class _FakeResponse:
 
 class _FakeClient:
     def __init__(self, responses_by_path):
-        # {path_substring: [responses...]} -- popped in order per matching path, so each
-        # endpoint (members?role=admin, members?role=all, members?filter=2fa_disabled,
-        # outside_collaborators) gets its own independent response queue.
+        # {path_substring: [responses...]}: each endpoint gets its own response queue.
         self._responses = {k: list(v) for k, v in responses_by_path.items()}
         self.calls = []
 
@@ -142,9 +133,7 @@ def test_get_all_pages_raises_after_exhausting_retries():
 
 
 def test_get_all_pages_raises_roster_incomplete_on_a_non_list_page():
-    # A malformed/non-list body (e.g. an error object GitHub returned with a 200) must never
-    # be silently treated as "zero results" -- that would look identical to a real empty page
-    # to reconcile_org_members, which deletes anyone not in the returned set.
+    # A non-list body must never read as "zero results"; reconcile would delete everyone.
     client = _FakeClient({"/orgs/acme/members": [_FakeResponse({"message": "unexpected"})]})
 
     with pytest.raises(membership_reconcile.RosterIncomplete):
@@ -152,8 +141,7 @@ def test_get_all_pages_raises_roster_incomplete_on_a_non_list_page():
 
 
 def test_get_all_pages_follows_more_pages_than_the_old_fixed_cap_used_to_allow():
-    # A large org's roster can genuinely span more than 20 pages (2000+ members) -- pagination
-    # must keep following next links rather than giving up at some fixed page count.
+    # Large orgs can exceed 20 pages; pagination must not stop at a fixed count.
     page_count = 25
     pages = [
         _FakeResponse(
@@ -170,8 +158,7 @@ def test_get_all_pages_follows_more_pages_than_the_old_fixed_cap_used_to_allow()
 
 
 def test_get_all_pages_raises_roster_incomplete_on_a_pagination_loop():
-    # A next link pointing back at an already-fetched URL is a real bug (GitHub misbehaving,
-    # or a stub in a test) -- must be detected and raised, not followed forever.
+    # A next link back to an already-fetched URL must raise, not loop forever.
     looping_url = "https://api.github.com/orgs/acme/members?page=2"
     page1 = _FakeResponse([_member("a")], links={"next": {"url": looping_url}})
     page2 = _FakeResponse([_member("b")], links={"next": {"url": looping_url}})
@@ -182,10 +169,7 @@ def test_get_all_pages_raises_roster_incomplete_on_a_pagination_loop():
 
 
 def test_get_all_pages_raises_roster_incomplete_on_a_malformed_entry():
-    # An entry with no usable login would otherwise be silently dropped by fetch_org_roster's
-    # `if "login" in m` filters -- reconcile_org_members treats the returned list as
-    # authoritative and DELETEs anyone not in it, so a dropped-not-fetched member would look
-    # identical to a real departure.
+    # A login-less entry would be silently dropped and look like a departure.
     client = _FakeClient({"/orgs/acme/members": [_FakeResponse([_member("a"), {"avatar_url": "https://example.com/b.png"}])]})
 
     with pytest.raises(membership_reconcile.RosterIncomplete):
@@ -219,8 +203,7 @@ def test_fetch_org_roster_2fa_overlay_is_none_when_incomplete():
 
 
 def test_fetch_org_roster_propagates_roster_incomplete_for_the_members_call():
-    # Unlike the 2FA overlay, an incomplete members/admins/outside_collaborators fetch must
-    # propagate -- it isn't best-effort, it's the data reconcile_org_members deletes against.
+    # Unlike the 2FA overlay, an incomplete core fetch must propagate.
     client = _FakeClient(
         {
             "/orgs/acme/members": [_FakeResponse({"message": "unexpected"})],
@@ -230,12 +213,6 @@ def test_fetch_org_roster_propagates_roster_incomplete_for_the_members_call():
 
     with pytest.raises(membership_reconcile.RosterIncomplete):
         membership_reconcile.fetch_org_roster(client, "https://api.github.com", {}, "acme")
-
-
-# ---------------------------------------------------------------------------
-# worker._handle_reconcile_org_membership: error paths, mirroring test_backfill.py's
-# _FakeConn/_FakeCursor + patch("worker.httpx.Client") convention.
-# ---------------------------------------------------------------------------
 
 
 class _FakeCursor:
@@ -318,9 +295,7 @@ def test_handler_requeues_on_5xx_from_github():
 
 
 def test_handler_requeues_on_an_exhausted_429_from_github():
-    # _get_with_retry inside fetch_org_roster already retried a 429 up to 3 times internally;
-    # reaching the handler with one still means "still rate-limited", not "bad request" -- it
-    # must go through the job-level retry, not be marked permanently failed.
+    # Still rate-limited after internal retries: must requeue, not fail permanently.
     conn = _FakeConn()
     with patch("worker.membership_reconcile.fetch_org_roster") as mock_fetch, patch("worker.httpx.Client"), patch(
         "worker.org_membership_store.acquire_tenant_lock"
@@ -347,8 +322,7 @@ def test_handler_requeues_on_an_exhausted_secondary_rate_limit_403():
 
 
 def test_handler_marks_failed_on_a_genuine_403_not_a_rate_limit():
-    # A plain permission-denied 403 (no Retry-After/X-RateLimit-Remaining headers) is not a
-    # rate limit -- must still be a terminal failure, not endlessly requeued.
+    # A plain permission-denied 403 is terminal, not requeued.
     conn = _FakeConn()
     with patch("worker.membership_reconcile.fetch_org_roster") as mock_fetch, patch("worker.httpx.Client"), patch(
         "worker.org_membership_store.acquire_tenant_lock"
@@ -417,12 +391,6 @@ def test_handler_rolls_back_and_requeues_on_a_db_error():
     assert not any("org_membership_sync_cursors" in sql for sql, _params in conn._cursor.calls)
 
 
-# ---------------------------------------------------------------------------
-# worker._handle_reconcile_org_membership: real Postgres, verifying the actual
-# org_members / repo_collaborators / org_membership_sync_cursors side effects.
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture()
 def pg_conn():
     conn = psycopg.connect(_DB_URL, autocommit=False)
@@ -482,9 +450,7 @@ def test_handler_inserts_members_and_upserts_cursor(pg_conn, tenant_id):
             {"login": "reconcile-owner", "avatar_url": "a", "role": "admin"},
             {"login": "reconcile-member", "avatar_url": "b", "role": "member"},
         ],
-        # Checked, only reconcile-member has 2FA disabled -- reconcile-owner is therefore
-        # enabled=True, reconcile-member enabled=False (both known, not None -- the overlay
-        # call itself succeeded).
+        # Overlay succeeded: only reconcile-member has 2FA disabled.
         "two_factor_disabled_logins": {"reconcile-member"},
         "outside_logins": set(),
     }
@@ -511,9 +477,7 @@ def test_handler_removes_a_member_no_longer_in_the_roster(pg_conn, tenant_id):
         "two_factor_disabled_logins": {"reconcile-leaver", "reconcile-stayer"},
         "outside_logins": set(),
     }
-    # Second poll's roster no longer includes reconcile-leaver -- a real departure the
-    # removal webhook missed. Still non-empty (reconcile-stayer remains), so this exercises
-    # actual reconciliation-driven removal, not the empty-roster no-op guard below.
+    # reconcile-leaver dropped from a still-non-empty roster: a missed removal.
     second = {
         "members": [{"login": "reconcile-stayer", "avatar_url": "b", "role": "member"}],
         "two_factor_disabled_logins": {"reconcile-stayer"},
@@ -550,12 +514,7 @@ def test_handler_empty_roster_does_not_wipe_existing_members(pg_conn, tenant_id)
         worker._handle_reconcile_org_membership(pg_conn, 110, _payload_for(tenant_id, "empty-org"), 0)
     assert len(_org_members(pg_conn, tenant_id)) == 1
 
-    # A genuinely empty roster from the GitHub API is treated as a no-op, not "remove
-    # everyone" -- see org_membership_store.reconcile_org_members's docstring for why (an
-    # org always has at least one owner, so an empty response is almost certainly a
-    # transient upstream problem, not a real zero-member org). Same posture for
-    # reconcile_repo_collaborator_outside_status: an empty member_logins set must not mark
-    # every existing repo_collaborators row as outside.
+    # An empty roster is a no-op for both org_members and repo_collaborators outside status.
     with patch("worker.membership_reconcile.fetch_org_roster", return_value=empty), patch("worker.httpx.Client"):
         worker._handle_reconcile_org_membership(pg_conn, 111, _payload_for(tenant_id, "empty-org"), 0)
     assert len(_org_members(pg_conn, tenant_id)) == 1
@@ -571,11 +530,8 @@ def test_handler_empty_roster_does_not_wipe_existing_members(pg_conn, tenant_id)
 
 
 def test_handler_backfills_is_outside_collaborator_on_existing_repo_collaborators(pg_conn, tenant_id):
-    # ON CONFLICT DO UPDATE, not a plain INSERT: the handler below commits internally on
-    # this same connection (like every other real-Postgres test in this file), so a plain
-    # INSERT here would only be idempotent on the very first run against a given DB volume --
-    # a second run in the same session would hit uq_repo_collaborators_tenant_repo_login.
-    # This reseeds is_outside_collaborator back to NULL regardless of prior runs.
+    # ON CONFLICT DO UPDATE: the handler commits, so a plain INSERT would collide on reruns;
+    # this also reseeds is_outside_collaborator to NULL.
     with pg_conn.cursor() as cur:
         cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
         cur.execute(
@@ -597,9 +553,7 @@ def test_handler_backfills_is_outside_collaborator_on_existing_repo_collaborator
 
     with pg_conn.cursor() as cur:
         cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
-        # Scoped to this test's own repo, not "every row for this tenant" -- tenant_id is a
-        # shared get-or-create fixture across this whole test file (real commits, not rolled
-        # back), so other tests' seeded repo_collaborators rows for other repos coexist here.
+        # Scoped to this test's repo: the shared tenant has other tests' committed rows.
         cur.execute(
             "SELECT login, is_outside_collaborator FROM repo_collaborators "
             "WHERE tenant_id = %s AND repo = 'acme/widgets' ORDER BY login",
@@ -619,8 +573,7 @@ def test_handler_preserves_two_factor_enabled_when_the_overlay_is_unavailable(pg
         worker._handle_reconcile_org_membership(pg_conn, 104, _payload_for(tenant_id, "twofa-org"), 0)
     assert _org_members(pg_conn, tenant_id)[0][2] is True
 
-    # Second poll's 2FA overlay call failed (fetch_org_roster returns None for it) --
-    # two_factor_enabled must stay True, not be clobbered to NULL.
+    # Overlay failed on the second poll: two_factor_enabled must stay True, not NULL.
     second = {
         "members": [{"login": "reconcile-2fa", "avatar_url": "a", "role": "member"}],
         "two_factor_disabled_logins": None,

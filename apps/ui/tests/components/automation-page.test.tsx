@@ -111,8 +111,7 @@ describe("AutomationPage", () => {
   });
 
   it("clears a selected repository when the owner changes, disabling Load workflows until a new one is picked", async () => {
-    // Regression test (CodeRabbit finding on PR #300): a stale repo name from the old
-    // owner must not be submittable against the new owner's dropdown options.
+    // A stale repo name from the old owner must not be submittable against the new owner.
     renderPage();
     await enterOwnerAndSelectRepo("acme", "demo");
     expect(screen.getByLabelText("Repository")).toHaveValue("demo");
@@ -164,9 +163,7 @@ describe("AutomationPage", () => {
   });
 
   it("hides the GitHub Token field when a personal installation covers the entered owner with trailing whitespace", async () => {
-    // Regression test (CodeRabbit finding on PR #299): the personal-installation match
-    // compared account_login against raw owner state, so "acme " (untrimmed) never
-    // matched an "acme" installation and incorrectly left the token field visible.
+    // "acme " (untrimmed) must still match an "acme" installation and hide the token field.
     installationsListMock.mockResolvedValue([
       { id: 1, account_login: "acme", account_type: "Organization", installation_id: 42, created_at: "2026-07-20T00:00:00Z" },
     ]);
@@ -178,9 +175,7 @@ describe("AutomationPage", () => {
   });
 
   it("hides the GitHub Token field when an org-level installation covers the entered owner", async () => {
-    // Regression test: api.installations.list() only ever returns the caller's *personal*
-    // installations -- an org's App installation must be checked via the separate
-    // org-scoped endpoint, or this would never hide the field for the primary (org) case.
+    // installations.list() is personal-only; org installs need the org-scoped endpoint.
     installationsListForOrgMock.mockResolvedValue([
       { id: 2, account_login: "acme", account_type: "Organization", installation_id: 99, created_at: "2026-07-20T00:00:00Z" },
     ]);
@@ -241,10 +236,7 @@ describe("AutomationPage", () => {
     renderPage();
 
     await enterOwnerAndSelectRepo("acme", "demo");
-    // Waiting for the repo dropdown to populate above gives the token-resolve mock time
-    // to settle too, so by the time "Load workflows" is clicked the resolved token is
-    // already applied -- unlike the free-text-field version of this test, which could
-    // click through before that resolution landed.
+    // Waiting for the repo dropdown also lets token-resolve settle before "Load workflows".
     await waitFor(() => expect(screen.getByText("saved")).toBeInTheDocument());
     fireEvent.click(screen.getByText("Load workflows"));
 

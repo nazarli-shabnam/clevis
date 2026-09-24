@@ -1,16 +1,7 @@
-"""Workflow listing/run-history/dispatch endpoints (docs/plan.md Phase 13 — Automation).
+"""Workflow listing/run-history/dispatch endpoints.
 
-Reads are plain GETs with an optional client-supplied PAT carried in the
-`X-GitHub-Token` header (never a query string), matching collab.py's convention.
-Dispatch is a write, so it stays a POST with the token in the body, matching
-actions_cache.py's convention -- and per docs/plan.md's cross-cutting note,
-dispatch is expected to remain a direct-GitHub-call action endpoint even after
-the aggregates migration lands, so it doesn't wait on that work.
-
-Dispatch is gated behind org-admin (require_org_role(min_role="admin")) --
-GitHub Actions has no dispatch-preview API, so unlike actions-cache clear there
-is no dry-run mode here. The audit log is written before the GitHub call so
-there's a record even if GitHub rejects or times out the dispatch.
+Reads accept an optional PAT via the `X-GitHub-Token` header; dispatch is a POST with
+the token in the body and requires org-admin (no dry-run mode exists for dispatch).
 """
 
 from datetime import datetime
@@ -71,9 +62,8 @@ def _list_workflows(owner: str, repo: str, token: str) -> WorkflowsResponse:
         for w in data.get("workflows", [])
     ]
 
-    # Best-effort: overlay each workflow's most recent run, same degrade-gracefully
-    # pattern as collab.py's 2FA overlay -- the workflow list itself already
-    # succeeded above, so a failure here shouldn't fail the whole response.
+    # Best-effort overlay of each workflow's most recent run -- a failure here shouldn't
+    # fail the whole response since the workflow list already succeeded.
     try:
         runs_data = client.request("GET", f"/repos/{owner}/{repo}/actions/runs", params={"per_page": 100})
         latest_by_workflow: dict[int, dict] = {}
@@ -146,8 +136,7 @@ def _dispatch(
     return DispatchResponse(dispatched=True, message="Workflow dispatched.")
 
 
-# Bounds one bulk-dispatch request: each active workflow is one sequential GitHub POST,
-# and the request shouldn't fan out unboundedly. Repos with more workflows than this
+# Bounds one bulk-dispatch request to sequential GitHub POSTs; more workflows than this
 # should dispatch individually.
 _BULK_DISPATCH_MAX = 40
 
@@ -174,8 +163,7 @@ def _list_all_workflows(client: GitHubClient, owner: str, repo: str) -> list[dic
         batch = data.get("workflows", [])
         workflows.extend(batch)
         total = data.get("total_count")
-        # Stop on an empty page (guards against a misbehaving API and infinite loops),
-        # a short page, or once total_count says we've seen everything.
+        # Stop on an empty/short page or once total_count is reached (guards infinite loop).
         if not batch or len(batch) < 100 or (total is not None and len(workflows) >= total):
             break
         page += 1
@@ -207,8 +195,8 @@ def _dispatch_all(
     results: list[DispatchAllResult] = []
     for w in active:
         wf_id, name = w["id"], w["name"]
-        # One audit row per attempted workflow, written before the call -- same
-        # convention as _dispatch, so a rejected bulk dispatch still leaves a record.
+        # One audit row per attempted workflow, written before the call, so a rejected
+        # dispatch still leaves a record.
         audit_repo.write(
             db,
             actor,
@@ -257,8 +245,6 @@ def _dispatch_all(
         failed_count=sum(r.status == "failed" for r in results),
     )
 
-
-# ── org-scoped ───────────────────────────────────────────────────────────────
 
 @router.get("/orgs/{org_login}/repos/{owner}/{repo}/workflows", response_model=WorkflowsResponse)
 def org_list_workflows(
@@ -333,8 +319,6 @@ def org_dispatch_all_workflows(
         raise HTTPException(status_code=400, detail=str(exc))
     return _dispatch_all(db, owner, repo, payload, token, actor=user.email, tenant_id=ctx.org.tenant_id)
 
-
-# ── personal-scoped ──────────────────────────────────────────────────────────
 
 @router.get("/me/repos/{owner}/{repo}/workflows", response_model=WorkflowsResponse)
 def personal_list_workflows(

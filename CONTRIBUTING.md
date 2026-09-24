@@ -146,7 +146,7 @@ python -m compileall apps/api/src apps/worker/src
 
 ### Docker images
 
-CI's `Docker Build Verification` job (issue #418) builds all three images via `docker
+CI's `Docker Build Verification` job builds all three images via `docker
 compose ... up --build -d --wait` and blocks until every service's own healthcheck
 (already defined in `docker-compose.yml`) reports healthy — API's hits its own `/healthz`
 via Python's urllib, worker's checks its heartbeat files, UI's checks `/api/health` via

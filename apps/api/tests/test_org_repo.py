@@ -24,8 +24,7 @@ def test_creates_new_org_links_a_tenant(db):
 
 
 def test_existing_org_gets_lazily_backfilled_with_a_tenant(db):
-    # An org row created before dual-write existed (tenant_id NULL) must self-heal the
-    # next time it's resolved through get_or_create, not stay permanently untenanted.
+    # An org row with tenant_id NULL must self-heal through get_or_create.
     from src.core.db import Org
 
     org = Org(github_login="acme", github_org_id=1)
@@ -54,9 +53,7 @@ def test_backfills_github_org_id_on_existing_login_only_row(db):
 
 
 def test_org_rename_resolves_by_github_org_id_instead_of_crashing(db):
-    # Regression test: an org renamed on GitHub keeps the same github_org_id but a new
-    # github_login. get_or_create must find it by id and update the login, not attempt
-    # a second insert that collides with the github_org_id unique constraint.
+    # A renamed org keeps its github_org_id: find it by id and update the login, not re-insert.
     original = org_repo.get_or_create(db, github_login="old-name", github_org_id=99)
 
     renamed = org_repo.get_or_create(db, github_login="new-name", github_org_id=99)
@@ -68,12 +65,8 @@ def test_org_rename_resolves_by_github_org_id_instead_of_crashing(db):
 
 
 def test_get_or_create_falls_back_to_org_id_lookup_on_concurrent_insert_race(db):
-    # Simulates two near-simultaneous get_or_create calls with the same github_org_id: this
-    # call's initial get_by_org_id lookup misses (the other request hasn't committed yet
-    # from this call's point of view), so it attempts an insert -- which collides on the
-    # real unique constraint once the other request's row is actually there. The except
-    # block's get_by_login also misses (different login than what's stored), so it must
-    # fall back to get_by_org_id to find the row, not raise.
+    # Simulates a concurrent get_or_create: the insert collides on github_org_id, get_by_login
+    # misses (different login), so recovery must fall back to get_by_org_id.
     existing = org_repo.get_or_create(db, github_login="old-name", github_org_id=7)
 
     original_first = Query.first
@@ -81,9 +74,7 @@ def test_get_or_create_falls_back_to_org_id_lookup_on_concurrent_insert_race(db)
 
     def racy_first(self):
         calls["n"] += 1
-        # The 1st call is get_by_login (real miss, different login) -- let it through.
-        # The 2nd call is get_by_org_id in the pre-insert check -- fake a miss to force
-        # the insert attempt into a real collision.
+        # Call 1 (get_by_login) passes through; call 2 (pre-insert get_by_org_id) fakes a miss.
         if calls["n"] == 2:
             return None
         return original_first(self)
@@ -95,10 +86,8 @@ def test_get_or_create_falls_back_to_org_id_lookup_on_concurrent_insert_race(db)
 
 
 def test_different_orgs_stay_separate(db):
-    # Issue #330: capture acme.id before creating globex -- committing globex's own
-    # tenant-link UPDATE expires SQLAlchemy's in-memory acme object (default
-    # expire_on_commit=True), and a later lazy-reload of it would run under app.tenant_id
-    # now pointed at globex's tenant, which RLS would then hide acme's row from.
+    # Capture acme.id now: globex's commit expires acme, and a lazy reload under globex's
+    # tenant context would be hidden by RLS.
     acme = org_repo.get_or_create(db, github_login="acme", github_org_id=1)
     acme_id = acme.id
     globex = org_repo.get_or_create(db, github_login="globex", github_org_id=2)

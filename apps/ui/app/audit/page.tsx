@@ -27,16 +27,13 @@ const JOB_STATUS_COLOR: Record<JobOut["status"], string> = {
   failed:     "text-destructive",
 }
 
-// The backend has no true offset/cursor pagination -- /audit only ever returns the N
-// most recent rows (Query(default=100, le=500)) -- so "Load more" re-fetches with a
-// bigger limit rather than requesting a next page.
+// /audit has no offset/cursor (it returns the N most recent rows), so "Load more" refetches
+// with a bigger limit.
 const INITIAL_LIMIT = 100
 const LIMIT_STEP = 100
 const MAX_LIMIT = 500
 
-// audit_logs.payload embeds job_id for cache-clear rows (a deliberate cross-reference,
-// not duplicate data -- see #281) so a row's live job status can be shown inline instead
-// of sending the user to a separate Job Queue page for exactly one operation type.
+// audit_logs.payload embeds job_id for cache-clear rows, so live job status can be shown inline.
 function parseJobId(payload: string): number | null {
   try {
     const parsed: unknown = JSON.parse(payload)
@@ -53,8 +50,7 @@ export default function AuditPage() {
   const searchParams = useSearchParams()
   const highlightJobId = Number(searchParams.get("job_id")) || null
 
-  // A new filter starts back at the default window -- an old "load more" bump for a
-  // different (or no) filter isn't a meaningful limit for this one.
+  // A new filter starts back at the default window.
   useEffect(() => {
     setLimit(INITIAL_LIMIT)
   }, [actionFilter])
@@ -65,8 +61,7 @@ export default function AuditPage() {
     refetchInterval: 30_000,
   })
 
-  // Reused across every row rather than one query per row -- same list the old Jobs
-  // page polled, just fetched once here and matched by id.
+  // One shared jobs list matched by id, not one query per row.
   const { data: jobs = [], isError: isJobsError } = useQuery({
     queryKey: ["jobs"],
     queryFn: api.jobs.list,
@@ -169,10 +164,8 @@ export default function AuditPage() {
               columns={columns}
               data={logs}
               getRowKey={(log) => log.id}
-              // Set high enough that this table's own pagination never triggers (the
-              // backend already caps rows at MAX_LIMIT) -- "Load more" below, not
-              // client-side paging, is what lets a highlighted row past the current
-              // window stay reachable instead of hiding behind an unrelated page click.
+              // High enough that table pagination never triggers (backend caps at MAX_LIMIT); "Load more"
+              // keeps a highlighted row reachable instead of hiding it behind a page click.
               pageSize={MAX_LIMIT}
               getRowRef={(log) => {
                 const jobId = parseJobId(log.payload)

@@ -1,10 +1,8 @@
 import { E2E_API_BASE } from "../playwright.config"
 import { E2E_ADMIN_EMAIL, E2E_ADMIN_NAME, E2E_ADMIN_PASSWORD } from "./constants"
 
-// Seeds the workspace-admin user directly via the API (fast, deterministic) rather than
-// driving the /setup wizard through the UI on every run. /auth/setup only succeeds once
-// (409 if any user already exists) — that's fine, it just means a prior run already seeded
-// this exact stack (e.g. re-running tests locally against a stack you didn't tear down).
+// Seeds the workspace admin via the API instead of the /setup wizard. /auth/setup 409s once any
+// user exists, which just means a prior run already seeded this stack.
 export default async function globalSetup(): Promise<void> {
   const res = await fetch(`${E2E_API_BASE}/auth/setup`, {
     method: "POST",

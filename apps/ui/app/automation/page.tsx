@@ -19,8 +19,7 @@ import { PermissionDriftNotice } from "@/components/permission-drift-notice"
 import { relativeTime } from "@/lib/format"
 import type { InstallationMeta, RunSummary, WorkflowSummary } from "@/lib/api/types"
 
-// > 0, not > 1 -- valid GitHub org logins can be a single character (see the
-// token-resolve effect below, and activity/page.tsx).
+// > 0, not > 1: valid GitHub org logins can be a single character.
 const MIN_OWNER_LEN_FOR_REPO_LOOKUP = 1
 
 function runDurationSeconds(run: RunSummary): number | null {
@@ -57,11 +56,8 @@ export default function AutomationPage() {
     queryKey: ["installations"],
     queryFn: () => api.installations.list(),
   })
-  // list() above only covers the caller's *personal* installations -- an org's App
-  // installation requires the separate org-scoped endpoint. Errors (403/404, e.g. the
-  // org isn't a recognized Clevis org yet) are treated as "not installed" rather than
-  // surfaced, matching this query's only purpose here (a soft signal to hide the token
-  // field, not something the user needs an error for).
+  // Org installs need the org-scoped endpoint (list() is personal-only). 403/404 is treated as
+  // "not installed": this is only a soft signal to hide the token field.
   const orgInstallsQuery = useQuery<InstallationMeta[]>({
     queryKey: ["installations.org", owner.trim()],
     queryFn: () => api.installations.listForOrg(owner.trim()),
@@ -74,10 +70,8 @@ export default function AutomationPage() {
   const resolveMutation = useMutation({
     mutationFn: (org: string) => api.tokens.resolve(org),
     onSuccess: (data, org) => {
-      // Skip applying a legacy saved token once an installation covers this owner --
-      // otherwise it'd be silently used (the token field, and its "saved" indicator,
-      // are hidden in that case) and could override the installation-token path the
-      // hidden field implies is now authoritative.
+      // Skip a legacy saved token once an installation covers this owner, or the hidden token
+      // would silently override the installation-token path.
       if (shouldApplyResolvedToken(org, owner) && !hasInstallationForOwner) {
         setToken(data.token)
         setTokenSaved(true)
@@ -89,7 +83,7 @@ export default function AutomationPage() {
   useEffect(() => {
     setToken("")
     setTokenSaved(false)
-    // > 0, not > 2 -- valid GitHub org logins can be 1-2 characters (see activity/page.tsx).
+    // > 0, not > 2: valid GitHub org logins can be 1-2 characters.
     if (owner.trim().length > 0) resolveMutation.mutate(owner.trim())
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner])
@@ -153,8 +147,7 @@ export default function AutomationPage() {
     setDispatchAllArmed(false)
   }
 
-  // Auto-disarm if the user doesn't confirm within a few seconds — same pattern
-  // as the Actions Cache "Clear" button (see components/repo/cache-panel.tsx).
+  // Auto-disarm if not confirmed within a few seconds (same as the Actions Cache "Clear" button).
   useEffect(() => {
     if (!dispatchArmed) return
     const timer = setTimeout(() => setDispatchArmed(false), 4000)
@@ -167,9 +160,7 @@ export default function AutomationPage() {
     return () => clearTimeout(timer)
   }, [dispatchAllArmed])
 
-  // Installs covering the current owner (personal + org-scoped), so the page can flag
-  // when a blocked automation is blocked because the App is missing a permission rather
-  // than for some other reason.
+  // Installs covering this owner, so a blocked automation can be attributed to a missing App permission.
   const ownerInstalls: InstallationMeta[] = [
     ...installs.filter((i) => i.account_login === owner.trim()),
     ...(orgInstallsQuery.data ?? []),
@@ -204,7 +195,6 @@ export default function AutomationPage() {
       )}
 
       <div className="grid gap-4 lg:grid-cols-3">
-        {/* Config panel */}
         <div className="card">
           <div className="px-4 py-3 border-b border-border">
             <span className="section-title">Repository</span>
@@ -328,7 +318,6 @@ export default function AutomationPage() {
           </div>
         </div>
 
-        {/* Results */}
         {(loadMutation.data || isLoading) && (
           <div className="card lg:col-span-2">
             <>

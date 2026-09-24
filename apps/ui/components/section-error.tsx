@@ -1,9 +1,7 @@
 import { CircleNotch } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 
-// Shared inline error state with a manual retry action — used anywhere a TanStack Query
-// section can fail and would otherwise show the same cached error forever (default query
-// behavior doesn't retry just from switching tabs away and back).
+// Inline error with manual retry; default query behavior won't retry just from switching tabs.
 export function SectionError({ message, onRetry, retrying }: { message: string; onRetry: () => void; retrying?: boolean }) {
   const retryContent: React.ReactNode = retrying ? <CircleNotch className="size-3 animate-spin" /> : "Retry"
 

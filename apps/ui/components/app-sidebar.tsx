@@ -31,7 +31,6 @@ function healthDotColor(score: number | null | undefined): string | null {
   return "bg-red-400"
 }
 
-// Settings is no longer in the sidebar nav — it lives inside the profile dropdown.
 const groups = [
   [
     { title: "Overview",         href: "/" },
@@ -44,8 +43,7 @@ const groups = [
     { title: "Health & Security",href: "/security", showHealthDot: true },
   ],
   [
-    // "/collaborators" is a sentinel, not a real route (issue #282): the render
-    // loop swaps in the scope-resolved org members URL (membersNavHref).
+    // "/collaborators" is a sentinel, not a real route: the render loop swaps in membersNavHref.
     { title: "Collaborators",    href: "/collaborators" },
     { title: "Automation",       href: "/automation" },
     { title: "Audit Log",        href: "/audit" },
@@ -91,17 +89,14 @@ function ProfileDropdown({
   return (
     <div
       className="absolute top-full left-0 right-0 z-50 border-b border-sidebar-border bg-sidebar shadow-2xl"
-      // prevent clicks inside from bubbling to the click-away handler
       onClick={(e) => e.stopPropagation()}
     >
-      {/* Email */}
       <div className="px-3.5 py-2.5 border-b border-sidebar-border/60">
         <p className="text-[0.75rem] text-sidebar-foreground/50 truncate">
           {profile.email || "no email set"}
         </p>
       </div>
 
-      {/* Current identity */}
       <div className="p-1.5">
         <div className="flex items-center gap-2.5 px-2 py-2">
           <div className="size-7 rounded-md bg-primary/15 border border-primary/20 flex items-center justify-center shrink-0">
@@ -120,7 +115,6 @@ function ProfileDropdown({
         </div>
       </div>
 
-      {/* Scope switcher — personal account + orgs you belong to */}
       {(scopeOptions.length > 0 || addInstallUrl) && (
         <div className="px-1.5 pb-1.5 border-b border-sidebar-border/60">
           <p className="px-2 pt-1 pb-1.5 text-[0.6875rem] font-medium uppercase tracking-wide text-sidebar-foreground/40">
@@ -160,7 +154,6 @@ function ProfileDropdown({
         </div>
       )}
 
-      {/* Settings + Invite members buttons */}
       <div className="px-1.5 pb-1.5 flex gap-1.5">
         <Link
           href="/settings"
@@ -181,7 +174,6 @@ function ProfileDropdown({
         </Link>
       </div>
 
-      {/* Sign out */}
       <div className="border-t border-sidebar-border/60 p-1.5">
         <button
           onClick={onSignOut}
@@ -205,9 +197,7 @@ export function AppSidebar() {
   const { scope, setScope } = useActiveScope()
   const scopeLogin = scope?.login ?? ""
 
-  // ["my-orgs"] is also queried by the Overview page; TanStack Query dedupes the
-  // request when both are mounted. Feeds membersHref() below (prefer the active
-  // org scope, else the first admin org, else /settings).
+  // ["my-orgs"] is shared with the Overview page; TanStack Query dedupes the request.
   const {
     data: memberships = [],
     isLoading: membershipsLoading,
@@ -223,8 +213,7 @@ export function AppSidebar() {
   })
   const personalInstall = installs.find((i) => i.account_type === "User")
   const slug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG
-  // Always offer a way to install the App on another account/org (there's no cap on how
-  // many an org admin can connect) — not only when the user has no personal install yet.
+  // Always offer installing on another account/org; there's no cap on how many can be connected.
   const addInstallUrl = slug ? `https://github.com/apps/${slug}/installations/new` : null
 
   const scopeOptions: ScopeOption[] = useMemo(
@@ -241,18 +230,9 @@ export function AppSidebar() {
     [personalInstall, memberships],
   )
 
-  // Issue #371: when nothing is persisted yet, auto-select the first available scope (the
-  // personal install if there is one, else the first org membership) as the real active
-  // scope once the data loads -- otherwise the sidebar cosmetically shows an org under the
-  // avatar while every page still says "no account selected yet" because `scope` was never
-  // set. Only fires when nothing is persisted (`scope === null`); an explicit pick from the
-  // profile menu always persists, so it's never overridden, and a multi-scope user can
-  // still switch freely. `useRef` keeps it to a single attempt.
-  //
-  // Gate on isSuccess (not just !isLoading): a failed query also clears isLoading but
-  // leaves the `= []` fallback in place, which could make a partial/empty result look like
-  // "exactly one scope" and persist it. If a query genuinely errors we simply don't
-  // auto-select and the user picks manually -- same as the pre-#371 baseline, no regression.
+  // When nothing is persisted, auto-select the first available scope once data loads; an explicit
+  // pick always persists so it's never overridden. Gate on isSuccess: a failed query leaves the
+  // `= []` fallback, which could look like "exactly one scope" and get persisted.
   const autoSelectedScope = useRef(false)
   useEffect(() => {
     if (autoSelectedScope.current || scope !== null) return
@@ -272,14 +252,11 @@ export function AppSidebar() {
     email: user?.email || "",
   }
 
-  // Destination for both the "Collaborators" sidebar item and the profile-menu
-  // "Invite members" link: the resolved org members page (issue #282 removed the
-  // /collaborators redirect stub that used to do this hop). While memberships are
-  // still loading, point at /settings rather than flicker between fallbacks.
+  // Target for the Collaborators item and "Invite members": the resolved org members page.
+  // While memberships load, point at /settings rather than flicker between fallbacks.
   const membersNavHref = membershipsLoading ? "/settings" : membersHref(memberships, scope)
 
-  // Same resolve-then-use pattern as the Overview page — falls back to a saved
-  // PAT for orgs without a GitHub App installation.
+  // Falls back to a saved PAT for orgs without a GitHub App installation.
   const tokenQuery = useQuery({
     queryKey: ["tokens.resolve", scopeLogin],
     queryFn: () => api.tokens.resolve(scopeLogin),
@@ -287,8 +264,7 @@ export function AppSidebar() {
     retry: false,
   })
 
-  // Same query key as the Overview page's cockpit query so TanStack Query dedupes
-  // the request when both are mounted (same dedup pattern as ["my-orgs"] above).
+  // Same query key as the Overview cockpit query so TanStack Query dedupes the request.
   const { data: cockpit } = useQuery({
     queryKey: ["analytics.cockpit", scopeLogin],
     queryFn: () => api.analytics.cockpit(scopeLogin, tokenQuery.data?.token),
@@ -303,7 +279,6 @@ export function AppSidebar() {
     (e) => !lastSeenAt || e.created_at > lastSeenAt,
   ).length
 
-  // Close on click outside
   useEffect(() => {
     if (!open) return
     function handleClickOutside(e: MouseEvent) {
@@ -324,7 +299,6 @@ export function AppSidebar() {
 
   return (
     <Sidebar>
-      {/* Profile widget — opens dropdown */}
       <SidebarHeader className="border-b border-sidebar-border p-0 relative" ref={containerRef}>
         <button
           onClick={() => setOpen((v) => !v)}
@@ -368,10 +342,7 @@ export function AppSidebar() {
                   {items.map((item) => {
                     const isCollaborators = item.href === "/collaborators"
                     const href = isCollaborators ? membersNavHref : item.href
-                    // The Collaborators item now lives at /settings/org/<login>/members,
-                    // so light it up on that members route (any org's) rather than matching
-                    // its now-non-existent sentinel href -- but not on sibling
-                    // /settings/org/<login>/* routes a future change might add.
+                    // Match any org's members route, but not sibling /settings/org/<login>/* routes.
                     const active = isCollaborators
                       ? /^\/settings\/org\/[^/]+\/members$/.test(pathname)
                       : isActive(item.href)

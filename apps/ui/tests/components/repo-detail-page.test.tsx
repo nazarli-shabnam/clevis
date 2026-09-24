@@ -167,9 +167,7 @@ describe("RepoDetailPage", () => {
   });
 
   it("maps a contributor's real (nested) GitHub login instead of falling back to 'unknown'", async () => {
-    // Regression test for the c.login vs c.author.login bug -- exercises the mapping
-    // function directly the same way the component does, since recharts' XAxis tick
-    // text isn't reliably queryable in jsdom (ResponsiveContainer has no real layout).
+    // Exercises the mapping directly, since recharts' XAxis ticks aren't queryable in jsdom.
     const contributors = [{ author: { login: "octocat" }, total: 10 }];
     const topContributors = [...contributors]
       .sort((a, b) => b.total - a.total)
@@ -201,8 +199,7 @@ describe("RepoDetailPage", () => {
 
     await waitFor(() => expect(screen.getByText(/protected/i)).toBeInTheDocument());
     expect(screen.getByText(/enabled/i)).toBeInTheDocument();
-    // Regression: this used to render an org-wide numeric score (e.g. "82") instead
-    // of per-repo status — make sure that's gone.
+    // Must show per-repo status, not an org-wide numeric score (e.g. "82").
     expect(screen.queryByText(/organization security score/i)).not.toBeInTheDocument();
   });
 
@@ -247,9 +244,7 @@ describe("RepoDetailPage", () => {
   });
 
   it("hides the GitHub Token field on the Actions Cache tab when an org-level installation covers the repo's owner", async () => {
-    // Regression test: api.installations.list() only ever returns the caller's *personal*
-    // installations -- an org's App installation must be checked via the separate
-    // org-scoped endpoint, or this would never hide the field for the primary (org) case.
+    // installations.list() is personal-only; org installs need the org-scoped endpoint.
     installationsListForOrgMock.mockResolvedValue([
       { id: 2, account_login: "acme", account_type: "Organization", installation_id: 99, created_at: "2026-07-20T00:00:00Z" },
     ]);
@@ -395,9 +390,7 @@ describe("RepoDetailPage", () => {
   });
 
   it("wires every tab to a panel that actually exists in the document, for all three tabs", () => {
-    // Regression test: the panels must stay mounted (visibility toggled via a class,
-    // not conditional `&&` rendering) or aria-controls/aria-labelledby point at IDs
-    // that don't resolve to any element for whichever tab isn't currently active.
+    // Panels must stay mounted (class-toggled) or aria-controls/aria-labelledby point at missing IDs.
     const { container } = renderPage();
 
     for (const name of [/^overview$/i, /actions cache/i, /security/i]) {
@@ -483,9 +476,8 @@ describe("RepoDetailPage", () => {
   });
 
   it("keeps a typed Actions Cache token when navigating to a different repo under the same org", async () => {
-    // The token is org-scoped (GitHub PAT/App token isn't per-repo), so it should survive
-    // a repo-only route change even though CachePanel's own [owner, repo] effect resets
-    // the repo-specific cache list/clear-armed state on every such navigation.
+    // The token is org-scoped, so it survives a repo-only route change even though CachePanel
+    // resets its repo-specific state.
     const { rerenderSamePage } = renderPage();
 
     fireEvent.click(screen.getByRole("tab", { name: /actions cache/i }));

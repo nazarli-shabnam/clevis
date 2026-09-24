@@ -7,11 +7,8 @@ import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api/client"
 
-// GitHub redirects here after "Install GitHub App" (this path must be configured as the
-// GitHub App's "Setup URL" in the App's own settings on github.com — see AGENTS.md/README
-// for the one-time manual step). It carries installation_id/setup_action as query params;
-// this page resolves the account behind installation_id, then calls the matching sync
-// endpoint (/me or /orgs/{org}) so a github_installations row actually gets persisted.
+// GitHub redirects here after "Install GitHub App" (must be set as the App's Setup URL). Resolves
+// the account behind installation_id and calls the matching sync endpoint to persist the row.
 type Status = "working" | "pending-approval" | "success" | "error"
 
 export default function GithubInstallCallbackPage() {
@@ -68,10 +65,8 @@ export default function GithubInstallCallbackPage() {
       cancelled = true
       if (redirectTimer) clearTimeout(redirectTimer)
     }
-    // router isn't included: Next's router object isn't reference-stable across renders,
-    // and this effect is a run-once flow (guarded by ranRef) -- depending on router would
-    // re-run the cleanup (and cancel the just-scheduled redirect timer) on every state
-    // update triggered by run() itself, well before the timer ever fires.
+    // router omitted: it isn't reference-stable, and re-running would cancel the redirect timer
+    // on every state update from run() in this run-once (ranRef-guarded) flow.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
 

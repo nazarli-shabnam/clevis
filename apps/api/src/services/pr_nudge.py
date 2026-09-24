@@ -1,18 +1,11 @@
-"""Stale-PR / stale-review nudges (issue #289).
+"""Stale-PR / stale-review nudges: post a one-line comment (or apply a ``needs-review``
+label) on a PR that's sat without review activity past a configurable threshold.
 
-When a pull request has sat without review activity past a configurable threshold,
-post a one-line nudge comment (or apply a ``needs-review`` label) so a human doesn't
-have to notice and chase it manually.
+Requires ``pull_requests: write``; a token without it gets a 400 pointing at
+docs/self-hosting.md.
 
-**Requires a GitHub App write scope Clevis does not request by default:**
-``pull_requests: write`` (issue comments + labels live under the Pull requests
-permission). A token without it gets GitHub's 403, surfaced by the router as a 400
-with a pointer to docs/self-hosting.md. Read-only installs are unaffected — the
-"Send nudges" button just returns that 400.
-
-On-demand only: the API endpoint runs a single sweep when the user clicks the
-button. A periodic background loop is deliberately out of scope here (tracked as a
-follow-up issue).
+On-demand only: the API endpoint runs a single sweep when the user clicks the button. A
+periodic background loop is deliberately out of scope here, tracked as a follow-up.
 """
 
 from __future__ import annotations

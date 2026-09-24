@@ -1,11 +1,4 @@
-"""security_alerts write path (post-S6, PR 2 of 3).
-
-Companion to repo_events_store.py, but an upsert rather than an insert-and-skip: unlike
-a repo_events row (an immutable activity log entry), a security alert's `state`
-legitimately changes over its lifetime (e.g. open -> dismissed/fixed), and GitHub
-redelivers the same alert's webhook on every state transition, not just once -- so a
-redelivery must update the existing row, not be silently deduped away.
-"""
+"""security_alerts write path: an upsert, since GitHub redelivers on every state change."""
 
 from datetime import datetime
 
@@ -26,24 +19,11 @@ def upsert_security_alert(
     created_at: datetime,
     updated_at: datetime,
 ) -> bool:
-    """Upserts a security_alerts row keyed on (tenant_id, repo, kind, number) --
-    migration 0039's uq_security_alerts_tenant_repo_kind_number. Returns True iff this
-    call inserted a brand-new row (first time this alert has been seen); False for a
-    redelivery that updated an existing row's state/severity/details/updated_at --
-    mirrors repo_events_store.insert_event_and_upsert_daily_count's `inserted` return,
-    which callers use for "how many new events" reporting.
+    """Upsert a security_alerts row keyed on (tenant_id, repo, kind, number).
 
-    The ON CONFLICT branch only applies when the incoming `updated_at` is at least as new
-    as the stored row's -- GitHub doesn't guarantee webhook delivery order, so without this
-    guard a late/redelivered older payload could overwrite a newer state (e.g. a stale
-    "open" landing after a real "dismissed"). Same ordering-guard reasoning as
-    org_membership_store.py's upsert_org_member/remove_repo_collaborator. A rejected-as-
-    stale update still returns False (not an insert), consistent with "this call didn't
-    add a new alert".
-
-    Caller is responsible for `SET app.tenant_id = <n>` on this cursor's connection
-    before calling this (mirrors repo_events_store.insert_event_and_upsert_daily_count),
-    to satisfy this table's RLS WITH CHECK.
+    Returns True iff a new row was inserted. The update only applies when the incoming
+    `updated_at` is at least as new as the stored one (delivery order isn't guaranteed).
+    Caller must `SET app.tenant_id` on this connection first (RLS WITH CHECK).
     """
     cur.execute(
         """

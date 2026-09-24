@@ -1,4 +1,4 @@
-"""Tests for the scan history endpoints and insert-after-scan persistence (Phase 10)."""
+"""Tests for the scan history endpoints and insert-after-scan persistence."""
 from unittest.mock import MagicMock, patch
 
 import pytest

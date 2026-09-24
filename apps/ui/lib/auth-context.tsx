@@ -16,11 +16,8 @@ interface AuthContextValue {
   token: string | null
   isLoading: boolean
   logoutWarning: string | null
-  /** True once the optimistic JWT-derived user could not be confirmed against
-   *  the server (network error, timeout, or non-401 failure) after a retry —
-   *  `user` may be stale (e.g. is_workspace_admin) until the next successful
-   *  check, which happens on login/setSession or once the browser is back
-   *  online. */
+  /** True when the JWT-derived user couldn't be confirmed by the server after a retry;
+   *  `user` may be stale until the next successful check. */
   authUnconfirmed: boolean
   pendingInvitations: PendingInvitationSummary[]
   login(email: string, password: string): Promise<void>
@@ -38,12 +35,8 @@ const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
 const _LOGOUT_WARNING =
   "Logged out locally, but the server session may still be active. Avoid shared devices until you can retry."
 
-// Per-user browser state that must not survive an identity change on this tab.
-// active_scope / default_org would point a new user at the previous user's org
-// for owner-scoped requests; activity_last_seen_at would mis-seed their unread
-// count. Cleared on logout AND on login/setSession (the public /register route
-// calls setSession() while a session is already active, replacing the user
-// without ever going through logout()).
+// Per-user browser state that must not survive an identity change on this tab. Cleared on
+// logout AND login/setSession, since /register calls setSession() without going through logout().
 function clearPerUserBrowserState(): void {
   clearActiveScope()
   try {
@@ -101,9 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       })
       .catch(() => setLogoutWarning(_LOGOUT_WARNING))
     localStorage.removeItem(_TOKEN_KEY)
-    // Drop per-user browser state so a different user on this browser doesn't
-    // inherit the previous user's org scope / unread-activity marker. The React
-    // Query cache is cleared separately by QueryAuthSync on the user-id change.
+    // The React Query cache is cleared separately by QueryAuthSync on the user-id change.
     clearPerUserBrowserState()
     setToken(null)
     setUser(null)
@@ -115,11 +106,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const epochAtStart = sessionEpochRef.current
     const stored = localStorage.getItem(_TOKEN_KEY)
     let retryTimer: ReturnType<typeof setTimeout> | undefined
-    // Guards against a fetch that was already in flight when this effect's
-    // cleanup ran (e.g. unmount, or React StrictMode's mount/unmount/remount)
-    // from scheduling a retry or touching state after the fact — clearing
-    // retryTimer alone can't catch this, since it isn't assigned until the
-    // in-flight fetch's catch handler runs, which may be after cleanup.
+    // Stops a fetch in flight at cleanup (unmount, StrictMode remount) from retrying or setting state;
+    // clearing retryTimer alone can't, since it's only assigned in the catch handler.
     let cancelled = false
 
     if (stored) {
@@ -153,9 +141,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
           if (!res.ok) throw new Error(`auth/me responded ${res.status}`)
           const data = (await res.json()) as AuthUser
-          // Re-check after the await — a concurrent login()/logout() could have
-          // bumped the epoch while the body was being parsed, in which case this
-          // response is stale and must not clobber the newer session.
+          // Re-check after the await: a concurrent login()/logout() may have bumped the epoch, making this stale.
           if (stale()) return
           if (stored) setToken(stored)
           setUser(data)
@@ -163,8 +149,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         })
         .catch(() => {
           if (stale()) return
-          // One retry for a transient network hiccup/timeout before treating the
-          // optimistic (or absent) user as unconfirmed instead of trusting it forever.
+          // One retry for a transient blip before marking the user unconfirmed.
           if (attempt === 0) {
             willRetry = true
             retryTimer = setTimeout(() => checkMe(1), 2000)
@@ -174,10 +159,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         })
         .finally(() => {
           clearTimeout(timer)
-          // Keep isLoading true while a retry is pending; otherwise this is the
-          // terminal outcome for this mount's check (success, 401, exhausted
-          // retries, or a stale epoch after a concurrent login/logout) and the
-          // initial loading phase is over regardless of which branch ran.
+          // Keep isLoading true while a retry is pending; any other outcome ends the initial loading phase.
           if (!willRetry) setIsLoading(false)
         })
     }
@@ -190,9 +172,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [logout])
 
-  // Re-check once the browser regains connectivity, so a session left
-  // "unconfirmed" by a network blip doesn't sit that way forever — the mount
-  // effect above only runs once and has no periodic re-check of its own.
+  // Re-check on reconnect; the mount effect has no periodic re-check of its own.
   useEffect(() => {
     if (!authUnconfirmed) return
     function handleOnline() {
@@ -210,9 +190,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
           if (!res.ok) return
           const data = (await res.json()) as AuthUser
-          // Re-check after the await — a concurrent login()/logout() could have
-          // bumped the epoch while the body was being parsed, in which case this
-          // response is stale and must not clobber the newer session.
+          // Re-check after the await: a concurrent login()/logout() may have bumped the epoch, making this stale.
           if (sessionEpochRef.current !== epochAtStart) return
           if (stored) setToken(stored)
           setUser(data)

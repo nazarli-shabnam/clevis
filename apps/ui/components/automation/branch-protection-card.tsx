@@ -11,10 +11,8 @@ import type {
   RepoSummary,
 } from "@/lib/api/types"
 
-// Bulk branch-protection apply (issue #288). Org-admin only; needs `Administration: write`
-// on the connected GitHub App. A dry-run diff is always shown before an apply, and the
-// apply button is two-step (matching the dispatch / cache-clear buttons) so one click
-// can't rewrite protection across every selected repo.
+// Bulk branch-protection apply. Org-admin only; needs `Administration: write`. Apply is
+// two-step and always preceded by a dry-run diff.
 
 interface Props {
   org: string
@@ -69,9 +67,8 @@ export function BranchProtectionCard({ org, token, repos }: Props) {
       }),
   })
 
-  // A preview is only valid for the exact repos + knobs it ran against. Apply is
-  // blocked until the current selection/knobs match what was previewed, so a bulk
-  // rewrite can't hit repos the admin never saw a diff for.
+  // Apply is blocked until selection/knobs match the preview, so a bulk rewrite can't hit
+  // repos the admin never saw a diff for.
   const previewSig = [...selected].sort().join(",") + `|${reviewCount}|${enforceAdmins}|${blockForcePush}`
   const [previewedSig, setPreviewedSig] = useState<string | null>(null)
   const previewStale = !preview.isSuccess || previewedSig !== previewSig

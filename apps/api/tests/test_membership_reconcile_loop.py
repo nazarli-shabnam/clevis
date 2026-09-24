@@ -1,6 +1,4 @@
-"""Tests that membership_reconcile_loop wires src.services.sweep_loop.run_sweep_loop
-correctly (Collaborators PR 2 of 3). Loop/session/reset behavior itself is covered once,
-in test_sweep_loop.py."""
+"""Tests that membership_reconcile_loop wires run_sweep_loop correctly (loop behavior: test_sweep_loop.py)."""
 
 from unittest.mock import AsyncMock, patch
 

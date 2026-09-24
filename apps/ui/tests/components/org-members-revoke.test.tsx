@@ -88,7 +88,6 @@ describe("OrgMembersPage per-row revoke pending state", () => {
       firstRevoke.click();
     });
 
-    // Row being revoked is disabled; the other row stays interactive.
     expect(firstRevoke).toBeDisabled();
     expect(secondRevoke).not.toBeDisabled();
 

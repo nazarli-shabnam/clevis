@@ -1,6 +1,4 @@
-// Triggers a browser "save file" for an in-memory string. Isolated here so
-// components don't touch Blob/URL plumbing directly and so it can be stubbed in
-// tests. No-op on the server (no `document`).
+// Triggers a browser "save file" for an in-memory string; isolated so tests can stub it. No-op on the server.
 
 export function downloadTextFile(filename: string, content: string, mimeType = "text/plain"): void {
   if (typeof document === "undefined") return

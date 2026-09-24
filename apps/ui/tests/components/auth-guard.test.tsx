@@ -99,9 +99,8 @@ describe("AuthGuard clevis:unauthorized handling", () => {
   });
 
   it("does not log out or redirect on a clevis:unauthorized event while on a public route", async () => {
-    // e.g. a stale token from a previous session sitting in localStorage, attached to a
-    // best-effort call (like an invite preview) that happens to 401 -- must not force-log-out
-    // someone merely viewing a public page.
+    // e.g. a stale token attached to a best-effort call (invite preview) that 401s: must not
+    // force-log-out someone merely viewing a public page.
     mockPathname = "/invite/abc123";
 
     render(
@@ -120,8 +119,7 @@ describe("AuthGuard clevis:unauthorized handling", () => {
       window.dispatchEvent(new Event("clevis:unauthorized"));
     });
 
-    // Give any (incorrect) async logout/redirect a chance to have fired before asserting
-    // it didn't -- avoids a false-pass from asserting too early.
+    // Let any incorrect async logout/redirect fire before asserting it didn't.
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
@@ -238,9 +236,7 @@ describe("AuthGuard pending invitations banner", () => {
     });
 
     const notice = await screen.findByText(/pending invite to join.*acme/i);
-    // Must never be a link — no accept token is exposed to this banner (see
-    // PendingInvitationSummary), since "logged in as email X" isn't proof of owning
-    // inbox X in this app (no email verification on registration).
+    // Must never be a link: "logged in as email X" isn't proof of owning inbox X.
     expect(screen.queryByRole("link", { name: /acme/i })).not.toBeInTheDocument();
 
     await act(async () => {

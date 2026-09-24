@@ -1,13 +1,4 @@
-"""Backfill one tenants/memberships row per existing org/org_membership (issue #190, PR 2 of 7).
-
-Zero ambiguity backfill: every `orgs` row gets exactly one `tenants` row
-(kind='org'), and every `org_memberships` row gets exactly one `memberships`
-row pointing at that org's new tenant, carrying the same role. Nothing here
-is read by application code yet (dual-write/cutover are later PRs in the
-#190 plan), so this is safe to run against any existing deployment.
-
-Personal tenants (one per `users` row) are added in a later PR, not here --
-see the design comment on #190.
+"""Backfill one tenants/memberships row per existing org/org_membership.
 
 Revision ID: 0022
 Revises: 0021

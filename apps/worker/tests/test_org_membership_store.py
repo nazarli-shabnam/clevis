@@ -1,6 +1,4 @@
-"""Tests for org_membership_store's tenant-membership advisory lock (issue #357): it must
-actually serialize two connections against the same tenant key, and be reentrant on a single
-connection (the reconcile handler's lock spans multiple statements on one connection)."""
+"""Tests for org_membership_store's tenant advisory lock: serializes connections, reentrant per connection."""
 
 import threading
 
@@ -47,10 +45,7 @@ def test_acquire_tenant_lock_serializes_across_connections(worker_db, second_con
 
 
 def test_acquire_tenant_lock_is_reentrant_on_same_connection(worker_db):
-    """Postgres session-level advisory locks are reentrant per-session (an internal
-    reference count, one release needed per acquire) -- the reconcile handler's lock spans
-    several statements on the same connection, so a second acquire on that same connection
-    must not deadlock against itself."""
+    """Session-level advisory locks are reentrant; the reconcile handler relies on that."""
     conn, _ = worker_db
     tenant_id = 999_000_002
 

@@ -33,11 +33,9 @@ jobs:
 
       - name: Lint commits (push)
         if: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' && github.event.before != '0000000000000000000000000000000000000000' }}
-        # github.event.before can be a commit no longer reachable from github.sha (e.g. after a
-        # rebase or force-push rewrites history), which makes the range invalid and this step
-        # fail even though nothing is actually wrong with the commit messages. When that happens,
-        # skip rather than fail: if this branch has an open PR, the pull_request-triggered lint
-        # job above already covers the same commits against a stable base.sha.
+        # github.event.before can be unreachable from github.sha (e.g. after a rebase/force-push),
+        # making the range invalid and this step fail though nothing is wrong with the commits.
+        # Skip rather than fail -- an open PR is already covered by the pull_request job above.
         run: |
           if git merge-base --is-ancestor ${{ github.event.before }} ${{ github.sha }} 2>/dev/null; then
             npx commitlint --from ${{ github.event.before }} --to ${{ github.sha }} --verbose
@@ -71,9 +69,8 @@ jobs:
         working-directory: apps/ui
         run: bun run lint
 
-      # Runs all tests and enforces the global coverage floor (apps/ui/vitest.config.ts
-      # test.coverage.thresholds) — a regression guard, not an aspirational target; most
-      # app/** page components aren't unit-tested yet. New/changed lines are held to a much
+      # Enforces the global coverage floor (apps/ui/vitest.config.ts test.coverage.thresholds)
+      # — a regression guard, not an aspirational target. New/changed lines are held to a
       # higher bar by the diff-coverage step below.
       - name: Test UI (with coverage)
         working-directory: apps/ui
@@ -91,11 +88,9 @@ jobs:
       - name: Install diff-cover
         run: python -m pip install diff-cover==9.4.1
 
-      # vitest's lcov report has SF: paths relative to apps/ui (its configured `root`), but
-      # diff-cover matches against `git diff` paths, which are repo-root-relative. Rewrite the
-      # paths to be repo-root-relative before handing off, then run diff-cover from the repo
-      # root so its own path resolution lines up. (Verified locally: without this rewrite,
-      # diff-cover silently reports "No lines with coverage information" instead of failing.)
+      # vitest's lcov report has SF: paths relative to apps/ui, but diff-cover matches against
+      # repo-root-relative `git diff` paths. Rewrite the paths before handing off -- without
+      # this, diff-cover silently reports "No lines with coverage information" instead of failing.
       - name: Diff coverage (new/changed UI lines must be tested)
         run: |
           sed -E 's#^SF:(.*)$#SF:apps/ui/\1#' apps/ui/coverage/lcov.info | tr '\134' '/' > apps/ui/coverage/lcov-root-relative.info
@@ -118,10 +113,7 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-      # Issue #191/S3: webhook ingestion queue. Not used by any test yet in this PR
-      # (infra scaffolding only), but required for Settings() to construct (redis_url
-      # has no default) and wired up now so PR 3's Redis-backed tests don't need a
-      # separate CI change.
+      # Required for Settings() to construct (redis_url has no default); not used by any test yet.
       redis:
         image: redis:7-alpine
         ports:
@@ -133,9 +125,9 @@ jobs:
           --health-retries 5
     env:
       # Superuser URL: used for migrations and every step except "Run Python tests" below,
-      # which overrides DATABASE_URL to the clevis_api role instead (issue #330/#190 --
-      # proves RLS actually enforces tenant isolation under the real non-superuser runtime
-      # role, not just a hand-built throwaway test role).
+      # which overrides DATABASE_URL to the clevis_api role instead -- proves RLS actually
+      # enforces tenant isolation under the real non-superuser runtime role, not just a
+      # hand-built throwaway test role.
       DATABASE_URL: postgresql+psycopg://clevis:clevis@localhost:5432/clevis
       API_DB_PASSWORD: ci-dummy-api-db-password-not-for-production-use-0
       JOB_SECRET_KEY: ${{ secrets.JOB_SECRET_KEY || 'ci-dummy-secret-key-not-for-production-use-00' }}
@@ -168,12 +160,11 @@ jobs:
         working-directory: apps/api
         run: python -m alembic check
 
-      # Reuses the exact same script an operator runs by hand for an existing deployment
-      # (docs/self-hosting.md) instead of duplicating its grant SQL here -- keeps CI's
-      # provisioning and the documented manual path from drifting apart. Connects over TCP
-      # to the service container (not a docker exec local-socket connection like the
-      # script's usual home), so auth needs PGPASSWORD/PGHOST/PGPORT explicitly.
-      - name: Provision clevis_api role (issue #330 -- non-superuser runtime role)
+      # Reuses the same script an operator runs by hand for an existing deployment
+      # (docs/self-hosting.md) instead of duplicating its grant SQL -- keeps CI's provisioning
+      # and the documented manual path from drifting apart. Connects over TCP to the service
+      # container, so auth needs PGPASSWORD/PGHOST/PGPORT explicitly.
+      - name: Provision clevis_api role (non-superuser runtime role)
         env:
           PGHOST: localhost
           PGPORT: 5432
@@ -183,17 +174,14 @@ jobs:
         run: sh docker/provision-api-role-existing-deployment.sh
 
       # Global floor (.coveragerc / --cov-fail-under) is a regression guard measured against
-      # the current baseline (~87%), not an aspirational target — it stops overall coverage
-      # from silently eroding. New/changed lines are held to a much higher bar by the diff
-      # coverage step below.
+      # the current baseline (~87%), not an aspirational target. New/changed lines are held
+      # to a much higher bar by the diff coverage step below.
       #
-      # DATABASE_URL is overridden here (not at job level) to the clevis_api role
-      # provisioned above -- issue #330/#190: this is what actually exercises the RLS
-      # policies (migrations 0030/0031) against a real non-superuser, non-owner role, the
-      # same posture as production when API_DB_PASSWORD is configured. Every other step
-      # in this job (migrations, drift check, coverage upload) keeps using the job-level
-      # superuser DATABASE_URL, since Alembic needs DDL/GRANT privilege this role
-      # intentionally lacks.
+      # DATABASE_URL is overridden here (not at job level) to the clevis_api role provisioned
+      # above -- this is what actually exercises RLS (migrations 0030/0031) against a real
+      # non-superuser, non-owner role, the same posture as production when API_DB_PASSWORD is
+      # configured. Every other step keeps using the job-level superuser DATABASE_URL, since
+      # Alembic needs DDL/GRANT privilege this role intentionally lacks.
       - name: Run Python tests (with coverage)
         env:
           DATABASE_URL: postgresql+psycopg://clevis_api:${{ env.API_DB_PASSWORD }}@localhost:5432/clevis
@@ -309,17 +297,10 @@ jobs:
           REDIS_PASSWORD=ci-docker-redis-password-not-for-production-00
           EOF
 
-      # A build-only check (previously: docker build + docker run --entrypoint python -c
-      # "import ...") only proves the Dockerfile's instructions succeed and the module
-      # imports -- it never executed entrypoint.sh (env-var validation, alembic upgrade
-      # head, the clevis_api role switch), booted uvicorn/the worker poll loop against a
-      # real DB, or smoke-tested the UI image at all (issue #418). `--wait` blocks until
-      # every service's own healthcheck (already defined in docker-compose.yml -- API's
-      # hits its own /healthz via Python's urllib, worker's checks its heartbeat files,
-      # UI's checks /api/health via Node's http client, not curl -- see that file's own
-      # comment on why) reports healthy, or fails the job if one doesn't -- so this now
-      # proves each image
-      # actually runs the way it runs in production, not just that it builds.
+      # `--wait` blocks until every service's own healthcheck (defined in docker-compose.yml --
+      # API hits /healthz, worker checks its heartbeat files, UI checks /api/health via Node's
+      # http client, not curl) reports healthy, or fails the job if one doesn't -- proving each
+      # image actually runs the way it runs in production, not just that it builds.
       - name: Build and start the full stack
         run: docker compose -f docker-compose.yml -f docker-compose.ci.yml up --build -d --wait
 

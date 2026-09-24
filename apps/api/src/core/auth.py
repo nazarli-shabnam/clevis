@@ -1,16 +1,6 @@
-"""
-JWT helpers and FastAPI auth dependencies.
+"""JWT helpers and FastAPI auth dependencies (org-scoped roles live in src/core/rbac.py).
 
-Two access levels:
-  - require_auth           — any authenticated user (valid JWT, not revoked)
-  - require_workspace_admin — authenticated user with is_workspace_admin=True (instance config only)
-
-Org-scoped access levels (member/admin per org) live in src/core/rbac.py, since they
-require a DB lookup rather than just the JWT claims.
-
-require_auth hits the DB on every request to compare the JWT's token_version claim
-against the user's current value, so that revoke-sessions (or any future forced logout)
-takes effect immediately instead of waiting out the 30-day token expiry.
+require_auth checks token_version against the DB on every request so revoked sessions end immediately.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -27,12 +17,10 @@ from src.core.db import User, get_db, set_session_user
 _ALGORITHM = "HS256"
 _TOKEN_EXPIRE_DAYS = 30
 
-# httpOnly cookie that carries the session JWT (set on OAuth callback / login).
 SESSION_COOKIE_NAME = "clevis_session"
 _COOKIE_MAX_AGE_SECONDS = _TOKEN_EXPIRE_DAYS * 24 * 60 * 60
 
-# HTTPBearer correctly models "send Bearer token in Authorization header".
-# OAuth2PasswordBearer would misrepresent /auth/login as a form-encoded OAuth2 flow.
+# HTTPBearer, not OAuth2PasswordBearer: /auth/login isn't a form-encoded OAuth2 flow.
 _http_bearer = HTTPBearer(auto_error=False)
 
 
@@ -63,9 +51,7 @@ class UserOut(BaseModel):
     email: str
     name: str | None
     is_workspace_admin: bool
-    # Set when the user linked/signed in via GitHub OAuth; None otherwise. Read fresh from
-    # the DB in require_auth below (not carried in the JWT), same as this function already
-    # re-checks token_version against the DB rather than trusting a stale claim.
+    # Set via GitHub OAuth; read fresh from the DB in require_auth, not from the JWT.
     github_login: str | None = None
 
 
@@ -101,12 +87,9 @@ def require_auth(
     session: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
     db: Session = Depends(get_db),
 ) -> UserOut:
-    """Dependency: validates the JWT (Authorization header or session cookie) and returns the user.
+    """Dependency: validate the JWT (Bearer header, else session cookie) and return the user.
 
-    Prefers the Bearer header (API clients) and falls back to the httpOnly session cookie
-    (browser sessions established via GitHub OAuth). Raises 401 if neither is present/valid,
-    or if the token's token_version claim no longer matches the user's current value (i.e.
-    the session was revoked via POST /auth/me/revoke-sessions).
+    Raises 401 if missing/invalid or if token_version no longer matches (sessions revoked).
     """
     token = credentials.credentials if credentials else session
     if not token:
@@ -123,11 +106,8 @@ def require_auth(
     db_user = db.query(User).filter(User.id == user_id).first()
     if db_user is None or db_user.token_version != payload.get("token_version", 0):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked")
-    # Issue #190 step 6c: every authenticated request gets app.user_id set here, ahead of
-    # require_org_role/require_personal_tenant's more specific app.tenant_id+app.user_id SET
-    # (src.core.rbac). Covers RLS self-access checks (migration 0031) for routes that write
-    # a user's own membership/installation row without ever resolving a single tenant --
-    # see that migration's docstring for why this is safe.
+    # Set app.user_id for RLS self-access checks on routes that never resolve a tenant
+    # (see migration 0031).
     set_session_user(db, user_id)
     return UserOut(
         id=user_id,

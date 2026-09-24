@@ -1,27 +1,8 @@
-"""
-Auth router — /auth/*
+"""Auth router — /auth/*: setup/register/login, email verification, session management.
 
-Endpoints:
-  POST /auth/setup          First-run only; creates the owner account (409 if users exist)
-  POST /auth/register       Creates a non-owner account; 403 if registration_enabled=false
-  POST /auth/verify-email   Marks the account owning the given token as email-verified
-  POST /auth/resend-verification Resends the verification email to the caller, if unverified
-  POST /auth/login          Returns a JWT on valid credentials
-  GET  /auth/me             Returns the current authenticated user
-  PATCH /auth/me            Updates the current user's display name
-  POST /auth/me/revoke-sessions Invalidates all previously issued JWTs for the caller
-  GET  /auth/setup-required Returns { setup_required: bool } for the UI routing decision
-
-/auth/login and /auth/register are rate-limited per client IP (see src.core.rate_limit);
-/auth/login is additionally rate-limited per submitted email, so an attacker spread across
-many source IPs can't bypass the IP-keyed limit by targeting one account.
-
-Email verification (issue #217): register() creates accounts with email_verified=False
-and emails a verification link; setup() and GitHub-OAuth-linked accounts (see
-src.routers.github_auth) are verified immediately since their email is already trusted
-(the deploying operator, or GitHub itself). Unverified accounts work normally everywhere
-except accepting an org invitation (src.routers.invitations), which requires proof the
-account actually controls the invited inbox.
+Login/register are rate-limited per IP (login also per email). Self-registered accounts
+start unverified; setup() and GitHub-linked accounts are verified immediately since
+their email is already trusted.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -47,21 +28,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _MIN_PASSWORD_LEN = 12
-# bcrypt's hard limit -- input past this point is silently ignored (bcrypt==4.2.1 pinned
-# here truncates rather than raising; only bcrypt>=5.0 raises ValueError). Left unchecked,
-# two different passwords that share the same first 72 bytes hash identically and are
-# accepted as the same password, so this must be validated (rejected, not truncated)
-# before hashing.
+# bcrypt's hard limit (bcrypt==4.2.1 truncates silently past this) -- must be validated
+# (rejected, not truncated) before hashing, or two passwords sharing the first 72 bytes
+# would hash identically.
 _MAX_PASSWORD_LEN = 72
 _VERIFY_TOKEN_TTL = timedelta(hours=24)
 
 
 def _generate_verification_token(user: User) -> None:
-    """Sets a fresh verification token/expiry on `user`. Caller is responsible for
-    db.commit() *before* calling _send_verification_email_best_effort below -- kept as two
-    steps so the real network send only happens once the token is durably persisted; a
-    commit that fails after the email already went out would hand the user a live-looking
-    verification link for a token that was never actually saved (#323 code-review finding)."""
+    """Sets a fresh verification token/expiry on `user`. Caller must db.commit() before
+    calling _send_verification_email_best_effort, so the email is only sent once the
+    token is durably persisted."""
     user.email_verify_token = secrets.token_urlsafe(32)
     user.email_verify_token_expires_at = datetime.now(timezone.utc) + _VERIFY_TOKEN_TTL
 
@@ -76,19 +53,15 @@ def _send_verification_email_best_effort(user: User) -> None:
     except EmailNotConfigured:
         logger.warning("SMTP not configured -- skipping verification email for %s", user.email)
     except Exception:
-        # Covers both a send failure and a misconfigured empty CORS_ORIGINS (cors_origins[0]
-        # would otherwise raise IndexError here, uncaught, breaking registration itself --
-        # this function must never raise regardless of the cause.
+        # Also catches IndexError from an empty CORS_ORIGINS -- must never raise, or
+        # registration itself would break.
         logger.exception("failed to send verification email to %s", user.email)
 
-# Arbitrary constant identifying the /auth/setup critical section for pg_advisory_xact_lock
-# (see setup()). Any int works; this one has no other significance.
+# Arbitrary key for pg_advisory_xact_lock serializing /auth/setup (see setup()).
 _SETUP_LOCK_KEY = 727100
 
-# Fixed hash checked when no real user/password_hash exists, so a login attempt for a
-# nonexistent email still pays the same bcrypt cost as a real one -- otherwise response
-# timing alone (short-circuit vs. a real ~100-300ms bcrypt check) reveals whether an
-# email is registered.
+# Checked when no real password_hash exists, so a login for a nonexistent email pays the
+# same bcrypt cost as a real one -- avoids a timing side-channel revealing registered emails.
 _DUMMY_PASSWORD_HASH = bcrypt.hashpw(b"clevis-timing-safety-dummy", bcrypt.gensalt()).decode()
 
 
@@ -98,10 +71,8 @@ def _hash_password(password: str) -> str:
 
 def _verify_password(password: str, password_hash: str | None) -> bool:
     password_bytes = password.encode()
-    # No account's real password can be over _MAX_PASSWORD_LEN bytes -- setup()/register()
-    # reject it before hashing -- so an oversized guess is always wrong. Still run a real
-    # (truncated) bcrypt call rather than short-circuiting, so response timing doesn't
-    # reveal the oversized-password case any more than it reveals a nonexistent email below.
+    # An oversized guess is always wrong (setup()/register() reject over-length passwords
+    # before hashing), but still run a real bcrypt call so timing doesn't leak that fact.
     if len(password_bytes) > _MAX_PASSWORD_LEN:
         password_bytes = password_bytes[:_MAX_PASSWORD_LEN]
         bcrypt.checkpw(password_bytes, (password_hash or _DUMMY_PASSWORD_HASH).encode())
@@ -111,8 +82,6 @@ def _verify_password(password: str, password_hash: str | None) -> bool:
         return False
     return bcrypt.checkpw(password_bytes, password_hash.encode())
 
-
-# ── Schemas ───────────────────────────────────────────────────────────────────
 
 class SetupRequest(BaseModel):
     email: EmailStr
@@ -132,14 +101,8 @@ class LoginRequest(BaseModel):
 
 
 class PendingInvitationSummary(BaseModel):
-    # Deliberately excludes the invitation token: the email isn't verified yet at
-    # register()/login() time (verification is async, via the emailed link -- see
-    # accept_invitation's email_verified check in src.routers.invitations), so "an
-    # account with email X" is still not immediate proof of controlling inbox X. Handing
-    # back the accept-capability token here would let anyone who merely knows a victim's
-    # email address (self-asserted at register, not yet verified) claim their pending org
-    # invitation without ever seeing the real invite link — this must stay informational
-    # only ("an invite exists"), never a shortcut to accepting it.
+    # Excludes the invite token: email isn't verified yet at register()/login() time, so
+    # this must stay informational only, never a shortcut to accepting the invitation.
     org_login: str
     expires_at: datetime
 
@@ -198,8 +161,6 @@ def _pending_invitations_for(db: Session, email: str) -> list[PendingInvitationS
     ]
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
-
 @router.get("/setup-required", response_model=SetupRequiredResponse)
 def setup_required(db: Session = Depends(get_db)):
     """No auth required — used by the UI before any redirect decision."""
@@ -210,14 +171,8 @@ def setup_required(db: Session = Depends(get_db)):
 @router.post("/setup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(rate_limit())])
 def setup(body: SetupRequest, db: Session = Depends(get_db)):
     """First-run only. Returns 409 if any user already exists."""
-    # Two concurrent /auth/setup calls with *different* emails can both pass the
-    # count()==0 check before either commits -- unlike /auth/register's email race, there's
-    # no unique-constraint collision to catch this (the two rows don't share a column
-    # value), so it would otherwise silently create two workspace admins. The advisory
-    # lock serializes the whole check-then-insert critical section; it's transaction-scoped,
-    # so it's released whenever this transaction ends -- an explicit commit/rollback below,
-    # or (on the early-409 path, which does neither) get_db()'s finally: db.close(), which
-    # implicitly rolls back and returns the connection to the pool at the end of the request.
+    # Two concurrent calls could both pass count()==0 before either commits -- no unique
+    # constraint catches this. The advisory lock serializes check-then-insert.
     db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _SETUP_LOCK_KEY})
     if db.query(User).count() > 0:
         raise HTTPException(status_code=409, detail="Setup already complete")
@@ -236,15 +191,13 @@ def setup(body: SetupRequest, db: Session = Depends(get_db)):
         name=body.name,
         password_hash=_hash_password(body.password),
         is_workspace_admin=True,
-        # The deploying operator's own account -- implicitly trusted, same reasoning as
-        # is_workspace_admin=True here (no one else could have run first-boot setup).
+        # Trusted: only the deploying operator can run first-boot setup.
         email_verified=True,
     )
     db.add(user)
     try:
-        # flush (not commit) so the personal tenant/membership below land in the same
-        # transaction as this user -- a failure between two separate commits could
-        # otherwise leave a User row with no personal tenant (#323 CodeRabbit finding).
+        # flush (not commit) so the personal tenant/membership land in the same
+        # transaction as this user, avoiding an orphaned User with no personal tenant.
         db.flush()
     except IntegrityError:
         db.rollback()
@@ -285,19 +238,15 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     )
     db.add(user)
     try:
-        # flush (not commit) so user.id is assigned in time for the verification token
-        # below -- this is also where a race with a concurrent /auth/register for the same
-        # email actually surfaces: both passed the existence check above before either
-        # flushed, and users.email is unique, so the second flush raises here instead of
-        # racing to a raw 500 at commit time.
+        # flush (not commit) so user.id is ready for the verification token below; also
+        # where a concurrent /auth/register race on the same email surfaces (unique
+        # constraint raises here instead of a raw 500 at commit).
         db.flush()
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="An account with this email already exists") from None
     _generate_verification_token(user)
-    # commit=False: land the personal tenant/membership in the same transaction as this
-    # user, then commit once -- a failure between two separate commits could otherwise
-    # leave a User row with no personal tenant (#323 CodeRabbit finding).
+    # commit=False: land the personal tenant/membership in the same transaction as this user.
     set_session_user(db, user.id)
     tenant_repo.ensure_personal_tenant(db, user.id, commit=False)
     db.commit()
@@ -309,10 +258,8 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     return {
         "access_token": token,
         "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin),
-        # Never populated here: the email isn't verified yet at this point (verification is
-        # async, via the emailed link), so a self-asserted email is still not proof of inbox
-        # control -- looking this up would let an attacker learn whether/where a victim's
-        # email has a pending invite just by registering with it.
+        # Never populated here: email isn't verified yet, so looking this up would let an
+        # attacker learn a victim's pending invites just by registering with their email.
         "pending_invitations": [],
     }
 
@@ -361,13 +308,12 @@ def logout(response: Response):
 @router.post("/login", response_model=TokenResponse, dependencies=[Depends(rate_limit())])
 def login(body: LoginRequest, db: Session = Depends(get_db)):
     """Returns a JWT on valid credentials. Always returns 401 on failure (no field leaking)."""
-    # Per-account limit, in addition to the per-IP one above -- an attacker spread across
-    # many source IPs targeting one victim's password wouldn't otherwise trip anything.
+    # Per-account limit in addition to the per-IP one -- catches credential stuffing
+    # spread across many source IPs targeting one victim.
     check_account_rate_limit(f"login:{body.email.lower()}")
     user = db.query(User).filter(func.lower(User.email) == body.email.lower()).first()
-    # Call _verify_password unconditionally (not "not user or not _verify_password(...)")
-    # -- that would short-circuit on a nonexistent user and skip bcrypt entirely, which is
-    # exactly the timing side-channel _verify_password's dummy-hash path exists to close.
+    # Called unconditionally (not short-circuited by "not user or ...") -- short-circuiting
+    # would skip bcrypt for a nonexistent user, reopening the timing side-channel.
     password_ok = _verify_password(body.password, user.password_hash if user else None)
     if not user or not password_ok:
         raise HTTPException(status_code=401, detail="Invalid credentials")

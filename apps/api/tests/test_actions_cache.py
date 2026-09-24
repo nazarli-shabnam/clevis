@@ -89,9 +89,7 @@ def test_personal_clear_caches_non_dry_run_uses_client_token(cache_client, db):
 
 
 def test_clear_caches_rejects_oversized_key_and_ref(cache_client):
-    # Regression test for issue #224 item 3: CacheClearInput.key/.ref had no max_length,
-    # letting a caller bloat the jobs/audit_logs payload columns with an arbitrarily large
-    # value via a legitimate authenticated endpoint.
+    # key/ref are length-capped so callers can't bloat the jobs/audit_logs payload columns.
     resp = cache_client.post(
         "/me/repos/acme/demo/actions-caches/clear",
         json={"dry_run": True, "key": "x" * 600},
@@ -114,10 +112,7 @@ def test_personal_clear_caches_non_dry_run_no_token_returns_400(cache_client):
 
 
 def test_personal_clear_caches_rejects_org_member_supplying_own_token(cache_client, db):
-    # Regression test (CodeRabbit finding on PR #264): a plain "member" of a connected
-    # org must not be able to trigger its cache clear through the personal endpoint by
-    # supplying their own PAT -- that would bypass the admin-only gate this endpoint is
-    # supposed to enforce via resolve_owner_token(min_role="admin").
+    # A plain org member supplying their own PAT must not bypass the admin-only gate.
     db.add(User(id=_USER.id, email=_USER.email, name=None, password_hash=None, is_workspace_admin=False))
     db.commit()
     org = org_repo.get_or_create(db, github_login="acme")
@@ -133,11 +128,7 @@ def test_personal_clear_caches_rejects_org_member_supplying_own_token(cache_clie
 
 
 def test_personal_clear_caches_dry_run_rejects_org_member(cache_client, db):
-    # Regression test for issue #416: the dry_run branch skipped resolve_owner_token
-    # entirely, so a plain "member" of a connected org (or anyone with no membership at
-    # all) could dry-run against the org's repo with no admin check and still get a
-    # cache.clear.dry_run audit row written. check_owner_role must now run before the
-    # dry_run branch too, not just on the non-dry-run path.
+    # dry_run must enforce the admin check too, before any audit row is written.
     db.add(User(id=_USER.id, email=_USER.email, name=None, password_hash=None, is_workspace_admin=False))
     db.commit()
     org = org_repo.get_or_create(db, github_login="acme")

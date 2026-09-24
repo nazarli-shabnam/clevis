@@ -1,17 +1,5 @@
 """add multi-tenant org RBAC: orgs, org_memberships, invitations
 
-Introduces the org/member/individual model. `users.is_owner` becomes
-`users.is_workspace_admin` (same semantics: the instance host). `github_installations`
-gains `org_id` / `owner_user_id` (exactly one set per row) to scope each installation to
-either a connected GitHub org or an individual's personal account.
-
-Existing `github_installations` rows are backfilled best-effort: organization installs
-each get a new `Org` row (github_org_id left NULL — GitHub's numeric org id was never
-recorded historically; it fills in lazily the next time an org member authenticates and
-the GitHub membership check runs) plus an admin `OrgMembership` for the current workspace
-admin, since there's no historical record of who actually connected each installation.
-User installs get `owner_user_id` set to the workspace admin for the same reason.
-
 Revision ID: 0009
 Revises: 0008
 Create Date: 2026-07-09
@@ -98,9 +86,7 @@ def upgrade() -> None:
         )
     )
 
-    # Fail loudly rather than silently deploying orgs nobody can administer: this only
-    # happens if no user has is_workspace_admin = true at migration time (e.g. the owner
-    # account was deleted, or /auth/setup never ran despite installations existing).
+    # Fail loudly rather than deploy orgs nobody can administer (no workspace admin exists).
     orphaned = op.get_bind().execute(
         sa.text(
             "SELECT COUNT(*) FROM orgs o "

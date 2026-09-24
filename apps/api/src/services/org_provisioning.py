@@ -1,26 +1,18 @@
-"""
-Auto-provisions and reconciles Clevis org memberships from verified GitHub org status.
+"""Auto-provisions and reconciles Clevis org memberships from verified GitHub org status.
 
-Runs at OAuth login time, where a live user token is transiently available (see
-src/routers/github_auth.py). Fetches the user's org memberships (role included) from
-GitHub in a single call, then does two things:
+Runs at OAuth login time, using the transiently-available live user token. Fetches the
+user's org memberships (role included) from GitHub in one call, then:
 
 1. For every org where they're currently a GitHub admin, get-or-creates the Clevis Org
-   and grants/refreshes an admin OrgMembership for them. This covers both "first person
-   to connect this org" and "another verified GitHub admin signing in later" — GitHub
-   already vouches for admins, so no invite is required.
-2. Reconciles every *existing* Clevis OrgMembership for this user against the freshly
-   fetched GitHub state: demotes to "member" if GitHub now says member, and deletes the
-   row entirely if GitHub no longer lists the org for this user at all (removed or the
-   org went private to them). This prevents privilege escalated via GitHub admin status
-   from outliving its GitHub grant — Clevis previously only ever created/no-op'd
-   memberships and never revoked them.
+   and grants/refreshes an admin OrgMembership -- GitHub already vouches for admins, so
+   no invite is required.
+2. Reconciles every existing Clevis OrgMembership against the fresh GitHub state:
+   demotes to "member" if GitHub now says member, deletes the row if GitHub no longer
+   lists the org for this user at all -- so admin privilege can't outlive its GitHub grant.
 
-Non-admin GitHub members who have no prior Clevis membership are never auto-added here;
-they only gain access through the explicit invite-accept flow.
-
-Best-effort: any GitHub API failure is logged and swallowed so it never blocks login (and
-existing memberships are left untouched rather than being wiped on a transient failure).
+Non-admin GitHub members with no prior Clevis membership are never auto-added; they only
+gain access through the invite-accept flow. Best-effort: any GitHub API failure is
+logged and swallowed so it never blocks login.
 """
 
 import logging
@@ -37,18 +29,15 @@ logger = logging.getLogger(__name__)
 def connect_admin_org_from_token(
     db: Session, user: User, org_login: str, user_token: str
 ) -> Org | None:
-    """Single-org version of :func:`sync_org_admin_memberships` for the legacy-PAT path
-    (issue #368): when a workspace admin saves a PAT for an org Clevis has never connected,
-    use that PAT to establish the ``Org`` + admin membership so the ``/orgs/{org}/...``
-    dashboard pages work, instead of every one of them 404ing.
+    """Single-org version of :func:`sync_org_admin_memberships` for the legacy-PAT path:
+    when a workspace admin saves a PAT for an org Clevis has never connected, use that PAT
+    to establish the ``Org`` + admin membership so the ``/orgs/{org}/...`` dashboard pages
+    work instead of 404ing.
 
-    Same authorization policy as the OAuth path: only connects when GitHub reports the caller
-    as an **admin/owner** of ``org_login``. A plain GitHub member still goes through the
-    explicit invite-accept flow — pasting a PAT must not be a back door around it.
-
-    Returns the connected ``Org`` (canonical GitHub casing), or ``None`` if the PAT can't
-    resolve it (missing ``read:org``, GitHub error, malformed response, or the caller isn't
-    an admin). **Never raises** — the token save must succeed regardless.
+    Same authorization policy as the OAuth path: only connects when GitHub reports the
+    caller as an admin/owner -- pasting a PAT must not be a back door around the
+    invite-accept flow. Returns the connected ``Org``, or ``None`` if it can't be resolved.
+    **Never raises** — the token save must succeed regardless.
     """
     try:
         memberships = github_oauth.list_user_org_memberships(user_token)
@@ -76,20 +65,16 @@ def connect_admin_org_from_token(
 
 
 def sync_org_admin_memberships(db: Session, user: User, user_token: str) -> None:
-    # Issue #190 step 6c: every membership write below is for `user` (never a different
-    # user), so this alone satisfies migration 0031's self-access RLS check regardless of
-    # which org/tenant each individual write targets. Defensive here rather than relying on
-    # the caller (github_auth.py's OAuth callback) having already set it, since this
-    # function has no other tenant context of its own across its multi-org loops.
+    # Every membership write below is for `user` (never a different user), so this alone
+    # satisfies the self-access RLS check regardless of which org/tenant each write
+    # targets. Defensive here rather than relying on the caller having already set it.
     set_session_user(db, user.id)
     try:
         memberships = github_oauth.list_user_org_memberships(user_token)
     except Exception:  # noqa: BLE001 -- best-effort; must never block login
-        # Not just httpx.HTTPError: a shape drift in GitHub's response (a missing
-        # `organization`/`id`/`login`/`role` key, a non-JSON body) raises KeyError /
-        # TypeError / ValueError, which previously escaped this handler and 500'd the
-        # OAuth callback -- contrary to the module docstring's "logged and swallowed".
-        # Matches connect_admin_org_from_token's own catch above.
+        # Not just httpx.HTTPError: a shape drift in GitHub's response (missing
+        # `organization`/`id`/`login`/`role` key, non-JSON body) raises KeyError/
+        # TypeError/ValueError too. Matches connect_admin_org_from_token's own catch above.
         logger.warning(
             "Failed to list GitHub org memberships for user %s during org provisioning", user.id, exc_info=True
         )

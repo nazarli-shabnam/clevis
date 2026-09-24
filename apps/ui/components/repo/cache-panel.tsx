@@ -19,36 +19,27 @@ import type { CacheEntry, InstallationMeta, JobOut } from "@/lib/api/types"
 interface CachePanelProps {
   owner: string
   repo: string
-  // The repo detail page keeps this panel mounted behind all three tabs (fixes a
-  // dangling aria-controls reference — see repos/[repo]/page.tsx), so without this
-  // flag it would auto-resolve a token on every page load even if the user never
-  // opens the Actions Cache tab. Defaults to true for the standalone /cache route,
-  // which has no tabs and is always "active".
+  // The repo detail page keeps this panel mounted behind all tabs, so this defers token
+  // resolution until the tab is opened. Defaults to true for the standalone /cache route.
   active?: boolean
 }
 
-/** Actions-cache list/clear UI — the standalone /repos/{repo}/cache route and the
- * repo detail page's "Actions Cache" tab both render this. */
+/** Actions-cache list/clear UI for the /repos/{repo}/cache route and the repo detail tab. */
 export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
   const [token, setToken] = useState("")
   const [tokenSaved, setTokenSaved] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
-  // Set to the enqueued job's id after a real (non-dry-run) clear, so we can poll its
-  // status and report the actual outcome instead of declaring success on enqueue.
+  // Enqueued job id after a real clear, polled so we report the actual outcome.
   const [jobId, setJobId] = useState<number | null>(null)
-  // null = clearing every cache for this repo (the existing global buttons); set to a
-  // specific { key, ref } when the user clicks a row's own "Clear" action instead.
+  // null = clear every cache for this repo; { key, ref } = a single row's "Clear".
   const [clearTarget, setClearTarget] = useState<{ key: string; ref: string } | null>(null)
 
   const { data: installs = [] } = useQuery<InstallationMeta[]>({
     queryKey: ["installations"],
     queryFn: () => api.installations.list(),
   })
-  // list() above only covers the caller's *personal* installations -- an org's App
-  // installation requires the separate org-scoped endpoint. Errors (403/404, e.g. the
-  // org isn't a recognized Clevis org yet) are treated as "not installed" rather than
-  // surfaced, matching this query's only purpose here (a soft signal to hide the token
-  // field, not something the user needs an error for).
+  // list() only covers personal installations; orgs need the org-scoped endpoint. Errors
+  // (403/404) are treated as "not installed" since this only decides whether to hide the token field.
   const orgInstallsQuery = useQuery<InstallationMeta[]>({
     queryKey: ["installations.org", owner],
     queryFn: () => api.installations.listForOrg(owner),
@@ -58,14 +49,11 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
   const hasInstallationForOwner =
     installs.some((i) => i.account_login === owner) || (orgInstallsQuery.data?.length ?? 0) > 0
 
-  // Auto-resolve saved token for this owner
   const resolveMutation = useMutation({
     mutationFn: (org: string) => api.tokens.resolve(org),
     onSuccess: (data, org) => {
-      // Skip applying a legacy saved token once an installation covers this owner --
-      // otherwise it'd be silently used (the token field, and its "saved" indicator,
-      // are hidden in that case) and could override the installation-token path the
-      // hidden field implies is now authoritative.
+      // Skip a legacy saved token once an installation covers this owner: the token field is
+      // hidden then, and the saved token would silently override the installation-token path.
       if (shouldApplyResolvedToken(org, owner) && !hasInstallationForOwner) {
         setToken(data.token)
         setTokenSaved(true)
@@ -74,10 +62,8 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
     onError: () => setTokenSaved(false),
   })
 
-  // Resolve at most once per owner, deferred until the panel is actually active (so
-  // opening the repo detail page never resolves a token for a tab the user hasn't
-  // clicked into yet) but NOT re-triggered every time the tab is revisited — otherwise
-  // switching tabs and back would wipe out whatever the user had typed in the meantime.
+  // Resolve at most once per owner, deferred until the panel is active, but not on every
+  // tab revisit, which would wipe out whatever the user typed meanwhile.
   const resolvedForOwnerRef = useRef(false)
 
   useEffect(() => {
@@ -96,9 +82,7 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner, active])
 
-  // Reset stale cache-table/clear-result data and any open confirm dialog whenever the
-  // owner/repo this panel is scoped to changes (route navigation, or a tab switch back
-  // to a differently-scoped repo).
+  // Reset stale table/result data and any open confirm dialog when owner/repo changes.
   useEffect(() => {
     listMutation.reset()
     clearMutation.reset()
@@ -141,16 +125,13 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
     },
   })
 
-  // Poll the enqueued job until it reaches a terminal state, so the panel shows what
-  // actually happened on GitHub's side (the clear runs in the worker, not in the request
-  // that enqueued it). Stops polling once done/failed.
+  // Poll the enqueued job until terminal: the clear runs in the worker, not in this request.
   const jobQuery = useQuery<JobOut>({
     queryKey: ["job", jobId],
     queryFn: () => api.jobs.get(jobId as number),
     enabled: jobId != null,
     refetchInterval: (query) => {
-      // Stop polling once the job is terminal, or once the status request itself has
-      // exhausted its retries — otherwise a persistently failing GET would poll forever.
+      // Also stop once the status request exhausts its retries, or a failing GET polls forever.
       if (query.state.status === "error") return false
       const status = query.state.data?.status
       return status === "done" || status === "failed" ? false : 2000
@@ -185,7 +166,6 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
   const caches: CacheEntry[] = listMutation.data?.actions_caches ?? []
   const totalBytes = caches.reduce((sum, c) => sum + c.size_in_bytes, 0)
 
-  // Total cache size per ref, in MB, for the summary bar chart above the table.
   const cacheByRef = caches.reduce<Record<string, number>>((acc, c) => {
     acc[c.ref] = (acc[c.ref] ?? 0) + c.size_in_bytes
     return acc
@@ -198,7 +178,6 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
   return (
     <>
     <div className="grid gap-4 lg:grid-cols-3">
-      {/* Config panel */}
       <div className="card">
         <div className="px-4 py-3 border-b border-border">
           <span className="section-label">Configuration</span>
@@ -287,7 +266,6 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
         </div>
       </div>
 
-      {/* Cache entries table */}
       <div className="card lg:col-span-2">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <span className="section-label">Cache entries</span>
@@ -313,7 +291,6 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
         )}
 
         {listMutation.isPending ? (
-          /* Skeleton while loading */
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
@@ -398,7 +375,6 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
       </div>
     </div>
 
-    {/* Clear result card */}
     {(clearMutation.data?.dry_run || jobId != null) && (
       <div className="card mt-4">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">

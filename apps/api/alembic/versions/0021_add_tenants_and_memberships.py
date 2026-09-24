@@ -1,15 +1,4 @@
-"""Add tenants and memberships tables (issue #190, S2 multi-tenancy PR 2 of 7).
-
-Pure additive schema change, no backfill and no existing table touched --
-zero data-loss risk. See the design comment on #190 for the full plan this
-is one step of: https://github.com/nazarli-shabnam/clevis/issues/190
-
-`tenants` is a new table, not a rename of `orgs` -- every org gets a 1:1
-`tenants` row (kind='org') and every user gets an implicit personal tenant
-(kind='personal', added in a later PR), so personal-scope resources get
-real DB-level isolation once Row-Level Security lands, not just
-`owner_user_id` filtering. `memberships` mirrors `org_memberships`'
-role vocabulary ("admin"|"member") to avoid renaming that concept mid-flight.
+"""Add tenants and memberships tables.
 
 Revision ID: 0021
 Revises: 0020
@@ -53,10 +42,7 @@ def upgrade() -> None:
         unique=True,
         postgresql_where=sa.text("personal_user_id IS NOT NULL"),
     )
-    # (id, org_id) as a composite unique constraint -- redundant with id's own PK
-    # uniqueness on its own, but required so a later composite FK from orgs.tenant_id
-    # can reference this exact column pair (see migration 0024's reciprocal-association
-    # fix on orgs.tenant_id).
+    # Redundant with the PK, but required as the target of orgs' composite FK (0024).
     op.create_unique_constraint("uq_tenants_id_org_id", "tenants", ["id", "org_id"])
 
     op.create_table(

@@ -1,18 +1,12 @@
-"""Shared advisory-lock helper for the periodic sweep loops (gap_heal_sweep.py,
-membership_reconcile_sweep.py). Both do a plain check-then-enqueue for whether a job is
-already active for a tenant -- safe within a single sweep pass (a plain sequential loop), but
-not across two concurrent passes (e.g. two API replicas each running their own copy of the
-asyncio background loop): both can pass the check before either enqueues, producing a
-duplicate job for the same tenant.
+"""Shared advisory-lock helper for the periodic sweep loops. Both do a plain
+check-then-enqueue for whether a job is already active for a tenant -- safe within a
+single sweep pass, but not across two concurrent passes (e.g. two API replicas), where
+both could pass the check before either enqueues, producing a duplicate job.
 
 pg_try_advisory_xact_lock serializes the check-then-enqueue around a (job_type, tenant_id)
-key without a schema migration. It's transaction-scoped: acquired here, released
-automatically at the caller's next commit or rollback on this session -- lines up with
-job_repo.enqueue's own immediate commit, so the lock is held for exactly the
-check-then-enqueue window and no longer. Same primitive as auth.py's setup lock and
-installations.py's per-org-login lock (see their docstrings); non-blocking here (the `_try`
-variant) because a sweep tick that loses the race should just skip this tenant and retry next
-tick, not stall waiting for another replica to finish.
+key, transaction-scoped (released at the caller's next commit/rollback). Non-blocking (the
+`_try` variant): a sweep tick that loses the race should skip this tenant and retry next
+tick, not stall waiting for another replica.
 """
 
 from sqlalchemy import text

@@ -95,10 +95,7 @@ def test_resolve_org_token_raises_when_nothing_available(db, app_configured):
 
 
 def test_installation_mint_failure_logs_at_error_not_warning(db, app_configured, caplog):
-    # Regression test for issue #414: a broken/rotated App key or a GitHub 5xx degrades
-    # every request through this installation to "fall back to a client-supplied PAT"
-    # with only this log line as a signal -- it must be `error`, not `warning`, so it's
-    # distinguishable from the routine "App isn't configured yet" case.
+    # A mint failure silently degrades to PAT fallback, so it must log at `error`, not `warning`.
     org = org_repo.get_or_create(db, github_login="acme")
     installation_repo.create(
         db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id
@@ -117,9 +114,7 @@ def test_installation_mint_failure_logs_at_error_not_warning(db, app_configured,
 
 
 def test_resolve_org_token_error_distinguishes_mint_failure_from_no_installation(db, app_configured):
-    # Regression test for #250: an installation row exists (App was installed), but
-    # minting a token for it failed -- the error must say so, not tell the caller to
-    # "install" something that's already installed per the DB.
+    # The installation exists but minting failed: the error must say so, not ask to "install".
     org = org_repo.get_or_create(db, github_login="acme")
     installation_repo.create(
         db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id
@@ -175,9 +170,7 @@ def test_resolve_personal_token_error_distinguishes_mint_failure_from_no_install
 
 
 def test_resolve_owner_token_prefers_org_installation_for_a_member(db, app_configured):
-    # Regression test: Overview's /me/* endpoints (cockpit, my-view, overview) could
-    # never find an org-only GitHub App installation because they called
-    # resolve_personal_token exclusively, which only checks owner_user_id-scoped rows.
+    # /me/* endpoints must also find an org-scoped installation, not only owner_user_id rows.
     user = _make_user(db, "shabnam@e.com")
     org = org_repo.get_or_create(db, github_login="OpenHikmah")
     org_membership_repo.get_or_create(db, org.id, user.id, role="member")
@@ -226,10 +219,7 @@ def test_resolve_owner_token_requires_admin_role_when_min_role_is_admin(db, app_
 
 
 def test_resolve_owner_token_rejects_insufficient_role_even_with_a_client_token(db, app_configured):
-    # Regression test (CodeRabbit finding on PR #264): a "member" must not be able to
-    # bypass the admin-only gate by supplying their own PAT -- that would let a
-    # client-supplied token stand in for the org-admin check AGENTS.md says must never
-    # be bypassed for privileged org actions (cache clear, workflow dispatch).
+    # A "member" must not bypass the admin-only gate by supplying their own PAT.
     user = _make_user(db, "shabnam@e.com")
     org = org_repo.get_or_create(db, github_login="acme")
     org_membership_repo.get_or_create(db, org.id, user.id, role="member")
@@ -241,10 +231,7 @@ def test_resolve_owner_token_rejects_insufficient_role_even_with_a_client_token(
 
 
 def test_resolve_owner_token_matches_org_login_case_insensitively(db, app_configured):
-    # Regression test (CodeRabbit finding on PR #264): org_repo.get_by_login is an exact
-    # match, while installation_repo.get_for_org is already case-insensitive (#246) --
-    # a casing variant of a connected org's login must still resolve to its installation,
-    # not silently fall through to the personal-token path.
+    # A casing variant of a connected org's login must still resolve to its installation.
     user = _make_user(db, "shabnam@e.com")
     org = org_repo.get_or_create(db, github_login="OpenHikmah")
     org_membership_repo.get_or_create(db, org.id, user.id, role="member")

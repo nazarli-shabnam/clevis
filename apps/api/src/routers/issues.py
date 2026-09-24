@@ -1,15 +1,8 @@
-"""File a GitHub issue from a Clevis finding (issue #286).
+"""File a GitHub issue from a Clevis finding.
 
-Personal-scoped (``/me/...``), matching ``security.py`` -- the Security page's check
-cards, where the "File as issue" button lives, scan an arbitrary ``owner`` by name, so
-token resolution goes through ``resolve_owner_token`` (membership-gated, and here
-``min_role="admin"`` because this writes to GitHub).
-
-**Requires the GitHub App installation -- or the pasted PAT -- to have ``Issues: write``.**
-Every other Clevis GitHub call is read-only; this is the first endpoint that *creates*
-data on GitHub. A token without the permission gets GitHub's 403, surfaced as a
-``400 "GitHub API error: 403"`` by ``github_error``; the UI shows a "needs Issues: write"
-hint for that case.
+Personal-scoped (``/me/...``); token resolution goes through ``resolve_owner_token``
+with ``min_role="admin"`` since this writes to GitHub. Requires ``Issues: write`` on the
+installation or PAT -- a 403 surfaces as a 400 with a "needs Issues: write" hint.
 """
 
 import httpx

@@ -1,4 +1,4 @@
-"""Tests for checks.runner — verifies B-05 fix: org repos are fetched only once."""
+"""Tests for checks.runner: org repos are fetched only once."""
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -17,7 +17,7 @@ FAKE_BRANCH = {"protected": True}
 
 
 def test_run_all_checks_fetches_repos_once():
-    """_get_all_pages must be called exactly once, not once per check (B-05)."""
+    """_get_all_pages must be called exactly once, not once per check."""
     with (
         patch("checks.runner._get_all_pages", return_value=FAKE_REPOS) as mock_pages,
         patch("checks.github_checks._get") as mock_get,
@@ -35,12 +35,10 @@ def test_run_all_checks_fetches_repos_once():
 
         result = run_all_checks(owner="acme", token="tok")
 
-    # The critical assertion: repos fetched once, not twice (B-05)
     mock_pages.assert_called_once_with(
         "https://api.github.com", "/orgs/acme/repos", "tok"
     )
 
-    # Sanity: all 6 checks returned results
     assert len(result["checks"]) == 6
     check_ids = {c["id"] for c in result["checks"]}
     assert "organization_members_mfa_required" in check_ids
@@ -50,8 +48,6 @@ def test_run_all_checks_fetches_repos_once():
     assert "repository_code_scanning_alerts_clear" in check_ids
     assert "repository_default_branch_no_force_push" in check_ids
 
-    # repo_count is surfaced so callers (e.g. the analytics overview) don't have
-    # to re-fetch the org's repo list just to get a count.
     assert result["repo_count"] == len(FAKE_REPOS)
 
 
@@ -87,8 +83,7 @@ def test_run_all_checks_personal_account_uses_installation_repos():
     )
     mfa = next(c for c in result["checks"] if c["id"] == "organization_members_mfa_required")
     assert mfa["status"] == "not_applicable"
-    # Every /orgs/{owner} call for MFA is skipped for a personal account -- _get should
-    # never see an org-detail URL.
+    # MFA's /orgs/{owner} call is skipped for a personal account.
     assert all("/orgs/" not in call.args[0] for call in mock_get.call_args_list)
 
 

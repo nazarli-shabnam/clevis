@@ -11,10 +11,8 @@ vi.mock("next/font/google", () => ({
 describe("RootLayout module", () => {
   it(
     "configures the Geist, Archivo, and JetBrains Mono fonts at import time",
-    // Dynamically importing the full root layout tree (providers, guards, etc.) can take
-    // well over 30s when running alongside the rest of the suite under CPU contention, even
-    // though it resolves in ~1s standalone. Observed up to ~153s under heavy contention, so
-    // 180s timeout plus one retry gives headroom for that without masking a genuine hang.
+    // Importing the full root layout can take >150s under suite CPU contention (~1s standalone);
+    // 180s plus one retry gives headroom without masking a real hang.
     { timeout: 180000, retry: 1 },
     async () => {
       const mod = await import("@/app/layout");

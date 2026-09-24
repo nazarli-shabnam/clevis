@@ -1,4 +1,4 @@
-"""Tests for the read-only GitHub org roster router (Phase 11 — Collaborators)."""
+"""Tests for the read-only GitHub org roster router."""
 
 from datetime import datetime, timezone
 from unittest.mock import patch

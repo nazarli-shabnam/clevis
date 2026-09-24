@@ -1,4 +1,4 @@
-"""Tests for the My View endpoint (docs/plan.md Phase 14)."""
+"""Tests for the My View endpoint."""
 
 from unittest.mock import patch
 
@@ -79,10 +79,8 @@ def test_my_view_degrades_to_empty_when_login_unresolvable(http):
 
 
 def test_my_view_propagates_unexpected_user_endpoint_error(http):
-    """A non-403 failure calling GET /user (a real auth/server problem, not the expected
-    "installation token can't call /user" case) must not be silently swallowed as
-    identity_unresolved -- it should propagate so the failure stays visible to the caller
-    instead of masquerading as "this user has zero PRs/issues"."""
+    """A non-403 failure calling GET /user must propagate, not masquerade as
+    identity_unresolved ("this user has zero PRs/issues")."""
     with (
         patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
         patch("src.routers.analytics.GitHubClient") as mock_client,
@@ -113,8 +111,7 @@ def test_my_view_propagates_network_error_from_user_endpoint(http):
 def test_my_view_falls_back_to_users_github_login_when_user_endpoint_unresolvable(app, http):
     """A GitHub App installation token can't call GET /user, but if the signed-in Clevis
     user linked their own GitHub identity via OAuth, my-view should use that login rather
-    than degrading to empty -- an App-connected org shouldn't silently hide a real user's
-    PRs/issues just because the *org's* token isn't a personal one."""
+    than degrading to empty."""
     app.dependency_overrides[require_auth] = lambda: UserOut(
         id=1, email="myview@example.com", name=None, is_workspace_admin=False, github_login="octocat"
     )
@@ -207,10 +204,8 @@ def test_my_view_success(http):
 
 def test_my_view_falls_back_to_client_supplied_token_header(http):
     with patch("src.routers.analytics.GitHubClient") as mock_client:
-        # 403 (not a bare network error) -- this test is exercising the client-supplied
-        # X-GitHub-Token header path (no 400 from a missing token), not /user's error
-        # handling, so it uses the "expected" degrade-to-empty case rather than a
-        # network failure that would now (correctly) propagate.
+        # 403 = the expected degrade-to-empty /user case; this test targets the
+        # X-GitHub-Token header path, not /user's error handling.
         mock_client.return_value.request.side_effect = httpx.HTTPStatusError(
             "boom",
             request=httpx.Request("GET", "https://api.github.com/user"),

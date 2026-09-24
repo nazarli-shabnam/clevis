@@ -101,9 +101,7 @@ def test_assert_owner_matches_org_allows_exact_match(db):
 
 
 def test_assert_owner_matches_org_is_case_insensitive(db):
-    # GitHub logins are case-insensitive (Acme and acme are the same account) --
-    # regression test for issue #224 item 1, matching the .lower() comparison already
-    # used in apps/api/src/routers/installations.py for the same class of check.
+    # GitHub logins are case-insensitive (Acme and acme are the same account).
     org = org_repo.get_or_create(db, github_login="acme")
     assert_owner_matches_org("Acme", OrgContext(org=org, membership=None))
     assert_owner_matches_org("ACME", OrgContext(org=org, membership=None))
@@ -116,11 +114,9 @@ def test_assert_owner_matches_org_rejects_a_different_org(db):
     assert exc_info.value.status_code == 403
 
 
-# ── tenant-context session-variable wiring (issue #190, PR 5a) ─────────────────────
+# ── tenant-context session-variable wiring ─────────────────────────────────────────
 #
-# require_org_role's HTTP-level behavior is already covered above through a real
-# request. These tests focus on the SET app.tenant_id / app.user_id side effect, which
-# the HTTP-level tests never assert on directly.
+# Asserts require_org_role's SET app.tenant_id / app.user_id side effect directly.
 
 def _current_setting(db, name: str) -> str | None:
     value = db.execute(text("SELECT current_setting(:name, true)"), {"name": name}).scalar()
@@ -144,12 +140,8 @@ def test_require_org_role_does_not_set_session_vars_on_403(db):
     org_repo.get_or_create(db, github_login="widgets")
     user = _make_user(db, "bob@example.com")  # no membership
 
-    # Issue #330: creating a brand-new org transiently sets app.tenant_id via SET LOCAL
-    # (org_repo.ensure_tenant_linked) so its own tenant-link UPDATE satisfies RLS -- scoped
-    # to that one real transaction in production, but this test's savepoint-based db
-    # fixture never issues a real top-level COMMIT, so it's still visible here. Snapshot it
-    # as the baseline and assert the dependency call under test doesn't change it, rather
-    # than asserting an absolute None -- that's the actual invariant this test protects.
+    # Org creation's SET LOCAL app.tenant_id stays visible under the savepoint fixture (no real
+    # COMMIT), so snapshot it and assert the dependency doesn't change it.
     baseline = _current_setting(db, "app.tenant_id")
 
     dependency = require_org_role("member")

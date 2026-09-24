@@ -2,22 +2,19 @@
 set -e
 
 # Creates a dedicated Postgres login role so the API can stop connecting as the initdb
-# bootstrap superuser (issue #330) -- POSTGRES_USER always becomes a superuser on the
-# official postgres image, and superusers unconditionally bypass Row-Level Security
-# regardless of ENABLE/FORCE, which would make migrations 0030/0031/0033/0046's RLS
-# policies enforce nothing in production. Unlike the worker (see
-# 01-create-worker-role.sh), this role does NOT get BYPASSRLS -- the whole point is for
-# the API to actually be subject to RLS.
+# bootstrap superuser -- POSTGRES_USER always becomes a superuser on the official
+# postgres image, and superusers unconditionally bypass Row-Level Security regardless of
+# ENABLE/FORCE, which would make migrations 0030/0031/0033/0046's RLS policies enforce
+# nothing in production. Unlike the worker (see 01-create-worker-role.sh), this role
+# does NOT get BYPASSRLS -- the whole point is for the API to actually be subject to RLS.
 #
-# Runs via docker-entrypoint-initdb.d, so it only executes once, on a completely fresh
-# data volume. Existing deployments (pgdata already initialized) must create this role
-# manually -- see docs/self-hosting.md.
+# Runs via docker-entrypoint-initdb.d, so it only executes once, on a fresh data volume.
+# Existing deployments must create this role manually -- see docs/self-hosting.md.
 #
-# No-op if API_DB_PASSWORD isn't set, so deployments that haven't opted in keep today's
-# shared-credential (superuser) behavior untouched. This script only grants table
-# privileges to the role once it exists -- see migration 0032. The runtime cutover that
-# actually makes the API connect as this role already exists in apps/api/entrypoint.sh,
-# gated on the same API_DB_PASSWORD env var.
+# No-op if API_DB_PASSWORD isn't set, keeping the shared-credential (superuser) fallback
+# untouched. This script only grants table privileges once the role exists -- see
+# migration 0032. The runtime cutover is in apps/api/entrypoint.sh, gated on the same
+# API_DB_PASSWORD env var.
 if [ -z "$API_DB_PASSWORD" ]; then
   exit 0
 fi

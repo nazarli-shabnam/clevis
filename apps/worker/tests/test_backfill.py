@@ -1,4 +1,4 @@
-"""Tests for the install-time activity backfill (issue #191/S5 PR 1)."""
+"""Tests for the install-time activity backfill."""
 
 import json
 from datetime import date
@@ -14,11 +14,6 @@ from _crypto import encrypt_job_token
 from config import settings
 
 _DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg://", "postgresql://")
-
-
-# ---------------------------------------------------------------------------
-# backfill.py: pure unit tests (no DB, no worker.py job machinery)
-# ---------------------------------------------------------------------------
 
 
 def test_summarize_all_five_tracked_types():
@@ -139,11 +134,6 @@ def test_fetch_events_uses_the_user_events_path_for_personal_installs():
     assert client.calls[0][0] == "https://api.github.com/users/octocat/events"
 
 
-# ---------------------------------------------------------------------------
-# _get_with_retry / fetch_events: GitHub rate-limit retry (issue #192 fast-follow)
-# ---------------------------------------------------------------------------
-
-
 def test_fetch_events_retries_a_429_and_succeeds():
     rate_limited = _FakeResponse({}, status_code=429)
     success = _FakeResponse([_raw_event(id="1")])
@@ -181,9 +171,8 @@ def test_fetch_events_retries_a_secondary_rate_limit_403_via_remaining_header():
 
 
 def test_fetch_events_retries_a_secondary_rate_limit_403_with_a_malformed_retry_after():
-    # A non-numeric Retry-After must not crash -- it's still a secondary-rate-limit response
-    # (the header's presence, not its validity, is what _is_secondary_rate_limit checks), so
-    # this falls through to the conservative _MAX_RETRY_AFTER_SECONDS wait, not a fast retry.
+    # A non-numeric Retry-After is still a secondary rate limit (header presence counts),
+    # so this waits the conservative cap, not a fast retry.
     rate_limited = _FakeResponse({}, status_code=403, headers={"Retry-After": "not-a-number"})
     success = _FakeResponse([_raw_event(id="1")])
     client = _FakeClient([rate_limited, success])
@@ -213,8 +202,7 @@ def test_retry_delay_seconds_caps_a_far_future_x_rate_limit_reset():
 
 
 def test_retry_delay_seconds_ignores_a_past_x_rate_limit_reset():
-    # A reset timestamp already in the past (clock skew, or the header lagging reality)
-    # must not produce a negative sleep -- fall through to the rate-limit default instead.
+    # A reset time already in the past must not produce a negative sleep.
     resp = _FakeResponse({}, status_code=429, headers={"X-RateLimit-Reset": "999900"})
     with patch("backfill.time.time", return_value=1000000.0):
         assert backfill._retry_delay_seconds(resp, 0) == backfill._MAX_RETRY_AFTER_SECONDS
@@ -276,12 +264,6 @@ def test_fetch_events_retries_a_connection_error_then_succeeds():
 
     assert [e["id"] for e in events] == ["1"]
     assert len(client.calls) == 2
-
-
-# ---------------------------------------------------------------------------
-# worker._handle_backfill_repo_events: error paths, mirroring
-# test_process_job.py's _FakeConn/_FakeCursor + patch("worker.httpx.Client") convention
-# ---------------------------------------------------------------------------
 
 
 class _FakeCursor:
@@ -395,10 +377,8 @@ def test_handler_requeues_on_network_error():
 
 
 class _FailingCursor(_FakeCursor):
-    """Raises on the first execute() (the SET app.tenant_id call) to simulate a genuine
-    DB error mid-insert-loop -- e.g. a constraint violation or serialization failure.
-    Subsequent execute() calls succeed, same as _requeue_for_retry's own UPDATE would
-    against a real connection once its rollback() has cleared the aborted transaction."""
+    """Raises on the first execute() (SET app.tenant_id) to simulate a DB error mid-loop;
+    later calls succeed, as they would after rollback()."""
 
     has_failed = False
 
@@ -416,10 +396,7 @@ class _FailingConn(_FakeConn):
 
 
 def test_handler_rolls_back_and_requeues_on_a_db_error_during_the_insert_loop():
-    # Without a rollback here, the connection's transaction stays aborted and the
-    # _mark_failed/_requeue_for_retry UPDATE that follows would itself raise
-    # InFailedSqlTransaction, leaving the job stuck in 'processing' forever instead of
-    # being requeued.
+    # Without a rollback, the follow-up UPDATE would hit InFailedSqlTransaction.
     conn = _FailingConn()
     events = [_raw_event(id="b-db-error-1")]
 
@@ -429,18 +406,8 @@ def test_handler_rolls_back_and_requeues_on_a_db_error_during_the_insert_loop():
     assert conn.rolled_back is True
     sql, _params = conn._cursor.calls[0]
     assert "status='queued'" in sql  # requeued, not stuck in 'processing'
-    # The activity_sync_cursors upsert never even runs -- the failure happens on the
-    # very first execute() (SET app.tenant_id), before the insert loop or the cursor
-    # upsert are reached.
+    # The failure is on the first execute(), so the cursor upsert never runs.
     assert not any("activity_sync_cursors" in sql for sql, _params in conn._cursor.calls)
-
-
-# ---------------------------------------------------------------------------
-# worker._handle_backfill_repo_events: real Postgres, verifying the actual
-# repo_events / repo_event_daily_counts side effects (mirrors test_event_consumer.py's
-# pg_conn/tenant_id fixture pattern -- kept file-local rather than shared via conftest.py,
-# matching how each worker test file already owns its own fixtures except worker_db).
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture()

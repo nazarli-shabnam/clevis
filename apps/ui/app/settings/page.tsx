@@ -20,7 +20,6 @@ import { useAuth } from "@/lib/auth-context"
 import { THEMES, useTheme } from "@/lib/theme"
 import type { InstallationMeta, MyOrgMembership, SavedTokenMeta } from "@/lib/api/types"
 
-// ── Profile section ──────────────────────────────────────────────────────────
 
 function ProfileSection() {
   const { user, updateUser, logout } = useAuth()
@@ -31,13 +30,11 @@ function ProfileSection() {
 
   const revokeSessions = useMutation({
     mutationFn: () => api.auth.revokeSessions(),
-    // Bumping token_version invalidates this device's own token too, so finish by
-    // logging out locally rather than leaving the UI in a now-unauthenticated state.
+    // Bumping token_version invalidates this device's token too, so log out locally.
     onSuccess: () => logout(),
   })
 
-  // Auto-disarm if the user doesn't confirm within a few seconds, matching the
-  // cache-clear confirm pattern (components/repo/cache-panel.tsx).
+  // Auto-disarm if not confirmed within a few seconds (same as the cache-clear confirm).
   useEffect(() => {
     if (!revokeArmed) return
     const timer = setTimeout(() => setRevokeArmed(false), 4000)
@@ -125,7 +122,6 @@ function ProfileSection() {
   )
 }
 
-// ── Appearance section ───────────────────────────────────────────────────────
 
 function AppearanceSection() {
   const { theme, setTheme } = useTheme()
@@ -167,12 +163,9 @@ function AppearanceSection() {
   )
 }
 
-// ── Org memberships section ───────────────────────────────────────────────────
 
-// Shared by OrgMembershipsSection and ConnectedOrgsSection below -- both need to know which
-// orgs the caller belongs to (the latter specifically to know which orgs it admins, to fetch
-// their installations). One hook, one queryFn reference, so React Query's dedup-by-key doesn't
-// depend on which of the two mounts first actually issuing the request.
+// Shared by OrgMembershipsSection and ConnectedOrgsSection: one queryFn reference so
+// React Query's dedup doesn't depend on which mounts first.
 function useMyOrgMemberships() {
   return useQuery<MyOrgMembership[]>({
     queryKey: ["my-orgs"],
@@ -242,7 +235,6 @@ function OrgMembershipsSection() {
   )
 }
 
-// ── Connected organizations (GitHub App, personal + org-scoped installs) ─────
 
 type ConnectedInstallation = InstallationMeta & (
   | { scope: "me" }
@@ -260,8 +252,7 @@ function ConnectedOrgsSection() {
   const membershipsQuery = useMyOrgMemberships()
   const adminOrgLogins = (membershipsQuery.data ?? []).filter((m) => m.role === "admin").map((m) => m.org_login)
 
-  // Only orgs the caller admins -- listForOrg is 403 for a plain member (installations are
-  // an admin concern, matching the DELETE endpoint's own require_org_role(min_role="admin")).
+  // Only orgs the caller admins -- listForOrg is 403 for a plain member.
   const orgInstallQueries = useQueries({
     queries: adminOrgLogins.map((orgLogin) => ({
       queryKey: ["installations", "org", orgLogin],
@@ -419,7 +410,7 @@ function ConnectedOrgsSection() {
   )
 }
 
-// ── Saved tokens section (legacy — being replaced by the GitHub App) ──────────
+// Saved tokens (legacy — being replaced by the GitHub App)
 
 function SavedTokensSection() {
   const qc = useQueryClient()
@@ -571,7 +562,6 @@ function SavedTokensSection() {
   )
 }
 
-// ── Instance configuration section (owner only) ──────────────────────────────
 
 const CONFIG_FIELDS: {
   key: string
@@ -652,8 +642,7 @@ function InstanceConfigSection() {
           const isSavingField = saving === field.key
           const saveContent: React.ReactNode = isSavingField ? <CircleNotch className="size-3 animate-spin" /> : "Save"
           const fieldId = `cfg-${field.key}`
-          // The value a select shows before the user touches it / before the key
-          // is persisted server-side: its first option ("" for non-select fields).
+          // A select shows its first option until the key is persisted ("" for non-select fields).
           const firstOption = field.options?.[0]?.value ?? ""
 
           return (
@@ -720,7 +709,6 @@ function InstanceConfigSection() {
   )
 }
 
-// ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
   const { user } = useAuth()

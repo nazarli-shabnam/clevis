@@ -1,4 +1,4 @@
-"""S5 PR 2: periodic gap-heal sweep, wired via sweep_loop.run_sweep_loop. Started from
+"""Periodic gap-heal sweep, wired via sweep_loop.run_sweep_loop. Started from
 src.main's lifespan. See sweep_loop.py for the shared loop/session/reset shape.
 """
 

@@ -1,21 +1,12 @@
-"""Issue #287: turn a failing security check into a one-click "Fix this".
+"""Turn a failing security check into a one-click "Fix this".
 
-Each supported check_id maps to the GitHub write call(s) that enable the setting
-the check verifies. Only checks with a safe, unambiguous "just turn it on" fix
-are here:
+Each supported check_id maps to the GitHub write call(s) that enable the setting it
+verifies. Only checks with a safe, unambiguous "just turn it on" fix are here --
+excludes MFA enforcement (not a single idempotent call) and code-scanning alert
+clearing (dismissing requires human judgement).
 
-- Excluded: ``organization_members_mfa_required`` -- GitHub is deprecating the
-  ``two_factor_requirement_enabled`` field; real enforcement is an org
-  security-settings change that isn't a single idempotent call.
-- Excluded: ``repository_code_scanning_alerts_clear`` -- clearing an alert means
-  *dismissing* it with a "won't fix / used in tests / false positive" reason,
-  which is a human judgement, not a fix.
-
-Requires the connected GitHub App installation (or the pasted PAT) to carry
-write scopes Clevis does not request by default -- ``administration:write`` (repo
-settings + branch protection) and ``security_events:write`` /
-``dependabot_alerts:write`` (Dependabot alerts). See docs/self-hosting.md. A 403
-from GitHub is surfaced to the caller as a clear 400.
+Requires write scopes Clevis doesn't request by default (``administration:write``,
+``security_events:write``/``dependabot_alerts:write``); a 403 becomes a 400.
 """
 
 from urllib.parse import quote
@@ -36,11 +27,9 @@ class RemediationConflict(Exception):
 
 
 # A deliberately conservative default for a branch that has no protection at all:
-# require one approving PR review, block force-pushes and branch deletion, and do
-# NOT enforce on admins (so a repo admin can still merge an emergency fix). No
-# required status checks -- Clevis can't know this repo's CI job names. Documented
-# in the PR / docs/self-hosting.md so a self-hoster knows exactly what "Fix this"
-# will apply.
+# require one approving PR review, block force-pushes and branch deletion, and do NOT
+# enforce on admins (so a repo admin can still merge an emergency fix). No required
+# status checks -- Clevis can't know this repo's CI job names. See docs/self-hosting.md.
 _DEFAULT_BRANCH_PROTECTION = {
     "required_status_checks": None,
     "enforce_admins": False,
@@ -75,10 +64,8 @@ def _protect_default_branch(client: GitHubClient, owner: str, repo: str) -> None
         client.request("PUT", path, json=_DEFAULT_BRANCH_PROTECTION)
         return
 
-    # Protection already exists (the "allows force pushes" check): carry every rule
-    # that's already configured across unchanged and only turn force-pushes off.
-    # Re-sending _DEFAULT_BRANCH_PROTECTION would silently drop required status
-    # checks, stricter review rules, linear-history, etc.
+    # Protection already exists: carry every already-configured rule unchanged and only
+    # turn force-pushes off. Re-sending _DEFAULT_BRANCH_PROTECTION would drop other rules.
     body = _preserving_put_body(current)
     body["allow_force_pushes"] = False
     client.request("PUT", path, json=body)
@@ -99,9 +86,8 @@ def _preserving_put_body(current: dict) -> dict:
     """Translate GitHub's *GET* branch-protection response into the *PUT* body
     shape, keeping every currently-enabled rule."""
     if isinstance(current.get("restrictions"), dict):
-        # PUT wants restrictions as {users:[login], teams:[slug], apps:[slug]}, but
-        # GET returns full objects and the field only works on org-owned repos.
-        # Getting this wrong could lock maintainers out -- refuse instead.
+        # PUT wants restrictions as {users:[login], teams:[slug], apps:[slug]}, but GET
+        # returns full objects -- getting this wrong could lock maintainers out, so refuse.
         raise RemediationConflict(
             "This branch's protection restricts who can push (specific users, teams "
             "or apps). Clevis can't rewrite that safely through the API -- turn off "

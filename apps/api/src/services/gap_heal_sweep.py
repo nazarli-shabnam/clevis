@@ -1,17 +1,14 @@
-"""S5 PR 2: periodically re-sync tenants whose activity_sync_cursors row has gone stale.
+"""Periodically re-sync tenants whose activity_sync_cursors row has gone stale.
 
-Reuses PR #342's install-time backfill job type (github.backfill_repo_events) unchanged --
+Reuses the install-time backfill job type (github.backfill_repo_events) unchanged --
 gap-healing is that same job, triggered on a schedule instead of only at install time.
 
-Issue #410: also covers tenants with a connected installation but *no* cursor row at all --
-that means the install-time backfill (best-effort, per PR #342's
-_enqueue_backfill_best_effort) never even got a job queued, or the job never completed, and
-there's no other retry mechanism for that first backfill. Treated as maximally stale, sourced
-from the installation row itself (see _installation_account) since there's no cursor payload
-to read account_login/account_type from.
+Also covers tenants with a connected installation but no cursor row at all -- meaning
+the install-time backfill never got a job queued or never completed, with no other retry
+mechanism. Treated as maximally stale, sourced from the installation row itself (see
+_installation_account) since there's no cursor payload to read from.
 
-Called from an asyncio background loop started in main.py's lifespan (see gap_heal_loop.py),
-mirroring apps/worker's own poll-loop shape rather than pulling in a new scheduler dependency.
+Called from an asyncio background loop started in main.py's lifespan (see gap_heal_loop.py).
 """
 
 import logging
@@ -43,13 +40,9 @@ def _read_stale_hours() -> int:
 
 def _has_active_backfill_job(db: Session, tenant_id: int) -> bool:
     """True if a github.backfill_repo_events job for this tenant is already queued or
-    processing. The cursor only advances once a job reaches a terminal state (worker.py's
-    _handle_backfill_repo_events upserts it right before _mark_done) -- without this check,
-    a job that's slow to finish (worker downtime, a retried run) would still look stale on
-    every subsequent sweep tick and get re-enqueued again and again, piling up duplicate
-    GitHub API work for the same tenant. jobs has no tenant_id column (it's a generic
-    queue), so this matches against the JSON payload the way it's actually stored --
-    job_repo.enqueue always writes tenant_id as a JSON number under this exact job_type."""
+    processing. Without this check, a job that's slow to finish would still look stale on
+    every subsequent sweep tick and get re-enqueued repeatedly. jobs has no tenant_id
+    column, so this matches against the JSON payload the way job_repo.enqueue writes it."""
     row = db.execute(
         text(
             "SELECT 1 FROM jobs WHERE job_type = :job_type "
@@ -63,9 +56,8 @@ def _has_active_backfill_job(db: Session, tenant_id: int) -> bool:
 
 def _installation_account(db: Session, *, kind: str, org_id: int | None, personal_user_id: int | None) -> tuple[str | None, str | None]:
     """Resolve (account_login, account_type) for a tenant that has no activity_sync_cursors
-    row yet -- the only place that payload shape can come from without a prior successful
-    backfill (issue #410) is the connected installation itself. Returns (None, None) if no
-    installation with an actual installation_id is connected -- nothing to backfill from."""
+    row yet -- the only source for that shape without a prior successful backfill is the
+    connected installation itself. Returns (None, None) if none is connected."""
     installations = (
         installation_repo.list_for_org(db, org_id)
         if kind == "org"
@@ -86,10 +78,8 @@ def run_gap_heal_sweep(db: Session) -> None:
     tenants = db.execute(text("SELECT id, kind, org_id, personal_user_id FROM tenants")).fetchall()
 
     for tenant_id, kind, org_id, personal_user_id in tenants:
-        # activity_sync_cursors is RLS-enabled (migration 0038) -- this must be set before
-        # reading this tenant's own cursor row, one tenant at a time, same as every other
-        # system code path that resolves a tenant_id without an acting user (see
-        # set_session_tenant's own docstring).
+        # activity_sync_cursors is RLS-enabled -- this must be set before reading this
+        # tenant's own cursor row, one tenant at a time (see set_session_tenant's docstring).
         set_session_tenant(db, tenant_id)
         cursor_row = db.execute(
             text(
@@ -99,11 +89,9 @@ def run_gap_heal_sweep(db: Session) -> None:
             {"tenant_id": tenant_id},
         ).fetchone()
         if cursor_row is None:
-            # Issue #410: no cursor row means the install-time backfill (installations.py's
-            # best-effort _enqueue_backfill_best_effort) either never got a job queued or
-            # never completed -- there's no other retry mechanism for that first backfill.
-            # Treat "no cursor" as maximally stale and give it the same one-shot enqueue
-            # attempt a stale cursor would get, sourced from the installation row itself.
+            # No cursor row means the install-time backfill never got a job queued or never
+            # completed, with no other retry mechanism. Treat as maximally stale and give it
+            # the same one-shot enqueue a stale cursor would get.
             account_login, account_type = _installation_account(
                 db, kind=kind, org_id=org_id, personal_user_id=personal_user_id
             )
@@ -113,10 +101,9 @@ def run_gap_heal_sweep(db: Session) -> None:
             account_login, account_type, last_synced_at = cursor_row
             if last_synced_at is not None and last_synced_at >= cutoff:
                 continue
-        # Acquired before the active-job check (not after) so the whole check-then-enqueue
-        # window for this tenant is mutually exclusive across concurrent sweep passes (e.g.
-        # two API replicas) -- a losing process skips this tenant entirely this tick rather
-        # than re-deriving a now-stale "no active job" answer. See sweep_lock.py.
+        # Acquired before the active-job check so the whole check-then-enqueue window for
+        # this tenant is mutually exclusive across concurrent sweep passes -- a losing
+        # process skips this tenant this tick rather than re-deriving a stale answer.
         if not try_acquire_sweep_slot(db, _JOB_TYPE, tenant_id):
             continue
         if _has_active_backfill_job(db, tenant_id):
@@ -137,10 +124,7 @@ def run_gap_heal_sweep(db: Session) -> None:
             db.commit()  # nothing to persist; releases the advisory lock promptly
             logger.warning("gap-heal sweep skipping %s (tenant %d): %s", account_login, tenant_id, exc)
         except Exception:
-            # A DB-level error here (e.g. from job_repo.enqueue's own commit) would leave this
-            # shared Session's transaction aborted -- roll back so the sweep can keep going for
-            # the remaining tenants instead of every subsequent iteration failing too (also
-            # releases the advisory lock). Same posture as installations.py's
-            # _enqueue_backfill_best_effort.
+            # A DB-level error here would leave this shared Session's transaction aborted --
+            # roll back so the sweep can keep going for the remaining tenants.
             db.rollback()
             logger.exception("gap-heal sweep failed to enqueue a backfill for %s (tenant %d)", account_login, tenant_id)

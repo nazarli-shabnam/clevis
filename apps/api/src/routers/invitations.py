@@ -1,13 +1,6 @@
-"""Org invitation router.
-
-  POST   /orgs/{org_login}/invitations             admin: create a pending invite, returns a
-                                                     shareable link (no email is sent)
-  GET    /orgs/{org_login}/invitations             admin: list pending/accepted/revoked invites
-  POST   /orgs/{org_login}/invitations/{id}/revoke admin: revoke a pending invite
-  GET    /invitations/{token}                      unauthenticated: preview an invite by token
-  POST   /invitations/{token}/accept               any authenticated user whose account email
-                                                     case-insensitively matches the invite AND
-                                                     is verified (see issue #217)
+"""Org invitation router: admin create/list/revoke pending invites (shareable link, no
+email sent), unauthenticated preview by token, and accept -- which requires the caller's
+account email to case-insensitively match the invite AND be verified.
 """
 
 from datetime import datetime, timezone
@@ -139,11 +132,9 @@ def accept_invitation(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Invitation is no longer pending")
     if invitation.email.lower() != user.email.lower():
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invitation email does not match account")
-    # Email match alone isn't proof of ownership for a self-registered account -- see
-    # issue #217. GitHub-linked accounts and the first-run setup admin are verified
-    # immediately (src.routers.auth); self-registered accounts must click the emailed
-    # verification link first, closing the same class of hijack the GitHub OAuth path
-    # already defends against via EmailAlreadyRegistered (src.routers.github_auth).
+    # Email match alone isn't proof of ownership for a self-registered account.
+    # GitHub-linked accounts and the setup admin are verified immediately; self-registered
+    # accounts must click the emailed verification link first.
     db_user = db.query(User).filter(User.id == user.id).first()
     if db_user is None or not db_user.email_verified:
         raise HTTPException(

@@ -1,18 +1,5 @@
 """Partial unique index on invitations(org_id, lower(email)) where status='pending'.
 
-Issue #270: create_invitation's "does a pending invite already exist" guard is a
-non-atomic check-then-insert with no DB constraint behind it (unlike the sibling
-org_membership_repo.get_or_create, which relies on uq_org_memberships_org_user).
-Two concurrent POSTs for the same org+email can both pass the check and both
-insert a pending row. This adds the missing partial unique index so the losing
-insert fails with IntegrityError, which invitation_repo.create now catches.
-
-Schema change: one partial unique index. No column changes, no NOT NULL, no data
-rewrite. Existing *active* duplicate pending invites -- the exact bug this closes
--- would fail the unique index build, so upgrade() first collapses already-lapsed
-'pending' rows to 'expired' (the app already treats them as expired) and then
-fails loudly listing any genuine duplicates rather than erroring mid-build.
-
 Revision ID: 0042
 Revises: 0041
 Create Date: 2026-09-02

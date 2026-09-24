@@ -1,20 +1,14 @@
 "use client"
 
-// Shared "which GitHub account am I looking at" state, replacing the old
-// localStorage.getItem("default_org")-per-page pattern. A scope is either an org
-// the user is a member of, or their own personal GitHub account (an installation
-// with account_type "User" — see ProfileDropdown in components/app-sidebar.tsx).
-// Every /me/* endpoint accepts either kind as `owner` (apps/api/src/services/token_resolution.py's
-// resolve_owner_token resolves org-installation or personal-installation tokens the same way);
-// only Health & Security is org-only by backend design.
+// Shared "which GitHub account am I looking at" state: an org the user belongs to, or their
+// personal account. Every /me/* endpoint accepts either as `owner`; only Health & Security is org-only.
 
 import { useCallback, useSyncExternalStore } from "react"
 
 export type ActiveScope = { kind: "org"; login: string } | { kind: "personal"; login: string }
 
 const STORAGE_KEY = "active_scope"
-// Legacy key written by the old Settings "Default organization" select — read once
-// as a fallback so existing users don't lose their selection on upgrade.
+// Legacy "Default organization" key, read as a fallback so existing users keep their selection.
 const LEGACY_ORG_KEY = "default_org"
 const CHANGE_EVENT = "clevis:active-scope-changed"
 
@@ -35,13 +29,8 @@ function parse(raw: string | null): ActiveScope | null {
   return null
 }
 
-// Memoized so useSyncExternalStore's getSnapshot returns a referentially stable
-// value between calls when the underlying localStorage strings haven't changed —
-// otherwise a fresh object every render would trigger React's "getSnapshot should
-// be cached" infinite-loop warning. Both keys are tracked (not just STORAGE_KEY):
-// the legacy key is only consulted while STORAGE_KEY is unset, but caching solely
-// on STORAGE_KEY (which stays null the whole time in that case) would let a stale
-// legacy-derived scope leak across renders whenever the legacy key changes underneath it.
+// Memoized so useSyncExternalStore's getSnapshot is referentially stable (else React's infinite-loop
+// warning). Keyed on both keys: STORAGE_KEY alone stays null while the legacy key is in use.
 let cachedActiveRaw: string | null = null
 let cachedLegacyRaw: string | null = null
 let cachedScope: ActiveScope | null = null
@@ -77,9 +66,8 @@ export function setActiveScope(scope: ActiveScope): void {
   window.dispatchEvent(new Event(CHANGE_EVENT))
 }
 
-// Called on logout so a new user on the same browser doesn't start already
-// scoped into the previous user's org (which would also fire scoped requests
-// for an org they may have no relationship with). Clears the legacy key too.
+// Called on logout so a new user on this browser doesn't start scoped into the previous
+// user's org. Clears the legacy key too.
 export function clearActiveScope(): void {
   if (typeof window === "undefined") return
   localStorage.removeItem(STORAGE_KEY)

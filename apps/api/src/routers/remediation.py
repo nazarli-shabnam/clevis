@@ -1,15 +1,9 @@
-"""Issue #287: "Fix this" — apply the fix for a failing security check.
+"""Apply the fix for a failing security check ("Fix this").
 
-Personal-scoped (``/me/...``), same shape as issues.py: the Security page's check
-cards scan an arbitrary ``owner`` by name, so token resolution goes through
-``resolve_owner_token(min_role="admin")`` (this writes to GitHub). If ``owner``
-is a connected Clevis org the caller must be an **admin** of it.
-
-**Requires write scopes Clevis does not request by default** --
-``administration:write`` (repo settings, branch protection) and
-``dependabot_alerts:write`` / ``security_events:write`` (Dependabot alerts). See
-docs/self-hosting.md. A 403 from GitHub is surfaced as a 400 with a hint to
-grant the permission.
+Personal-scoped (``/me/...``); token resolution goes through
+``resolve_owner_token(min_role="admin")`` since this writes to GitHub. Requires write
+scopes Clevis doesn't request by default (``administration:write``,
+``dependabot_alerts:write``) -- a 403 is surfaced as a 400 with a grant hint.
 """
 
 import httpx

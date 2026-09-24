@@ -27,7 +27,7 @@ _INT_KEYS = {
     "webhook_requeue_poll_seconds",
 }
 _BOOL_KEYS = {"registration_enabled"}
-# key -> allowed values, for small closed-vocabulary settings (issues #292, #289).
+# key -> allowed values, for small closed-vocabulary settings.
 _ENUM_KEYS = {
     "digest_cadence": {"off", "weekly", "monthly"},
     "pr_nudge_mode": {"off", "comment", "label"},
@@ -54,7 +54,6 @@ def update_config(
     if key not in _ACCEPTED_KEYS:
         raise HTTPException(status_code=400, detail=f"Unknown config key: {key!r}")
 
-    # Type validation
     if key in _INT_KEYS:
         try:
             parsed_int = int(body.value)

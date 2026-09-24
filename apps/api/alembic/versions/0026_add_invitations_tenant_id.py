@@ -1,11 +1,4 @@
-"""Add invitations.tenant_id, backfilled, nullable (issue #190, PR 3 of 7).
-
-invitations.org_id is required, and every org already has a tenant from
-migration 0022, so the backfill join is small and unambiguous. NOT NULL is
-*not* enforced here though, for the same reason as orgs (0024): invitation
--creation code doesn't set tenant_id until PR 4's dual-write lands.
-Enforcing NOT NULL now would break every "invite a member" request the
-moment this migration deploys.
+"""Add invitations.tenant_id, backfilled, nullable.
 
 Revision ID: 0026
 Revises: 0025

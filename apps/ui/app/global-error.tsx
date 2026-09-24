@@ -1,13 +1,7 @@
 "use client"
 
-// Last-resort error boundary for issue #370. A Next.js App Router `error.tsx` boundary
-// wraps the *page* below the root layout but NOT the root `layout.tsx` / `template.tsx`
-// themselves -- if the layout throws during render, `error.tsx` can't catch it and the
-// user is back to a blank white screen. `global-error.tsx` is the only boundary that
-// covers a root-layout crash; when it fires it *replaces* the root layout, so it must
-// render its own `<html>` / `<body>`, and it does not inherit `globals.css`, fonts, or
-// providers -- hence the inline styles (a broken layout is exactly when a dark ground and
-// legible text matter most).
+// Only boundary that covers a root-layout crash. It replaces the root layout, so it renders its own
+// <html>/<body> and gets no globals.css, fonts, or providers -- hence the inline styles.
 export default function GlobalError({
   error,
   reset,

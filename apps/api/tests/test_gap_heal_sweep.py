@@ -1,4 +1,4 @@
-"""Tests for the scheduled gap-heal sweep (issue #192/S5 PR 2)."""
+"""Tests for the scheduled gap-heal sweep."""
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -74,11 +74,9 @@ def test_sweep_skips_a_tenant_with_no_cursor_row_and_no_installation(db):
 
 
 def test_sweep_enqueues_a_first_backfill_for_a_tenant_with_no_cursor_row_but_an_installation(db):
-    # Regression test for issue #410: a tenant whose install-time backfill was never even
-    # enqueued (installations.py's _enqueue_backfill_best_effort is best-effort) has no
-    # activity_sync_cursors row at all -- previously that meant it was silently skipped
-    # forever, with no other retry mechanism for that first backfill. Sourced from the
-    # installation row since there's no cursor payload to read account_login/type from.
+    # A tenant whose install-time backfill was never enqueued (best-effort) has no
+    # activity_sync_cursors row at all; source account_login/type from the installation
+    # row instead, since there's no cursor payload to read it from.
     org = org_repo.get_or_create(db, github_login="acme-sweep-never-backfilled")
     installation_repo.create(
         db, account_login="acme-sweep-never-backfilled", account_type="Organization",
@@ -177,8 +175,7 @@ def test_sweep_survives_a_token_resolution_failure_for_one_tenant(db):
 
 def test_sweep_does_not_double_enqueue_while_a_backfill_job_is_still_active(db):
     # The cursor only advances once the worker's handler reaches _mark_done -- a sweep that
-    # fires again before a slow/retried job finishes must not pile up a second job for the
-    # same tenant (issue found on this PR's own review).
+    # fires again before a slow/retried job finishes must not pile up a second job.
     org = org_repo.get_or_create(db, github_login="acme-sweep-dedupe")
     stale = datetime.now(timezone.utc) - timedelta(hours=10)
     _seed_cursor(db, org.tenant_id, "acme-sweep-dedupe", "Organization", stale)
@@ -192,12 +189,10 @@ def test_sweep_does_not_double_enqueue_while_a_backfill_job_is_still_active(db):
 
 
 def test_sweep_skips_a_tenant_whose_lock_is_held_by_another_connection(db, _engine):
-    # Regression test: the sweep's check-then-enqueue is only safe within a single sweep
-    # pass. Two concurrent passes (e.g. two API replicas) could both see "no active job"
-    # before either commits and both enqueue -- proven here with a second real connection
-    # holding the (job_type, tenant_id) advisory lock for the whole call, which the running
-    # sweep must lose and skip this tenant entirely (not just avoid enqueueing twice within
-    # one connection, which the dedupe test above already covers).
+    # The sweep's check-then-enqueue is only safe within a single pass: two concurrent
+    # passes could both see "no active job" before either commits. A second real connection
+    # holds the (job_type, tenant_id) advisory lock for the whole call, and the running
+    # sweep must lose and skip this tenant entirely.
     org = org_repo.get_or_create(db, github_login="acme-sweep-locked")
     stale = datetime.now(timezone.utc) - timedelta(hours=10)
     _seed_cursor(db, org.tenant_id, "acme-sweep-locked", "Organization", stale)

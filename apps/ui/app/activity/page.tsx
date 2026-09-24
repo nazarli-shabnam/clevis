@@ -19,8 +19,7 @@ const EVENTS_REFRESH_SECONDS = 30
 const HEATMAP_COLOR_SCALE = [CHART_COLORS.grid, "#1d4ed8", "#3b82f6", "#60a5fa", "#93c5fd"]
 
 export default function ActivityPage() {
-  // Marks all cockpit-sourced events as read so the sidebar's unread badge
-  // clears once the user has actually looked at this page.
+  // Marks cockpit events as read so the sidebar's unread badge clears.
   useEffect(() => {
     localStorage.setItem("activity_last_seen_at", new Date().toISOString())
   }, [])
@@ -42,12 +41,8 @@ export default function ActivityPage() {
   })
 
   const token = resolveQuery.data?.token ?? ""
-  // Queries fire once an org is set and token resolution has settled, regardless of
-  // whether a saved PAT was found -- an org connected purely via GitHub App
-  // installation (no PAT ever saved, a fully supported flow) has no `token` here, but
-  // the API resolves an installation token server-side the same way Overview's queries
-  // already rely on (see app/page.tsx). Gating on a resolved PAT specifically made this
-  // page permanently blank for App-only orgs (#251).
+  // Fire once token resolution settles, PAT or not -- App-only orgs have no `token` here and
+  // the API resolves an installation token server-side.
   const hasOrg = org.trim().length > 0
   const queriesEnabled = hasOrg && !resolveQuery.isLoading
 
@@ -59,10 +54,8 @@ export default function ActivityPage() {
     refetchInterval: EVENTS_REFRESH_SECONDS * 1000,
   })
 
-  // Heatmap data rides on the personal cockpit endpoint (commit_heatmap_52w) --
-  // that endpoint is personal-scoped (no OrgMembership needed), unlike the
-  // org-scoped failed-runs/release-timeline calls below, but the same resolved
-  // token works for either since it's just a client-supplied PAT either way.
+  // Heatmap comes from the personal cockpit endpoint (no org membership needed); the same
+  // resolved token works for it and the org-scoped calls below.
   const cockpitQuery = useQuery({
     queryKey: ["analytics.cockpit-heatmap", org],
     queryFn: () => api.analytics.cockpit(org, token),

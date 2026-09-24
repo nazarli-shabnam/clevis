@@ -1,14 +1,6 @@
-"""GET-equivalent org activity feed — proxies GitHub's `/orgs/{org}/events` and
-normalizes each raw event into a human-readable summary (docs/plan.md Phase 9).
-
-Implemented as POST (not the literal GET the plan doc sketches) so an optional
-client-supplied PAT travels in the request body, never a URL/query string --
-matching every other GitHub-token-bearing endpoint in this codebase
-(src.routers.repos's *Input models).
-
-Mounted with the full "/github/orgs/{org_login}/events" path on the router
-itself (no `prefix=` passed to include_router in main.py), matching every
-sibling org-scoped router's convention of defining its complete path locally.
+"""Org activity feed — proxies GitHub's `/orgs/{org}/events`, normalized into
+human-readable summaries. POST (not GET) so an optional client-supplied PAT travels in
+the body, never a URL/query string.
 """
 
 import asyncio
@@ -47,11 +39,9 @@ from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_to
 
 logger = logging.getLogger(__name__)
 
-# repo_events.event_type is the lowercase vocabulary apps/worker's event_consumer.py and
-# backfill.py both write (issue #191/#192) -- the UI's event-feed.tsx filter chips match
-# against GitHub's own raw PascalCase event type strings (e.g. "PushEvent"), the same
-# strings the live-GitHub path below has always returned. Reversing the map here keeps
-# the response contract identical regardless of which path served it.
+# repo_events.event_type is the lowercase vocabulary the worker writes; the UI's filter
+# chips match GitHub's raw PascalCase strings (e.g. "PushEvent") -- this map keeps the
+# response contract identical regardless of which path served it.
 _EVENT_TYPE_TO_GITHUB = {
     "push": "PushEvent",
     "pull_request": "PullRequestEvent",
@@ -62,15 +52,12 @@ _EVENT_TYPE_TO_GITHUB = {
 
 router = APIRouter()
 
-# Each repo costs one additional GitHub call for failed-runs/release-timeline, on
-# top of the initial repo list -- matching analytics.py's _MAX_REPOS_FOR_AGGREGATES
-# tier for per-repo fan-out.
+# Each repo costs one additional GitHub call for failed-runs/release-timeline, on top
+# of the initial repo list -- bounds per-repo fan-out.
 _MAX_REPOS_FOR_FEED = 20
 
-# Short TTL, well under the frontend's 30s poll interval -- collapses concurrent
-# polls from multiple open tabs/team members watching the same org into one
-# upstream call, mirroring repos.py's _stats_cache for the same class of data
-# (identical for every viewer of a given org at a given moment).
+# Short TTL, well under the frontend's 30s poll interval -- collapses concurrent polls
+# from multiple viewers of the same org into one upstream call.
 _EVENTS_CACHE_TTL_SECONDS = 25
 _events_cache: dict[tuple[str, str, int], tuple[float, OrgEventsResponse]] = {}
 
@@ -140,23 +127,16 @@ def _fetch_events(org_login: str, token: str, per_page: int) -> OrgEventsRespons
     raw_events = client.request("GET", f"/orgs/{org_login}/events", params={"per_page": per_page})
     if not isinstance(raw_events, list):
         # GitHub's events endpoint always returns a JSON array; a dict here means
-        # GitHubClient's empty-body fallback (`{}`) kicked in on an unexpected 2xx
-        # response -- surface that as an error rather than silently rendering it
-        # as "no events".
+        # GitHubClient's empty-body fallback kicked in on an unexpected 2xx response.
         raise HTTPException(status_code=502, detail="Unexpected response from GitHub events API")
     events = [_normalize_event(e) for e in raw_events if not _is_bot(e)]
     return OrgEventsResponse(org=org_login, events=events)
 
 
 def _fetch_events_from_repo_events(db: Session, org_login: str, tenant_id: int, per_page: int) -> OrgEventsResponse:
-    """S6: serves the Activity Feed from the already-populated, already-fresh repo_events
-    table (S3 webhooks + S4 normalization + S5 install-time backfill/gap-healing) instead
-    of a live GitHub call -- no token, no GitHub rate-limit exposure, no cache needed (a
-    cheap indexed DB read doesn't need one). Relies on the tenant session context
-    require_org_role's dependency already set (RLS, migration 0036) -- tenant_id is passed
-    through explicitly only for the WHERE clause, not to re-establish that context.
-    Bot-filtered here at read time, matching backfill.py's own note that repo_events itself
-    stores every actor unfiltered by design (filtering is a display concern, not storage)."""
+    """Serves the Activity Feed from the already-populated repo_events table instead of a
+    live GitHub call -- no token, no rate-limit exposure, no cache needed. Bot-filtered
+    here at read time; repo_events itself stores every actor unfiltered by design."""
     rows = (
         db.query(RepoEvent)
         .filter(RepoEvent.tenant_id == tenant_id, ~RepoEvent.actor.like("%[bot]"))
@@ -206,31 +186,18 @@ def org_events(
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     db: Session = Depends(get_db),
 ):
-    # repo_events only ever gets rows for a tenant with a connected GitHub App
-    # installation -- webhooks, install-time backfill, and gap-healing (S3-S5) all require
-    # one. An org still on the legacy PAT-only path has no installation and therefore no
-    # repo_events rows; falling through to the live-GitHub path for that case (unchanged
-    # below) avoids silently regressing it to an empty feed. Mirrors token_resolution.py's
-    # own "prefer installation, fall back to client token" precedent, applied to the read
-    # path instead of the auth path.
-    #
-    # get_for_org's own filter only matches on org_id/account_login (it's a general lookup,
-    # also used to just display "is something connected" in list endpoints) -- a row can
-    # exist with installation_id IS NULL (e.g. sync_org_installation's known-admin path lets
-    # a caller re-sync org metadata without a real installation_id). Checking
-    # installation_id here too, rather than widening get_for_org itself, mirrors
-    # token_resolution.py's _from_installation, which guards the exact same gap at its own
-    # call site instead of baking the check into the shared repository function.
+    # repo_events only has rows for a tenant with a connected GitHub App installation; a
+    # legacy PAT-only org falls through to the live-GitHub path below to avoid an empty feed.
+    # get_for_org can return a row with installation_id IS NULL (re-synced org metadata
+    # without a real installation), so installation_id is checked explicitly here too.
     installation = installation_repo.get_for_org(db, org_id=ctx.org.id, account_login=org_login)
     if installation is not None and installation.installation_id is not None:
         from_db = _fetch_events_from_repo_events(db, org_login, ctx.org.tenant_id, payload.per_page)
         if from_db.events:
             return from_db
-        # repo_events is empty for this tenant. That normally means the GitHub App isn't
-        # subscribed to the push/pull_request/issues/release/create webhooks yet (see
-        # docs/self-hosting.md), or the one-time install backfill has aged out. Rather
-        # than show a permanently blank feed, fall through to the live-GitHub read below
-        # -- resolve_org_token already prefers the installation token.
+        # repo_events being empty usually means the webhooks aren't subscribed yet or the
+        # install backfill aged out -- fall through to a live-GitHub read rather than show
+        # a permanently blank feed.
 
     client_token = payload.token.get_secret_value() if payload.token else None
     try:
@@ -243,43 +210,25 @@ def org_events(
         raise _github_error(exc) from exc
 
 
-# ---------------------------------------------------------------------------
-# S6 foundation: first read path against a pre-computed aggregate table instead
-# of repo_events row-by-row or a live GitHub call. repo_event_daily_counts
-# (migration 0037, S4 PR 2) has been upserted by apps/worker's event_consumer.py
-# and backfill.py since S4/S5 shipped, but nothing in apps/api has read it until
-# now -- this is the "aggregates-first API" half of S6's own branch name
-# (feat/aggregates-api-sse), proving the read + live-push pattern once on one
-# real slice of data before the feature-module phases (8, 10/16, 11/18, 12/14,
-# 13, 17) each build their own dashboard on top of it.
-# ---------------------------------------------------------------------------
-
-# Same reasoning as _MAX_REPOS_FOR_FEED below: an upper bound on a client-supplied
-# window, not a default -- keeps a mistaken/malicious `days=100000` from summing an
-# unbounded number of daily-count rows.
+# Upper bound on a client-supplied window (not a default) -- keeps a malicious
+# `days=100000` from summing an unbounded number of daily-count rows.
 _ACTIVITY_SUMMARY_MAX_DAYS = 90
 _ACTIVITY_SUMMARY_DEFAULT_DAYS = 7
 
-# SSE poll cadence and a hard cap on how long a single stream connection stays open
-# (v1: poll-and-diff against the aggregate table, not Postgres LISTEN/NOTIFY or a
-# Redis pub/sub channel -- simplest thing that proves live-push works; a client
-# whose connection hits the cap just reconnects, same as any short-lived SSE
-# gateway timeout would force anyway).
+# SSE poll cadence and a hard cap on stream duration -- poll-and-diff against the
+# aggregate table rather than LISTEN/NOTIFY or pub/sub; a client past the cap just
+# reconnects, same as any SSE gateway timeout would force anyway.
 _SSE_POLL_INTERVAL_SECONDS = 5
 _SSE_MAX_DURATION_SECONDS = 15 * 60
-# Upper bound on a single snapshot read. The stream offloads the read to a threadpool
-# worker via anyio.to_thread.run_sync with abandon_on_cancel=False (the worker owns the
-# Session, so we must not abandon it mid-query) -- meaning a snapshot that blocks would
-# also block cancellation of the stream itself. A server-side statement_timeout lets
-# Postgres kill a stuck read so the worker returns and cancellation can proceed.
+# Upper bound on a single snapshot read. The stream offloads it to a threadpool worker
+# with abandon_on_cancel=False, so a blocked read would also block cancellation --
+# statement_timeout lets Postgres kill a stuck read so the worker can return.
 _SSE_SNAPSHOT_TIMEOUT_MS = 20_000
 
 
 def _org_installation_connected(db: Session, org_login: str, ctx: OrgContext) -> bool:
-    # Same installation_id-presence guard as org_events above (see that handler's
-    # comment) -- repo_event_daily_counts is upserted by the same pipeline that
-    # populates repo_events, so it's only ever non-empty for a tenant with a real
-    # connected installation.
+    # Same installation_id-presence guard as org_events -- repo_event_daily_counts is
+    # only ever non-empty for a tenant with a real connected installation.
     installation = installation_repo.get_for_org(db, org_id=ctx.org.id, account_login=org_login)
     return installation is not None and installation.installation_id is not None
 
@@ -302,11 +251,9 @@ def _activity_summary_snapshot(db: Session, org_login: str, ctx: OrgContext, day
 
 
 def _teardown_stream_session(db: Session) -> None:
-    # Mirrors src.core.db.get_db's teardown: app.tenant_id/app.user_id are set with plain
-    # SET (not SET LOCAL -- see set_tenant_session_context), so they persist on the pooled
-    # connection unless RESET before checkin. If any step here fails it's unclear whether
-    # the RESET took, so invalidate() to force the pool to discard the DBAPI connection
-    # rather than risk handing a still-tenant-scoped one to an unrelated later request.
+    # app.tenant_id/app.user_id are set with plain SET (not SET LOCAL), so they persist on
+    # the pooled connection unless RESET before checkin; on failure, invalidate() rather
+    # than risk handing a still-tenant-scoped connection to an unrelated request.
     try:
         db.rollback()
         db.execute(text("RESET app.tenant_id"))
@@ -320,11 +267,9 @@ def _teardown_stream_session(db: Session) -> None:
 
 @contextmanager
 def _stream_poll_session():
-    """A fresh short-lived Session for one poll, torn down (and its connection returned to
-    the pool) before the caller sleeps until the next poll. The stream must NOT hold one
-    Session open for its whole <=15-min lifetime: the Session keeps a pooled connection
-    checked out for as long as it has an open transaction, so a handful of idle streams --
-    openable by any org member -- would otherwise exhaust the connection pool."""
+    """A fresh short-lived Session for one poll, torn down before the caller sleeps until
+    the next poll. The stream must NOT hold one Session open for its whole <=15-min
+    lifetime, or a handful of idle streams would exhaust the connection pool."""
     db = SessionLocal()
     try:
         yield db
@@ -350,20 +295,14 @@ async def _activity_summary_stream(
     *,
     session_scope=_stream_poll_session,
 ):
-    """Async SSE body generator. The between-poll wait is `await asyncio.sleep`, not a
-    blocking `time.sleep` on a threadpool worker -- a stream stays open up to
-    _SSE_MAX_DURATION_SECONDS (15 min), and the previous sync generator pinned one of
-    Starlette's ~40 shared threadpool tokens for that whole time, so ~40 concurrent
-    EventSource connections (openable by any org member) could starve every other
-    endpoint. Each poll's DB snapshot runs on its own short-lived session, offloaded to a
-    thread, so nothing DB-side is held across the sleep either (`session_scope` is
-    injectable only so tests can reuse their transaction-scoped fixture session).
+    """Async SSE body generator. Uses `await asyncio.sleep` (not blocking `time.sleep`) so
+    a stream open for up to _SSE_MAX_DURATION_SECONDS doesn't pin one of Starlette's shared
+    threadpool tokens; each poll's DB snapshot runs on its own short-lived session,
+    offloaded to a thread (`session_scope` is injectable for tests).
 
-    Only emits a real `activity_summary` event when the aggregate actually changed since
-    the last poll (comparing on totals/connected, not generated_at, which changes every
-    poll by definition); otherwise emits an SSE comment as a heartbeat, both to keep
-    intermediary proxies from closing an idle-looking connection and to give the client a
-    liveness signal distinct from "no events yet"."""
+    Only emits a real `activity_summary` event when the aggregate changed since the last
+    poll; otherwise emits an SSE heartbeat comment so intermediary proxies don't close an
+    idle-looking connection."""
     deadline = time.monotonic() + _SSE_MAX_DURATION_SECONDS
     last_key: tuple | None = None
     while time.monotonic() < deadline:
@@ -385,14 +324,10 @@ def org_activity_summary(
     db: Session = Depends(get_db),
 ):
     """Per-repo, per-event-type event counts over a trailing window, read from the
-    pre-computed repo_event_daily_counts rollup -- no live GitHub call, no token. GET (not
-    POST like org_events/failed-runs/release-timeline) because, unlike those, this never
-    takes a client-supplied token in its body -- there is nothing here that needs to avoid
-    a URL/query string.
+    pre-computed repo_event_daily_counts rollup -- no live GitHub call, no token.
 
     Returns connected=False with empty totals (200, not an error) for a legacy PAT-only
-    org that has no GitHub App installation -- repo_event_daily_counts is only ever
-    populated for a tenant with one, same gating as org_events' repo_events path."""
+    org with no GitHub App installation."""
     days = max(1, min(days, _ACTIVITY_SUMMARY_MAX_DAYS))
     return _activity_summary_snapshot(db, org_login, ctx, days)
 
@@ -404,20 +339,13 @@ async def org_activity_summary_stream(
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
 ):
     """SSE channel pushing the same shape org_activity_summary returns, whenever it
-    changes. First concrete piece of S6's "+ SSE" half -- see _activity_summary_stream.
+    changes. See _activity_summary_stream.
 
-    No `Depends(get_db)`: FastAPI 0.116.1 tears a yield-dependency down as soon as the
-    handler *returns* the StreamingResponse, before the body has streamed -- so the
-    stream opens its own per-poll sessions instead (see _stream_poll_session)."""
+    No `Depends(get_db)`: FastAPI tears a yield-dependency down as soon as the handler
+    *returns* the StreamingResponse, before the body has streamed -- so the stream opens
+    its own per-poll sessions instead (see _stream_poll_session)."""
     days = max(1, min(days, _ACTIVITY_SUMMARY_MAX_DAYS))
     return StreamingResponse(_activity_summary_stream(org_login, ctx, days), media_type="text/event-stream")
-
-
-# ---------------------------------------------------------------------------
-# Full developer feed (docs/plan.md Phase 17) -- org-wide failed-run log and
-# release timeline, both fanned out per-repo (best-effort per repo, capped
-# repo count), matching analytics.py's per-repo aggregate helper pattern.
-# ---------------------------------------------------------------------------
 
 
 def _run_duration_seconds(run: dict) -> int | None:
@@ -441,9 +369,8 @@ def _repo_failed_runs(client: GitHubClient, owner: str, repo: str) -> list[Faile
         return []
     raw_runs = data.get("workflow_runs", []) if isinstance(data, dict) else []
 
-    # GitHub returns runs newest-first; group by workflow to walk each workflow's
-    # own timeline independently (a failing workflow on one runs list mustn't count
-    # a different workflow's success as breaking its streak).
+    # GitHub returns runs newest-first; group by workflow so a different workflow's
+    # success doesn't break this workflow's failure streak.
     by_workflow: dict[int, list[dict]] = {}
     for run in raw_runs:
         by_workflow.setdefault(run.get("workflow_id"), []).append(run)
@@ -459,9 +386,7 @@ def _repo_failed_runs(client: GitHubClient, owner: str, repo: str) -> list[Faile
         if streak < 3:
             continue
         latest = runs[0]
-        # A malformed run entry (missing id/created_at) shouldn't 500 the whole repo's
-        # results -- skip just that workflow's streak, same as _pr_summaries/_issue_summaries
-        # in analytics.py degrade on a malformed search-result item.
+        # A malformed run entry (missing id/created_at) shouldn't 500 the whole repo.
         if "id" not in latest or ("run_started_at" not in latest and "created_at" not in latest):
             continue
         summaries.append(

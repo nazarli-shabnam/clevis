@@ -100,16 +100,13 @@ export default function SecurityPage() {
 
   const { scope } = useActiveScope()
   const scopeOrgLogin = scope?.kind === "org" ? scope.login : ""
-  // Security scanning is org-only (the backend 422s for a personal account) — pre-fill
-  // from an org scope, and clear (not just skip) when switching to personal so a stale
-  // org doesn't linger.
+  // Security scanning is org-only (the backend 422s for a personal account); clear rather than
+  // skip on personal so a stale org doesn't linger.
   useEffect(() => {
     setOwner(scopeOrgLogin)
   }, [scopeOrgLogin])
 
-  // Same pattern as the other pages that gate on useActiveScope() (see app/page.tsx,
-  // app/repos/page.tsx, etc.) -- deferred a tick so this doesn't flash before
-  // useActiveScope's first read of localStorage resolves.
+  // Deferred a tick so this doesn't flash before useActiveScope's first localStorage read resolves.
   const [scopeChecked, setScopeChecked] = useState(false)
   useEffect(() => {
     setScopeChecked(true)
@@ -119,11 +116,8 @@ export default function SecurityPage() {
     queryKey: ["installations"],
     queryFn: () => api.installations.list(),
   })
-  // list() above only covers the caller's *personal* installations -- an org's App
-  // installation requires the separate org-scoped endpoint. Errors (403/404, e.g. the
-  // org isn't a recognized Clevis org yet) are treated as "not installed" rather than
-  // surfaced, matching this query's only purpose here (a soft signal to hide the token
-  // field, not something the user needs an error for).
+  // Org installs need the org-scoped endpoint (list() is personal-only). 403/404 is treated as
+  // "not installed": this is only a soft signal to hide the token field.
   const orgInstallsQuery = useQuery<InstallationMeta[]>({
     queryKey: ["installations.org", owner.trim()],
     queryFn: () => api.installations.listForOrg(owner.trim()),
@@ -136,10 +130,8 @@ export default function SecurityPage() {
   const resolveMutation = useMutation({
     mutationFn: (org: string) => api.tokens.resolve(org),
     onSuccess: (data, org) => {
-      // Skip applying a legacy saved token once an installation covers this owner --
-      // otherwise it'd be silently used (the token field, and its "saved" indicator,
-      // are hidden in that case) and could override the installation-token path the
-      // hidden field implies is now authoritative.
+      // Skip a legacy saved token once an installation covers this owner, or the hidden token
+      // would silently override the installation-token path.
       if (shouldApplyResolvedToken(org, owner) && !hasInstallationForOwner) {
         setToken(data.token)
         setTokenSaved(true)
@@ -173,9 +165,7 @@ export default function SecurityPage() {
     },
   })
 
-  // Compliance export (issue #293): pull the full scan history with per-check
-  // detail and hand the auditor a CSV. One row per check per scan (long format);
-  // scans that stored no per-check breakdown still contribute one summary row.
+  // One CSV row per check per scan; scans without per-check detail still contribute a summary row.
   const exportCsv = useMutation({
     mutationFn: () => api.analytics.exportHistory(owner.trim(), exportSince || undefined, exportUntil || undefined),
     onSuccess: (res) => {
@@ -219,11 +209,8 @@ export default function SecurityPage() {
       value: h.score,
     }))
 
-  // "Remediation trend": how many of a scan's checks were passing at the time, over
-  // the last N scans -- an approximation of dependabot/code-scanning remediation
-  // progress using the data already captured per historical scan (ScanHistoryEntry
-  // doesn't expose the full checks_json breakdown via this endpoint), rather than a
-  // literal sum of historical dependabot critical+high counts.
+  // Passing checks per scan over the last N scans: an approximation of remediation progress,
+  // since this endpoint doesn't expose the full checks_json breakdown.
   const remediationTrendData = (historyQuery.data ?? [])
     .slice(0, 10)
     .reverse()
@@ -272,7 +259,6 @@ export default function SecurityPage() {
       )}
 
       <div className="grid gap-4 lg:grid-cols-3">
-        {/* Config */}
         <div className="card">
           <div className="px-4 py-3 border-b border-border">
             <span className="section-title">Scan configuration</span>
@@ -386,7 +372,6 @@ export default function SecurityPage() {
           </div>
         </div>
 
-        {/* Results */}
         {(scan.data || scan.isPending) && (
           <div className="card lg:col-span-2">
             {scan.data && (
@@ -395,7 +380,6 @@ export default function SecurityPage() {
               </div>
             )}
 
-            {/* Gauge + donut side-by-side */}
             {scan.data && (
               <div className="grid sm:grid-cols-2 border-b border-border">
                 <ScoreGauge
@@ -411,7 +395,6 @@ export default function SecurityPage() {
               </div>
             )}
 
-            {/* Score trend */}
             {trendData.length > 1 && (
               <div className="px-4 py-4 border-b border-border">
                 <span className="text-xs font-medium text-muted-foreground block mb-2">
@@ -421,7 +404,6 @@ export default function SecurityPage() {
               </div>
             )}
 
-            {/* Tabs */}
             {scan.data && (
               <div className="px-4 py-2.5 border-b border-border flex items-center gap-3 flex-wrap">
                 <div className="flex items-center gap-1.5">
@@ -463,7 +445,6 @@ export default function SecurityPage() {
 
             <div className="p-4 grid gap-3 sm:grid-cols-2">
               {scan.isPending ? (
-                /* Skeleton while scanning */
                 Array.from({ length: 3 }).map((_, i) => (
                   <div
                     key={i}

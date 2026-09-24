@@ -3,9 +3,8 @@
 import { IconContext } from "@phosphor-icons/react"
 
 /**
- * Standardizes Phosphor icon rendering app-wide: one weight, currentColor fill.
- * Size is left at the Phosphor default (1em) so existing `size-*` utility classes
- * continue to control dimensions per call site.
+ * Standardizes Phosphor icons app-wide: one weight, currentColor. Size stays at the 1em
+ * default so `size-*` classes keep controlling dimensions.
  */
 export function IconProvider({ children }: { children: React.ReactNode }) {
   return (

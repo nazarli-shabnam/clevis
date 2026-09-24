@@ -34,8 +34,7 @@ def test_overview_excludes_not_applicable_checks_from_score():
     with patch("src.services.analytics_service.run_all_checks", return_value=report):
         overview = get_overview(owner="acme", token="tok")
 
-    # not_applicable is excluded from both the numerator and denominator —
-    # scored against {pass, fail} only, not {pass, not_applicable, fail}.
+    # not_applicable is excluded from both numerator and denominator.
     assert overview["failed_checks"] == 1
     assert overview["score"] == 50
 
@@ -53,9 +52,7 @@ def test_overview_all_not_applicable_checks_scores_100():
 
     assert overview["failed_checks"] == 0
     assert overview["score"] == 100
-    # total_checks must also exclude not_applicable entries — otherwise the
-    # UI's `passed = total - failed` reads "2 passed" for an org where
-    # nothing was actually evaluated.
+    # total_checks must exclude not_applicable too, or the UI's "passed = total - failed" lies.
     assert overview["total_checks"] == 0
 
 
@@ -72,8 +69,6 @@ def test_overview_total_checks_excludes_not_applicable():
     with patch("src.services.analytics_service.run_all_checks", return_value=report):
         overview = get_overview(owner="acme", token="tok")
 
-    # 4 checks total, but only 2 are evaluable (pass/fail); total_checks
-    # must reflect the same scored set used for failed_checks/score, not
-    # the raw, unfiltered checks list.
+    # total_checks must reflect the same scored set as failed_checks/score, not the raw list.
     assert overview["total_checks"] == 2
     assert overview["failed_checks"] == 1

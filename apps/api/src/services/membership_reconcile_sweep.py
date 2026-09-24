@@ -1,15 +1,12 @@
-"""Collaborators PR 2 of 3: periodically re-sync each org-kind tenant's org_members/
-repo_collaborators state via a full GitHub roster poll.
+"""Periodically re-sync each org-kind tenant's org_members/repo_collaborators state via a
+full GitHub roster poll.
 
-Mirrors gap_heal_sweep.py's shape exactly (see that module's docstring for the pattern this
-reuses) -- the one structural difference is scope: only org-kind tenants have org membership
-to reconcile at all (a personal tenant has no `/orgs/{org}/...` roster), so personal tenants
-are skipped outright here, not just left with no cursor row.
+Mirrors gap_heal_sweep.py's shape, except only org-kind tenants have org membership to
+reconcile (personal tenants are skipped outright, not just left with no cursor row).
 
-This poll is not a fallback for missed webhooks the way gap-healing is for activity sync --
-per docs/plan.md's Collaborators research, an org member's role changing and 2FA
-enrollment/status have *zero* webhook coverage, ever. This sweep is the only source of truth
-for those two fields, permanently, not a backstop for an outage.
+This poll is not a fallback for missed webhooks the way gap-healing is for activity sync:
+an org member's role changing and 2FA status have zero webhook coverage, ever -- this
+sweep is the only source of truth for those two fields, permanently.
 """
 
 import logging
@@ -67,9 +64,8 @@ def run_membership_reconcile_sweep(db: Session) -> None:
         if not org_login:
             continue
 
-        # org_membership_sync_cursors is RLS-enabled (migration 0041) -- must be set before
-        # reading this tenant's own cursor row, one tenant at a time, same as every other
-        # system code path that resolves a tenant_id without an acting user.
+        # org_membership_sync_cursors is RLS-enabled -- must be set before reading this
+        # tenant's own cursor row, one tenant at a time.
         set_session_tenant(db, tenant_id)
         cursor_row = db.execute(
             text("SELECT last_synced_at FROM org_membership_sync_cursors WHERE tenant_id = :tenant_id"),
@@ -79,10 +75,9 @@ def run_membership_reconcile_sweep(db: Session) -> None:
             (last_synced_at,) = cursor_row
             if last_synced_at is not None and last_synced_at >= cutoff:
                 continue
-        # Acquired before the active-job check (not after) so the whole check-then-enqueue
-        # window for this tenant is mutually exclusive across concurrent sweep passes (e.g.
-        # two API replicas) -- a losing process skips this tenant entirely this tick rather
-        # than re-deriving a now-stale "no active job" answer. See sweep_lock.py.
+        # Acquired before the active-job check so the whole check-then-enqueue window for
+        # this tenant is mutually exclusive across concurrent sweep passes -- a losing
+        # process skips this tenant this tick rather than re-deriving a stale answer.
         if not try_acquire_sweep_slot(db, _JOB_TYPE, tenant_id):
             continue
         if _has_active_reconcile_job(db, tenant_id):
@@ -97,8 +92,6 @@ def run_membership_reconcile_sweep(db: Session) -> None:
             logger.warning("membership-reconcile sweep skipping %s (tenant %d): %s", org_login, tenant_id, exc)
         except Exception:
             # A DB-level error here would leave this shared Session's transaction aborted --
-            # roll back so the sweep can keep going for the remaining tenants (also releases
-            # the advisory lock). Same posture as gap_heal_sweep.py's own except-Exception
-            # branch.
+            # roll back so the sweep can keep going for the remaining tenants.
             db.rollback()
             logger.exception("membership-reconcile sweep failed to enqueue for %s (tenant %d)", org_login, tenant_id)

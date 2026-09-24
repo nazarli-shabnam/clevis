@@ -25,9 +25,8 @@ export default function InviteAcceptPage() {
     onSuccess: () => router.push("/"),
   })
 
-  // The backend 403s with this specific message when the account's email isn't verified
-  // yet (issue #217) -- distinct from a genuine email mismatch, which also 403s but with
-  // different wording, so only this case gets a resend affordance.
+  // The backend 403s with this specific message for an unverified email -- distinct from an
+  // email mismatch (also 403, different wording), so only this case gets a resend affordance.
   const needsVerification = accept.isError && accept.error.message.toLowerCase().includes("verify")
   const [resendState, setResendState] = useState<"idle" | "sending" | "sent" | "error">("idle")
 

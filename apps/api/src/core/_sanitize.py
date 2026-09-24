@@ -1,8 +1,7 @@
 import re
 
-# Job.result is stored and later exposed verbatim via GET /jobs to workspace admins.
-# Cap length and strip anything that looks like a token/credential fragment as defense
-# in depth against GitHub API error text echoing request details (URLs, headers, params).
+# Job.result is exposed verbatim via GET /jobs; cap length and strip token-like fragments in
+# case GitHub error text echoes request details.
 _MAX_ERROR_LENGTH = 500
 _TRUNCATION_SUFFIX = "...(truncated)"
 

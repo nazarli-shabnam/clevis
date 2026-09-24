@@ -1,9 +1,7 @@
 import { Warning, ArrowSquareOut } from "@phosphor-icons/react"
 import type { InstallationMeta } from "@/lib/api/types"
 
-// Deep link to an installation's page on GitHub, where the owner can review and approve
-// the App's updated permission request. `installation_id` is part of the path, so the
-// link is always per-installation.
+// Per-installation page on GitHub where the owner can approve updated permissions.
 function reviewUrl(install: InstallationMeta): string | null {
   const slug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG
   if (!slug || install.installation_id == null) return null
@@ -11,14 +9,9 @@ function reviewUrl(install: InstallationMeta): string | null {
 }
 
 /**
- * Shown when a connected GitHub App installation is missing the permissions one or more
- * optional write automations (#286–#291) need. Only a GitHub org *owner* can approve the
- * new request, so this is an org-admin-facing prompt with a link out to GitHub; the
- * notice clears on its own once the `installation.new_permissions_accepted` webhook lands.
- *
- * Renders nothing when the install is fine, or when its permissions have never been
- * observed (`permissions_synced_at == null`) — in that case a muted "not yet checked"
- * line is shown instead so we don't imply everything is blocked.
+ * Prompt to approve missing GitHub App permissions that write automations need; only an
+ * org owner can approve, and it clears once `new_permissions_accepted` arrives. Shows a
+ * muted "not yet checked" line when permissions were never synced.
  */
 export function PermissionDriftNotice({
   install,
