@@ -1,11 +1,14 @@
+import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import func, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from src.core.db import GitHubInstallation, set_session_tenant
 from src.repositories import tenant_repo
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_tenant_id(db: Session, org_id: int | None, owner_user_id: int | None) -> int:
@@ -38,7 +41,10 @@ def upsert(
     if existing:
         existing.account_type = account_type
         existing.auth_mode = auth_mode
-        existing.installation_id = installation_id
+        if installation_id is not None:
+            # A re-sync without an id (e.g. the org/personal sync routes) must not wipe the
+            # one GitHub gave us -- token minting and webhook tenant resolution depend on it.
+            existing.installation_id = installation_id
         existing.token_ref = token_ref
         existing.tenant_id = tenant_id
         db.commit()
@@ -66,7 +72,10 @@ def upsert(
             raise
         existing.account_type = account_type
         existing.auth_mode = auth_mode
-        existing.installation_id = installation_id
+        if installation_id is not None:
+            # A re-sync without an id (e.g. the org/personal sync routes) must not wipe the
+            # one GitHub gave us -- token minting and webhook tenant resolution depend on it.
+            existing.installation_id = installation_id
         existing.token_ref = token_ref
         existing.tenant_id = tenant_id
         db.commit()
@@ -172,7 +181,39 @@ def delete_by_installation_id(db: Session, installation_id: int) -> tuple[int, i
     resolved_tenant_id = rows[0].tenant_id if rows else tenant_id
     count = db.query(GitHubInstallation).filter(GitHubInstallation.installation_id == installation_id).delete()
     db.commit()
+    if resolved_tenant_id is not None:
+        purge_tenant_github_data_if_disconnected(db, resolved_tenant_id)
     return count, resolved_tenant_id
+
+
+# GitHub-derived, per-tenant data that's meaningless once no installation covers the tenant.
+_TENANT_GITHUB_TABLES = (
+    "security_alerts",
+    "org_members",
+    "repo_collaborators",
+    "activity_sync_cursors",
+    "org_membership_sync_cursors",
+    "automation_repo_settings",
+    "repo_event_daily_counts",
+    "repo_events",
+)
+
+
+def purge_tenant_github_data_if_disconnected(db: Session, tenant_id: int) -> None:
+    """Delete a tenant's GitHub-derived rows once its last installation is gone.
+
+    Each table runs in its own savepoint: under the restricted clevis_api role some tables
+    grant no DELETE, and a missing privilege there must not fail the uninstall itself."""
+    set_session_tenant(db, tenant_id)
+    if db.query(GitHubInstallation).filter(GitHubInstallation.tenant_id == tenant_id).first() is not None:
+        return
+    for table in _TENANT_GITHUB_TABLES:
+        try:
+            with db.begin_nested():
+                db.execute(text(f"DELETE FROM {table} WHERE tenant_id = :t"), {"t": tenant_id})
+        except ProgrammingError:
+            logger.warning("could not purge %s for tenant %s after uninstall (no DELETE privilege)", table, tenant_id)
+    db.commit()
 
 
 def update_permissions(
