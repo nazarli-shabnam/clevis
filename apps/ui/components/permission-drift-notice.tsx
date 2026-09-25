@@ -1,11 +1,12 @@
 import { Warning, ArrowSquareOut } from "@phosphor-icons/react"
 import type { InstallationMeta } from "@/lib/api/types"
+import { githubWebUrl } from "@/lib/github-web"
 
 // Per-installation page on GitHub where the owner can approve updated permissions.
 function reviewUrl(install: InstallationMeta): string | null {
   const slug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG
   if (!slug || install.installation_id == null) return null
-  return `https://github.com/apps/${slug}/installations/${install.installation_id}`
+  return githubWebUrl(`apps/${slug}/installations/${install.installation_id}`)
 }
 
 /**

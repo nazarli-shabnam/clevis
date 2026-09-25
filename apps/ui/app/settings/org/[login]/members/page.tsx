@@ -12,6 +12,7 @@ import { api } from "@/lib/api/client"
 import { addRevokingId, isRevoking, removeRevokingId } from "@/lib/revoke-pending"
 import { relativeTime } from "@/lib/format"
 import type { GithubOrgMember, InvitationOut } from "@/lib/api/types"
+import { githubWebUrl } from "@/lib/github-web"
 
 const MEMBER_COLUMNS: DataTableColumn<GithubOrgMember>[] = [
   {
@@ -24,7 +25,7 @@ const MEMBER_COLUMNS: DataTableColumn<GithubOrgMember>[] = [
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={m.avatar_url} alt="" className="size-5 rounded-full" />
         <a
-          href={`https://github.com/${m.login}`}
+          href={githubWebUrl(m.login)}
           target="_blank"
           rel="noreferrer"
           className="text-foreground/80 hover:text-foreground"
