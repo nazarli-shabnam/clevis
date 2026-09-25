@@ -182,4 +182,13 @@ describe("BranchProtectionCard", () => {
     expect(body.preset.allow_deletions).toBe(true)
     expect(body.preset.required_pull_request_reviews.required_approving_review_count).toBe(3)
   })
+  it("sends allow_deletions when block-deletion is unticked", async () => {
+    mockBulk.mockResolvedValue(DRY_RUN_RESP)
+    renderCard()
+    fireEvent.click(screen.getByLabelText("Block deletion"))
+    fireEvent.click(screen.getByLabelText("api"))
+    fireEvent.click(screen.getByRole("button", { name: /Preview changes/ }))
+    await waitFor(() => expect(mockBulk).toHaveBeenCalled())
+    expect(mockBulk.mock.calls[0][1].preset.allow_deletions).toBe(true)
+  })
 })
