@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { useMutation, useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api/client"
 import type { DependabotTriageResponse } from "@/lib/api/types"
@@ -26,11 +26,13 @@ export function DependabotTriageCard({ org, owner, repo, token }: Props) {
   const [runArmed, setRunArmed] = useState(false)
 
   const ready = org.trim().length > 0 && owner.trim().length > 0 && repo.trim().length > 0
+  const queryClient = useQueryClient()
+  const settingKey = ["dependabotTriage.setting", org.trim(), owner.trim(), repo.trim()]
 
   // Hydrate the form from the persisted setting so opening the page can't silently
   // downgrade a repo that's already enabled.
   const current = useQuery({
-    queryKey: ["dependabotTriage.setting", org.trim(), owner.trim(), repo.trim()],
+    queryKey: settingKey,
     queryFn: () => api.dependabotTriage.getRepo(org.trim(), owner.trim(), repo.trim()),
     enabled: ready,
     retry: false,
@@ -56,7 +58,17 @@ export function DependabotTriageCard({ org, owner, repo, token }: Props) {
         mode,
         merge_method: mergeMethod,
       }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: settingKey }),
   })
+
+  // A real run uses the *saved* setting server-side, so the run button reflects the saved
+  // setting and is blocked while the form has unsaved changes.
+  const saved = current.data
+  const dirty =
+    !!saved &&
+    (enabled !== saved.enabled ||
+      mode !== saved.mode ||
+      (mode === "approve_and_merge" && mergeMethod !== (saved.merge_method || "squash")))
 
   const run = useMutation({
     mutationFn: (dryRun: boolean) =>
@@ -131,7 +143,7 @@ export function DependabotTriageCard({ org, owner, repo, token }: Props) {
           </Button>
           <Button
             size="sm"
-            disabled={!ready || run.isPending || !enabled}
+            disabled={!ready || run.isPending || !saved?.enabled || dirty}
             onClick={() => {
               if (runArmed) {
                 setRunArmed(false)
@@ -141,9 +153,11 @@ export function DependabotTriageCard({ org, owner, repo, token }: Props) {
               }
             }}
           >
-            {runArmed
+            {dirty
+              ? "Save settings first"
+              : runArmed
               ? "Click again to confirm"
-              : mode === "approve_and_merge"
+              : saved?.mode === "approve_and_merge"
                 ? "Approve & merge eligible PRs"
                 : "Approve eligible PRs"}
           </Button>
