@@ -33,7 +33,7 @@ Tables managed by Alembic — no runtime DDL. (Not an exhaustive list of every t
 
 ### Job queue flow
 
-**Enqueueing (API):** `POST /repos/{owner}/{repo}/actions-caches/clear` — if `dry_run=true`, only an audit log is written; if `dry_run=false`, the token is Fernet-encrypted and a `jobs` row with `status='queued'` is inserted.
+**Enqueueing (API):** `POST /me/repos/{owner}/{repo}/actions-caches/clear` — if `dry_run=true`, only an audit log is written; if `dry_run=false`, the token is Fernet-encrypted and a `jobs` row with `status='queued'` is inserted.
 
 **Processing (worker):** atomic `SELECT FOR UPDATE SKIP LOCKED` claims one job, updates status to `processing`, decrypts the token, calls the GitHub API, then updates to `done` or `failed`. Multiple worker replicas can poll safely.
 
@@ -48,7 +48,7 @@ The old `viewer` / `analyst` / `admin` header model was removed in Phase 5.
 
 ### Auth & GitHub App
 
-Two sign-in paths, both issuing the same JWT session: password (`/auth/setup` for the first-run admin, `/auth/register` + `/auth/login` after that) and "Sign in with GitHub" OAuth (`apps/api/src/routers/github_auth.py`). Separately, a **GitHub App installation** (`apps/api/src/routers/installations.py`, `apps/api/src/routers/webhooks.py`) is how an org actually grants Clevis API access — installing lets the API mint short-lived per-installation tokens instead of relying on a browser-pasted PAT. `POST /webhooks/github` (HMAC-signature-verified) keeps `github_installations` in sync on install/uninstall lifecycle events; it does not do full webhook-driven event ingestion.
+Two sign-in paths, both issuing the same JWT session: password (`/auth/setup` for the first-run admin, `/auth/register` + `/auth/login` after that) and "Sign in with GitHub" OAuth (`apps/api/src/routers/github_auth.py`). Separately, a **GitHub App installation** (`apps/api/src/routers/installations.py`, `apps/api/src/routers/webhooks.py`) is how an org actually grants Clevis API access — installing lets the API mint short-lived per-installation tokens instead of relying on a browser-pasted PAT. `POST /webhooks/github` (HMAC-signature-verified) keeps `github_installations` in sync on install/uninstall lifecycle events, and persists the other subscribed events to `webhook_deliveries` and queues them on Redis Streams, where `apps/worker`'s event consumer normalizes them into `repo_events`, `security_alerts`, `org_members` and `repo_collaborators`.
 
 ### Token encryption / storage
 
@@ -95,6 +95,7 @@ Key variables:
 - `NEXT_PUBLIC_API_BASE` — default `http://localhost:8080` (baked in at UI build time as a Next.js `NEXT_PUBLIC_*` var, not read at runtime; see `apps/ui/Dockerfile`'s `ARG`).
 - `CORS_ORIGINS` — JSON array of allowed origins; default `["http://localhost:3000"]`. Read once at API startup (a security boundary), so a change requires an API restart. Set your real UI domain in production.
 - `GITHUB_API_BASE` — default `https://api.github.com`; set for GitHub Enterprise (e.g. `https://github.yourco.com/api/v3`). Used by both the API and the worker. Not runtime-editable because it's where GitHub tokens are sent.
+- `NEXT_PUBLIC_GITHUB_WEB_BASE` — default `https://github.com`; GitHub's *web* origin for browser links (App install pages, member profiles). Set it alongside `GITHUB_API_BASE` on GitHub Enterprise (e.g. `https://github.yourco.com`). Baked in at UI build time.
 - `GITHUB_APP_ID` / `GITHUB_APP_CLIENT_ID` / `GITHUB_APP_CLIENT_SECRET` / `GITHUB_APP_PRIVATE_KEY` / `GITHUB_APP_WEBHOOK_SECRET` / `NEXT_PUBLIC_GITHUB_APP_SLUG` — unset by default (all `None`); "Sign in with GitHub" and the "Install GitHub App" button raise a clear "not configured" error until these are set. See `docs/self-hosting.md` for how to register the App.
 - `SMTP_HOST` / `SMTP_PORT` (default `587`) / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` — unset by default. Without these, self-registered accounts are still created successfully but stay `email_verified=False` and can't accept org invitations until an operator configures SMTP (or the user later verifies via GitHub OAuth linking, which verifies immediately).
 - `WORKER_DB_PASSWORD` — unset by default, in which case the worker keeps sharing the API's `DB_USER`/`DB_PASSWORD` credential (today's behavior). When set, `docker/postgres-init/01-create-worker-role.sh` provisions a `clevis_worker` Postgres role on a fresh `db` data volume, migration `0020` grants it SELECT/INSERT/UPDATE on `jobs` and SELECT on `app_config` (the only tables the worker touches), and `apps/worker/entrypoint.sh` connects as that role instead. Prerequisite for eventually granting the worker `BYPASSRLS` once Row-Level Security lands — see `docs/self-hosting.md` for manual role provisioning on existing deployments (the init script only runs on a brand-new volume).

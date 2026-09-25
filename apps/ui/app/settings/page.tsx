@@ -19,6 +19,7 @@ import { initialConfigValues, mergeSavedConfigValue } from "@/lib/config-values"
 import { useAuth } from "@/lib/auth-context"
 import { THEMES, useTheme } from "@/lib/theme"
 import type { InstallationMeta, MyOrgMembership, SavedTokenMeta } from "@/lib/api/types"
+import { githubWebUrl } from "@/lib/github-web"
 
 
 function ProfileSection() {
@@ -296,7 +297,7 @@ function ConnectedOrgsSection() {
   const rowKey = (row: ConnectedInstallation) => `${row.scope}:${row.id}`
 
   const slug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG
-  const installUrl = slug ? `https://github.com/apps/${slug}/installations/new` : null
+  const installUrl = slug ? githubWebUrl(`apps/${slug}/installations/new`) : null
 
   return (
     <div className="card">

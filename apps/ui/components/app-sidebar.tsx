@@ -21,6 +21,7 @@ import { api } from "@/lib/api/client"
 import { useActiveScope, type ActiveScope } from "@/lib/active-scope"
 import { membersHref } from "@/lib/members-href"
 import type { InstallationMeta, MyOrgMembership } from "@/lib/api/types"
+import { githubWebUrl } from "@/lib/github-web"
 
 const ACTIVITY_LAST_SEEN_KEY = "activity_last_seen_at"
 
@@ -214,7 +215,7 @@ export function AppSidebar() {
   const personalInstall = installs.find((i) => i.account_type === "User")
   const slug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG
   // Always offer installing on another account/org; there's no cap on how many can be connected.
-  const addInstallUrl = slug ? `https://github.com/apps/${slug}/installations/new` : null
+  const addInstallUrl = slug ? githubWebUrl(`apps/${slug}/installations/new`) : null
 
   const scopeOptions: ScopeOption[] = useMemo(
     () => [

@@ -126,6 +126,7 @@ services:
         # NEXT_PUBLIC_* vars must be available at build time
         NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE}
         NEXT_PUBLIC_GITHUB_APP_SLUG: ${NEXT_PUBLIC_GITHUB_APP_SLUG:-}
+        NEXT_PUBLIC_GITHUB_WEB_BASE: ${NEXT_PUBLIC_GITHUB_WEB_BASE:-https://github.com}
     mem_limit: 512m
     env_file:
       - .env
