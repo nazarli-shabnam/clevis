@@ -1,7 +1,7 @@
 """Tests for auth router and config router."""
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import bcrypt
 import pytest
@@ -758,7 +758,7 @@ def test_update_config_valid_worker_poll_seconds(config_client_owner):
     ):
         resp = config_client_owner.put("/config/worker_poll_seconds", json={"value": "10"})
     assert resp.status_code == 200
-    mock_set.assert_called_once_with("worker_poll_seconds", "10")
+    mock_set.assert_called_once_with("worker_poll_seconds", "10", db=ANY)
 
 
 # github_api_base and cors_origins are env-only, not runtime-editable.
@@ -782,7 +782,7 @@ def test_update_config_digest_cadence_accepts_valid_values(config_client_owner, 
     ):
         resp = config_client_owner.put("/config/digest_cadence", json={"value": value})
     assert resp.status_code == 200
-    mock_set.assert_called_once_with("digest_cadence", value)
+    mock_set.assert_called_once_with("digest_cadence", value, db=ANY)
 
 
 @pytest.mark.parametrize("value", ["yes", "1", ""])
@@ -798,7 +798,7 @@ def test_update_config_valid_bool(config_client_owner):
     ):
         resp = config_client_owner.put("/config/registration_enabled", json={"value": "false"})
     assert resp.status_code == 200
-    mock_set.assert_called_once_with("registration_enabled", "false")
+    mock_set.assert_called_once_with("registration_enabled", "false", db=ANY)
 
 
 @pytest.mark.parametrize("value", ["weekly", "yes", ""])
@@ -815,7 +815,7 @@ def test_update_config_valid_pr_nudge_mode(config_client_owner, value):
     ):
         resp = config_client_owner.put("/config/pr_nudge_mode", json={"value": value})
     assert resp.status_code == 200
-    mock_set.assert_called_once_with("pr_nudge_mode", value)
+    mock_set.assert_called_once_with("pr_nudge_mode", value, db=ANY)
 
 
 def test_update_config_pr_nudge_stale_days_is_int_validated(config_client_owner):
@@ -838,7 +838,7 @@ def test_update_config_success(config_client_owner):
     ):
         resp = config_client_owner.put("/config/worker_poll_seconds", json={"value": "10"})
     assert resp.status_code == 200
-    mock_set.assert_called_once_with("worker_poll_seconds", "10")
+    mock_set.assert_called_once_with("worker_poll_seconds", "10", db=ANY)
     assert resp.json()["worker_poll_seconds"] == "10"
 
 

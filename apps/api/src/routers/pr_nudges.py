@@ -85,13 +85,24 @@ def _run(client: GitHubClient, owner: str, repo: str) -> NudgeResponse:
     )
 
 
-def _audit_sweep(db: Session, user: UserOut, owner: str, repo: str, resp: NudgeResponse, tenant_id: int) -> None:
-    # Written after the sweep so the row records what was actually posted on GitHub.
+def _run_audited(
+    db: Session, user: UserOut, client: GitHubClient, owner: str, repo: str, tenant_id: int
+) -> NudgeResponse:
+    """Run the sweep and write one audit row afterwards: what was actually posted on GitHub,
+    or -- when the sweep failed before posting anything -- the attempt and its error."""
+    try:
+        resp = _run(client, owner, repo)
+    except HTTPException as exc:
+        stale_days, mode = _settings()
+        payload = {"mode": mode, "stale_days": stale_days, "error": exc.detail}
+        audit_repo.write(db, user.email, "pr_nudge.sweep", f"{owner}/{repo}", payload, tenant_id=tenant_id)
+        raise
     acted = [r.model_dump() for r in resp.results if r.action in ("commented", "labeled", "error")]
     audit_repo.write(
         db, user.email, "pr_nudge.sweep", f"{owner}/{repo}",
         {"mode": resp.mode, "stale_days": resp.stale_days, "results": acted}, tenant_id=tenant_id,
     )
+    return resp
 
 
 @router.post("/me/repos/{owner}/{repo}/pr-nudges", response_model=NudgeResponse)
@@ -113,9 +124,7 @@ def nudge_stale_prs(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    resp = _run(GitHubClient(token), owner, repo)
-    _audit_sweep(db, user, owner, repo, resp, audit_tenant(db, user.id, owner))
-    return resp
+    return _run_audited(db, user, GitHubClient(token), owner, repo, audit_tenant(db, user.id, owner))
 
 
 @router.post(
@@ -140,6 +149,4 @@ def nudge_stale_prs_for_org(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    resp = _run(GitHubClient(token), owner, repo)
-    _audit_sweep(db, user, owner, repo, resp, ctx.org.tenant_id)
-    return resp
+    return _run_audited(db, user, GitHubClient(token), owner, repo, ctx.org.tenant_id)

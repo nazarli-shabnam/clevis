@@ -93,12 +93,12 @@ def set_triage_setting(
         mode=body.mode,
         extra={"merge_method": body.merge_method},
     )
-    db.commit()
     audit_repo.write(
         db, user.email, "dependabot_triage.setting_saved", f"{owner}/{repo}",
         {"enabled": body.enabled, "mode": body.mode, "merge_method": body.merge_method},
-        tenant_id=ctx.org.tenant_id,
+        tenant_id=ctx.org.tenant_id, commit=False,
     )
+    db.commit()
     return {"enabled": body.enabled, "mode": body.mode, "merge_method": body.merge_method}
 
 

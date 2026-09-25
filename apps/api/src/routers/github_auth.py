@@ -16,7 +16,6 @@ from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from src.core.app_config import get_config
 from src.core.auth import SETUP_LOCK_KEY, create_access_token, set_session_cookie
 from src.core.config import settings
 from src.core.db import User, get_db, set_session_user
@@ -60,6 +59,16 @@ def _refresh_profile(user: User, identity: github_oauth.GitHubIdentity) -> None:
         user.name = identity.name
 
 
+def _registration_enabled(db: Session) -> bool:
+    """Authoritative read in the caller's (locked) transaction -- unlike get_config, a failed
+    read raises instead of silently falling back to the permissive default, so signup fails
+    closed. A missing row means the code default: enabled."""
+    value = db.execute(
+        text("SELECT value FROM app_config WHERE key = 'registration_enabled'")
+    ).scalar()
+    return value is None or value == "true"
+
+
 def find_or_create_user(db: Session, identity: github_oauth.GitHubIdentity) -> User:
     user = db.query(User).filter(User.github_user_id == identity.github_user_id).first()
     if user is not None:
@@ -82,7 +91,7 @@ def find_or_create_user(db: Session, identity: github_oauth.GitHubIdentity) -> U
         db.refresh(user)
         return user
     is_workspace_admin = db.query(User).count() == 0
-    if not is_workspace_admin and get_config("registration_enabled", "true") != "true":
+    if not is_workspace_admin and not _registration_enabled(db):
         db.rollback()
         raise RegistrationDisabled(identity.email)
     user = User(

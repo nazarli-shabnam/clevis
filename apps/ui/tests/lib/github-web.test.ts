@@ -7,6 +7,7 @@ describe("githubWebUrl", () => {
   })
 
   it("defaults to github.com", async () => {
+    vi.stubEnv("NEXT_PUBLIC_GITHUB_WEB_BASE", "")
     const { githubWebUrl } = await import("@/lib/github-web")
     expect(githubWebUrl("apps/clevis/installations/new")).toBe("https://github.com/apps/clevis/installations/new")
   })

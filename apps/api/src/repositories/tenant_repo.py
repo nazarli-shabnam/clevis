@@ -143,12 +143,13 @@ def get_or_create_membership(
 def upsert_membership(
     db: Session, tenant_id: int, user_id: int, role: str, *, commit: bool = True, source: str = "github"
 ) -> Membership:
-    """get_or_create_membership plus fixing a stale role on an existing row.
+    """get_or_create_membership plus fixing a stale role on an existing row. A role change
+    also records ``source`` (whoever changes the role now owns the grant) in the same write.
 
     commit=False keeps the whole sequence in the caller's transaction."""
     membership = get_or_create_membership(db, tenant_id, user_id, role, commit=commit, source=source)
     if membership.role != role:
-        updated = update_membership_role(db, tenant_id, user_id, role, commit=commit)
+        updated = update_membership_role(db, tenant_id, user_id, role, commit=commit, source=source)
         # A concurrent delete_membership could remove the row in between; re-create it.
         membership = (
             updated
@@ -159,7 +160,7 @@ def upsert_membership(
 
 
 def update_membership_role(
-    db: Session, tenant_id: int, user_id: int, role: str, *, commit: bool = True
+    db: Session, tenant_id: int, user_id: int, role: str, *, commit: bool = True, source: str | None = None
 ) -> Membership | None:
     _set_session_user(db, user_id)
     membership = (
@@ -170,6 +171,8 @@ def update_membership_role(
     if membership is None:
         return None
     membership.role = role
+    if source is not None:
+        membership.source = source
     # commit=False: flush into the caller's transaction so its FOR UPDATE lock holds until the
     # caller's single commit. No refresh needed; the value is current in-session.
     if commit:

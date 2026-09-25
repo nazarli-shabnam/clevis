@@ -109,10 +109,9 @@ def test_run_all_checks_personal_account_falls_back_to_user_repos_on_auth_mismat
     assert result["repo_count"] == len(FAKE_REPOS)
 
 
-def test_archived_and_empty_repos_are_excluded():
+def test_archived_repos_are_excluded():
     repos = FAKE_REPOS + [
         {"name": "old", "default_branch": "main", "archived": True, "security_and_analysis": {}},
-        {"name": "blank", "default_branch": "main", "size": 0, "security_and_analysis": {}},
     ]
     with (
         patch("checks.runner._get_all_pages", return_value=repos),

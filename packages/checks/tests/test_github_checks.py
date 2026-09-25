@@ -534,6 +534,7 @@ def test_force_push_fails_when_allowed():
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr("checks.github_checks._get", fake_get)
+        mp.setattr("checks.github_checks._get_all_pages", lambda base, path, token: [])  # no rulesets
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "fail"
     assert result["value"] == {"repos_checked": 1, "force_push_allowed": 1}
@@ -545,11 +546,14 @@ def test_force_push_unprotected_branch_404_means_force_push_is_allowed():
     repos = [{"name": "api", "default_branch": "main"}]
 
     def fake_get(url, token):
-        response = httpx.Response(404, request=httpx.Request("GET", url))
-        raise httpx.HTTPStatusError("not found", request=response.request, response=response)
+        if url.endswith("/protection"):
+            response = httpx.Response(404, request=httpx.Request("GET", url))
+            raise httpx.HTTPStatusError("not found", request=response.request, response=response)
+        return {"name": "main"}  # the branch itself exists
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr("checks.github_checks._get", fake_get)
+        mp.setattr("checks.github_checks._get_all_pages", lambda base, path, token: [])  # no rulesets
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "fail"
     assert result["value"] == {"repos_checked": 1, "force_push_allowed": 1}
@@ -598,15 +602,52 @@ def test_code_scanning_disabled_repo_does_not_mask_a_clean_pass():
     assert result["status"] == "pass"
 
 
-def test_force_push_ruleset_protected_branch_passes():
+def _force_push_run(protection, rules):
+    """protection: dict, or an int status to raise; rules: list, or an int status to raise."""
     def fake_get(url, token):
-        if url.endswith("/rules/branches/main"):
-            return [{"type": "non_fast_forward"}]
-        _raise(404, url)
+        if url.endswith("/protection"):
+            if isinstance(protection, int):
+                _raise(protection, url)
+            return protection
+        return {"name": "main"}
+
+    def fake_pages(base, path, token):
+        assert path.endswith("/rules/branches/main")
+        if isinstance(rules, int):
+            _raise(rules, base + path)
+        return rules
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr("checks.github_checks._get", fake_get)
-        result = DefaultBranchNoForcePushCheck().run(
+        mp.setattr("checks.github_checks._get_all_pages", fake_pages)
+        return DefaultBranchNoForcePushCheck().run(
             owner="acme", token="tok", repos=[{"name": "api", "default_branch": "main"}]
         )
-    assert result["status"] == "pass"
+
+
+def test_force_push_ruleset_protected_branch_passes():
+    assert _force_push_run(404, [{"type": "pull_request"}, {"type": "non_fast_forward"}])["status"] == "pass"
+
+
+def test_force_push_ruleset_overrides_a_permissive_classic_rule():
+    assert _force_push_run({"allow_force_pushes": {"enabled": True}}, [{"type": "non_fast_forward"}])["status"] == "pass"
+    assert _force_push_run({"allow_force_pushes": {"enabled": True}}, [])["status"] == "fail"
+
+
+def test_force_push_rules_lookup_failure_is_unknown_not_allowed():
+    result = _force_push_run(404, 403)
+    assert result["status"] == "error"
+    assert result["value"]["force_push_allowed"] == 0
+
+
+def test_empty_repo_without_a_default_branch_is_skipped_by_branch_checks():
+    def fake_get(url, token):
+        _raise(404, url)  # neither /protection nor the branch itself exists
+
+    repos = [{"name": "blank", "default_branch": "main"}]
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        force = DefaultBranchNoForcePushCheck().run(owner="acme", token="tok", repos=repos)
+        protection = BranchProtectionEnabled().run(owner="acme", token="tok", repos=repos)
+    assert force["value"]["force_push_allowed"] == 0
+    assert protection["value"]["protected"] == 0 and protection["status"] == "error"
