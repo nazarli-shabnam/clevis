@@ -18,6 +18,10 @@ vi.mock("next/navigation", () => ({
   useParams: () => ({ repo: currentRepoParam }),
 }));
 
+vi.mock("@/lib/auth-context", () => ({
+  useAuth: () => ({ user: { is_workspace_admin: true } }),
+}))
+
 vi.mock("@/lib/api/client", () => ({
   api: {
     tokens: {

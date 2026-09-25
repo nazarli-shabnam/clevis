@@ -28,11 +28,13 @@ def _github_cache_error(exc: Exception) -> HTTPException:
 
 def _list_caches(owner: str, repo: str, token: str) -> CacheListResponse:
     try:
-        client = GitHubClient(token)
-        data = client.request("GET", f"/repos/{owner}/{repo}/actions/caches")
+        # Every page, not GitHub's default 30: the panel's totals and bulk clear cover them all.
+        caches = GitHubClient(token).request_paginated(
+            f"/repos/{owner}/{repo}/actions/caches", items_key="actions_caches"
+        )
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise _github_cache_error(exc) from exc
-    return {"repository": f"{owner}/{repo}", "total": data.get("total_count", 0), "actions_caches": data.get("actions_caches", [])}
+    return {"repository": f"{owner}/{repo}", "total": len(caches), "actions_caches": caches}
 
 
 def _client_token(payload: CacheListInput | CacheClearInput) -> str | None:

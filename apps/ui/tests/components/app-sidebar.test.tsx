@@ -22,13 +22,13 @@ function b64url(value: object): string {
     .replace(/=+$/, "");
 }
 
-function makeJwt(): string {
+function makeJwt(isWorkspaceAdmin = false): string {
   const header = b64url({ alg: "none", typ: "JWT" });
   const payload = b64url({
     sub: "1",
     email: "user@example.com",
     name: "User",
-    is_workspace_admin: false,
+    is_workspace_admin: isWorkspaceAdmin,
     exp: Math.floor(Date.now() / 1000) + 3600,
   });
   return `${header}.${payload}.sig`;
@@ -388,7 +388,6 @@ describe("AppSidebar coming-soon badges", () => {
     "Health & Security",
     "Collaborators",
     "Automation",
-    "Audit Log",
     "My Work",
   ])(
     "shows no 'Soon' badge on the shipped '%s' nav item",
@@ -606,5 +605,16 @@ describe("AppSidebar scope switcher", () => {
       expect(globalThis.fetch).toHaveBeenCalledWith(expect.stringContaining("/me/orgs"), expect.anything()),
     );
     expect(localStorage.getItem("active_scope")).toBeNull();
+  });
+  it("shows the Audit Log nav item only to workspace admins", async () => {
+    renderSidebar();
+    await screen.findByRole("link", { name: /Overview/ });
+    expect(screen.queryByRole("link", { name: /Audit Log/ })).not.toBeInTheDocument();
+
+    cleanup();
+    localStorage.setItem(TOKEN_KEY, makeJwt(true));
+    renderSidebar();
+    const link = await screen.findByRole("link", { name: /Audit Log/ });
+    expect(link).not.toHaveTextContent("Soon");
   });
 });

@@ -14,6 +14,12 @@ vi.mock("next/navigation", () => ({
   useParams: () => ({ repo: currentRepoParam }),
 }));
 
+// Workspace admin by default; individual tests flip it to cover the member view.
+let mockIsWorkspaceAdmin = true
+vi.mock("@/lib/auth-context", () => ({
+  useAuth: () => ({ user: { is_workspace_admin: mockIsWorkspaceAdmin } }),
+}))
+
 vi.mock("@/lib/api/client", () => ({
   api: {
     tokens: {
