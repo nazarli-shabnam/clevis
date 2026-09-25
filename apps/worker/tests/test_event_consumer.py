@@ -645,6 +645,45 @@ def test_organization_member_removed_deletes_org_member(pg_conn, tenant_id):
     assert _org_member(conn, tenant_id, "removeme") is None
 
 
+def test_organization_member_removed_revokes_github_sourced_membership_only(pg_conn, tenant_id):
+    conn, state = pg_conn
+    with conn.cursor() as cur:
+        user_ids = []
+        for email, gh_id in (("s4-revoke-gh@example.com", 947_001), ("s4-revoke-inv@example.com", 947_002)):
+            cur.execute("INSERT INTO users (email, github_user_id) VALUES (%s, %s) RETURNING id", (email, gh_id))
+            user_ids.append(cur.fetchone()[0])
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        cur.execute(
+            "INSERT INTO memberships (tenant_id, user_id, role, source) VALUES (%s, %s, 'admin', 'github'), (%s, %s, 'member', 'invite')",
+            (tenant_id, user_ids[0], tenant_id, user_ids[1]),
+        )
+    conn.commit()
+    try:
+        for i, (login, gh_id) in enumerate((("revoke-gh", 947_001), ("revoke-inv", 947_002))):
+            payload = {"action": "member_removed", "membership": {"user": {"login": login, "id": gh_id}}}
+            row_id = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id=f"d-org-revoke-{i}", event_type="organization", payload=payload)
+            event_consumer._process_entry(conn, _FakeRedis(), f"{i + 1}-0", _entry_fields(row_id, "organization", tenant_id))
+
+        with conn.cursor() as cur:
+            cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+            cur.execute("SELECT user_id FROM memberships WHERE user_id = ANY(%s)", (user_ids,))
+            assert [r[0] for r in cur.fetchall()] == [user_ids[1]]
+            cur.execute(
+                "SELECT target FROM audit_logs WHERE action = 'membership.github_revoked' AND tenant_id = %s "
+                "AND target IN ('revoke-gh', 'revoke-inv')",
+                (tenant_id,),
+            )
+            assert [r[0] for r in cur.fetchall()] == ["revoke-gh"]
+    finally:
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+            cur.execute("DELETE FROM memberships WHERE user_id = ANY(%s)", (user_ids,))
+            cur.execute("DELETE FROM audit_logs WHERE action = 'membership.github_revoked' AND target IN ('revoke-gh', 'revoke-inv')")
+            cur.execute("DELETE FROM users WHERE id = ANY(%s)", (user_ids,))
+        conn.commit()
+
+
 def test_organization_member_invited_is_a_noop_for_org_members(pg_conn, tenant_id):
     conn, state = pg_conn
     payload = {"action": "member_invited", "membership": {"user": {"login": "pending-invite"}}}

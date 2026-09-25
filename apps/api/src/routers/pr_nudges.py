@@ -85,6 +85,15 @@ def _run(client: GitHubClient, owner: str, repo: str) -> NudgeResponse:
     )
 
 
+def _audit_sweep(db: Session, user: UserOut, owner: str, repo: str, resp: NudgeResponse, tenant_id: int) -> None:
+    # Written after the sweep so the row records what was actually posted on GitHub.
+    acted = [r.model_dump() for r in resp.results if r.action in ("commented", "labeled", "error")]
+    audit_repo.write(
+        db, user.email, "pr_nudge.sweep", f"{owner}/{repo}",
+        {"mode": resp.mode, "stale_days": resp.stale_days, "results": acted}, tenant_id=tenant_id,
+    )
+
+
 @router.post("/me/repos/{owner}/{repo}/pr-nudges", response_model=NudgeResponse)
 def nudge_stale_prs(
     owner: str,
@@ -104,11 +113,9 @@ def nudge_stale_prs(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    tenant_id = audit_tenant(db, user.id, owner)
-    audit_repo.write(
-        db, user.email, "pr_nudge.sweep", f"{owner}/{repo}", {}, tenant_id=tenant_id
-    )
-    return _run(GitHubClient(token), owner, repo)
+    resp = _run(GitHubClient(token), owner, repo)
+    _audit_sweep(db, user, owner, repo, resp, audit_tenant(db, user.id, owner))
+    return resp
 
 
 @router.post(
@@ -133,7 +140,6 @@ def nudge_stale_prs_for_org(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    audit_repo.write(
-        db, user.email, "pr_nudge.sweep", f"{owner}/{repo}", {}, tenant_id=ctx.org.tenant_id
-    )
-    return _run(GitHubClient(token), owner, repo)
+    resp = _run(GitHubClient(token), owner, repo)
+    _audit_sweep(db, user, owner, repo, resp, ctx.org.tenant_id)
+    return resp

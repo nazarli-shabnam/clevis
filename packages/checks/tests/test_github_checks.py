@@ -569,3 +569,44 @@ def test_force_push_rate_limited_branch_excluded_from_denominator():
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "error"
     assert result["value"] == {"repos_checked": 0, "force_push_allowed": 0}
+
+
+def _raise(status, url, body=None):
+    response = httpx.Response(status, json=body or {}, request=httpx.Request("GET", url))
+    raise httpx.HTTPStatusError(str(status), request=response.request, response=response)
+
+
+def test_dependabot_feature_disabled_403_is_not_applicable_not_error():
+    def fake_get(url, token):
+        _raise(403, url, {"message": "Dependabot alerts are disabled for this repository."})
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        result = DependabotAlertsCheck().run(owner="acme", token="tok", repos=[{"name": "api"}])
+    assert result["status"] == "not_applicable"
+
+
+def test_code_scanning_disabled_repo_does_not_mask_a_clean_pass():
+    def fake_get(url, token):
+        if "/api/" in url:
+            _raise(403, url, {"message": "Advanced Security must be enabled for this repository to use code scanning."})
+        return []
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        result = CodeScanningCheck().run(owner="acme", token="tok", repos=[{"name": "api"}, {"name": "ui"}])
+    assert result["status"] == "pass"
+
+
+def test_force_push_ruleset_protected_branch_passes():
+    def fake_get(url, token):
+        if url.endswith("/rules/branches/main"):
+            return [{"type": "non_fast_forward"}]
+        _raise(404, url)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        result = DefaultBranchNoForcePushCheck().run(
+            owner="acme", token="tok", repos=[{"name": "api", "default_branch": "main"}]
+        )
+    assert result["status"] == "pass"

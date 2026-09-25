@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
-from src.repositories import tenant_repo
+from src.core.rbac import audit_tenant
 from src.schemas.cache import CacheClearInput, CacheClearResponse, CacheListInput, CacheListResponse
 from src.services.cache_service import clear
 from src.services.github_client import GitHubClient
@@ -28,11 +28,13 @@ def _github_cache_error(exc: Exception) -> HTTPException:
 
 def _list_caches(owner: str, repo: str, token: str) -> CacheListResponse:
     try:
-        client = GitHubClient(token)
-        data = client.request("GET", f"/repos/{owner}/{repo}/actions/caches")
+        # Every page, not GitHub's default 30: the panel's totals and bulk clear cover them all.
+        caches = GitHubClient(token).request_paginated(
+            f"/repos/{owner}/{repo}/actions/caches", items_key="actions_caches"
+        )
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise _github_cache_error(exc) from exc
-    return {"repository": f"{owner}/{repo}", "total": data.get("total_count", 0), "actions_caches": data.get("actions_caches", [])}
+    return {"repository": f"{owner}/{repo}", "total": len(caches), "actions_caches": caches}
 
 
 def _client_token(payload: CacheListInput | CacheClearInput) -> str | None:
@@ -76,5 +78,4 @@ def personal_clear_caches(
             raise HTTPException(status_code=403, detail=str(exc))
         except NoGitHubTokenAvailable as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-    personal_tenant = tenant_repo.ensure_personal_tenant(db, user.id)
-    return clear(db, owner, repo, payload, actor=user.email, token=token, tenant_id=personal_tenant.id)
+    return clear(db, owner, repo, payload, actor=user.email, token=token, tenant_id=audit_tenant(db, user.id, owner))

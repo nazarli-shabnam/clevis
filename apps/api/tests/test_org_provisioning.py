@@ -101,6 +101,31 @@ def test_removed_github_member_loses_clevis_membership_entirely(db):
     assert membership is None
 
 
+def test_invite_sourced_membership_survives_login_for_non_github_member(db):
+    org = org_repo.get_or_create(db, github_login="acme", github_org_id=1)
+    contractor = _make_user(db, "contractor@example.com")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=contractor.id, role="member", source="invite")
+
+    with patch.object(github_oauth, "list_user_org_memberships", return_value=[]):
+        org_provisioning.sync_org_admin_memberships(db, contractor, "fake-token")
+
+    membership = org_membership_repo.get(db, org_id=org.id, user_id=contractor.id)
+    assert membership is not None and membership.role == "member"
+
+
+def test_github_revocation_is_audited(db):
+    from src.core.db import AuditLog
+
+    org = org_repo.get_or_create(db, github_login="acme", github_org_id=1)
+    grace = _make_user(db, "grace2@example.com")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=grace.id, role="admin")
+
+    with patch.object(github_oauth, "list_user_org_memberships", return_value=[]):
+        org_provisioning.sync_org_admin_memberships(db, grace, "fake-token")
+
+    assert db.query(AuditLog).filter(AuditLog.action == "membership.github_revoked", AuditLog.actor == "grace2@example.com").count() == 1
+
+
 def test_unrelated_org_membership_untouched_when_other_org_reconciled(db):
     # Capture ids now: a later org's commit expires earlier objects, and lazy-reloading them
     # under another tenant's RLS context raises ObjectDeletedError.
@@ -141,3 +166,19 @@ def test_stale_clevis_membership_untouched_on_github_api_failure(db):
     membership = org_membership_repo.get(db, org_id=org.id, user_id=ivan.id)
     assert membership is not None
     assert membership.role == "admin"
+
+
+def test_github_admin_promotion_of_an_invited_member_is_revocable_by_github(db):
+    org = org_repo.get_or_create(db, github_login="acme", github_org_id=1)
+    user = _make_user(db, "promoted@example.com")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=user.id, role="member", source="invite")
+
+    admin = [github_oauth.GitHubOrgMembership(github_org_id=1, login="acme", role="admin")]
+    with patch.object(github_oauth, "list_user_org_memberships", return_value=admin):
+        org_provisioning.sync_org_admin_memberships(db, user, "fake-token")
+    membership = org_membership_repo.get(db, org_id=org.id, user_id=user.id)
+    assert membership.role == "admin" and membership.source == "github"
+
+    with patch.object(github_oauth, "list_user_org_memberships", return_value=[]):
+        org_provisioning.sync_org_admin_memberships(db, user, "fake-token")
+    assert org_membership_repo.get(db, org_id=org.id, user_id=user.id) is None

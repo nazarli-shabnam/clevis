@@ -10,6 +10,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { toast } from "@/components/ui/toast"
 import { Warning, Eye, Key, CircleNotch, Trash } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
+import { useAuth } from "@/lib/auth-context"
 import { shouldApplyResolvedToken } from "@/lib/token-resolve"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
 import { CHART_COLORS } from "@/lib/charts/theme"
@@ -26,6 +27,7 @@ interface CachePanelProps {
 
 /** Actions-cache list/clear UI for the /repos/{repo}/cache route and the repo detail tab. */
 export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
+  const { user } = useAuth()
   const [token, setToken] = useState("")
   const [tokenSaved, setTokenSaved] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -151,6 +153,8 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
 
   useEffect(() => {
     if (job?.status === "done") {
+      // The clear ran in the worker; refresh the table so it stops showing deleted caches.
+      if (listMutation.data) listMutation.mutate()
       toast.success(
         clearedCount != null
           ? `Cache cleared — ${clearedCount} ${clearedCount === 1 ? "entry" : "entries"} deleted.`
@@ -162,7 +166,9 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job?.status])
 
-  const isLoading = listMutation.isPending || clearMutation.isPending
+  // A queued/processing clear job blocks another clear until it finishes.
+  const jobActive = jobId != null && job?.status !== "done" && job?.status !== "failed" && !jobQuery.isError
+  const isLoading = listMutation.isPending || clearMutation.isPending || jobActive
   const caches: CacheEntry[] = listMutation.data?.actions_caches ?? []
   const totalBytes = caches.reduce((sum, c) => sum + c.size_in_bytes, 0)
 
@@ -242,7 +248,12 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
           <div className="grid grid-cols-2 gap-2">
             <Button
               variant="outline"
-              onClick={() => { setClearTarget(null); clearMutation.mutate(true) }}
+              onClick={() => {
+                setClearTarget(null)
+                clearMutation.mutate(true)
+                // The preview lists what a clear would delete, so fetch the current caches.
+                listMutation.mutate()
+              }}
               disabled={isLoading}
             >
               <Eye className="size-3.5" />
@@ -386,7 +397,11 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
         <div className="p-4">
           {clearMutation.data?.dry_run ? (
             <p className="text-sm text-yellow-400/80">
-              Dry run complete — no caches were deleted.
+              {listMutation.isPending
+                ? "Dry run complete — loading the caches a clear would delete…"
+                : listMutation.isSuccess
+                  ? `Dry run complete — a clear would delete ${caches.length} ${caches.length === 1 ? "cache" : "caches"} (${formatBytes(totalBytes)}). Nothing was deleted.`
+                  : "Dry run complete — no caches were deleted."}
             </p>
           ) : (
             <div className="flex items-center gap-3">
@@ -417,12 +432,12 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
                   {job?.status === "processing" ? "Clearing caches…" : "Queued…"} (Job #{jobId})
                 </p>
               )}
-              <Link
+              {user?.is_workspace_admin && <Link
                 href={`/audit?job_id=${jobId}`}
                 className="text-xs text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
               >
                 View in Audit Log →
-              </Link>
+              </Link>}
             </div>
           )}
         </div>

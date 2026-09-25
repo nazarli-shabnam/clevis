@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQuery } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { api } from "@/lib/api/client"
@@ -25,7 +25,26 @@ export function BranchProtectionCard({ org, token, repos }: Props) {
   const [reviewCount, setReviewCount] = useState(1)
   const [enforceAdmins, setEnforceAdmins] = useState(false)
   const [blockForcePush, setBlockForcePush] = useState(true)
+  const [blockDeletion, setBlockDeletion] = useState(true)
   const [savePreset, setSavePreset] = useState(false)
+
+  // Start from the preset last saved for this org, once per org.
+  const saved = useQuery({
+    queryKey: ["branchProtection.savedPreset", org.trim()],
+    queryFn: () => api.branchProtection.savedPreset(org.trim()),
+    enabled: org.trim().length > 0,
+    retry: false,
+  })
+  const [hydratedOrg, setHydratedOrg] = useState<string | null>(null)
+  useEffect(() => {
+    const p = saved.data?.preset
+    if (!p || hydratedOrg === org.trim()) return
+    setHydratedOrg(org.trim())
+    if (typeof p.required_approving_review_count === "number") setReviewCount(p.required_approving_review_count)
+    if (typeof p.enforce_admins === "boolean") setEnforceAdmins(p.enforce_admins)
+    if (typeof p.allow_force_pushes === "boolean") setBlockForcePush(!p.allow_force_pushes)
+    if (typeof p.allow_deletions === "boolean") setBlockDeletion(!p.allow_deletions)
+  }, [saved.data, org, hydratedOrg])
   const [applyArmed, setApplyArmed] = useState(false)
 
   // Selected repos that no longer exist in the list (owner switched) shouldn't linger.
@@ -44,7 +63,7 @@ export function BranchProtectionCard({ org, token, repos }: Props) {
     required_pull_request_reviews: { required_approving_review_count: reviewCount },
     enforce_admins: enforceAdmins,
     allow_force_pushes: !blockForcePush,
-    allow_deletions: false,
+    allow_deletions: !blockDeletion,
     required_status_checks: null,
     restrictions: null,
   })
@@ -69,7 +88,7 @@ export function BranchProtectionCard({ org, token, repos }: Props) {
 
   // Apply is blocked until selection/knobs match the preview, so a bulk rewrite can't hit
   // repos the admin never saw a diff for.
-  const previewSig = [...selected].sort().join(",") + `|${reviewCount}|${enforceAdmins}|${blockForcePush}`
+  const previewSig = [...selected].sort().join(",") + `|${reviewCount}|${enforceAdmins}|${blockForcePush}|${blockDeletion}`
   const [previewedSig, setPreviewedSig] = useState<string | null>(null)
   const previewStale = !preview.isSuccess || previewedSig !== previewSig
 
@@ -140,6 +159,10 @@ export function BranchProtectionCard({ org, token, repos }: Props) {
               <label className="flex items-center gap-1.5">
                 <input type="checkbox" checked={blockForcePush} onChange={(e) => setBlockForcePush(e.target.checked)} />
                 Block force-pushes
+              </label>
+              <label className="flex items-center gap-1.5">
+                <input type="checkbox" checked={blockDeletion} onChange={(e) => setBlockDeletion(e.target.checked)} />
+                Block deletion
               </label>
               <label className="flex items-center gap-1.5">
                 <input type="checkbox" checked={enforceAdmins} onChange={(e) => setEnforceAdmins(e.target.checked)} />

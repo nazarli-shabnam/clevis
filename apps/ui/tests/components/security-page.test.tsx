@@ -39,8 +39,10 @@ vi.mock("next/navigation", () => ({
     ),
 }));
 
+const orgsMineMock = vi.fn().mockResolvedValue([]);
 vi.mock("@/lib/api/client", () => ({
   api: {
+    orgs: { mine: (...args: unknown[]) => orgsMineMock(...args) },
     tokens: {
       resolve: (...args: unknown[]) => tokensResolveMock(...args),
       upsert: (...args: unknown[]) => tokensUpsertMock(...args),
@@ -382,6 +384,41 @@ describe("SecurityPage", () => {
 
     await waitFor(() => expect(screen.queryByText("Passing check")).not.toBeInTheDocument());
     expect(screen.getByText("Failing check")).toBeInTheDocument();
+  });
+
+  it("hides org-admin actions from a plain member of the scanned org", async () => {
+    orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "member" }]);
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme",
+      score: 40,
+      total_checks: 1,
+      failed_checks: 1,
+      repo_count: 1,
+      checks: [
+        {
+          id: "repository_secret_scanning_enabled",
+          title: "Secret scanning enabled",
+          severity: "high",
+          remediation: "Enable secret scanning.",
+          status: "fail",
+          value: null,
+        },
+      ],
+    });
+    try {
+      renderPage();
+      fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+      const scanButton = screen.getByRole("button", { name: /run scan/i });
+      await waitFor(() => expect(scanButton).not.toBeDisabled());
+      await waitFor(() => expect(orgsMineMock).toHaveBeenCalled());
+      fireEvent.click(scanButton);
+
+      await waitFor(() => expect(screen.getByText("Secret scanning enabled")).toBeInTheDocument());
+      expect(screen.queryByRole("button", { name: /fix this/i })).not.toBeInTheDocument();
+      expect(screen.queryByText("File as issue")).not.toBeInTheDocument();
+    } finally {
+      orgsMineMock.mockResolvedValue([]);
+    }
   });
 
   it("applies a 'Fix this' remediation from a failing check and re-runs the scan", async () => {

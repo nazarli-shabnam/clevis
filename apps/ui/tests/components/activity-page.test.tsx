@@ -11,6 +11,12 @@ const analyticsCockpitMock = vi.fn();
 const reposListMock = vi.fn();
 const reposPullsMock = vi.fn();
 
+// Workspace admin by default; individual tests flip it to cover the member view.
+let mockIsWorkspaceAdmin = true
+vi.mock("@/lib/auth-context", () => ({
+  useAuth: () => ({ user: { is_workspace_admin: mockIsWorkspaceAdmin } }),
+}))
+
 vi.mock("@/lib/api/client", () => ({
   api: {
     jobs: {
@@ -253,5 +259,28 @@ describe("ActivityPage", () => {
     renderPage();
 
     expect(await screen.findByText("pre-release")).toBeInTheDocument();
+  });
+  it("doesn't poll the admin-only jobs endpoint for a non-admin", async () => {
+    mockIsWorkspaceAdmin = false
+    try {
+      localStorage.setItem("default_org", "acme");
+      tokensResolveMock.mockResolvedValue({ token: "" });
+      renderPage();
+      await waitFor(() => expect(githubEventsMock).toHaveBeenCalled());
+      expect(jobsListMock).not.toHaveBeenCalled();
+      expect(screen.queryByText("Jobs")).not.toBeInTheDocument();
+    } finally {
+      mockIsWorkspaceAdmin = true
+    }
+  });
+
+  it("skips org-only endpoints for a personal account scope", async () => {
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "personal", login: "octocat" }));
+    tokensResolveMock.mockResolvedValue({ token: "" });
+    renderPage();
+    expect(await screen.findByText(/available for organizations/)).toBeInTheDocument();
+    await waitFor(() => expect(analyticsCockpitMock).toHaveBeenCalled());
+    expect(githubEventsMock).not.toHaveBeenCalled();
+    expect(githubFailedRunsMock).not.toHaveBeenCalled();
   });
 });

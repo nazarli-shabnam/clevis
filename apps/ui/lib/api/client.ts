@@ -5,6 +5,7 @@ import type {
   AuditLogOut,
   BranchProtectionBulkResponse,
   BranchProtectionPreset,
+  SavedBranchProtectionPreset,
   CacheClearResponse,
   CacheListResponse,
   CheckValue,
@@ -148,6 +149,8 @@ async function del(path: string): Promise<void> {
 
 
 function normalizeCheckValue(id: string, raw: unknown): CheckValue {
+  // Checked first: an error explanation must not be coerced (Boolean("Check failed…") is true).
+  if (typeof raw === "string") return raw ? { type: "text", text: raw } : null
   if (id === "organization_members_mfa_required") {
     return { type: "boolean", enabled: Boolean(raw) }
   }
@@ -332,6 +335,9 @@ export const api = {
       ),
   },
   branchProtection: {
+    // Most recently saved preset (flattened knobs), or null. Org-admin only.
+    savedPreset: (org: string) =>
+      get<{ preset: SavedBranchProtectionPreset | null }>(`/orgs/${encodeURIComponent(org)}/branch-protection/preset`),
     // Org-admin only; needs `Administration: write`. dry_run returns a per-repo diff and writes nothing.
     // A 400 with a docs pointer means the App is missing the permission.
     bulk: (

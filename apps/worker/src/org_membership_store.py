@@ -6,6 +6,7 @@ guarded by the event's received_at against the row's added_at/granted_at. Known 
 that late "added" (would need tombstones).
 """
 
+import json
 from datetime import datetime
 
 import psycopg
@@ -60,6 +61,25 @@ def remove_org_member(cur: psycopg.Cursor, *, tenant_id: int, login: str, event_
         "DELETE FROM org_members WHERE tenant_id = %(tenant_id)s AND login = %(login)s AND added_at <= %(event_received_at)s",
         {"tenant_id": tenant_id, "login": login, "event_received_at": event_received_at},
     )
+
+
+def revoke_github_membership(cur: psycopg.Cursor, *, tenant_id: int, github_user_id: int, login: str) -> None:
+    """Delete the GitHub-sourced Clevis membership of a user GitHub just removed from the org,
+    auditing it in the same transaction (same action the OAuth-login reconcile writes).
+
+    Invite-sourced memberships are Clevis's own grant (e.g. outside contractors) and survive.
+    Caller must have set app.tenant_id (memberships' RLS tenant clause)."""
+    cur.execute(
+        "DELETE FROM memberships WHERE tenant_id = %(tenant_id)s AND source = 'github' "
+        "AND user_id IN (SELECT id FROM users WHERE github_user_id = %(gh_id)s) RETURNING role",
+        {"tenant_id": tenant_id, "gh_id": github_user_id},
+    )
+    for (role,) in cur.fetchall():
+        cur.execute(
+            "INSERT INTO audit_logs (actor, action, target, payload, tenant_id, created_at) "
+            "VALUES ('github-webhook', 'membership.github_revoked', %s, %s, %s, NOW())",
+            (login, json.dumps({"previous_role": role, "reason": "member_removed"}), tenant_id),
+        )
 
 
 def upsert_repo_collaborator(

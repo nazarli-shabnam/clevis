@@ -1,11 +1,11 @@
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from src.core.db import Invitation
+from src.core.db import Invitation, set_session_tenant
 from src.repositories import tenant_repo
 
 INVITATION_LIFETIME = timedelta(days=7)
@@ -61,6 +61,13 @@ def create(db: Session, org_id: int, email: str, invited_by_user_id: int) -> Inv
 
 
 def get_by_token(db: Session, token: str) -> Invitation | None:
+    # Token holders (preview/accept) have no tenant context yet; under the non-owner clevis_api
+    # role RLS would hide the row. Resolve its tenant via the narrow SECURITY DEFINER lookup
+    # (migration 0047) and set it first. The token itself is the capability.
+    tenant_id = db.execute(text("SELECT invitation_tenant_by_token(:t)"), {"t": token}).scalar()
+    if tenant_id is None:
+        return None
+    set_session_tenant(db, tenant_id)
     return db.query(Invitation).filter(Invitation.token == token).first()
 
 

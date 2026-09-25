@@ -96,6 +96,14 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
     expect(JSON.parse(init.body as string)).toEqual({ repos: ["api"], dry_run: true, token: undefined });
   });
 
+  it("GETs the saved branch-protection preset for the org", async () => {
+    stubOkJson({ preset: null });
+    await api.branchProtection.savedPreset("acme");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/orgs/acme/branch-protection/preset");
+    expect(init?.method ?? "GET").toBe("GET");
+  });
+
   it("POSTs workflow-lint under the personal route and drops an empty token", async () => {
     stubOkJson({ findings: [], fixable: false, pr_url: null });
     await api.workflowLint.scan("acme", "api", { open_pr: true }, "");
@@ -198,6 +206,28 @@ describe("api.analytics value normalization", () => {
     });
     const result = await api.analytics.overview("acme", "ghp_test");
     expect(result.checks[0].value).toEqual({ type: "ratio", numerator: 3, denominator: 4 });
+  });
+
+  it("keeps an errored check's string explanation instead of coercing it", async () => {
+    stubOkJson({
+      owner: "acme",
+      score: 0,
+      total_checks: 1,
+      failed_checks: 1,
+      repo_count: 0,
+      checks: [
+        {
+          id: "organization_members_mfa_required",
+          title: "MFA",
+          severity: "high",
+          remediation: "n/a",
+          status: "error",
+          value: "Check failed: could not fetch repository list",
+        },
+      ],
+    });
+    const result = await api.analytics.overview("acme", "ghp_test");
+    expect(result.checks[0].value).toEqual({ type: "text", text: "Check failed: could not fetch repository list" });
   });
 
   it("normalizes the force-push check's raw shape into a ratio value", async () => {

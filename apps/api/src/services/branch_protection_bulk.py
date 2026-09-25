@@ -30,7 +30,7 @@ from src.services.github_client import GitHubClient
 # GitHub repo names: letters, digits, ``.  _  -``; 1–100 chars; never "." or "..".
 # ``repos[]`` is caller-supplied, so a name with a slash or ".." could otherwise walk
 # the API path to another repo/org.
-_REPO_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+_REPO_NAME_RE = re.compile(r"^(?!\.\.?$)[A-Za-z0-9._-]{1,100}$")
 
 # The knob keys a preset controls (flattened form). Everything else is preserved.
 _KNOB_KEYS = ("required_approving_review_count", "enforce_admins", "allow_force_pushes", "allow_deletions")
@@ -150,32 +150,16 @@ def _put_body(protection: dict | None, knobs: dict) -> dict:
 
 
 def _current_for(protection: dict | None, key: str):
-    """The current value of ``key`` in a shape comparable to the PUT body."""
+    """The current value of ``key`` in a shape comparable to the PUT body. Reuses the
+    GET->PUT translation so the diff can't disagree with what a PUT would send."""
     if not protection:
         return None
-    val = protection.get(key)
-    if key in (
-        "enforce_admins",
-        "allow_force_pushes",
-        "allow_deletions",
-        "required_linear_history",
-        "block_creations",
-        "required_conversation_resolution",
-    ):
+    if key == "restrictions":
+        return protection.get(key)
+    if key == "allow_force_pushes":  # not carried by _preserving_put_body
+        val = protection.get(key)
         return bool(val.get("enabled")) if isinstance(val, dict) else bool(val)
-    if key == "required_pull_request_reviews":
-        if not isinstance(val, dict):
-            return None
-        return {
-            "dismiss_stale_reviews": bool(val.get("dismiss_stale_reviews")),
-            "require_code_owner_reviews": bool(val.get("require_code_owner_reviews")),
-            "required_approving_review_count": val.get("required_approving_review_count"),
-        }
-    if key == "required_status_checks":
-        if not isinstance(val, dict):
-            return None
-        return {"strict": bool(val.get("strict")), "contexts": list(val.get("contexts") or [])}
-    return val  # restrictions
+    return _preserving_put_body(protection).get(key)
 
 
 def _diff(protection: dict | None, body: dict) -> dict:

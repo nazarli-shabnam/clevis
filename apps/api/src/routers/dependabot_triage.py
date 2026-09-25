@@ -22,8 +22,8 @@ _FEATURE = "dependabot_triage"
 _PERMISSION_HINT = (
     "GitHub returned 403. Auto-triage needs Clevis's GitHub App (or token) to have the "
     "repository 'Pull requests' permission at Read and write (to approve) and, for "
-    "approve-and-merge mode, 'Contents' at Read and write (to merge). See "
-    "docs/self-hosting.md."
+    "approve-and-merge mode, 'Contents' at Read and write (to merge), plus 'Checks' and "
+    "'Commit statuses' at Read-only (to verify CI is green). See docs/self-hosting.md."
 )
 _MERGE_METHODS = ("merge", "squash", "rebase")
 
@@ -75,6 +75,7 @@ def set_triage_setting(
     owner: str,
     repo: str,
     body: SettingRequest,
+    user: UserOut = Depends(require_auth),
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     db: Session = Depends(get_db),
 ):
@@ -93,6 +94,11 @@ def set_triage_setting(
         extra={"merge_method": body.merge_method},
     )
     db.commit()
+    audit_repo.write(
+        db, user.email, "dependabot_triage.setting_saved", f"{owner}/{repo}",
+        {"enabled": body.enabled, "mode": body.mode, "merge_method": body.merge_method},
+        tenant_id=ctx.org.tenant_id,
+    )
     return {"enabled": body.enabled, "mode": body.mode, "merge_method": body.merge_method}
 
 
@@ -115,13 +121,19 @@ def run_triage(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # GitHub repo names are case-insensitive; key and look up lowercased so "Acme/API" and
+    # "acme/api" resolve to the same saved setting (and the same repo isn't run twice).
     settings = {
-        s.repo: s
+        s.repo.lower(): s
         for s in automation_settings_repo.list_for_feature(db, ctx.org.tenant_id, _FEATURE)
     }
     # `repos: null` (omitted) means "every configured repo"; an explicit `repos: []`
     # means "none" and must not expand to all.
-    target = list(settings) if body.repos is None else body.repos
+    if body.repos is None:
+        target = [s.repo for s in settings.values()]
+    else:
+        seen: set[str] = set()
+        target = [r for r in body.repos if not (r.lower() in seen or seen.add(r.lower()))]
     audit_repo.write(
         db, user.email, "dependabot_triage.run", ctx.org.github_login,
         {"repos": target, "dry_run": body.dry_run}, tenant_id=ctx.org.tenant_id,
@@ -129,11 +141,12 @@ def run_triage(
 
     client = GitHubClient(token)
     out: list[DecisionOut] = []
+    forbidden_repos = 0
     for full_repo in target:
         owner_r, _, name_r = full_repo.partition("/")
         if not name_r:
             owner_r, name_r = ctx.org.github_login, full_repo
-        setting = settings.get(full_repo) or settings.get(f"{owner_r}/{name_r}")
+        setting = settings.get(full_repo.lower()) or settings.get(f"{owner_r}/{name_r}".lower())
         try:
             decisions = dependabot_triage.triage(
                 client,
@@ -145,11 +158,14 @@ def run_triage(
                 dry_run=body.dry_run,
             )
         except httpx.HTTPStatusError as exc:
-            # 403 is almost always a missing scope -- surface the hint immediately. Any
-            # other GitHub error is recorded against just this repo so the sweep continues.
+            # 403 is almost always a missing scope. Record it against this repo so earlier
+            # repos' results (already acted on GitHub) are still returned; only if every repo
+            # was forbidden does the whole call fail with the hint.
             if exc.response.status_code == 403:
-                raise HTTPException(status_code=400, detail=_PERMISSION_HINT) from exc
-            decisions = [dependabot_triage.Decision(None, "", "error", f"GitHub API error: {exc.response.status_code}")]
+                forbidden_repos += 1
+                decisions = [dependabot_triage.Decision(None, "", "error", _PERMISSION_HINT)]
+            else:
+                decisions = [dependabot_triage.Decision(None, "", "error", f"GitHub API error: {exc.response.status_code}")]
         except httpx.RequestError:
             decisions = [dependabot_triage.Decision(None, "", "error", "GitHub API unreachable")]
 
@@ -167,4 +183,6 @@ def run_triage(
                 f"{full_repo}#{d.number}" if d.number else full_repo,
                 {"reason": d.reason}, tenant_id=ctx.org.tenant_id,
             )
+    if target and forbidden_repos == len(target):
+        raise HTTPException(status_code=400, detail=_PERMISSION_HINT)
     return TriageResponse(decisions=out)

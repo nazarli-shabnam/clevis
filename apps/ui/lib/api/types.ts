@@ -17,7 +17,13 @@ export interface SeverityCountsValue {
   low: number
 }
 
-export type CheckValue = MFACheckValue | RatioCheckValue | SeverityCountsValue | null
+// A check that errored returns a plain-text explanation instead of structured data.
+export interface TextCheckValue {
+  type: "text"
+  text: string
+}
+
+export type CheckValue = MFACheckValue | RatioCheckValue | SeverityCountsValue | TextCheckValue | null
 
 export interface CheckResult {
   id: string
@@ -555,6 +561,14 @@ export interface BranchProtectionPreset {
   allow_deletions?: boolean
   required_status_checks?: { strict: boolean; contexts: string[] } | null
   restrictions?: null
+}
+
+// Server-side flattened form of a saved preset (branch_protection_bulk.normalize_preset).
+export interface SavedBranchProtectionPreset {
+  required_approving_review_count?: number
+  enforce_admins?: boolean
+  allow_force_pushes?: boolean
+  allow_deletions?: boolean
 }
 
 export interface BranchProtectionRepoDiff {

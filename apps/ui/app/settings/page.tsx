@@ -19,6 +19,7 @@ import { initialConfigValues, mergeSavedConfigValue } from "@/lib/config-values"
 import { useAuth } from "@/lib/auth-context"
 import { THEMES, useTheme } from "@/lib/theme"
 import type { InstallationMeta, MyOrgMembership, SavedTokenMeta } from "@/lib/api/types"
+import { githubWebUrl } from "@/lib/github-web"
 
 
 function ProfileSection() {
@@ -296,7 +297,7 @@ function ConnectedOrgsSection() {
   const rowKey = (row: ConnectedInstallation) => `${row.scope}:${row.id}`
 
   const slug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG
-  const installUrl = slug ? `https://github.com/apps/${slug}/installations/new` : null
+  const installUrl = slug ? githubWebUrl(`apps/${slug}/installations/new`) : null
 
   return (
     <div className="card">
@@ -583,6 +584,24 @@ const CONFIG_FIELDS: {
       { value: "monthly", label: "Monthly" },
     ],
   },
+  { key: "digest_poll_seconds", label: "Digest Check Interval", description: "Seconds between checks for a due leadership digest.", type: "number" },
+  {
+    key: "pr_nudge_mode",
+    label: "Stale-PR Nudge Mode",
+    description: "What \"Nudge stale PRs\" does on the Pull Requests page.",
+    type: "select",
+    options: [
+      { value: "comment", label: "Comment" },
+      { value: "label", label: "Add needs-review label" },
+      { value: "off", label: "Off" },
+    ],
+  },
+  { key: "pr_nudge_stale_days", label: "Stale-PR Threshold", description: "Days without review activity before a PR counts as stale.", type: "number" },
+  { key: "gap_heal_poll_seconds", label: "Activity Gap-Heal Interval", description: "Seconds between sweeps that re-backfill stale activity (default 900).", type: "number" },
+  { key: "gap_heal_stale_hours", label: "Activity Stale After", description: "Hours since the last activity sync before a backfill is re-queued (default 6).", type: "number" },
+  { key: "membership_reconcile_poll_seconds", label: "Membership Reconcile Interval", description: "Seconds between org-membership reconciliation sweeps.", type: "number" },
+  { key: "membership_reconcile_stale_hours", label: "Membership Stale After", description: "Hours since the last membership sync before it's reconciled again.", type: "number" },
+  { key: "webhook_requeue_poll_seconds", label: "Webhook Re-queue Interval", description: "Seconds between retries of webhook deliveries that failed to queue.", type: "number" },
 ]
 
 function InstanceConfigSection() {

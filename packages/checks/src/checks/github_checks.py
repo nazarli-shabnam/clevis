@@ -121,6 +121,29 @@ def _branch_protection_status(exc: httpx.HTTPStatusError) -> str:
     return "unknown"
 
 
+def _feature_disabled(exc: httpx.HTTPStatusError) -> bool:
+    """A 403 that means the alert feature is off for the repo (e.g. "Dependabot alerts are
+    disabled for this repository", "Advanced Security must be enabled"), as opposed to a
+    missing permission -- the former is a real "no alerts", the latter an unknown."""
+    if exc.response.status_code != 403:
+        return False
+    try:
+        message = str(exc.response.json().get("message", "")).lower()
+    except ValueError:
+        return False
+    return "disabled" in message or "not enabled" in message or "must be enabled" in message
+
+
+def _has_non_fast_forward_rule(base_url: str, owner: str, repo: str, branch: str, token: str) -> bool:
+    """True when a repository ruleset blocks force pushes on ``branch`` (rulesets don't
+    show up in the classic /protection endpoint)."""
+    try:
+        rules = _get(f"{base_url}/repos/{owner}/{repo}/rules/branches/{branch}", token)
+    except httpx.HTTPError:
+        return False
+    return any(isinstance(r, dict) and r.get("type") == "non_fast_forward" for r in rules or [])
+
+
 class OrgMFARequired(Check):
     metadata = CheckMetadata(
         check_id="organization_members_mfa_required",
@@ -251,6 +274,7 @@ class DependabotAlertsCheck(Check):
             return {"status": "not_applicable", "value": {"critical": 0, "high": 0, "medium": 0, "low": 0}}
         counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
         forbidden = 0
+        disabled = 0
         for repo in repos:
             try:
                 alerts = _get(
@@ -261,6 +285,9 @@ class DependabotAlertsCheck(Check):
                 # count is unknown, not zero.
                 if exc.response.status_code == 404:
                     continue
+                if _feature_disabled(exc):
+                    disabled += 1
+                    continue
                 if exc.response.status_code == 403:
                     forbidden += 1
                     continue
@@ -269,7 +296,9 @@ class DependabotAlertsCheck(Check):
                 severity = (alert.get("security_advisory") or {}).get("severity")
                 if severity in counts:
                     counts[severity] += 1
-        if forbidden == len(repos):
+        if disabled == len(repos):
+            return {"status": "not_applicable", "value": counts}
+        if forbidden and forbidden + disabled == len(repos):
             return {"status": "error", "value": counts}
         compliant = counts["critical"] == 0 and counts["high"] == 0
         if compliant and forbidden > 0:
@@ -303,6 +332,7 @@ class CodeScanningCheck(Check):
         open_count = 0
         repos_with_alerts = 0
         forbidden = 0
+        disabled = 0
         for repo in repos:
             try:
                 alerts = _get(
@@ -313,6 +343,9 @@ class CodeScanningCheck(Check):
                 # so the count is unknown, not zero.
                 if exc.response.status_code == 404:
                     continue
+                if _feature_disabled(exc):
+                    disabled += 1
+                    continue
                 if exc.response.status_code == 403:
                     forbidden += 1
                     continue
@@ -321,7 +354,9 @@ class CodeScanningCheck(Check):
                 repos_with_alerts += 1
                 open_count += len(alerts)
         value = {"open": open_count, "repos_with_alerts": repos_with_alerts, "total_repos": total_repos}
-        if forbidden == total_repos:
+        if disabled == total_repos:
+            return {"status": "not_applicable", "value": value}
+        if forbidden and forbidden + disabled == total_repos:
             return {"status": "error", "value": value}
         compliant = open_count == 0
         if compliant and forbidden > 0:
@@ -363,9 +398,11 @@ class DefaultBranchNoForcePushCheck(Check):
                 )
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 404:
-                    # 404 = branch not protected, so force pushes are allowed (not unknown).
+                    # 404 = no classic protection. A ruleset may still block force pushes;
+                    # otherwise they're allowed (not unknown).
                     checked += 1
-                    force_push_allowed += 1
+                    if not _has_non_fast_forward_rule(base_url, owner, repo["name"], branch, token):
+                        force_push_allowed += 1
                     continue
                 # 403/429: can't evaluate, so exclude from the denominator.
                 unknown += 1

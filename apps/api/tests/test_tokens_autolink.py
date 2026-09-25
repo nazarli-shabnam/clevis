@@ -115,3 +115,13 @@ def test_existing_member_row_is_promoted_when_github_says_admin(db, admin):
 
     membership = tenant_repo.get_membership(db, org.tenant_id, admin.id)
     assert membership is not None and membership.role == "admin"
+
+
+def test_token_save_and_delete_are_audited(db, admin):
+    client = _admin_client(db, admin)
+    with patch(_PATCH_TARGET, return_value=[]):
+        assert client.put("/tokens/acme", json={"token": "ghp_valid", "label": "ci"}).status_code == 200
+    assert client.delete("/tokens/acme").status_code == 204
+
+    actions = [r.action for r in db.query(AuditLog).filter(AuditLog.target == "acme").order_by(AuditLog.id)]
+    assert "token.save" in actions and "token.delete" in actions

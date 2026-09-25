@@ -148,3 +148,38 @@ def test_get_for_user_matches_regardless_of_login_casing(db):
 
     assert found is not None
     assert found.installation_id == 7
+
+
+def test_resync_without_installation_id_keeps_the_stored_id(db):
+    org_id = _acme_org_id(db)
+    installation_repo.upsert(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=77, org_id=org_id
+    )
+    row = installation_repo.upsert(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=None, org_id=org_id
+    )
+    assert row.installation_id == 77
+
+
+def test_last_uninstall_purges_the_tenants_github_data(db):
+    from sqlalchemy import text
+
+    from src.repositories import automation_settings_repo
+
+    org_id = _acme_org_id(db)
+    row = installation_repo.upsert(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=88, org_id=org_id
+    )
+    tenant_id = row.tenant_id
+    automation_settings_repo.upsert(db, tenant_id, "acme/api", "dependabot_triage", enabled=True, mode="approve_only")
+    db.execute(
+        text("INSERT INTO org_members (tenant_id, login, avatar_url, role, added_at) VALUES (:t, 'octo', '', 'member', NOW())"),
+        {"t": tenant_id},
+    )
+    db.commit()
+
+    count, _ = installation_repo.delete_by_installation_id(db, 88)
+
+    assert count == 1
+    assert automation_settings_repo.list_for_feature(db, tenant_id, "dependabot_triage") == []
+    assert db.execute(text("SELECT count(*) FROM org_members WHERE tenant_id = :t"), {"t": tenant_id}).scalar() == 0

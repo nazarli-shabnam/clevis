@@ -48,10 +48,6 @@ def _enable_secret_scanning(client: GitHubClient, owner: str, repo: str) -> None
     )
 
 
-def _enable_dependabot_alerts(client: GitHubClient, owner: str, repo: str) -> None:
-    client.request("PUT", f"/repos/{owner}/{repo}/vulnerability-alerts")
-
-
 def _protect_default_branch(client: GitHubClient, owner: str, repo: str) -> None:
     info = client.request("GET", f"/repos/{owner}/{repo}")
     branch = info.get("default_branch", "main") if isinstance(info, dict) else "main"
@@ -100,22 +96,33 @@ def _preserving_put_body(current: dict) -> dict:
 
     status_checks = current.get("required_status_checks")
     if isinstance(status_checks, dict):
-        status_checks = {
-            "strict": bool(status_checks.get("strict")),
-            "contexts": list(status_checks.get("contexts") or []),
-        }
+        checks = status_checks.get("checks")
+        status_checks = {"strict": bool(status_checks.get("strict"))}
+        if checks:
+            # `checks` carries each check's app_id binding; `contexts` would drop it.
+            status_checks["checks"] = [
+                {"context": c["context"], "app_id": c.get("app_id")} for c in checks if c.get("context")
+            ]
+        else:
+            status_checks["contexts"] = list(current["required_status_checks"].get("contexts") or [])
     else:
         status_checks = None
 
     reviews = current.get("required_pull_request_reviews")
     if isinstance(reviews, dict):
-        reviews = {
+        out = {
             "dismiss_stale_reviews": bool(reviews.get("dismiss_stale_reviews")),
             "require_code_owner_reviews": bool(reviews.get("require_code_owner_reviews")),
             "required_approving_review_count": int(
                 reviews.get("required_approving_review_count", 1)
             ),
+            "require_last_push_approval": bool(reviews.get("require_last_push_approval")),
         }
+        # GET returns full user/team/app objects; PUT wants logins/slugs.
+        for key in ("dismissal_restrictions", "bypass_pull_request_allowances"):
+            if isinstance(reviews.get(key), dict):
+                out[key] = _actor_lists(reviews[key])
+        reviews = out
     else:
         reviews = None
 
@@ -128,12 +135,24 @@ def _preserving_put_body(current: dict) -> dict:
         "allow_deletions": _enabled("allow_deletions"),
         "block_creations": _enabled("block_creations"),
         "required_conversation_resolution": _enabled("required_conversation_resolution"),
+        "lock_branch": _enabled("lock_branch"),
+        "allow_fork_syncing": _enabled("allow_fork_syncing"),
+    }
+
+
+def _actor_lists(value: dict) -> dict:
+    return {
+        "users": [u["login"] for u in value.get("users") or [] if u.get("login")],
+        "teams": [t["slug"] for t in value.get("teams") or [] if t.get("slug")],
+        "apps": [a["slug"] for a in value.get("apps") or [] if a.get("slug")],
     }
 
 
 _REMEDIATIONS = {
     "repository_secret_scanning_enabled": _enable_secret_scanning,
-    "repository_dependabot_alerts_clear": _enable_dependabot_alerts,
+    # repository_dependabot_alerts_clear is deliberately absent: it measures *open*
+    # critical/high alerts, which enabling alerts can't fix (and would falsely report as
+    # remediated).
     # Both of these are fixed by applying branch protection with force-push disabled.
     "repository_default_branch_protection_enabled": _protect_default_branch,
     "repository_default_branch_no_force_push": _protect_default_branch,

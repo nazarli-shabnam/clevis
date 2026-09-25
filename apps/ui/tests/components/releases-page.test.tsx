@@ -55,6 +55,13 @@ describe("ReleasesPage", () => {
     expect(releaseTimelineMock).not.toHaveBeenCalled();
   });
 
+  it("explains the page is org-only and skips the release call for a personal scope", async () => {
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "personal", login: "octocat" }));
+    renderPage();
+    expect(await screen.findByText(/lists organization repositories/)).toBeInTheDocument();
+    expect(releaseTimelineMock).not.toHaveBeenCalled();
+  });
+
   it("renders releases for the default org at the default 90-day window", async () => {
     localStorage.setItem("default_org", "acme");
     tokensResolveMock.mockResolvedValue({ token: "ghp_test" });

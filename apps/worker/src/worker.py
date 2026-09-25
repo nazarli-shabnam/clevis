@@ -46,6 +46,10 @@ _DB_URL = _plain_db_url(settings.database_url.get_secret_value())
 
 # Shared cap on retry_count for both reclaim-after-crash and transient-failure requeue.
 MAX_RETRIES = 5
+# Worst case ~23 min of total backoff across MAX_RETRIES -- well inside the 1h lifetime of
+# the installation token a job payload carries.
+_RETRY_BACKOFF_BASE_SECONDS = 30
+_RETRY_BACKOFF_CAP_SECONDS = 480
 # A 'processing' job older than this, with a stale heartbeat, is presumed crashed.
 RECLAIM_TIMEOUT_MINUTES = 30
 
@@ -530,12 +534,17 @@ def run() -> None:
                         WHERE id = (
                             SELECT id FROM jobs
                             WHERE status = 'queued'
+                              -- Exponential backoff for retries (60s, 120s, ... capped at
+                              -- _RETRY_BACKOFF_CAP_SECONDS) so a rate-limited job doesn't burn
+                              -- all MAX_RETRIES in seconds. updated_at is stamped at requeue.
+                              AND (retry_count = 0 OR updated_at <= NOW() - make_interval(
+                                  secs => LEAST(%(base)s * power(2, retry_count), %(cap)s)))
                             ORDER BY id
                             LIMIT 1
                             FOR UPDATE SKIP LOCKED
                         )
                         RETURNING id, job_type, payload, retry_count
-                    """)
+                    """, {"base": _RETRY_BACKOFF_BASE_SECONDS, "cap": _RETRY_BACKOFF_CAP_SECONDS})
                     row = cur.fetchone()
 
                 if row:

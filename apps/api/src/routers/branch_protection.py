@@ -29,7 +29,7 @@ _PERMISSION_HINT = (
 
 
 class BulkRequest(BaseModel):
-    repos: list[str] = Field(min_length=1)
+    repos: list[str] = Field(min_length=1, max_length=500)
     preset: dict | None = None
     dry_run: bool = True
     save_preset: bool = False
@@ -64,6 +64,19 @@ class BulkApplyResponse(BaseModel):
 def _all_forbidden(errors: list[str | None]) -> bool:
     real = [e for e in errors if e]
     return bool(real) and len(real) == len(errors) and all("403" in e for e in real)
+
+
+@router.get("/orgs/{org_login}/branch-protection/preset")
+def get_saved_preset(
+    org_login: str,
+    ctx: OrgContext = Depends(require_org_role(min_role="admin")),
+    db: Session = Depends(get_db),
+) -> dict:
+    """The most recently saved preset for this org (flattened knobs), or ``{"preset": null}``.
+    Lets the Automation card start from what was last applied instead of hard-coded defaults."""
+    rows = automation_settings_repo.list_for_feature(db, ctx.org.tenant_id, _FEATURE)
+    latest = max((r for r in rows if r.extra), key=lambda r: r.updated_at, default=None)
+    return {"preset": latest.extra if latest else None}
 
 
 @router.post("/orgs/{org_login}/branch-protection/bulk")

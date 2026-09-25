@@ -28,7 +28,7 @@ def test_list_caches_maps_github_status_error_to_400(cache_client):
     response = httpx.Response(404, request=httpx.Request("GET", "https://api.github.com/x"))
     error = httpx.HTTPStatusError("missing", request=response.request, response=response)
     with patch("src.routers.actions_cache.GitHubClient") as mock_client:
-        mock_client.return_value.request.side_effect = error
+        mock_client.return_value.request_paginated.side_effect = error
         resp = cache_client.post(
             "/me/repos/acme/demo/actions-caches",
             json={"token": "ghp_testtoken123456789012345678901234"},
@@ -55,7 +55,7 @@ def test_list_caches_uses_installation_token_when_no_client_token(cache_client, 
         patch("src.routers.actions_cache.GitHubClient") as mock_client,
         patch("src.services.token_resolution.github_app.get_installation_token", return_value="minted-token"),
     ):
-        mock_client.return_value.request.return_value = {"total_count": 0, "actions_caches": []}
+        mock_client.return_value.request_paginated.return_value = []
         resp = cache_client.post("/me/repos/acme/demo/actions-caches", json={})
     assert resp.status_code == 200
     mock_client.assert_called_once_with("minted-token")

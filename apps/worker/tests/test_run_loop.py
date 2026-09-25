@@ -84,3 +84,22 @@ def test_run_logs_full_exception_on_generic_poll_error(monkeypatch, caplog):
             pass
 
     assert any("boom" in r.exc_text for r in caplog.records if r.exc_info)
+
+
+def test_run_does_not_claim_a_retried_job_before_its_backoff_elapses(worker_db, monkeypatch):
+    conn, created_ids = worker_db
+    job_id = _insert_queued_job(conn, created_ids)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE jobs SET retry_count = 1, updated_at = NOW() WHERE id = %s", (job_id,))
+    conn.commit()
+
+    monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 1)
+    monkeypatch.setattr(worker.time, "sleep", MagicMock(side_effect=_StopLoop))
+    with patch.object(worker, "process_job") as process:
+        try:
+            worker.run()
+        except _StopLoop:
+            pass
+
+    assert _fetch(conn, job_id)[0] == "queued"
+    assert not any(c.args[1] == job_id for c in process.call_args_list)

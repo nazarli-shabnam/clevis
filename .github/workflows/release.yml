@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
   packages: write
+  actions: read
 
 jobs:
   publish:
@@ -17,6 +18,22 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Gate: a manual dispatch may only publish from main, and only a commit whose CI run
+      # passed -- so `:latest` can't be pushed from an arbitrary branch or an untested commit.
+      - name: Gate on branch and CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "::error::Manual releases must be dispatched from main (got ${{ github.ref }})."
+            exit 1
+          fi
+          conclusion=$(gh run list --repo "${{ github.repository }}" --workflow ci.yml --commit "${{ github.sha }}" --json conclusion,status --jq '[.[] | select(.status == "completed")][0].conclusion // ""')
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::CI has not passed for ${{ github.sha }} (conclusion: '${conclusion:-none}')."
+            exit 1
+          fi
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -54,8 +71,8 @@ jobs:
           # NEXT_PUBLIC_API_BASE is baked at build time — set via repo secret
           build-args: |
             NEXT_PUBLIC_API_BASE=${{ secrets.NEXT_PUBLIC_API_BASE }}
-            NEXT_PUBLIC_DEFAULT_ROLE=${{ secrets.NEXT_PUBLIC_DEFAULT_ROLE || 'viewer' }}
             NEXT_PUBLIC_GITHUB_APP_SLUG=${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
+            NEXT_PUBLIC_GITHUB_WEB_BASE=${{ vars.NEXT_PUBLIC_GITHUB_WEB_BASE || 'https://github.com' }}
           tags: |
             ghcr.io/${{ github.repository }}-ui:latest
             ghcr.io/${{ github.repository }}-ui:${{ github.ref_name }}

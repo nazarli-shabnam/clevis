@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.app_config import get_config
-from src.core.auth import UserOut, clear_session_cookie, create_access_token, require_auth
+from src.core.auth import SETUP_LOCK_KEY, UserOut, clear_session_cookie, create_access_token, require_auth
 from src.core.config import settings
 from src.core.db import Org, User, get_db, set_session_user
 from src.core.rate_limit import check_account_rate_limit, rate_limit
@@ -57,8 +57,6 @@ def _send_verification_email_best_effort(user: User) -> None:
         # registration itself would break.
         logger.exception("failed to send verification email to %s", user.email)
 
-# Arbitrary key for pg_advisory_xact_lock serializing /auth/setup (see setup()).
-_SETUP_LOCK_KEY = 727100
 
 # Checked when no real password_hash exists, so a login for a nonexistent email pays the
 # same bcrypt cost as a real one -- avoids a timing side-channel revealing registered emails.
@@ -173,7 +171,7 @@ def setup(body: SetupRequest, db: Session = Depends(get_db)):
     """First-run only. Returns 409 if any user already exists."""
     # Two concurrent calls could both pass count()==0 before either commits -- no unique
     # constraint catches this. The advisory lock serializes check-then-insert.
-    db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _SETUP_LOCK_KEY})
+    db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": SETUP_LOCK_KEY})
     if db.query(User).count() > 0:
         raise HTTPException(status_code=409, detail="Setup already complete")
     if len(body.password) < _MIN_PASSWORD_LEN:

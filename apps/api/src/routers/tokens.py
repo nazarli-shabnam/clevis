@@ -105,6 +105,10 @@ def upsert_token(
         db.add(row)
     db.commit()
     db.refresh(row)
+    audit_repo.write(
+        db, user.email, "token.save", org, {"label": body.label},
+        tenant_id=row.tenant_id or tenant_repo.ensure_personal_tenant(db, user.id).id,
+    )
     return TokenMeta.model_validate(row)
 
 
@@ -133,11 +137,13 @@ def resolve_token(
 def delete_token(
     org: str,
     db: Session = Depends(get_db),
-    _user: UserOut = Depends(require_workspace_admin),
+    user: UserOut = Depends(require_workspace_admin),
 ) -> None:
     """Remove a saved token. Workspace admin only."""
     row = db.query(SavedToken).filter_by(org=org).first()
     if not row:
         raise HTTPException(status_code=404, detail="No saved token for this org")
+    tenant_id = row.tenant_id or tenant_repo.ensure_personal_tenant(db, user.id).id
     db.delete(row)
     db.commit()
+    audit_repo.write(db, user.email, "token.delete", org, {}, tenant_id=tenant_id)

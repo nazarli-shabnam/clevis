@@ -15,7 +15,8 @@ from src.core.db import User, get_db
 from src.core.rate_limit import _account_buckets as _account_rate_limit_buckets
 from src.core.rate_limit import _buckets as _rate_limit_buckets
 from src.repositories import invitation_repo, org_repo
-from src.routers.auth import _SETUP_LOCK_KEY, _pending_invitations_for
+from src.core.auth import SETUP_LOCK_KEY as _SETUP_LOCK_KEY
+from src.routers.auth import _pending_invitations_for
 from src.routers.auth import router as auth_router
 from src.routers.config import router as config_router
 
@@ -678,13 +679,33 @@ def config_client_viewer():
 
 
 @pytest.fixture()
-def config_client_owner():
-    """Authenticated as the owner."""
+def config_owner(db):
+    u = User(email="cfg-owner@example.com", password_hash=None, is_workspace_admin=True)
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+    return UserOut(id=u.id, email=u.email, name=None, is_workspace_admin=True)
+
+
+@pytest.fixture()
+def config_client_owner(db, config_owner):
+    """Authenticated as the owner (a real user row, so the update's audit write can land)."""
     a = FastAPI()
-    a.dependency_overrides[require_auth] = lambda: _OWNER
-    a.dependency_overrides[require_workspace_admin] = lambda: _OWNER
+    a.dependency_overrides[require_auth] = lambda: config_owner
+    a.dependency_overrides[require_workspace_admin] = lambda: config_owner
+    a.dependency_overrides[get_db] = lambda: db
     a.include_router(config_router, prefix="/config")
     return TestClient(a)
+
+
+def test_update_config_is_audited(config_client_owner, db):
+    from src.core.db import AuditLog
+
+    with patch("src.routers.config.set_config"), patch("src.routers.config.read_all", return_value={}):
+        resp = config_client_owner.put("/config/registration_enabled", json={"value": "false"})
+    assert resp.status_code == 200
+    row = db.query(AuditLog).filter(AuditLog.action == "config.update").one()
+    assert row.target == "registration_enabled" and row.actor == "cfg-owner@example.com"
 
 
 def test_get_config_unauthenticated(config_client):
@@ -819,3 +840,20 @@ def test_update_config_success(config_client_owner):
     assert resp.status_code == 200
     mock_set.assert_called_once_with("worker_poll_seconds", "10")
     assert resp.json()["worker_poll_seconds"] == "10"
+
+
+def test_require_auth_trusts_db_admin_flag_over_token_claim(db):
+    from fastapi.security import HTTPAuthorizationCredentials
+
+    from src.core.auth import create_access_token, require_auth
+
+    user = User(email="plain@example.com", password_hash=None, is_workspace_admin=False)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    forged_claims = create_access_token(user.id, "other@example.com", True, None, user.token_version)
+
+    out = require_auth(HTTPAuthorizationCredentials(scheme="Bearer", credentials=forged_claims), None, db)
+
+    assert out.is_workspace_admin is False
+    assert out.email == "plain@example.com"

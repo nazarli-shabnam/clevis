@@ -211,3 +211,29 @@ def test_github_unreachable_maps_to_503(client, db, user):
 def test_remediate_helper_rejects_an_unsupported_check():
     with pytest.raises(check_remediation.RemediationNotSupported):
         check_remediation.remediate(MagicMock(), "organization_members_mfa_required", "acme", "api")
+
+
+def test_dependabot_alerts_check_has_no_fake_remediation():
+    # It measures *open* alerts; enabling alerts can't fix it.
+    assert "repository_dependabot_alerts_clear" not in check_remediation.supported_check_ids()
+
+
+def test_preserving_put_body_keeps_rules_the_old_body_dropped():
+    current = {
+        "required_status_checks": {"strict": True, "contexts": ["ci"], "checks": [{"context": "ci", "app_id": 15368}]},
+        "required_pull_request_reviews": {
+            "required_approving_review_count": 2,
+            "require_last_push_approval": True,
+            "dismissal_restrictions": {"users": [{"login": "alice"}], "teams": [{"slug": "core"}], "apps": []},
+            "bypass_pull_request_allowances": {"users": [], "teams": [], "apps": [{"slug": "release-bot"}]},
+        },
+        "lock_branch": {"enabled": True},
+        "allow_fork_syncing": {"enabled": True},
+    }
+    body = check_remediation._preserving_put_body(current)
+    assert body["required_status_checks"] == {"strict": True, "checks": [{"context": "ci", "app_id": 15368}]}
+    reviews = body["required_pull_request_reviews"]
+    assert reviews["require_last_push_approval"] is True
+    assert reviews["dismissal_restrictions"] == {"users": ["alice"], "teams": ["core"], "apps": []}
+    assert reviews["bypass_pull_request_allowances"] == {"users": [], "teams": [], "apps": ["release-bot"]}
+    assert body["lock_branch"] is True and body["allow_fork_syncing"] is True

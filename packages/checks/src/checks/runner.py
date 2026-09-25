@@ -59,6 +59,11 @@ def run_all_checks(
             for check in checks
         ]
         return {"checks": results, "repo_count": 0}
+    # Archived repos are read-only (nothing "Fix this" can change) and empty repos have no
+    # default branch to protect; neither should count against the score.
+    # ponytail: size == 0 is GitHub's empty-repo signal; a brand-new tiny repo can briefly
+    # report 0 too, and is re-counted on the next scan.
+    repos = [r for r in repos if not r.get("archived") and r.get("size", 1) != 0]
 
     results = []
     for check in checks:

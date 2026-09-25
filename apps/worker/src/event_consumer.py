@@ -309,6 +309,13 @@ def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry
                             redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
                             return
                         org_membership_store.remove_org_member(cur, tenant_id=tenant_id, login=login, event_received_at=received_at)
+                        gh_user_id = ((payload.get("membership") or {}).get("user") or {}).get("id")
+                        # A surviving org_members row means this removal is older than a re-add.
+                        cur.execute("SELECT 1 FROM org_members WHERE tenant_id = %s AND login = %s", (tenant_id, login))
+                        if isinstance(gh_user_id, int) and cur.fetchone() is None:
+                            org_membership_store.revoke_github_membership(
+                                cur, tenant_id=tenant_id, github_user_id=gh_user_id, login=login
+                            )
                     elif action == "member_added":
                         org_normalized = _normalize_organization_event(payload)
                         if org_normalized is None:

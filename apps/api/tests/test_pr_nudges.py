@@ -109,7 +109,9 @@ def test_comment_mode_nudges_only_stale_non_draft_prs_and_audits(client, db, use
     assert actions[2] == "skipped-not-stale"       # too new
     assert actions[3] == "skipped-not-stale"       # draft
     assert actions[4] == "skipped-not-stale"       # updated recently
-    assert db.query(AuditLog).filter(AuditLog.action == "pr_nudge.sweep").count() == 1
+    rows = db.query(AuditLog).filter(AuditLog.action == "pr_nudge.sweep").all()
+    assert len(rows) == 1
+    assert '"commented"' in rows[0].payload  # records what was actually posted
 
 
 def test_comment_mode_skips_a_pr_already_nudged(client, db, user):
@@ -331,3 +333,23 @@ def test_per_sweep_cap_stops_acting_after_the_limit():
     results = pr_nudge.run_nudge_sweep(fake, "o", "r", stale_days=3, mode="label")
     assert results[-1].action == "skipped-per-sweep-cap"
     assert sum(1 for r in results if r.action == "labeled") == pr_nudge._MAX_PER_SWEEP
+
+
+def test_error_after_a_posted_nudge_keeps_the_result_and_stops():
+    now = datetime.now(timezone.utc)
+    stale = [
+        {"number": n, "title": f"PR {n}", "draft": False,
+         "created_at": (now - timedelta(days=30)).isoformat(), "updated_at": (now - timedelta(days=30)).isoformat()}
+        for n in (1, 2, 3)
+    ]
+    fake = _FakeClient(stale)
+    real = fake.request
+
+    def request(method, path, params=None, json=None):
+        if "/issues/2/" in path:
+            raise httpx.HTTPStatusError("500", request=httpx.Request("POST", "https://x"), response=httpx.Response(500))
+        return real(method, path, params=params, json=json)
+
+    fake.request = request
+    results = pr_nudge.run_nudge_sweep(fake, "o", "r", stale_days=3, mode="label")
+    assert [(r.number, r.action) for r in results] == [(1, "labeled"), (2, "error")]
