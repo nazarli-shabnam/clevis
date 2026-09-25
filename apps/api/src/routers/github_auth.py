@@ -12,11 +12,12 @@ import logging
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from src.core.auth import create_access_token, set_session_cookie
+from src.core.app_config import get_config
+from src.core.auth import SETUP_LOCK_KEY, create_access_token, set_session_cookie
 from src.core.config import settings
 from src.core.db import User, get_db, set_session_user
 from src.core.rate_limit import rate_limit
@@ -38,6 +39,11 @@ def _ui_redirect_target() -> str:
 def _ui_login_error_redirect(error_code: str) -> RedirectResponse:
     base = settings.cors_origins[0] if settings.cors_origins else ""
     return RedirectResponse(f"{base}/login?error={error_code}", status_code=303)
+
+
+class RegistrationDisabled(Exception):
+    """A new (non-first) user tried to sign up via GitHub while registration_enabled is off --
+    same gate as /auth/register."""
 
 
 class EmailAlreadyRegistered(Exception):
@@ -65,7 +71,12 @@ def find_or_create_user(db: Session, identity: github_oauth.GitHubIdentity) -> U
     if db.query(User).filter(func.lower(User.email) == identity.email.lower()).first() is not None:
         raise EmailAlreadyRegistered(identity.email)
 
+    # Same lock as /auth/setup: serialize the first-user check-then-insert.
+    db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": SETUP_LOCK_KEY})
     is_workspace_admin = db.query(User).count() == 0
+    if not is_workspace_admin and get_config("registration_enabled", "true") != "true":
+        db.rollback()
+        raise RegistrationDisabled(identity.email)
     user = User(
         email=identity.email.lower(),
         name=identity.name,
@@ -164,6 +175,10 @@ def github_callback(
         user = find_or_create_user(db, identity)
     except EmailAlreadyRegistered:
         error_response = _ui_login_error_redirect("github_email_registered")
+        _clear_state_cookie(error_response)
+        return error_response
+    except RegistrationDisabled:
+        error_response = _ui_login_error_redirect("github_registration_disabled")
         _clear_state_cookie(error_response)
         return error_response
     org_provisioning.sync_org_admin_memberships(db, user, user_token)

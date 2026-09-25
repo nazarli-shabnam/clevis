@@ -15,7 +15,8 @@ from src.core.db import User, get_db
 from src.core.rate_limit import _account_buckets as _account_rate_limit_buckets
 from src.core.rate_limit import _buckets as _rate_limit_buckets
 from src.repositories import invitation_repo, org_repo
-from src.routers.auth import _SETUP_LOCK_KEY, _pending_invitations_for
+from src.core.auth import SETUP_LOCK_KEY as _SETUP_LOCK_KEY
+from src.routers.auth import _pending_invitations_for
 from src.routers.auth import router as auth_router
 from src.routers.config import router as config_router
 
@@ -819,3 +820,20 @@ def test_update_config_success(config_client_owner):
     assert resp.status_code == 200
     mock_set.assert_called_once_with("worker_poll_seconds", "10")
     assert resp.json()["worker_poll_seconds"] == "10"
+
+
+def test_require_auth_trusts_db_admin_flag_over_token_claim(db):
+    from fastapi.security import HTTPAuthorizationCredentials
+
+    from src.core.auth import create_access_token, require_auth
+
+    user = User(email="plain@example.com", password_hash=None, is_workspace_admin=False)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    forged_claims = create_access_token(user.id, "other@example.com", True, None, user.token_version)
+
+    out = require_auth(HTTPAuthorizationCredentials(scheme="Bearer", credentials=forged_claims), None, db)
+
+    assert out.is_workspace_admin is False
+    assert out.email == "plain@example.com"

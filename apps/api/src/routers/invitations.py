@@ -142,7 +142,11 @@ def accept_invitation(
             detail="Verify your email before accepting this invitation",
         )
 
-    membership = org_membership_repo.get_or_create(db, org_id=invitation.org_id, user_id=user.id, role="member")
+    # An existing membership (e.g. a GitHub-verified admin) is kept as-is: accepting a member
+    # invite must never demote it.
+    membership = org_membership_repo.get(db, org_id=invitation.org_id, user_id=user.id) or org_membership_repo.get_or_create(
+        db, org_id=invitation.org_id, user_id=user.id, role="member", source="invite"
+    )
     invitation.status = "accepted"
     invitation.accepted_at = datetime.now(timezone.utc)
     db.commit()

@@ -62,6 +62,18 @@ def remove_org_member(cur: psycopg.Cursor, *, tenant_id: int, login: str, event_
     )
 
 
+def revoke_github_membership(cur: psycopg.Cursor, *, tenant_id: int, github_user_id: int) -> None:
+    """Delete the GitHub-sourced Clevis membership of a user GitHub just removed from the org.
+
+    Invite-sourced memberships are Clevis's own grant (e.g. outside contractors) and survive.
+    Caller must have set app.tenant_id (memberships' RLS tenant clause)."""
+    cur.execute(
+        "DELETE FROM memberships WHERE tenant_id = %(tenant_id)s AND source = 'github' "
+        "AND user_id IN (SELECT id FROM users WHERE github_user_id = %(gh_id)s)",
+        {"tenant_id": tenant_id, "gh_id": github_user_id},
+    )
+
+
 def upsert_repo_collaborator(
     cur: psycopg.Cursor,
     *,

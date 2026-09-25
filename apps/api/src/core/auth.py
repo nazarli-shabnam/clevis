@@ -17,6 +17,10 @@ from src.core.db import User, get_db, set_session_user
 _ALGORITHM = "HS256"
 _TOKEN_EXPIRE_DAYS = 30
 
+# Arbitrary key for pg_advisory_xact_lock serializing first-user creation (/auth/setup and
+# GitHub OAuth signup), so two concurrent first sign-ins can't both become workspace admin.
+SETUP_LOCK_KEY = 727100
+
 SESSION_COOKIE_NAME = "clevis_session"
 _COOKIE_MAX_AGE_SECONDS = _TOKEN_EXPIRE_DAYS * 24 * 60 * 60
 
@@ -109,11 +113,13 @@ def require_auth(
     # Set app.user_id for RLS self-access checks on routes that never resolve a tenant
     # (see migration 0031).
     set_session_user(db, user_id)
+    # Privilege and identity come from the DB row, not the token: a claim minted before a
+    # role or email change must not outlive it.
     return UserOut(
         id=user_id,
-        email=email,
+        email=db_user.email,
         name=payload.get("name"),
-        is_workspace_admin=bool(payload.get("is_workspace_admin", False)),
+        is_workspace_admin=db_user.is_workspace_admin,
         github_login=db_user.github_login,
     )
 

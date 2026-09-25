@@ -6,9 +6,10 @@ user's org memberships (role included) from GitHub in one call, then:
 1. For every org where they're currently a GitHub admin, get-or-creates the Clevis Org
    and grants/refreshes an admin OrgMembership -- GitHub already vouches for admins, so
    no invite is required.
-2. Reconciles every existing Clevis OrgMembership against the fresh GitHub state:
-   demotes to "member" if GitHub now says member, deletes the row if GitHub no longer
-   lists the org for this user at all -- so admin privilege can't outlive its GitHub grant.
+2. Reconciles every existing GitHub-sourced Clevis membership against the fresh GitHub
+   state: demotes to "member" if GitHub now says member, deletes the row if GitHub no
+   longer lists the org for this user at all -- so admin privilege can't outlive its GitHub
+   grant. Invite-sourced memberships are Clevis's own grant and are left alone.
 
 Non-admin GitHub members with no prior Clevis membership are never auto-added; they only
 gain access through the invite-accept flow. Best-effort: any GitHub API failure is
@@ -86,15 +87,23 @@ def sync_org_admin_memberships(db: Session, user: User, user_token: str) -> None
         if gh_membership.role != "admin":
             continue
         org = org_repo.get_or_create(db, github_login=gh_membership.login, github_org_id=gh_membership.github_org_id)
-        membership = org_membership_repo.get_or_create(db, org_id=org.id, user_id=user.id, role="admin")
-        if membership.role != "admin":
-            org_membership_repo.update_role(db, org_id=org.id, user_id=user.id, role="admin")
+        existing = org_membership_repo.get(db, org_id=org.id, user_id=user.id)
+        if existing is not None and existing.role == "admin":
+            continue
+        org_membership_repo.get_or_create(db, org_id=org.id, user_id=user.id, role="admin")
+        _audit(db, user, "membership.github_granted", org, {"role": "admin"})
 
     for org, membership in tenant_repo.list_org_memberships_for_user(db, user.id):
-        if org.github_org_id is None:
+        if org.github_org_id is None or membership.source != "github":
             continue
         gh_role = gh_role_by_org_id.get(org.github_org_id)
         if gh_role is None:
             org_membership_repo.delete(db, org_id=org.id, user_id=user.id)
+            _audit(db, user, "membership.github_revoked", org, {"previous_role": membership.role})
         elif gh_role == "member" and membership.role != "member":
             org_membership_repo.update_role(db, org_id=org.id, user_id=user.id, role="member")
+            _audit(db, user, "membership.github_demoted", org, {"role": "member"})
+
+
+def _audit(db: Session, user: User, action: str, org: Org, payload: dict) -> None:
+    audit_repo.write(db, user.email, action, org.github_login, payload, tenant_id=org.tenant_id)

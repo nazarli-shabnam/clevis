@@ -371,6 +371,9 @@ class Membership(Base):
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     role: Mapped[str] = mapped_column(String, nullable=False)  # "admin" | "member"
+    # How access was granted: "github" (verified GitHub org status) or "invite" (accepted
+    # invitation). GitHub-driven reconciliation only ever demotes/deletes "github" rows.
+    source: Mapped[str] = mapped_column(Text, nullable=False, default="github", server_default="github")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

@@ -122,7 +122,7 @@ def list_org_memberships_for_user(db: Session, user_id: int) -> list[tuple[Org, 
 
 
 def get_or_create_membership(
-    db: Session, tenant_id: int, user_id: int, role: str, *, commit: bool = True
+    db: Session, tenant_id: int, user_id: int, role: str, *, commit: bool = True, source: str = "github"
 ) -> Membership:
     def _find():
         # Re-assert the session user on every lookup: the post-IntegrityError refetch runs after a
@@ -137,23 +137,23 @@ def get_or_create_membership(
     membership = _find()
     if membership is not None:
         return membership
-    return _persist_new(db, Membership(tenant_id=tenant_id, user_id=user_id, role=role), _find, commit=commit)
+    return _persist_new(db, Membership(tenant_id=tenant_id, user_id=user_id, role=role, source=source), _find, commit=commit)
 
 
 def upsert_membership(
-    db: Session, tenant_id: int, user_id: int, role: str, *, commit: bool = True
+    db: Session, tenant_id: int, user_id: int, role: str, *, commit: bool = True, source: str = "github"
 ) -> Membership:
     """get_or_create_membership plus fixing a stale role on an existing row.
 
     commit=False keeps the whole sequence in the caller's transaction."""
-    membership = get_or_create_membership(db, tenant_id, user_id, role, commit=commit)
+    membership = get_or_create_membership(db, tenant_id, user_id, role, commit=commit, source=source)
     if membership.role != role:
         updated = update_membership_role(db, tenant_id, user_id, role, commit=commit)
         # A concurrent delete_membership could remove the row in between; re-create it.
         membership = (
             updated
             if updated is not None
-            else get_or_create_membership(db, tenant_id, user_id, role, commit=commit)
+            else get_or_create_membership(db, tenant_id, user_id, role, commit=commit, source=source)
         )
     return membership
 
