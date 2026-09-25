@@ -70,6 +70,13 @@ describe("PullRequestsPage", () => {
     expect(reposListMock).not.toHaveBeenCalled();
   });
 
+  it("explains the page is org-only and skips org calls for a personal scope", async () => {
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "personal", login: "octocat" }));
+    renderPage();
+    expect(await screen.findByText(/lists organization repositories/)).toBeInTheDocument();
+    expect(reposListMock).not.toHaveBeenCalled();
+  });
+
   it("shows an empty state when the org has repos but no open pull requests", async () => {
     localStorage.setItem("default_org", "acme");
     reposListMock.mockResolvedValue({

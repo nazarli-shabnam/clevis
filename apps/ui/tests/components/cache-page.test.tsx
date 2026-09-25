@@ -103,6 +103,24 @@ describe("CachePage", () => {
     );
   });
 
+  it("previews how many caches a clear would delete on a dry run", async () => {
+    cacheClearMock.mockResolvedValue({ queued: false, dry_run: true });
+    cacheListMock.mockResolvedValue({
+      repository: "acme/demo",
+      total: 2,
+      actions_caches: [
+        { id: 1, key: "a", ref: "refs/heads/main", size_in_bytes: 1024, last_accessed_at: null, created_at: null },
+        { id: 2, key: "b", ref: "refs/heads/main", size_in_bytes: 1024, last_accessed_at: null, created_at: null },
+      ],
+    });
+    renderPage();
+    const dryRunButton = screen.getByRole("button", { name: /dry run/i });
+    await waitFor(() => expect(dryRunButton).not.toBeDisabled());
+    fireEvent.click(dryRunButton);
+
+    expect(await screen.findByText(/a clear would delete 2 caches/)).toBeInTheDocument();
+  });
+
   it("enables the Clear button without needing an actor entered", async () => {
     renderPage();
     await waitFor(() => expect(screen.getByRole("button", { name: /^clear$/i })).not.toBeDisabled());
