@@ -12,7 +12,7 @@ from src.core.auth import UserOut, require_auth
 from src.core.config import settings
 from src.core.db import Org, User, get_db
 from src.core.rbac import OrgContext, require_org_role
-from src.repositories import invitation_repo, org_membership_repo
+from src.repositories import audit_repo, invitation_repo, org_membership_repo
 from src.schemas.invitation import (
     InvitationAcceptResponse,
     InvitationCreate,
@@ -61,6 +61,10 @@ def create_invitation(
         # A concurrent request won the race between the pre-check above and its own
         # insert; the DB constraint rejected this one.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    audit_repo.write(
+        db, user.email, "invitation.create", ctx.org.github_login, {"email": body.email},
+        tenant_id=ctx.org.tenant_id,
+    )
     return {
         "invitation": invitation,
         "invite_link": f"{_ui_base()}/invite/{invitation.token}",
@@ -91,6 +95,7 @@ def list_invitations(
 def revoke_invitation(
     invitation_id: int,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
+    user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
     invitation = invitation_repo.get_by_id_and_org(db, invitation_id=invitation_id, org_id=ctx.org.id)
@@ -101,6 +106,10 @@ def revoke_invitation(
     invitation.status = "revoked"
     db.commit()
     db.refresh(invitation)
+    audit_repo.write(
+        db, user.email, "invitation.revoke", ctx.org.github_login, {"email": invitation.email},
+        tenant_id=ctx.org.tenant_id,
+    )
     return invitation
 
 
@@ -152,4 +161,8 @@ def accept_invitation(
     db.commit()
 
     org = db.query(Org).filter(Org.id == invitation.org_id).first()
+    audit_repo.write(
+        db, user.email, "invitation.accept", org.github_login, {"role": membership.role},
+        tenant_id=org.tenant_id,
+    )
     return {"org_login": org.github_login, "role": membership.role}

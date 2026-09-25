@@ -300,3 +300,17 @@ def test_list_invitations_reflects_expired_status(db, acme_org):
     assert len(body) == 1
     assert body[0]["status"] == "expired"
     assert "expires_at" in body[0]
+
+
+def test_invitation_lifecycle_is_audited(db, acme_org):
+    from src.core.db import AuditLog
+
+    admin = _client(db, acme_org["admin"])
+    created = admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+    token = created["invite_link"].rsplit("/", 1)[-1]
+    assert _client(db, acme_org["invitee"]).post(f"/invitations/{token}/accept").status_code == 200
+    other = admin.post("/orgs/acme/invitations", json={"email": "dave@acme.com"}).json()
+    assert admin.post(f"/orgs/acme/invitations/{other['invitation']['id']}/revoke").status_code == 200
+
+    actions = {r.action for r in db.query(AuditLog).filter(AuditLog.target == "acme")}
+    assert {"invitation.create", "invitation.accept", "invitation.revoke"} <= actions

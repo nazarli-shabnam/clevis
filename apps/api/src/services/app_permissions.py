@@ -17,10 +17,14 @@ _RANK: dict[str, int] = {"read": 1, "write": 2, "admin": 3}
 
 # What every installation needs for the core security checks + dashboards to work.
 # Sourced from docs/self-hosting.md's setup step (contents/metadata/administration/
-# members read, plus the three alert-read grants for webhook ingestion).
+# members read, the three alert-read grants for webhook ingestion, pull_requests/issues
+# read for the event webhooks, and actions read for workflow runs and the cache list).
 BASELINE_PERMISSIONS: dict[str, str] = {
     "metadata": "read",
     "contents": "read",
+    "pull_requests": "read",
+    "issues": "read",
+    "actions": "read",
     "administration": "read",
     "members": "read",
     "vulnerability_alerts": "read",
@@ -62,7 +66,12 @@ FEATURE_PERMISSIONS: dict[str, FeatureSpec] = {
     ),
     "dependabot_triage": FeatureSpec(
         "Dependabot auto-triage",
-        {"pull_requests": "write", "contents": "write"},
+        # checks/statuses read: the CI-green gate reads check-runs and commit statuses.
+        {"pull_requests": "write", "contents": "write", "checks": "read", "statuses": "read"},
+    ),
+    "actions_cache_clear": FeatureSpec(
+        "Clear GitHub Actions caches",
+        {"actions": "write"},
     ),
     "workflow_dispatch": FeatureSpec(
         "Workflow dispatch (Automation page)",

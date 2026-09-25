@@ -30,7 +30,7 @@ def test_blocked_features_partial_grant():
     # Only Pull requests: write granted — unblocks stale_pr_nudges, still blocks the rest.
     blocked = {b.feature: b.missing for b in app_permissions.blocked_features({"pull_requests": "write"})}
     assert "stale_pr_nudges" not in blocked
-    assert blocked["dependabot_triage"] == {"contents": "write"}
+    assert blocked["dependabot_triage"] == {"contents": "write", "checks": "read", "statuses": "read"}
     assert blocked["bulk_branch_protection"] == {"administration": "write"}
 
 
@@ -43,8 +43,16 @@ def test_blocked_features_full_write_grant_unblocks_all():
         "contents": "write",
         "workflows": "write",
         "actions": "write",
+        "checks": "read",
+        "statuses": "read",
     }
     assert app_permissions.blocked_features(granted) == []
+
+
+def test_cache_clear_needs_actions_write_and_baseline_covers_reads():
+    assert {b.feature for b in app_permissions.blocked_features({"actions": "read"})} >= {"actions_cache_clear"}
+    for perm in ("pull_requests", "issues", "actions"):
+        assert app_permissions.BASELINE_PERMISSIONS[perm] == "read"
 
 
 def test_workflow_dispatch_needs_actions_write():

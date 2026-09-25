@@ -13,6 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+import httpx
+
 from src.services.github_client import GitHubClient
 
 # app_config keys (registered in src.core.app_config._ACCEPTED_KEYS)
@@ -99,41 +101,58 @@ def run_nudge_sweep(
     acted = 0
     for pr in prs:
         number, title = pr["number"], pr.get("title", "")
-        if not _is_stale(pr, cutoff):
-            results.append(NudgeResult(number, title, "skipped-not-stale"))
-            continue
-        if acted >= _MAX_PER_SWEEP:
-            results.append(NudgeResult(number, title, "skipped-per-sweep-cap"))
-            continue
-
-        if mode == "label":
-            client.request(
-                "POST",
-                f"/repos/{owner}/{repo}/issues/{number}/labels",
-                json={"labels": [_NUDGE_LABEL]},
-            )
-            results.append(NudgeResult(number, title, "labeled"))
-            acted += 1
-            continue
-
-        # mode == "comment"
-        if _already_nudged(client, owner, repo, number):
-            results.append(NudgeResult(number, title, "skipped-recent-nudge"))
-            continue
-        age_days = (now - (_parse_ts(pr.get("created_at")) or now)).days
-        client.request(
-            "POST",
-            f"/repos/{owner}/{repo}/issues/{number}/comments",
-            json={
-                "body": (
-                    f"This pull request has been open for {age_days} days without review "
-                    f"activity. Could a maintainer take a look?\n\n{_NUDGE_MARKER}"
-                )
-            },
-        )
-        results.append(NudgeResult(number, title, "commented"))
-        acted += 1
+        try:
+            acted += _nudge_pr(client, owner, repo, pr, results, cutoff=cutoff, now=now, mode=mode,
+                               cap_reached=acted >= _MAX_PER_SWEEP)
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            # Nothing posted yet: let the caller map the error (e.g. a 403 permission hint).
+            # Otherwise keep what was already posted so it's returned and audited, and stop.
+            if acted == 0:
+                raise
+            results.append(NudgeResult(number, title, "error"))
+            break
 
     return results
+
+
+def _nudge_pr(
+    client: GitHubClient, owner: str, repo: str, pr: dict, results: list[NudgeResult], *,
+    cutoff: datetime, now: datetime, mode: str, cap_reached: bool,
+) -> int:
+    """Appends this PR's result; returns 1 if a comment/label was posted."""
+    number, title = pr["number"], pr.get("title", "")
+    if not _is_stale(pr, cutoff):
+        results.append(NudgeResult(number, title, "skipped-not-stale"))
+        return 0
+    if cap_reached:
+        results.append(NudgeResult(number, title, "skipped-per-sweep-cap"))
+        return 0
+
+    if mode == "label":
+        client.request(
+            "POST",
+            f"/repos/{owner}/{repo}/issues/{number}/labels",
+            json={"labels": [_NUDGE_LABEL]},
+        )
+        results.append(NudgeResult(number, title, "labeled"))
+        return 1
+
+    # mode == "comment"
+    if _already_nudged(client, owner, repo, number):
+        results.append(NudgeResult(number, title, "skipped-recent-nudge"))
+        return 0
+    age_days = (now - (_parse_ts(pr.get("created_at")) or now)).days
+    client.request(
+        "POST",
+        f"/repos/{owner}/{repo}/issues/{number}/comments",
+        json={
+            "body": (
+                f"This pull request has been open for {age_days} days without review "
+                f"activity. Could a maintainer take a look?\n\n{_NUDGE_MARKER}"
+            )
+        },
+    )
+    results.append(NudgeResult(number, title, "commented"))
+    return 1
 
 

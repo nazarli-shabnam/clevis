@@ -9,9 +9,12 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from src.core.app_config import _ACCEPTED_KEYS, read_all, set_config
 from src.core.auth import UserOut, require_workspace_admin
+from src.core.db import get_db
+from src.repositories import audit_repo, tenant_repo
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -48,7 +51,8 @@ def get_all_config(_user: UserOut = Depends(require_workspace_admin)) -> dict[st
 def update_config(
     key: str,
     body: ConfigValue,
-    _user: UserOut = Depends(require_workspace_admin),
+    user: UserOut = Depends(require_workspace_admin),
+    db: Session = Depends(get_db),
 ) -> dict[str, str]:
     """Update a single config value. Owner only."""
     if key not in _ACCEPTED_KEYS:
@@ -75,4 +79,9 @@ def update_config(
         logger.exception("Failed to update config key %r", key)
         raise HTTPException(status_code=500, detail="Failed to update config")
 
+    # Instance-wide setting: attributed to the acting admin's personal tenant (as token.resolve is).
+    audit_repo.write(
+        db, user.email, "config.update", key, {"value": body.value},
+        tenant_id=tenant_repo.ensure_personal_tenant(db, user.id).id,
+    )
     return read_all()

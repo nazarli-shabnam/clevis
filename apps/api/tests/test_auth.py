@@ -679,13 +679,33 @@ def config_client_viewer():
 
 
 @pytest.fixture()
-def config_client_owner():
-    """Authenticated as the owner."""
+def config_owner(db):
+    u = User(email="cfg-owner@example.com", password_hash=None, is_workspace_admin=True)
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+    return UserOut(id=u.id, email=u.email, name=None, is_workspace_admin=True)
+
+
+@pytest.fixture()
+def config_client_owner(db, config_owner):
+    """Authenticated as the owner (a real user row, so the update's audit write can land)."""
     a = FastAPI()
-    a.dependency_overrides[require_auth] = lambda: _OWNER
-    a.dependency_overrides[require_workspace_admin] = lambda: _OWNER
+    a.dependency_overrides[require_auth] = lambda: config_owner
+    a.dependency_overrides[require_workspace_admin] = lambda: config_owner
+    a.dependency_overrides[get_db] = lambda: db
     a.include_router(config_router, prefix="/config")
     return TestClient(a)
+
+
+def test_update_config_is_audited(config_client_owner, db):
+    from src.core.db import AuditLog
+
+    with patch("src.routers.config.set_config"), patch("src.routers.config.read_all", return_value={}):
+        resp = config_client_owner.put("/config/registration_enabled", json={"value": "false"})
+    assert resp.status_code == 200
+    row = db.query(AuditLog).filter(AuditLog.action == "config.update").one()
+    assert row.target == "registration_enabled" and row.actor == "cfg-owner@example.com"
 
 
 def test_get_config_unauthenticated(config_client):

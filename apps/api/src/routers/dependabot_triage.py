@@ -22,8 +22,8 @@ _FEATURE = "dependabot_triage"
 _PERMISSION_HINT = (
     "GitHub returned 403. Auto-triage needs Clevis's GitHub App (or token) to have the "
     "repository 'Pull requests' permission at Read and write (to approve) and, for "
-    "approve-and-merge mode, 'Contents' at Read and write (to merge). See "
-    "docs/self-hosting.md."
+    "approve-and-merge mode, 'Contents' at Read and write (to merge), plus 'Checks' and "
+    "'Commit statuses' at Read-only (to verify CI is green). See docs/self-hosting.md."
 )
 _MERGE_METHODS = ("merge", "squash", "rebase")
 
@@ -75,6 +75,7 @@ def set_triage_setting(
     owner: str,
     repo: str,
     body: SettingRequest,
+    user: UserOut = Depends(require_auth),
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     db: Session = Depends(get_db),
 ):
@@ -93,6 +94,11 @@ def set_triage_setting(
         extra={"merge_method": body.merge_method},
     )
     db.commit()
+    audit_repo.write(
+        db, user.email, "dependabot_triage.setting_saved", f"{owner}/{repo}",
+        {"enabled": body.enabled, "mode": body.mode, "merge_method": body.merge_method},
+        tenant_id=ctx.org.tenant_id,
+    )
     return {"enabled": body.enabled, "mode": body.mode, "merge_method": body.merge_method}
 
 
