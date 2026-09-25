@@ -5,6 +5,7 @@ import type {
   AuditLogOut,
   BranchProtectionBulkResponse,
   BranchProtectionPreset,
+  SavedBranchProtectionPreset,
   CacheClearResponse,
   CacheListResponse,
   CheckValue,
@@ -332,6 +333,9 @@ export const api = {
       ),
   },
   branchProtection: {
+    // Most recently saved preset (flattened knobs), or null. Org-admin only.
+    savedPreset: (org: string) =>
+      get<{ preset: SavedBranchProtectionPreset | null }>(`/orgs/${encodeURIComponent(org)}/branch-protection/preset`),
     // Org-admin only; needs `Administration: write`. dry_run returns a per-repo diff and writes nothing.
     // A 400 with a docs pointer means the App is missing the permission.
     bulk: (
