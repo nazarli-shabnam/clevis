@@ -73,6 +73,14 @@ def find_or_create_user(db: Session, identity: github_oauth.GitHubIdentity) -> U
 
     # Same lock as /auth/setup: serialize the first-user check-then-insert.
     db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": SETUP_LOCK_KEY})
+    # A concurrent callback for this same identity may have committed while we waited: it's
+    # a returning user now, not a new signup, so the registration gate doesn't apply.
+    user = db.query(User).filter(User.github_user_id == identity.github_user_id).first()
+    if user is not None:
+        _refresh_profile(user, identity)
+        db.commit()
+        db.refresh(user)
+        return user
     is_workspace_admin = db.query(User).count() == 0
     if not is_workspace_admin and get_config("registration_enabled", "true") != "true":
         db.rollback()

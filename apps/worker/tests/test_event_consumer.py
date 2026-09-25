@@ -668,11 +668,18 @@ def test_organization_member_removed_revokes_github_sourced_membership_only(pg_c
             cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
             cur.execute("SELECT user_id FROM memberships WHERE user_id = ANY(%s)", (user_ids,))
             assert [r[0] for r in cur.fetchall()] == [user_ids[1]]
+            cur.execute(
+                "SELECT target FROM audit_logs WHERE action = 'membership.github_revoked' AND tenant_id = %s "
+                "AND target IN ('revoke-gh', 'revoke-inv')",
+                (tenant_id,),
+            )
+            assert [r[0] for r in cur.fetchall()] == ["revoke-gh"]
     finally:
         conn.rollback()
         with conn.cursor() as cur:
             cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
             cur.execute("DELETE FROM memberships WHERE user_id = ANY(%s)", (user_ids,))
+            cur.execute("DELETE FROM audit_logs WHERE action = 'membership.github_revoked' AND target IN ('revoke-gh', 'revoke-inv')")
             cur.execute("DELETE FROM users WHERE id = ANY(%s)", (user_ids,))
         conn.commit()
 

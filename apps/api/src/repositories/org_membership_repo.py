@@ -38,6 +38,27 @@ def get_or_create(db: Session, org_id: int, user_id: int, role: str, source: str
     return membership
 
 
+def create_if_missing(db: Session, org_id: int, user_id: int, role: str, source: str) -> Membership:
+    """Like get_or_create, but never changes an existing row's role -- including one a
+    concurrent transaction inserted first (e.g. a GitHub admin grant racing an invite accept)."""
+    _set_session_user(db, user_id)
+    tenant_id = tenant_repo.get_or_create_org_tenant(db, org_id, commit=False).id
+    membership = tenant_repo.get_or_create_membership(
+        db, tenant_id=tenant_id, user_id=user_id, role=role, commit=False, source=source
+    )
+    db.commit()
+    return membership
+
+
+def set_source(db: Session, org_id: int, user_id: int, source: str) -> None:
+    _set_session_user(db, user_id)
+    membership = get(db, org_id, user_id)
+    if membership is None:
+        return
+    membership.source = source
+    db.commit()
+
+
 def update_role(db: Session, org_id: int, user_id: int, role: str) -> Membership | None:
     tenant = tenant_repo.get_org_tenant(db, org_id)
     if tenant is None:

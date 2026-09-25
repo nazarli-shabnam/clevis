@@ -91,6 +91,11 @@ def sync_org_admin_memberships(db: Session, user: User, user_token: str) -> None
         if existing is not None and existing.role == "admin":
             continue
         org_membership_repo.get_or_create(db, org_id=org.id, user_id=user.id, role="admin")
+        if existing is not None and existing.source != "github":
+            # The admin role now comes from GitHub, so GitHub must be able to take it back:
+            # an invite-sourced row promoted here would otherwise survive GitHub removal as an
+            # admin. (Fail-closed: losing GitHub admin then revokes the row; re-invite if needed.)
+            org_membership_repo.set_source(db, org_id=org.id, user_id=user.id, source="github")
         _audit(db, user, "membership.github_granted", org, {"role": "admin"})
 
     for org, membership in tenant_repo.list_org_memberships_for_user(db, user.id):

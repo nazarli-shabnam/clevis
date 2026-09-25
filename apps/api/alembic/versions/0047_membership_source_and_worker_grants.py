@@ -6,9 +6,11 @@ Clevis invitation). GitHub-driven reconciliation (login sync, the worker's membe
 handler) only ever demotes/deletes 'github' rows, so invite-granted access for non-org
 members survives login, and GitHub org removal revokes GitHub-derived access.
 
-Backfill is best-effort: a row becomes 'invite' when an accepted invitation for that org
-matches the user's email (case-insensitive); everything else keeps the 'github' default,
-which is exactly today's behavior for that row.
+Backfill is best-effort and fails closed: a *member* row becomes 'invite' when an accepted
+invitation for that org matches the user's email (case-insensitive). Admin rows always
+stay 'github' -- an invite only ever grants member, so an admin role there came from GitHub
+(or a later promotion) and must remain revocable by GitHub reconciliation. Everything else
+keeps the 'github' default, which is exactly today's behavior for that row.
 
 invitation_tenant_by_token() lets unauthenticated-tenant invitation preview/accept set
 tenant context under the non-owner clevis_api role (pattern of 0035).
@@ -41,6 +43,7 @@ def upgrade() -> None:
         FROM tenants t, users u, invitations i
         WHERE t.id = m.tenant_id AND t.kind = 'org'
           AND u.id = m.user_id
+          AND m.role = 'member'
           AND i.org_id = t.org_id AND i.status = 'accepted'
           AND lower(i.email) = lower(u.email)
         """
@@ -68,6 +71,8 @@ def upgrade() -> None:
             IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'clevis_worker') THEN
                 GRANT SELECT ON users TO clevis_worker;
                 GRANT SELECT, DELETE ON memberships TO clevis_worker;
+                GRANT INSERT ON audit_logs TO clevis_worker;
+                GRANT USAGE, SELECT ON SEQUENCE audit_logs_id_seq TO clevis_worker;
             END IF;
         END
         $$;
@@ -83,6 +88,8 @@ def downgrade() -> None:
             IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'clevis_worker') THEN
                 REVOKE SELECT ON users FROM clevis_worker;
                 REVOKE SELECT, DELETE ON memberships FROM clevis_worker;
+                REVOKE INSERT ON audit_logs FROM clevis_worker;
+                REVOKE USAGE, SELECT ON SEQUENCE audit_logs_id_seq FROM clevis_worker;
             END IF;
         END
         $$;

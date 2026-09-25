@@ -144,7 +144,7 @@ def accept_invitation(
 
     # An existing membership (e.g. a GitHub-verified admin) is kept as-is: accepting a member
     # invite must never demote it.
-    membership = org_membership_repo.get(db, org_id=invitation.org_id, user_id=user.id) or org_membership_repo.get_or_create(
+    membership = org_membership_repo.create_if_missing(
         db, org_id=invitation.org_id, user_id=user.id, role="member", source="invite"
     )
     invitation.status = "accepted"

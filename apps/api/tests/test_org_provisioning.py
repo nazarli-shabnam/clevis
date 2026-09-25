@@ -166,3 +166,19 @@ def test_stale_clevis_membership_untouched_on_github_api_failure(db):
     membership = org_membership_repo.get(db, org_id=org.id, user_id=ivan.id)
     assert membership is not None
     assert membership.role == "admin"
+
+
+def test_github_admin_promotion_of_an_invited_member_is_revocable_by_github(db):
+    org = org_repo.get_or_create(db, github_login="acme", github_org_id=1)
+    user = _make_user(db, "promoted@example.com")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=user.id, role="member", source="invite")
+
+    admin = [github_oauth.GitHubOrgMembership(github_org_id=1, login="acme", role="admin")]
+    with patch.object(github_oauth, "list_user_org_memberships", return_value=admin):
+        org_provisioning.sync_org_admin_memberships(db, user, "fake-token")
+    membership = org_membership_repo.get(db, org_id=org.id, user_id=user.id)
+    assert membership.role == "admin" and membership.source == "github"
+
+    with patch.object(github_oauth, "list_user_org_memberships", return_value=[]):
+        org_provisioning.sync_org_admin_memberships(db, user, "fake-token")
+    assert org_membership_repo.get(db, org_id=org.id, user_id=user.id) is None
