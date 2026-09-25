@@ -340,7 +340,8 @@ export function AppSidebar() {
             <SidebarGroup className="py-1">
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {items.map((item) => {
+                  {items.filter((item) => item.href !== "/audit" || user?.is_workspace_admin).map((item) => {
+                    // /audit is workspace-admin only (the API 403s everyone else).
                     const isCollaborators = item.href === "/collaborators"
                     const href = isCollaborators ? membersNavHref : item.href
                     // Match any org's members route, but not sibling /settings/org/<login>/* routes.

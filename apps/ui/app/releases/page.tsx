@@ -13,7 +13,8 @@ const DAY_OPTIONS = [30, 90, 180] as const
 
 export default function ReleasesPage() {
   const { scope } = useActiveScope()
-  const org = scope?.login ?? ""
+  // The release timeline is an org endpoint; a personal scope would 404.
+  const org = scope?.kind === "org" ? scope.login : ""
   const [orgChecked, setOrgChecked] = useState(false)
   const [days, setDays] = useState<(typeof DAY_OPTIONS)[number]>(90)
   useEffect(() => {
@@ -43,7 +44,7 @@ export default function ReleasesPage() {
     <>
       <PageHeader title="Releases" description="Release history across your organization." />
 
-      {orgChecked && !org && <EmptyStateNoAccount />}
+      {orgChecked && !org && <EmptyStateNoAccount message={scope?.kind === "personal" ? "This view lists organization repositories. Pick an organization from the profile menu." : undefined} />}
 
       {org && (
         <div className="card">

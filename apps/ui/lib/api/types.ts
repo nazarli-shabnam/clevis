@@ -17,7 +17,13 @@ export interface SeverityCountsValue {
   low: number
 }
 
-export type CheckValue = MFACheckValue | RatioCheckValue | SeverityCountsValue | null
+// A check that errored returns a plain-text explanation instead of structured data.
+export interface TextCheckValue {
+  type: "text"
+  text: string
+}
+
+export type CheckValue = MFACheckValue | RatioCheckValue | SeverityCountsValue | TextCheckValue | null
 
 export interface CheckResult {
   id: string

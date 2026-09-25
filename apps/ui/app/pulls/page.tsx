@@ -10,8 +10,9 @@ import { EmptyStateNoAccount } from "@/components/empty-state"
 import { GitPullRequest } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
+import { isOrgMemberOnly } from "@/lib/members-href"
 import { relativeTime } from "@/lib/format"
-import type { PullSummary } from "@/lib/api/types"
+import type { MyOrgMembership, PullSummary } from "@/lib/api/types"
 
 // No repo-count cap here; requests are fanned out in batches so large orgs don't fire
 // dozens of simultaneous requests.
@@ -25,10 +26,18 @@ type GroupBy = "repo" | "author"
 
 export default function PullRequestsPage() {
   const { scope } = useActiveScope()
-  const org = scope?.login ?? ""
+  // Pulls are listed via /orgs/{org}/repos; a personal scope has no org to list.
+  const org = scope?.kind === "org" ? scope.login : ""
   const hasOrg = org.trim().length > 0
 
   const [groupBy, setGroupBy] = useState<GroupBy>("repo")
+
+  // Nudging posts on GitHub and needs org admin; plain members would just get a 403.
+  const { data: memberships = [] } = useQuery<MyOrgMembership[]>({
+    queryKey: ["my-orgs"],
+    queryFn: () => api.orgs.mine(),
+  })
+  const canNudge = !isOrgMemberOnly(memberships, org)
 
   const resolveQuery = useQuery({
     queryKey: ["tokens.resolve", org],
@@ -140,7 +149,7 @@ export default function PullRequestsPage() {
           <span className="section-title">Open Pull Requests</span>
           <div className="flex items-center gap-3">
             {pulls.length > 0 && <span className="stat-chip">{pulls.length} total</span>}
-            <Button
+            {canNudge && <Button
               size="sm"
               variant="outline"
               disabled={pulls.length === 0 || nudge.isPending}
@@ -155,7 +164,7 @@ export default function PullRequestsPage() {
               }}
             >
               {nudge.isPending ? "Nudging…" : nudgeArmed ? "Click again to confirm" : "Nudge stale PRs"}
-            </Button>
+            </Button>}
             <div className="flex items-center gap-1.5" role="group" aria-label="Group pull requests by">
               {(["repo", "author"] as const).map((g) => (
                 <button
@@ -179,7 +188,7 @@ export default function PullRequestsPage() {
           <p className="px-4 py-2 text-xs text-muted-foreground border-b border-border">{nudgeMsg}</p>
         )}
         {!hasOrg ? (
-          <EmptyStateNoAccount bare />
+          <EmptyStateNoAccount bare message={scope?.kind === "personal" ? "This view lists organization repositories. Pick an organization from the profile menu." : undefined} />
         ) : reposQuery.isError ? (
           <SectionError
             message={reposQuery.error instanceof Error ? reposQuery.error.message : "Failed to load repositories."}

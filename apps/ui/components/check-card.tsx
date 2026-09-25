@@ -33,6 +33,14 @@ const severityLabel: Record<string, string> = {
 function CheckValueDisplay({ value }: { value: CheckValue }) {
   if (!value) return null
 
+  if (value.type === "text") {
+    return (
+      <div className="border-t border-border/40 mt-2 pt-2">
+        <span className="text-xs text-muted-foreground">{value.text}</span>
+      </div>
+    )
+  }
+
   if (value.type === "boolean") {
     return (
       <div className="border-t border-border/40 mt-2 pt-2">

@@ -14,6 +14,12 @@ vi.mock("next/navigation", () => ({
   useParams: () => ({ repo: currentRepoParam }),
 }));
 
+// Workspace admin by default; individual tests flip it to cover the member view.
+let mockIsWorkspaceAdmin = true
+vi.mock("@/lib/auth-context", () => ({
+  useAuth: () => ({ user: { is_workspace_admin: mockIsWorkspaceAdmin } }),
+}))
+
 vi.mock("@/lib/api/client", () => ({
   api: {
     tokens: {
@@ -95,6 +101,24 @@ describe("CachePage", () => {
         dry_run: true,
       }),
     );
+  });
+
+  it("previews how many caches a clear would delete on a dry run", async () => {
+    cacheClearMock.mockResolvedValue({ queued: false, dry_run: true });
+    cacheListMock.mockResolvedValue({
+      repository: "acme/demo",
+      total: 2,
+      actions_caches: [
+        { id: 1, key: "a", ref: "refs/heads/main", size_in_bytes: 1024, last_accessed_at: null, created_at: null },
+        { id: 2, key: "b", ref: "refs/heads/main", size_in_bytes: 1024, last_accessed_at: null, created_at: null },
+      ],
+    });
+    renderPage();
+    const dryRunButton = screen.getByRole("button", { name: /dry run/i });
+    await waitFor(() => expect(dryRunButton).not.toBeDisabled());
+    fireEvent.click(dryRunButton);
+
+    expect(await screen.findByText(/a clear would delete 2 caches/)).toBeInTheDocument();
   });
 
   it("enables the Clear button without needing an actor entered", async () => {

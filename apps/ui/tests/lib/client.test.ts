@@ -208,6 +208,28 @@ describe("api.analytics value normalization", () => {
     expect(result.checks[0].value).toEqual({ type: "ratio", numerator: 3, denominator: 4 });
   });
 
+  it("keeps an errored check's string explanation instead of coercing it", async () => {
+    stubOkJson({
+      owner: "acme",
+      score: 0,
+      total_checks: 1,
+      failed_checks: 1,
+      repo_count: 0,
+      checks: [
+        {
+          id: "organization_members_mfa_required",
+          title: "MFA",
+          severity: "high",
+          remediation: "n/a",
+          status: "error",
+          value: "Check failed: could not fetch repository list",
+        },
+      ],
+    });
+    const result = await api.analytics.overview("acme", "ghp_test");
+    expect(result.checks[0].value).toEqual({ type: "text", text: "Check failed: could not fetch repository list" });
+  });
+
   it("normalizes the force-push check's raw shape into a ratio value", async () => {
     stubOkJson({
       owner: "acme",

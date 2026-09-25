@@ -20,7 +20,8 @@ import { AreaTimeChart } from "@/components/charts/area-time-chart"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
 import { CHART_COLORS } from "@/lib/charts/theme"
 import { relativeTime } from "@/lib/format"
-import type { CheckResult, InstallationMeta } from "@/lib/api/types"
+import { isOrgMemberOnly } from "@/lib/members-href"
+import type { CheckResult, InstallationMeta, MyOrgMembership } from "@/lib/api/types"
 
 const TABS = [
   { id: "all", label: "All" },
@@ -100,6 +101,11 @@ export default function SecurityPage() {
 
   const { scope } = useActiveScope()
   const scopeOrgLogin = scope?.kind === "org" ? scope.login : ""
+  // "Fix this" / "File as issue" need org admin; hide them from plain members (the API 403s).
+  const { data: memberships = [] } = useQuery<MyOrgMembership[]>({
+    queryKey: ["my-orgs"],
+    queryFn: () => api.orgs.mine(),
+  })
   // Security scanning is org-only (the backend 422s for a personal account); clear rather than
   // skip on personal so a stale org doesn't linger.
   useEffect(() => {
@@ -233,7 +239,8 @@ export default function SecurityPage() {
   const filteredChecks = scan.data
     ? sortChecks(
         scan.data.checks.filter((c) => {
-          if (statusFilter !== "all" && c.status !== statusFilter) return false
+          // "Failed" matches the gauge: an errored check also counts against the score.
+          if (statusFilter === "fail" && c.status !== "fail" && c.status !== "error") return false
           if (tab === "severity" && severityFilter !== "all" && c.severity !== severityFilter) return false
           return true
         }),
@@ -464,7 +471,13 @@ export default function SecurityPage() {
                 </p>
               ) : (
                 filteredChecks.map((c: CheckResult) => (
-                  <CheckCard key={c.id} check={c} owner={scan.data.owner} token={token} onRemediated={() => runScan()} />
+                  <CheckCard
+                    key={c.id}
+                    check={c}
+                    owner={isOrgMemberOnly(memberships, scan.data.owner) ? undefined : scan.data.owner}
+                    token={token}
+                    onRemediated={() => runScan()}
+                  />
                 ))
               )}
             </div>

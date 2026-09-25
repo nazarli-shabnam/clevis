@@ -14,6 +14,7 @@ import { CHART_COLORS } from "@/lib/charts/theme"
 import { relativeTime } from "@/lib/format"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
+import { useAuth } from "@/lib/auth-context"
 
 const EVENTS_REFRESH_SECONDS = 30
 const HEATMAP_COLOR_SCALE = [CHART_COLORS.grid, "#1d4ed8", "#3b82f6", "#60a5fa", "#93c5fd"]
@@ -24,14 +25,20 @@ export default function ActivityPage() {
     localStorage.setItem("activity_last_seen_at", new Date().toISOString())
   }, [])
 
+  // /jobs is workspace-admin only; don't poll a 403 for everyone else.
+  const { user } = useAuth()
+  const isWorkspaceAdmin = !!user?.is_workspace_admin
   const { data: jobs = [], isLoading: jobsLoading } = useQuery({
     queryKey: ["jobs"],
     queryFn: api.jobs.list,
     refetchInterval: 15_000,
+    enabled: isWorkspaceAdmin,
   })
 
   const { scope } = useActiveScope()
   const org = scope?.login ?? ""
+  // Events, failed runs and releases are org endpoints; a personal account would 404.
+  const isOrg = scope?.kind === "org"
 
   const resolveQuery = useQuery({
     queryKey: ["tokens.resolve", org],
@@ -49,7 +56,7 @@ export default function ActivityPage() {
   const eventsQuery = useQuery({
     queryKey: ["github.events", org],
     queryFn: () => api.github.events(org, token),
-    enabled: queriesEnabled,
+    enabled: queriesEnabled && isOrg,
     retry: false,
     refetchInterval: EVENTS_REFRESH_SECONDS * 1000,
   })
@@ -66,14 +73,14 @@ export default function ActivityPage() {
   const failedRunsQuery = useQuery({
     queryKey: ["github.failed-runs", org],
     queryFn: () => api.github.failedRuns(org, token),
-    enabled: queriesEnabled,
+    enabled: queriesEnabled && isOrg,
     retry: false,
   })
 
   const releaseTimelineQuery = useQuery({
     queryKey: ["github.release-timeline", org],
     queryFn: () => api.github.releaseTimeline(org, token),
-    enabled: queriesEnabled,
+    enabled: queriesEnabled && isOrg,
     retry: false,
   })
 
@@ -94,13 +101,15 @@ export default function ActivityPage() {
       />
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2 card">
+        <div className={`${isWorkspaceAdmin ? "lg:col-span-2" : "lg:col-span-3"} card`}>
           <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
             <span className="section-label">Activity Feed</span>
             {hasOrg && <span className="stat-chip">auto-refreshes every {EVENTS_REFRESH_SECONDS}s</span>}
           </div>
           {!hasOrg ? (
             <EmptyStateNoAccount bare />
+          ) : !isOrg ? (
+            <p className="p-4 text-sm text-muted-foreground">The activity feed is available for organizations.</p>
           ) : eventsQuery.isError ? (
             <SectionError
               message={eventsQuery.error instanceof Error ? eventsQuery.error.message : "Failed to load events."}
@@ -112,13 +121,15 @@ export default function ActivityPage() {
           )}
         </div>
 
-        <div className="lg:col-span-1 card">
-          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-            <span className="section-label">Jobs</span>
-            <span className="stat-chip">auto-refreshes every 15s</span>
+        {isWorkspaceAdmin && (
+          <div className="lg:col-span-1 card">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+              <span className="section-label">Jobs</span>
+              <span className="stat-chip">auto-refreshes every 15s</span>
+            </div>
+            <ActivityList jobs={jobs} isLoading={jobsLoading} />
           </div>
-          <ActivityList jobs={jobs} isLoading={jobsLoading} />
-        </div>
+        )}
       </div>
 
       {hasOrg && (
@@ -144,6 +155,7 @@ export default function ActivityPage() {
             </div>
           </div>
 
+          {isOrg && (<>
           <div className="card">
             <div className="px-4 py-3 border-b border-border">
               <span className="section-label">CI Failure Log</span>
@@ -204,6 +216,7 @@ export default function ActivityPage() {
               </div>
             )}
           </div>
+          </>)}
         </div>
       )}
     </>

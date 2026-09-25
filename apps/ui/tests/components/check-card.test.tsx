@@ -123,6 +123,16 @@ describe("CheckCard", () => {
   });
 });
 
+describe("CheckCard — text value", () => {
+  afterEach(cleanup);
+
+  it("shows an errored check's explanation instead of dropping it", () => {
+    render(<CheckCard check={{ ...baseCheck, status: "error", value: { type: "text", text: "Check failed: mfa" } }} />);
+    expect(screen.getByText("Check failed: mfa")).toBeInTheDocument();
+    expect(screen.queryByText("✓ Enabled")).not.toBeInTheDocument();
+  });
+});
+
 describe("CheckCard — file as issue (#286)", () => {
   beforeEach(() => {
     createIssueMock.mockReset();
