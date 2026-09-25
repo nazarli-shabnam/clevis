@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from src.core.app_config import _ACCEPTED_KEYS, read_all, set_config
+from src.core.app_config import _ACCEPTED_KEYS, invalidate, read_all, set_config
 from src.core.auth import UserOut, require_workspace_admin
 from src.core.db import get_db
 from src.repositories import audit_repo, tenant_repo
@@ -73,15 +73,18 @@ def update_config(
         allowed = ", ".join(sorted(_ENUM_KEYS[key]))
         raise HTTPException(status_code=422, detail=f"{key} must be one of: {allowed}")
 
+    # Instance-wide setting: attributed to the acting admin's personal tenant (as token.resolve is).
+    # The change and its audit row commit together.
     try:
-        set_config(key, body.value)
+        set_config(key, body.value, db=db)
+        audit_repo.write(
+            db, user.email, "config.update", key, {"value": body.value},
+            tenant_id=tenant_repo.ensure_personal_tenant(db, user.id, commit=False).id, commit=False,
+        )
+        db.commit()
     except Exception:
+        db.rollback()
         logger.exception("Failed to update config key %r", key)
         raise HTTPException(status_code=500, detail="Failed to update config")
-
-    # Instance-wide setting: attributed to the acting admin's personal tenant (as token.resolve is).
-    audit_repo.write(
-        db, user.email, "config.update", key, {"value": body.value},
-        tenant_id=tenant_repo.ensure_personal_tenant(db, user.id).id,
-    )
+    invalidate(key)
     return read_all()

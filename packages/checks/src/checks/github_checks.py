@@ -112,15 +112,6 @@ def _get_all_pages(base_url: str, path: str, token: str, items_key: str | None =
     return results
 
 
-def _branch_protection_status(exc: httpx.HTTPStatusError) -> str:
-    code = exc.response.status_code
-    if code == 404:
-        return "unprotected"
-    # 403/429/5xx mean status can't be evaluated; treating them as "unprotected" would
-    # fail the whole check on a flaky GitHub response.
-    return "unknown"
-
-
 def _feature_disabled(exc: httpx.HTTPStatusError) -> bool:
     """A 403 that means the alert feature is off for the repo (e.g. "Dependabot alerts are
     disabled for this repository", "Advanced Security must be enabled"), as opposed to a
@@ -135,13 +126,22 @@ def _feature_disabled(exc: httpx.HTTPStatusError) -> bool:
 
 
 def _has_non_fast_forward_rule(base_url: str, owner: str, repo: str, branch: str, token: str) -> bool:
-    """True when a repository ruleset blocks force pushes on ``branch`` (rulesets don't
-    show up in the classic /protection endpoint)."""
+    """True when an active ruleset blocks force pushes on ``branch`` (rulesets don't show up
+    in the classic /protection endpoint). Every page is read. A failed lookup raises -- the
+    caller must treat it as unknown, not as "no rule"."""
+    rules = _get_all_pages(base_url, f"/repos/{owner}/{repo}/rules/branches/{branch}", token)
+    return any(isinstance(r, dict) and r.get("type") == "non_fast_forward" for r in rules)
+
+
+def _branch_exists(base_url: str, owner: str, repo: str, branch: str, token: str) -> bool:
+    """False for a missing default branch (an empty repository); other errors raise."""
     try:
-        rules = _get(f"{base_url}/repos/{owner}/{repo}/rules/branches/{branch}", token)
-    except httpx.HTTPError:
-        return False
-    return any(isinstance(r, dict) and r.get("type") == "non_fast_forward" for r in rules or [])
+        _get(f"{base_url}/repos/{owner}/{repo}/branches/{branch}", token)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return False
+        raise
+    return True
 
 
 class OrgMFARequired(Check):
@@ -208,7 +208,12 @@ class BranchProtectionEnabled(Check):
                 if details.get("protected"):
                     protected += 1
             except httpx.HTTPStatusError as exc:
-                if _branch_protection_status(exc) == "unknown":
+                if exc.response.status_code == 404:
+                    # The branch itself doesn't exist (an empty repository): nothing to protect,
+                    # so it isn't counted. (An unprotected branch is a 200 with protected=false.)
+                    checked -= 1
+                else:
+                    # 403/429/5xx: can't be evaluated; not a failure.
                     unknown += 1
             except httpx.HTTPError:
                 unknown += 1
@@ -390,30 +395,36 @@ class DefaultBranchNoForcePushCheck(Check):
         unknown = 0
         for repo in repos:
             branch = repo.get("default_branch")
+            name = repo["name"]
+            no_classic_protection = False
             try:
                 # The plain /branches/{branch} response never includes
                 # `allow_force_pushes`; only the protection sub-resource does.
-                details = _get(
-                    f"{base_url}/repos/{owner}/{repo['name']}/branches/{branch}/protection", token
-                )
+                details = _get(f"{base_url}/repos/{owner}/{name}/branches/{branch}/protection", token)
+                classic_allows = bool((details.get("allow_force_pushes") or {}).get("enabled"))
             except httpx.HTTPStatusError as exc:
-                if exc.response.status_code == 404:
-                    # 404 = no classic protection. A ruleset may still block force pushes;
-                    # otherwise they're allowed (not unknown).
-                    checked += 1
-                    if not _has_non_fast_forward_rule(base_url, owner, repo["name"], branch, token):
-                        force_push_allowed += 1
+                if exc.response.status_code != 404:
+                    # 403/429: can't evaluate, so exclude from the denominator.
+                    unknown += 1
                     continue
-                # 403/429: can't evaluate, so exclude from the denominator.
-                unknown += 1
-                continue
+                # 404 = no classic protection (force pushes allowed by it), or no branch at all.
+                no_classic_protection = True
+                classic_allows = True
             except httpx.HTTPError:
                 unknown += 1
                 continue
+            if classic_allows:
+                # An active ruleset can still block force pushes, whatever classic protection says.
+                try:
+                    if no_classic_protection and not _branch_exists(base_url, owner, name, branch, token):
+                        continue  # empty repo: no default branch to protect
+                    ruleset_blocks = _has_non_fast_forward_rule(base_url, owner, name, branch, token)
+                except httpx.HTTPError:
+                    unknown += 1
+                    continue
+                if not ruleset_blocks:
+                    force_push_allowed += 1
             checked += 1
-            allow_force_pushes = (details.get("allow_force_pushes") or {}).get("enabled")
-            if allow_force_pushes:
-                force_push_allowed += 1
         if checked == 0:
             return {"status": "error", "value": {"repos_checked": checked, "force_push_allowed": force_push_allowed}}
         return {

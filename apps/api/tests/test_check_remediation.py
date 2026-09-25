@@ -237,3 +237,9 @@ def test_preserving_put_body_keeps_rules_the_old_body_dropped():
     assert reviews["dismissal_restrictions"] == {"users": ["alice"], "teams": ["core"], "apps": []}
     assert reviews["bypass_pull_request_allowances"] == {"users": [], "teams": [], "apps": ["release-bot"]}
     assert body["lock_branch"] is True and body["allow_fork_syncing"] is True
+
+
+def test_any_app_status_check_keeps_its_any_app_binding():
+    current = {"required_status_checks": {"strict": False, "checks": [{"context": "lint", "app_id": None}]}}
+    body = check_remediation._preserving_put_body(current)
+    assert body["required_status_checks"]["checks"] == [{"context": "lint", "app_id": -1}]

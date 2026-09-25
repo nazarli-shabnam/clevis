@@ -50,15 +50,6 @@ def create_if_missing(db: Session, org_id: int, user_id: int, role: str, source:
     return membership
 
 
-def set_source(db: Session, org_id: int, user_id: int, source: str) -> None:
-    _set_session_user(db, user_id)
-    membership = get(db, org_id, user_id)
-    if membership is None:
-        return
-    membership.source = source
-    db.commit()
-
-
 def update_role(db: Session, org_id: int, user_id: int, role: str) -> Membership | None:
     tenant = tenant_repo.get_org_tenant(db, org_id)
     if tenant is None:

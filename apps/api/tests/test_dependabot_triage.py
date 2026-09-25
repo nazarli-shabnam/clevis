@@ -338,7 +338,17 @@ def test_merge_method_from_the_setting_is_used():
     client, _decisions = _run([_pr()], mode="approve_and_merge")
     # default squash here; the router-level test covers a custom method
     merge_call = next(c for c in client.calls if "/merge" in c[1])
-    assert merge_call[2] == {"merge_method": "squash"}
+    assert merge_call[2]["merge_method"] == "squash"
+    # Pinned to the head SHA whose checks were verified.
+    assert merge_call[2]["sha"] == _pr()["head"]["sha"]
+
+
+def test_merge_failure_after_an_earlier_approval_is_not_reported_as_a_new_approval():
+    from src.services.dependabot_triage import _APPROVAL_BODY
+
+    client = _FakeClient(prs=[_pr(1)], merge_status=409, reviews=[{"state": "APPROVED", "body": _APPROVAL_BODY}])
+    decisions = triage(client, "acme", "api", enabled=True, mode="approve_and_merge")
+    assert [d.action for d in decisions] == ["merge_failed"]
 
 
 # --- router ----------------------------------------------------------
@@ -484,7 +494,7 @@ def test_run_uses_the_repos_configured_merge_method(db, acme):
     with patch("src.routers.dependabot_triage.GitHubClient") as mock:
         _inst, calls = _wire(mock, prs=[_pr(1)])
         client.post("/orgs/acme/dependabot-triage", json={"token": "ghp_admin", "repos": ["acme/api"]})
-    assert calls["merges"] and calls["merges"][0][1] == {"merge_method": "rebase"}
+    assert calls["merges"] and calls["merges"][0][1]["merge_method"] == "rebase"
 
 
 def test_run_requires_admin(db, acme):

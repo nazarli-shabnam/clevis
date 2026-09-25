@@ -22,16 +22,19 @@ jobs:
       # Gate: a manual dispatch may only publish from main, and only a commit whose CI run
       # passed -- so `:latest` can't be pushed from an arbitrary branch or an untested commit.
       - name: Gate on branch and CI
+        # Context values go through env, never interpolated into the script (a ref name is
+        # attacker-influenced text).
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.ref }}" != "refs/heads/main" ]; then
-            echo "::error::Manual releases must be dispatched from main (got ${{ github.ref }})."
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Manual releases must be dispatched from main (got $GITHUB_REF)."
             exit 1
           fi
-          conclusion=$(gh run list --repo "${{ github.repository }}" --workflow ci.yml --commit "${{ github.sha }}" --json conclusion,status --jq '[.[] | select(.status == "completed")][0].conclusion // ""')
+          conclusion=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" --json conclusion,status --jq '[.[] | select(.status == "completed")][0].conclusion // ""')
           if [ "$conclusion" != "success" ]; then
-            echo "::error::CI has not passed for ${{ github.sha }} (conclusion: '${conclusion:-none}')."
+            echo "::error::CI has not passed for $GITHUB_SHA (conclusion: '${conclusion:-none}')."
             exit 1
           fi
 

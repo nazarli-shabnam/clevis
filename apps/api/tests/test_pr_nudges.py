@@ -162,6 +162,9 @@ def test_github_403_becomes_400_with_permission_hint(client, db, user):
         resp = client.post("/me/repos/acme/api/pr-nudges", json={"token": "ghp_noscope"})
     assert resp.status_code == 400
     assert "Pull requests" in resp.json()["detail"]
+    # The failed attempt is still audited, with its settings and the error.
+    row = db.query(AuditLog).filter(AuditLog.action == "pr_nudge.sweep").one()
+    assert '"error"' in row.payload and '"comment"' in row.payload
 
 
 def test_org_route_requires_owner_to_match_org(client, db, user):
