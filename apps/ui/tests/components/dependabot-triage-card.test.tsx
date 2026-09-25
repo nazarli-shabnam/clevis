@@ -102,6 +102,16 @@ describe("DependabotTriageCard", () => {
     expect(screen.getByRole("button", { name: "Approve eligible PRs" })).toBeDisabled()
   })
 
+  it("blocks a real run while the form differs from the saved setting", async () => {
+    mockGetRepo.mockResolvedValue({ enabled: true, mode: "approve_only", merge_method: "squash" })
+    renderCard()
+    await waitFor(() => expect(screen.getByRole("button", { name: "Approve eligible PRs" })).toBeEnabled())
+
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "approve_and_merge" } })
+    expect(screen.getByRole("button", { name: "Save settings first" })).toBeDisabled()
+    expect(screen.queryByRole("button", { name: "Approve & merge eligible PRs" })).not.toBeInTheDocument()
+  })
+
   it("surfaces a permission error from the run", async () => {
     mockRun.mockRejectedValueOnce(new Error("GitHub returned 403 ... 'Pull requests' ... See docs/self-hosting.md."))
     renderCard()

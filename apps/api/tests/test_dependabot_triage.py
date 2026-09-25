@@ -295,6 +295,45 @@ def test_per_run_cap_is_respected():
     assert len([d for d in decisions if d.reason == "per-run cap reached"]) == 2
 
 
+def test_approve_only_does_not_re_approve_a_pr_clevis_already_approved():
+    from src.services.dependabot_triage import _APPROVAL_BODY
+
+    client, decisions = _run([_pr()], reviews=[{"state": "APPROVED", "body": _APPROVAL_BODY}])
+    assert decisions[0].action == "skipped" and "already approved" in decisions[0].reason
+    assert not any(c[0] == "POST" for c in client.calls)
+
+
+def test_approve_and_merge_merges_without_a_second_approval():
+    from src.services.dependabot_triage import _APPROVAL_BODY
+
+    client, decisions = _run([_pr()], mode="approve_and_merge", reviews=[{"state": "APPROVED", "body": _APPROVAL_BODY}])
+    assert decisions[0].action == "merged"
+    assert not any(c[0] == "POST" for c in client.calls)
+
+
+def test_error_after_an_approval_keeps_the_approval_and_stops_the_repo():
+    client = _FakeClient(prs=[_pr(1), _pr(2), _pr(3)])
+    real_request = client.request
+
+    def request(method, path, params=None, json=None):
+        if method == "POST" and "/pulls/2/" in path:
+            raise httpx.HTTPStatusError("403", request=httpx.Request("POST", "https://x"), response=httpx.Response(403))
+        return real_request(method, path, params=params, json=json)
+
+    client.request = request
+    decisions = triage(client, "acme", "api", enabled=True, mode="approve_only")
+    assert [(d.number, d.action) for d in decisions] == [(1, "approved"), (2, "error")]
+
+
+def test_error_before_any_write_still_propagates():
+    client = _FakeClient(prs=[_pr(1)])
+    client.request = lambda *a, **k: (_ for _ in ()).throw(
+        httpx.HTTPStatusError("403", request=httpx.Request("GET", "https://x"), response=httpx.Response(403))
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        triage(client, "acme", "api", enabled=True, mode="approve_only")
+
+
 def test_merge_method_from_the_setting_is_used():
     client, _decisions = _run([_pr()], mode="approve_and_merge")
     # default squash here; the router-level test covers a custom method
@@ -591,3 +630,32 @@ def test_run_dry_run_writes_no_reviews(db, acme):
         )
     assert resp.json()["decisions"][0]["action"] == "would_merge"
     assert not calls["reviews_posted"] and not calls["merges"]
+
+
+def test_run_matches_saved_setting_case_insensitively_and_dedupes(db, acme):
+    client = _client(db, acme["admin"].id)
+    automation_settings_repo.upsert(
+        db, acme["org"].tenant_id, "acme/api", "dependabot_triage", enabled=True, mode="approve_only"
+    )
+    db.commit()
+    with patch("src.routers.dependabot_triage.dependabot_triage.triage", return_value=[]) as mock:
+        resp = client.post("/orgs/acme/dependabot-triage", json={"token": "ghp_x", "repos": ["Acme/API", "acme/api"]})
+    assert resp.status_code == 200
+    assert mock.call_count == 1
+    assert mock.call_args.kwargs["enabled"] is True
+
+
+def test_run_403_on_one_repo_still_returns_other_repos(db, acme):
+    client = _client(db, acme["admin"].id)
+    err = httpx.HTTPStatusError("403", request=httpx.Request("GET", "https://x"), response=httpx.Response(403))
+
+    def fake_triage(_client, owner, name, **kw):
+        if name == "web":
+            raise err
+        return [dependabot_triage.Decision(7, "bump", "approved")]
+
+    with patch("src.routers.dependabot_triage.dependabot_triage.triage", side_effect=fake_triage):
+        resp = client.post("/orgs/acme/dependabot-triage", json={"token": "ghp_x", "repos": ["acme/api", "acme/web"]})
+    assert resp.status_code == 200
+    actions = {(d["repo"], d["action"]) for d in resp.json()["decisions"]}
+    assert ("acme/api", "approved") in actions and ("acme/web", "error") in actions

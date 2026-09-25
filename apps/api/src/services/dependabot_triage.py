@@ -43,7 +43,7 @@ _UPDATE_LINE_RE = re.compile(r"\b(?:bumps|updates)\b.+?\bfrom\s+\S+\s+to\s+\S+",
 class Decision:
     number: int | None
     title: str
-    action: str  # approved | merged | merge_failed | would_approve | would_merge | skipped
+    action: str  # approved | merged | merge_failed | would_approve | would_merge | skipped | error
     reason: str = ""
 
 
@@ -110,30 +110,38 @@ def _checks_all_green(client: GitHubClient, owner: str, repo: str, sha: str) -> 
     return bool(check_runs) or state == "success"
 
 
-def _human_review_blocks(client: GitHubClient, owner: str, repo: str, pr: dict) -> bool:
+_APPROVAL_BODY = "Auto-approved by Clevis: patch-level Dependabot bump, all checks green."
+
+
+def _review_state(client: GitHubClient, owner: str, repo: str, pr: dict) -> tuple[bool, bool]:
+    """(a human review blocks, Clevis already approved this PR). Clevis's own approval is
+    recognised by its fixed review body, independent of which token/bot identity posted it."""
     if pr.get("requested_reviewers") or pr.get("requested_teams"):
-        return True
+        return True, False
     reviews = client.request_paginated(f"/repos/{owner}/{repo}/pulls/{pr['number']}/reviews")
-    return any(r.get("state") == "CHANGES_REQUESTED" for r in reviews)
+    blocked = any(r.get("state") == "CHANGES_REQUESTED" for r in reviews)
+    approved = any(r.get("state") == "APPROVED" and r.get("body") == _APPROVAL_BODY for r in reviews)
+    return blocked, approved
 
 
-def _evaluate(client: GitHubClient, owner: str, repo: str, pr: dict) -> str | None:
-    """A skip-reason string, or ``None`` when the PR is eligible to be acted on."""
+def _evaluate(client: GitHubClient, owner: str, repo: str, pr: dict) -> tuple[str | None, bool]:
+    """(skip-reason or ``None`` when eligible, whether Clevis already approved it)."""
     if (pr.get("user") or {}).get("login") != DEPENDABOT_LOGIN:
-        return "not a Dependabot PR"
+        return "not a Dependabot PR", False
     if pr.get("draft"):
-        return "draft PR"
+        return "draft PR", False
     patch = _bump_is_patch(pr.get("body", ""))
     if patch is None:
-        return "could not determine the bump level from the PR body"
+        return "could not determine the bump level from the PR body", False
     if not patch:
-        return "not a patch-level bump"
+        return "not a patch-level bump", False
     sha = (pr.get("head") or {}).get("sha")
     if not sha or not _checks_all_green(client, owner, repo, sha):
-        return "checks are not all green"
-    if _human_review_blocks(client, owner, repo, pr):
-        return "a human review is pending or requested changes"
-    return None
+        return "checks are not all green", False
+    blocked, approved = _review_state(client, owner, repo, pr)
+    if blocked:
+        return "a human review is pending or requested changes", approved
+    return None, approved
 
 
 def triage(
@@ -159,49 +167,75 @@ def triage(
     acted = 0
     for pr in prs:
         number, title = pr.get("number"), pr.get("title", "")
-        reason = _evaluate(client, owner, repo, pr)
-        if reason is not None:
-            decisions.append(Decision(number, title, "skipped", reason))
-            continue
-        if acted >= cap:
-            decisions.append(Decision(number, title, "skipped", "per-run cap reached"))
-            continue
+        try:
+            acted += _triage_pr(client, owner, repo, pr, decisions, mode=mode, merge_method=merge_method,
+                                cap_reached=acted >= cap, dry_run=dry_run)
+        except httpx.HTTPStatusError:
+            # Nothing acted on yet in this repo: let the caller classify the error (e.g. a 403
+            # permission hint). Otherwise keep the approvals/merges already made so they are
+            # returned and audited, and stop this repo.
+            if not any(d.action in _WRITE_ACTIONS for d in decisions):
+                raise
+            decisions.append(Decision(number, title, "error", "GitHub API error; stopped this repo"))
+            break
+        except httpx.RequestError:
+            if not any(d.action in _WRITE_ACTIONS for d in decisions):
+                raise
+            decisions.append(Decision(number, title, "error", "GitHub API unreachable; stopped this repo"))
+            break
 
-        will_merge = mode == MODE_APPROVE_AND_MERGE
-        if dry_run:
-            decisions.append(Decision(number, title, "would_merge" if will_merge else "would_approve"))
-            acted += 1
-            continue
+    return decisions
 
+
+_WRITE_ACTIONS = ("approved", "merged", "merge_failed")
+
+
+def _triage_pr(
+    client: GitHubClient, owner: str, repo: str, pr: dict, decisions: list[Decision], *,
+    mode: str, merge_method: str, cap_reached: bool, dry_run: bool,
+) -> int:
+    """Appends this PR's decision(s); returns 1 if it counts against the per-run cap."""
+    number, title = pr.get("number"), pr.get("title", "")
+    reason, already_approved = _evaluate(client, owner, repo, pr)
+    will_merge = mode == MODE_APPROVE_AND_MERGE
+    if reason is None and already_approved and not will_merge:
+        reason = "already approved by Clevis"
+    if reason is not None:
+        decisions.append(Decision(number, title, "skipped", reason))
+        return 0
+    if cap_reached:
+        decisions.append(Decision(number, title, "skipped", "per-run cap reached"))
+        return 0
+
+    if dry_run:
+        decisions.append(Decision(number, title, "would_merge" if will_merge else "would_approve"))
+        return 1
+
+    if not already_approved:
         client.request(
             "POST",
             f"/repos/{owner}/{repo}/pulls/{number}/reviews",
-            json={
-                "event": "APPROVE",
-                "body": "Auto-approved by Clevis: patch-level Dependabot bump, all checks green.",
-            },
+            json={"event": "APPROVE", "body": _APPROVAL_BODY},
         )
-        if will_merge:
-            try:
-                client.request(
-                    "PUT",
-                    f"/repos/{owner}/{repo}/pulls/{number}/merge",
-                    json={"merge_method": merge_method},
-                )
-                decisions.append(Decision(number, title, "merged"))
-            except (httpx.HTTPStatusError, httpx.RequestError) as exc:
-                # The approval already landed on GitHub -- record it as its own decision
-                # and report the merge failure separately, rather than discarding it.
-                if isinstance(exc, httpx.HTTPStatusError):
-                    detail = f"the merge request failed: {exc.response.status_code}"
-                else:
-                    detail = "the merge request could not be sent, so the merge outcome is unknown"
-                decisions.append(Decision(number, title, "approved"))
-                decisions.append(
-                    Decision(number, title, "merge_failed", f"approved, but {detail}")
-                )
-        else:
+    if will_merge:
+        try:
+            client.request(
+                "PUT",
+                f"/repos/{owner}/{repo}/pulls/{number}/merge",
+                json={"merge_method": merge_method},
+            )
+            decisions.append(Decision(number, title, "merged"))
+        except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            # The approval already landed on GitHub -- record it as its own decision
+            # and report the merge failure separately, rather than discarding it.
+            if isinstance(exc, httpx.HTTPStatusError):
+                detail = f"the merge request failed: {exc.response.status_code}"
+            else:
+                detail = "the merge request could not be sent, so the merge outcome is unknown"
             decisions.append(Decision(number, title, "approved"))
-        acted += 1
-
-    return decisions
+            decisions.append(
+                Decision(number, title, "merge_failed", f"approved, but {detail}")
+            )
+    else:
+        decisions.append(Decision(number, title, "approved"))
+    return 1
