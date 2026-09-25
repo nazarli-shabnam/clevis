@@ -174,6 +174,7 @@ def test_preset_touching_only_approvals_preserves_other_review_rules(db, acme):
         "required_approving_review_count": 2,
         "dismiss_stale_reviews": True,
         "require_code_owner_reviews": True,
+        "require_last_push_approval": False,
     }
     assert put["required_status_checks"] == {"strict": True, "contexts": ["ci"]}
 
@@ -394,3 +395,28 @@ def test_dry_run_writes_an_audit_row(db, acme):
         _fake_github(mock, protection_404=True)
         _post(client, {"repos": ["api"], "dry_run": True})
     assert db.query(AuditLog).filter(AuditLog.action == "branch_protection.bulk_dryrun").count() == 1
+
+
+def test_repo_name_rule_allows_dot_github_but_not_dot_segments():
+    from src.services.branch_protection_bulk import _REPO_NAME_RE
+
+    assert _REPO_NAME_RE.match(".github")
+    assert not _REPO_NAME_RE.match(".") and not _REPO_NAME_RE.match("..")
+    assert not _REPO_NAME_RE.match("a/b")
+
+
+def test_repo_list_is_bounded(db, acme):
+    resp = _post(_client(db, acme["admin"].id), {"repos": [f"r{i}" for i in range(501)], "dry_run": True})
+    assert resp.status_code == 422
+
+
+def test_saved_preset_is_readable(db, acme):
+    client = _client(db, acme["admin"].id)
+    assert client.get("/orgs/acme/branch-protection/preset").json() == {"preset": None}
+    automation_settings_repo.upsert(
+        db, acme["org"].tenant_id, "acme/api", "branch_protection", enabled=True,
+        extra={"required_approving_review_count": 2, "allow_deletions": False},
+    )
+    db.commit()
+    assert client.get("/orgs/acme/branch-protection/preset").json()["preset"]["required_approving_review_count"] == 2
+    assert _client(db, acme["member"].id, "member@e.com").get("/orgs/acme/branch-protection/preset").status_code == 403

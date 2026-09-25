@@ -46,7 +46,7 @@ FEATURE_PERMISSIONS: dict[str, FeatureSpec] = {
     ),
     "fix_this": FeatureSpec(
         '"Fix this" security auto-remediation',
-        {"administration": "write", "vulnerability_alerts": "write"},
+        {"administration": "write"},
     ),
     "stale_pr_nudges": FeatureSpec(
         "Stale pull-request nudges",

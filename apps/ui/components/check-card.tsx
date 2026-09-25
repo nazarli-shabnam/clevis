@@ -11,7 +11,6 @@ import type { CheckResult, CheckValue } from "@/lib/api/types"
 // check_ids the API can auto-fix. Keep in sync with check_remediation.supported_check_ids().
 const REMEDIABLE_CHECK_IDS = new Set([
   "repository_secret_scanning_enabled",
-  "repository_dependabot_alerts_clear",
   "repository_default_branch_protection_enabled",
   "repository_default_branch_no_force_push",
 ])

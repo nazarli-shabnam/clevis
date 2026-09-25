@@ -3,9 +3,15 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const mockBulk = vi.fn()
+const mockSavedPreset = vi.fn()
 
 vi.mock("@/lib/api/client", () => ({
-  api: { branchProtection: { bulk: (...args: unknown[]) => mockBulk(...args) } },
+  api: {
+    branchProtection: {
+      bulk: (...args: unknown[]) => mockBulk(...args),
+      savedPreset: (...args: unknown[]) => mockSavedPreset(...args),
+    },
+  },
 }))
 
 import { BranchProtectionCard } from "@/components/automation/branch-protection-card"
@@ -54,7 +60,11 @@ function renderCard(repos: RepoSummary[] = [repo("api"), repo("web")]) {
 }
 
 describe("BranchProtectionCard", () => {
-  beforeEach(() => mockBulk.mockReset())
+  beforeEach(() => {
+    mockBulk.mockReset()
+    mockSavedPreset.mockReset()
+    mockSavedPreset.mockResolvedValue({ preset: null })
+  })
   afterEach(cleanup)
 
   it("prompts for an org when there are no repos", () => {
@@ -155,5 +165,21 @@ describe("BranchProtectionCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Apply to 2 repos" }))
     fireEvent.click(await screen.findByRole("button", { name: "Click again to confirm" }))
     await waitFor(() => expect(screen.getByText(/1 failed: web\./)).toBeInTheDocument())
+  })
+  it("prefills the knobs from the last saved preset and sends block-deletion", async () => {
+    mockSavedPreset.mockResolvedValue({
+      preset: { required_approving_review_count: 3, enforce_admins: true, allow_force_pushes: false, allow_deletions: true },
+    })
+    mockBulk.mockResolvedValue(DRY_RUN_RESP)
+    renderCard()
+    await waitFor(() => expect(screen.getByLabelText("Enforce on admins")).toBeChecked())
+    expect(screen.getByLabelText("Block deletion")).not.toBeChecked()
+
+    fireEvent.click(screen.getByLabelText("api"))
+    fireEvent.click(screen.getByRole("button", { name: /Preview changes/ }))
+    await waitFor(() => expect(mockBulk).toHaveBeenCalled())
+    const body = mockBulk.mock.calls[0][1]
+    expect(body.preset.allow_deletions).toBe(true)
+    expect(body.preset.required_pull_request_reviews.required_approving_review_count).toBe(3)
   })
 })

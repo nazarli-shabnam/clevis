@@ -557,6 +557,14 @@ export interface BranchProtectionPreset {
   restrictions?: null
 }
 
+// Server-side flattened form of a saved preset (branch_protection_bulk.normalize_preset).
+export interface SavedBranchProtectionPreset {
+  required_approving_review_count?: number
+  enforce_admins?: boolean
+  allow_force_pushes?: boolean
+  allow_deletions?: boolean
+}
+
 export interface BranchProtectionRepoDiff {
   repo: string
   branch: string
