@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
-from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role
-from src.repositories import audit_repo, tenant_repo
+from src.core.rbac import OrgContext, assert_owner_matches_org, audit_tenant, require_org_role
+from src.repositories import audit_repo
 from src.schemas.automation import (
     DispatchAllInput,
     DispatchAllResponse,
@@ -367,8 +367,7 @@ def personal_dispatch_workflow(
         raise HTTPException(status_code=403, detail=str(exc))
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    personal_tenant = tenant_repo.ensure_personal_tenant(db, user.id)
-    return _dispatch(db, owner, repo, workflow_id, payload, token, actor=user.email, tenant_id=personal_tenant.id)
+    return _dispatch(db, owner, repo, workflow_id, payload, token, actor=user.email, tenant_id=audit_tenant(db, user.id, owner))
 
 
 @router.post("/me/repos/{owner}/{repo}/workflows/dispatch-all", response_model=DispatchAllResponse)
@@ -386,5 +385,4 @@ def personal_dispatch_all_workflows(
         raise HTTPException(status_code=403, detail=str(exc))
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    personal_tenant = tenant_repo.ensure_personal_tenant(db, user.id)
-    return _dispatch_all(db, owner, repo, payload, token, actor=user.email, tenant_id=personal_tenant.id)
+    return _dispatch_all(db, owner, repo, payload, token, actor=user.email, tenant_id=audit_tenant(db, user.id, owner))
