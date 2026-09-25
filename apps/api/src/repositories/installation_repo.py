@@ -11,6 +11,18 @@ from src.repositories import tenant_repo
 logger = logging.getLogger(__name__)
 
 
+# pg_advisory_xact_lock(namespace, tenant_id): serializes installation writes for a tenant
+# with the uninstall purge, so a new installation can't commit between the purge's
+# "no installation left?" check and its deletes.
+_TENANT_INSTALL_LOCK_NS = 727101
+
+
+def _lock_tenant_installs(db: Session, tenant_id: int) -> None:
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(:ns, :t)"), {"ns": _TENANT_INSTALL_LOCK_NS, "t": int(tenant_id)}
+    )
+
+
 def _resolve_tenant_id(db: Session, org_id: int | None, owner_user_id: int | None) -> int:
     if org_id is not None:
         return tenant_repo.get_or_create_org_tenant(db, org_id).id
@@ -35,9 +47,10 @@ def upsert(
     else:
         query = query.filter(GitHubInstallation.owner_user_id == owner_user_id)
 
-    existing = query.first()
     token_ref = f"tok_{account_login}"
     tenant_id = _resolve_tenant_id(db, org_id, owner_user_id)
+    _lock_tenant_installs(db, tenant_id)
+    existing = query.first()
     if existing:
         existing.account_type = account_type
         existing.auth_mode = auth_mode
@@ -67,6 +80,7 @@ def upsert(
     except IntegrityError:
         # Lost a race with a concurrent sync (unique constraint); update the row it just inserted.
         db.rollback()
+        _lock_tenant_installs(db, tenant_id)
         existing = query.first()
         if existing is None:
             raise
@@ -205,7 +219,10 @@ def purge_tenant_github_data_if_disconnected(db: Session, tenant_id: int) -> Non
     Each table runs in its own savepoint: under the restricted clevis_api role some tables
     grant no DELETE, and a missing privilege there must not fail the uninstall itself."""
     set_session_tenant(db, tenant_id)
+    # Check-then-delete runs under the tenant lock upsert() also takes, in one transaction.
+    _lock_tenant_installs(db, tenant_id)
     if db.query(GitHubInstallation).filter(GitHubInstallation.tenant_id == tenant_id).first() is not None:
+        db.commit()  # release the lock
         return
     for table in _TENANT_GITHUB_TABLES:
         try:

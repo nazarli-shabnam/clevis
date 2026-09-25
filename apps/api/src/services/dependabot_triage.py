@@ -211,18 +211,22 @@ def _triage_pr(
         decisions.append(Decision(number, title, "would_merge" if will_merge else "would_approve"))
         return 1
 
+    approved_now = False
     if not already_approved:
         client.request(
             "POST",
             f"/repos/{owner}/{repo}/pulls/{number}/reviews",
             json={"event": "APPROVE", "body": _APPROVAL_BODY},
         )
+        approved_now = True
     if will_merge:
         try:
+            # Pin the merge to the head commit whose checks were verified green: if a new
+            # commit landed since, GitHub rejects the merge (409) instead of merging unchecked code.
             client.request(
                 "PUT",
                 f"/repos/{owner}/{repo}/pulls/{number}/merge",
-                json={"merge_method": merge_method},
+                json={"merge_method": merge_method, "sha": (pr.get("head") or {}).get("sha")},
             )
             decisions.append(Decision(number, title, "merged"))
         except (httpx.HTTPStatusError, httpx.RequestError) as exc:
@@ -232,7 +236,8 @@ def _triage_pr(
                 detail = f"the merge request failed: {exc.response.status_code}"
             else:
                 detail = "the merge request could not be sent, so the merge outcome is unknown"
-            decisions.append(Decision(number, title, "approved"))
+            if approved_now:
+                decisions.append(Decision(number, title, "approved"))
             decisions.append(
                 Decision(number, title, "merge_failed", f"approved, but {detail}")
             )

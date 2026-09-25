@@ -72,20 +72,20 @@ def test_second_user_is_member(db):
 
 def test_new_github_signup_rejected_when_registration_disabled(db):
     find_or_create_user(db, _identity())
-    with patch("src.routers.github_auth.get_config", return_value="false"):
+    with patch("src.routers.github_auth._registration_enabled", return_value=False):
         with pytest.raises(RegistrationDisabled):
             find_or_create_user(db, _identity(github_user_id=2002, login="hubot", email="hubot@example.com"))
     assert db.query(User).filter(User.github_user_id == 2002).first() is None
 
 
 def test_first_github_signup_allowed_even_when_registration_disabled(db):
-    with patch("src.routers.github_auth.get_config", return_value="false"):
+    with patch("src.routers.github_auth._registration_enabled", return_value=False):
         assert find_or_create_user(db, _identity()).is_workspace_admin is True
 
 
 def test_returning_github_user_unaffected_by_registration_disabled(db):
     find_or_create_user(db, _identity())
-    with patch("src.routers.github_auth.get_config", return_value="false"):
+    with patch("src.routers.github_auth._registration_enabled", return_value=False):
         assert find_or_create_user(db, _identity()).github_user_id == 1001
 
 
@@ -395,3 +395,13 @@ def test_callback_clears_the_state_cookie_on_success(gh_client, db, oauth_config
     state_cookie_headers = [c for c in set_cookies if c.startswith("clevis_oauth_state=")]
     assert len(state_cookie_headers) == 1
     assert "Max-Age=0" in state_cookie_headers[0]
+
+
+def test_registration_setting_is_read_from_the_database(db):
+    from sqlalchemy import text
+
+    from src.routers.github_auth import _registration_enabled
+
+    assert _registration_enabled(db) is True  # no row -> code default
+    db.execute(text("INSERT INTO app_config (key, value, updated_at) VALUES ('registration_enabled', 'false', NOW())"))
+    assert _registration_enabled(db) is False

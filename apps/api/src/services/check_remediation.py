@@ -99,9 +99,12 @@ def _preserving_put_body(current: dict) -> dict:
         checks = status_checks.get("checks")
         status_checks = {"strict": bool(status_checks.get("strict"))}
         if checks:
-            # `checks` carries each check's app_id binding; `contexts` would drop it.
+            # `checks` carries each check's app_id binding; `contexts` would drop it. GET reports
+            # "any app" as a null app_id, which PUT spells -1.
             status_checks["checks"] = [
-                {"context": c["context"], "app_id": c.get("app_id")} for c in checks if c.get("context")
+                {"context": c["context"], "app_id": c["app_id"] if c.get("app_id") is not None else -1}
+                for c in checks
+                if c.get("context")
             ]
         else:
             status_checks["contexts"] = list(current["required_status_checks"].get("contexts") or [])

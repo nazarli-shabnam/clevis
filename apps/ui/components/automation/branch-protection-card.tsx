@@ -88,7 +88,7 @@ export function BranchProtectionCard({ org, token, repos }: Props) {
 
   // Apply is blocked until selection/knobs match the preview, so a bulk rewrite can't hit
   // repos the admin never saw a diff for.
-  const previewSig = [...selected].sort().join(",") + `|${reviewCount}|${enforceAdmins}|${blockForcePush}|${blockDeletion}`
+  const previewSig = `${org.trim()}|` + [...selected].sort().join(",") + `|${reviewCount}|${enforceAdmins}|${blockForcePush}|${blockDeletion}`
   const [previewedSig, setPreviewedSig] = useState<string | null>(null)
   const previewStale = !preview.isSuccess || previewedSig !== previewSig
 

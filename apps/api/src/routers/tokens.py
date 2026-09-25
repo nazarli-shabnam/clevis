@@ -103,12 +103,13 @@ def upsert_token(
     else:
         row = SavedToken(org=org, label=body.label, encrypted_token=encrypted, tenant_id=tenant_id)
         db.add(row)
-    db.commit()
-    db.refresh(row)
     audit_repo.write(
         db, user.email, "token.save", org, {"label": body.label},
-        tenant_id=row.tenant_id or tenant_repo.ensure_personal_tenant(db, user.id).id,
+        tenant_id=row.tenant_id or tenant_repo.ensure_personal_tenant(db, user.id, commit=False).id,
+        commit=False,
     )
+    db.commit()
+    db.refresh(row)
     return TokenMeta.model_validate(row)
 
 
@@ -143,7 +144,7 @@ def delete_token(
     row = db.query(SavedToken).filter_by(org=org).first()
     if not row:
         raise HTTPException(status_code=404, detail="No saved token for this org")
-    tenant_id = row.tenant_id or tenant_repo.ensure_personal_tenant(db, user.id).id
+    tenant_id = row.tenant_id or tenant_repo.ensure_personal_tenant(db, user.id, commit=False).id
     db.delete(row)
+    audit_repo.write(db, user.email, "token.delete", org, {}, tenant_id=tenant_id, commit=False)
     db.commit()
-    audit_repo.write(db, user.email, "token.delete", org, {}, tenant_id=tenant_id)

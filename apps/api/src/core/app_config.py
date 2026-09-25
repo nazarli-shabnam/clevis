@@ -66,21 +66,32 @@ def read_all() -> dict[str, str]:
     return {r[0]: r[1] for r in rows}
 
 
-def set_config(key: str, value: str) -> None:
-    """Upsert *key* → *value* (re-creating a missing row) and invalidate its cache entry."""
+_UPSERT_SQL = text(
+    "INSERT INTO app_config (key, value, updated_at) VALUES (:key, :value, NOW()) "
+    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()"
+)
+
+
+def set_config(key: str, value: str, db=None) -> None:
+    """Upsert *key* → *value* (re-creating a missing row) and invalidate its cache entry.
+
+    With *db*, the write joins the caller's transaction and is NOT committed here: the caller
+    commits (e.g. together with its audit row) and then calls :func:`invalidate`."""
     if key not in _ACCEPTED_KEYS:
         raise ValueError(f"Unknown config key: {key!r}")
 
+    if db is not None:
+        db.execute(_UPSERT_SQL, {"key": key, "value": value})
+        return
+
     from src.core.db import SessionLocal  # noqa: PLC0415
 
-    with SessionLocal() as db:
-        db.execute(
-            text(
-                "INSERT INTO app_config (key, value, updated_at) VALUES (:key, :value, NOW()) "
-                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()"
-            ),
-            {"key": key, "value": value},
-        )
-        db.commit()
+    with SessionLocal() as own_db:
+        own_db.execute(_UPSERT_SQL, {"key": key, "value": value})
+        own_db.commit()
 
+    invalidate(key)
+
+
+def invalidate(key: str) -> None:
     _cache.pop(key, None)
