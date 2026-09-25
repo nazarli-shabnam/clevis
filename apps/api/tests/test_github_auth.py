@@ -13,7 +13,7 @@ from sqlalchemy.orm import Query
 from src.core.config import settings
 from src.core.db import User, get_db
 from src.core.rate_limit import _buckets as _rate_limit_buckets
-from src.routers.github_auth import EmailAlreadyRegistered, find_or_create_user
+from src.routers.github_auth import EmailAlreadyRegistered, RegistrationDisabled, find_or_create_user
 from src.routers.github_auth import router as gh_router
 from src.services import github_oauth
 from src.services.github_oauth import GitHubIdentity
@@ -68,6 +68,25 @@ def test_second_user_is_member(db):
     find_or_create_user(db, _identity())
     second = find_or_create_user(db, _identity(github_user_id=2002, login="hubot", email="hubot@example.com"))
     assert second.is_workspace_admin is False
+
+
+def test_new_github_signup_rejected_when_registration_disabled(db):
+    find_or_create_user(db, _identity())
+    with patch("src.routers.github_auth.get_config", return_value="false"):
+        with pytest.raises(RegistrationDisabled):
+            find_or_create_user(db, _identity(github_user_id=2002, login="hubot", email="hubot@example.com"))
+    assert db.query(User).filter(User.github_user_id == 2002).first() is None
+
+
+def test_first_github_signup_allowed_even_when_registration_disabled(db):
+    with patch("src.routers.github_auth.get_config", return_value="false"):
+        assert find_or_create_user(db, _identity()).is_workspace_admin is True
+
+
+def test_returning_github_user_unaffected_by_registration_disabled(db):
+    find_or_create_user(db, _identity())
+    with patch("src.routers.github_auth.get_config", return_value="false"):
+        assert find_or_create_user(db, _identity()).github_user_id == 1001
 
 
 def test_new_user_gets_a_personal_tenant_and_self_membership(db):

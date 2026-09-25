@@ -24,17 +24,39 @@ def get(db: Session, org_id: int, user_id: int) -> Membership | None:
     return tenant_repo.get_membership(db, tenant.id, user_id)
 
 
-def get_or_create(db: Session, org_id: int, user_id: int, role: str) -> Membership:
+def get_or_create(db: Session, org_id: int, user_id: int, role: str, source: str = "github") -> Membership:
+    """``source`` only applies to a newly created row; an existing row keeps its source."""
     _set_session_user(db, user_id)
     tenant_id = tenant_repo.get_or_create_org_tenant(db, org_id, commit=False).id
     # Lock the row if it exists so a concurrent delete() can't land before our commit. A lost
     # insert race is handled by upsert_membership's SAVEPOINT recovery; the call is one transaction.
     tenant_repo.get_membership(db, tenant_id, user_id, for_update=True)
     membership = tenant_repo.upsert_membership(
-        db, tenant_id=tenant_id, user_id=user_id, role=role, commit=False
+        db, tenant_id=tenant_id, user_id=user_id, role=role, commit=False, source=source
     )
     db.commit()
     return membership
+
+
+def create_if_missing(db: Session, org_id: int, user_id: int, role: str, source: str) -> Membership:
+    """Like get_or_create, but never changes an existing row's role -- including one a
+    concurrent transaction inserted first (e.g. a GitHub admin grant racing an invite accept)."""
+    _set_session_user(db, user_id)
+    tenant_id = tenant_repo.get_or_create_org_tenant(db, org_id, commit=False).id
+    membership = tenant_repo.get_or_create_membership(
+        db, tenant_id=tenant_id, user_id=user_id, role=role, commit=False, source=source
+    )
+    db.commit()
+    return membership
+
+
+def set_source(db: Session, org_id: int, user_id: int, source: str) -> None:
+    _set_session_user(db, user_id)
+    membership = get(db, org_id, user_id)
+    if membership is None:
+        return
+    membership.source = source
+    db.commit()
 
 
 def update_role(db: Session, org_id: int, user_id: int, role: str) -> Membership | None:

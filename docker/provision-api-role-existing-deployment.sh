@@ -152,6 +152,10 @@ BEGIN
   IF EXISTS (SELECT FROM pg_proc WHERE proname = 'resolve_installation_tenant_id') THEN
     GRANT EXECUTE ON FUNCTION resolve_installation_tenant_id(integer) TO clevis_api;
   END IF;
+  -- Same pattern for migration 0047's invitation token -> tenant lookup.
+  IF EXISTS (SELECT FROM pg_proc WHERE proname = 'invitation_tenant_by_token') THEN
+    GRANT EXECUTE ON FUNCTION invitation_tenant_by_token(text) TO clevis_api;
+  END IF;
 END
 $do$;
 
