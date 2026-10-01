@@ -101,46 +101,60 @@ class ReconcileOrgMembershipPayload(BaseModel):
     token: str = Field(min_length=1)
 
 
-def _mark_done(conn: psycopg.Connection, job_id: int, result: dict, expected_retry_count: int) -> None:
+def _fenced_update(conn: psycopg.Connection, job_id: int, sql: str, params: tuple) -> bool:
+    """Run a status UPDATE fenced on (status='processing', retry_count) and commit.
+
+    Returns False when the fence matched no row: another worker already reclaimed or
+    finished the job (issue #253), so this worker's write never landed."""
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        applied = cur.rowcount == 1
+    conn.commit()
+    if not applied:
+        log.warning("job %d already claimed by another worker, skipping status update", job_id)
+    return applied
+
+
+def _mark_done(conn: psycopg.Connection, job_id: int, result: dict, expected_retry_count: int) -> bool:
     # The retry_count match fences against reclaim resetting this job and a second
     # worker re-claiming it (status is 'processing' again, but retry_count was bumped).
-    with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE jobs SET status='done', result=%s, updated_at=NOW() "
-            "WHERE id=%s AND status='processing' AND retry_count=%s",
-            (json.dumps(result), job_id, expected_retry_count),
-        )
-    conn.commit()
+    return _fenced_update(
+        conn,
+        job_id,
+        "UPDATE jobs SET status='done', result=%s, updated_at=NOW() "
+        "WHERE id=%s AND status='processing' AND retry_count=%s",
+        (json.dumps(result), job_id, expected_retry_count),
+    )
 
 
-def _mark_failed(conn: psycopg.Connection, job_id: int, error_text: str, expected_retry_count: int) -> None:
-    with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE jobs SET status='failed', result=%s, updated_at=NOW() "
-            "WHERE id=%s AND status='processing' AND retry_count=%s",
-            (error_text, job_id, expected_retry_count),
-        )
-    conn.commit()
+def _mark_failed(conn: psycopg.Connection, job_id: int, error_text: str, expected_retry_count: int) -> bool:
+    return _fenced_update(
+        conn,
+        job_id,
+        "UPDATE jobs SET status='failed', result=%s, updated_at=NOW() "
+        "WHERE id=%s AND status='processing' AND retry_count=%s",
+        (error_text, job_id, expected_retry_count),
+    )
 
 
-def _requeue_for_retry(conn: psycopg.Connection, job_id: int, retry_count: int, error_text: str) -> None:
+def _requeue_for_retry(conn: psycopg.Connection, job_id: int, retry_count: int, error_text: str) -> bool:
     # Fence on the retry_count observed at claim time, same as _mark_done/_mark_failed.
     new_count = retry_count + 1
     if new_count > MAX_RETRIES:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE jobs SET status='failed', retry_count=%s, result=%s, updated_at=NOW() "
-                "WHERE id=%s AND status='processing' AND retry_count=%s",
-                (new_count, f"exceeded max retry attempts ({MAX_RETRIES}): {error_text}", job_id, retry_count),
-            )
-    else:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE jobs SET status='queued', retry_count=%s, result=%s, updated_at=NOW() "
-                "WHERE id=%s AND status='processing' AND retry_count=%s",
-                (new_count, error_text, job_id, retry_count),
-            )
-    conn.commit()
+        return _fenced_update(
+            conn,
+            job_id,
+            "UPDATE jobs SET status='failed', retry_count=%s, result=%s, updated_at=NOW() "
+            "WHERE id=%s AND status='processing' AND retry_count=%s",
+            (new_count, f"exceeded max retry attempts ({MAX_RETRIES}): {error_text}", job_id, retry_count),
+        )
+    return _fenced_update(
+        conn,
+        job_id,
+        "UPDATE jobs SET status='queued', retry_count=%s, result=%s, updated_at=NOW() "
+        "WHERE id=%s AND status='processing' AND retry_count=%s",
+        (new_count, error_text, job_id, retry_count),
+    )
 
 
 def process_job(conn: psycopg.Connection, job_id: int, job_type: str, payload_raw: str, retry_count: int = 0) -> None:
@@ -217,8 +231,8 @@ def _handle_clear_actions_cache(conn: psycopg.Connection, job_id: int, payload_r
                 resp = client.delete(repo_path, headers=headers, params=params)
                 if _github_response_is_error(conn, job_id, retry_count, resp):
                     return
-                _mark_done(conn, job_id, {"ok": True, "status": resp.status_code}, retry_count)
-                log.info("job %d done", job_id)
+                if _mark_done(conn, job_id, {"ok": True, "status": resp.status_code}, retry_count):
+                    log.info("job %d done", job_id)
                 return
 
             # GitHub has no bulk-delete endpoint (keyless DELETE is a 422): list every
@@ -249,8 +263,8 @@ def _handle_clear_actions_cache(conn: psycopg.Connection, job_id: int, payload_r
         _requeue_for_retry(conn, job_id, retry_count, sanitize_error(error))
         return
 
-    _mark_done(conn, job_id, {"ok": True, "deleted": deleted}, retry_count)
-    log.info("job %d done (%d cache entries deleted)", job_id, deleted)
+    if _mark_done(conn, job_id, {"ok": True, "deleted": deleted}, retry_count):
+        log.info("job %d done (%d cache entries deleted)", job_id, deleted)
 
 
 def _handle_backfill_repo_events(conn: psycopg.Connection, job_id: int, payload_raw: str, retry_count: int) -> None:
@@ -327,10 +341,12 @@ def _handle_backfill_repo_events(conn: psycopg.Connection, job_id: int, payload_
         _requeue_for_retry(conn, job_id, retry_count, sanitize_error(error))
         return
 
-    _mark_done(
+    if _mark_done(
         conn, job_id, {"ok": True, "events_seen": len(raw_events), "events_inserted": inserted_count}, retry_count
-    )
-    log.info("job %d done: backfilled %d/%d events for %s", job_id, inserted_count, len(raw_events), payload.account_login)
+    ):
+        log.info(
+            "job %d done: backfilled %d/%d events for %s", job_id, inserted_count, len(raw_events), payload.account_login
+        )
 
 
 def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payload_raw: str, retry_count: int) -> None:
@@ -423,8 +439,8 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
             _requeue_for_retry(conn, job_id, retry_count, sanitize_error(error))
             return
 
-        _mark_done(conn, job_id, {"ok": True, "members_seen": len(members)}, retry_count)
-        log.info("job %d done: reconciled %d members for %s", job_id, len(members), payload.org_login)
+        if _mark_done(conn, job_id, {"ok": True, "members_seen": len(members)}, retry_count):
+            log.info("job %d done: reconciled %d members for %s", job_id, len(members), payload.org_login)
     finally:
         org_membership_store.release_tenant_lock(conn, payload.tenant_id)
 
