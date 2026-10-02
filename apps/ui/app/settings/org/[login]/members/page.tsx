@@ -424,9 +424,17 @@ export default function OrgMembersPage() {
     },
   })
 
+  // useMutation only retains the latest call's error, so concurrent revokes would overwrite
+  // each other's failures; track them per invitation instead.
+  const [revokeErrors, setRevokeErrors] = useState<Record<number, string>>({})
+
   const revoke = useMutation({
     mutationFn: (id: number) => api.invitations.revoke(orgLogin, id),
-    onMutate: (id) => setRevokingIds((prev) => addRevokingId(prev, id)),
+    onMutate: (id) => {
+      setRevokeErrors(({ [id]: _cleared, ...rest }) => rest)
+      setRevokingIds((prev) => addRevokingId(prev, id))
+    },
+    onError: (error, id) => setRevokeErrors((prev) => ({ ...prev, [id]: error.message })),
     onSettled: (_data, _error, id) => setRevokingIds((prev) => removeRevokingId(prev, id)),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["invitations", orgLogin] }),
   })
@@ -469,9 +477,6 @@ export default function OrgMembersPage() {
           <div className="px-4 py-3 border-b border-border">
             <span className="section-title">Clevis workspace invitations</span>
           </div>
-          {revoke.isError && (
-            <p className="px-4 py-2 text-xs text-destructive border-b border-border">{revoke.error.message}</p>
-          )}
           {isLoading ? (
             <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
               <CircleNotch className="size-3.5 animate-spin" /> Loading…
@@ -493,7 +498,12 @@ export default function OrgMembersPage() {
                 <tbody className="divide-y divide-border">
                   {invitations.map((inv) => (
                     <tr key={inv.id}>
-                      <td className="px-4 py-2.5 text-foreground/80">{inv.email}</td>
+                      <td className="px-4 py-2.5 text-foreground/80">
+                        {inv.email}
+                        {revokeErrors[inv.id] && (
+                          <p role="alert" className="mt-1 text-xs text-destructive">{revokeErrors[inv.id]}</p>
+                        )}
+                      </td>
                       <td className="px-4 py-2.5 text-muted-foreground">{inv.status}</td>
                       <td className="px-4 py-2.5 text-right">
                         {inv.status === "pending" && (
