@@ -430,6 +430,21 @@ describe("AutomationPage", () => {
     expect(screen.getByText("in_progress")).toBeInTheDocument();
   });
 
+  it("shows an error when saving the token fails", async () => {
+    const { api } = await import("@/lib/api/client");
+    const upsertMock = api.tokens.upsert as unknown as ReturnType<typeof vi.fn>;
+    upsertMock.mockReset();
+    upsertMock.mockRejectedValue(new Error("Invalid token format"));
+
+    renderPage();
+
+    await enterOwnerAndSelectRepo("acme", "demo");
+    fireEvent.change(screen.getByPlaceholderText(/ghp_/), { target: { value: "ghp_manual123456789012345678901234" } });
+    fireEvent.click(await screen.findByText("Save token for this org"));
+
+    await waitFor(() => expect(screen.getByText("Invalid token format")).toBeInTheDocument());
+  });
+
   it("surfaces a dispatch error and lets the user edit the ref before retrying", async () => {
     workflowsMock.mockResolvedValue({
       repository: "acme/demo",

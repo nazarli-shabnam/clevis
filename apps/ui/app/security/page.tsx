@@ -326,6 +326,12 @@ export default function SecurityPage() {
                 {saveTokenMutation.isPending ? "Saving…" : "Save token for this org"}
               </Button>
             )}
+            {saveTokenMutation.isError && (
+              <div data-testid="save-token-error" className="flex items-start gap-2 text-xs text-destructive">
+                <Warning className="size-3.5 mt-0.5 shrink-0" />
+                {saveTokenMutation.error.message}
+              </div>
+            )}
             {scan.isError && (
               <div data-testid="scan-error" className="flex items-start gap-2 text-xs text-destructive">
                 <Warning className="size-3.5 mt-0.5 shrink-0" />

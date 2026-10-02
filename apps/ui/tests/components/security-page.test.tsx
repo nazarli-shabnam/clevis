@@ -217,6 +217,20 @@ describe("SecurityPage", () => {
     await waitFor(() => expect(analyticsOverviewMock).toHaveBeenCalledWith("acme", "ghp_test"));
   });
 
+  it("shows an error when saving the token fails", async () => {
+    tokensUpsertMock.mockRejectedValue(new Error("Invalid token format"));
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.change(screen.getByPlaceholderText(/leave blank to use the connected GitHub App/i), {
+      target: { value: "ghp_test" },
+    });
+    fireEvent.click(await screen.findByText("Save token for this org"));
+
+    await waitFor(() => expect(screen.getByTestId("save-token-error")).toHaveTextContent("Invalid token format"));
+  });
+
   it("renders the score trend chart once 2+ history points are available", async () => {
     analyticsHistoryMock.mockResolvedValue([
       { id: 2, owner: "acme", score: 90, total_checks: 3, failed_checks: 0, created_at: "2026-07-17T00:00:00Z" },

@@ -267,6 +267,12 @@ export default function AutomationPage() {
                 {saveTokenMutation.isPending ? "Saving…" : "Save token for this org"}
               </Button>
             )}
+            {saveTokenMutation.isError && (
+              <p className="text-xs text-destructive flex items-center gap-1.5">
+                <Warning className="size-3 shrink-0" />
+                {saveTokenMutation.error.message}
+              </p>
+            )}
             <Button onClick={() => loadMutation.mutate()} disabled={isLoading || !owner.trim() || !repo.trim()} className="mt-1">
               {isLoading ? <><CircleNotch className="size-3.5 animate-spin" />Loading…</> : "Load workflows"}
             </Button>
