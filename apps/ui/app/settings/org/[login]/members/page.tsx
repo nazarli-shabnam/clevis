@@ -469,6 +469,9 @@ export default function OrgMembersPage() {
           <div className="px-4 py-3 border-b border-border">
             <span className="section-title">Clevis workspace invitations</span>
           </div>
+          {revoke.isError && (
+            <p className="px-4 py-2 text-xs text-destructive border-b border-border">{revoke.error.message}</p>
+          )}
           {isLoading ? (
             <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
               <CircleNotch className="size-3.5 animate-spin" /> Loading…
