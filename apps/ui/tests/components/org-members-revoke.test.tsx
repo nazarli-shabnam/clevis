@@ -100,4 +100,22 @@ describe("OrgMembersPage per-row revoke pending state", () => {
       expect(firstRevoke).not.toBeDisabled();
     });
   });
+
+  it("shows the error when revoking an invitation fails", async () => {
+    revokeMock.mockRejectedValue(new Error("Invitation already accepted"));
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("a@example.com")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      screen.getAllByRole("button", { name: /revoke/i })[0].click();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Invitation already accepted")).toBeInTheDocument();
+    });
+  });
 });
