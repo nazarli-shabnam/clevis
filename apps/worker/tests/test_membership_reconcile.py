@@ -218,6 +218,7 @@ def test_fetch_org_roster_propagates_roster_incomplete_for_the_members_call():
 class _FakeCursor:
     def __init__(self):
         self.calls = []
+        self.rowcount = 1
 
     def execute(self, sql, params=None):
         self.calls.append((sql, params))

@@ -269,6 +269,7 @@ def test_fetch_events_retries_a_connection_error_then_succeeds():
 class _FakeCursor:
     def __init__(self):
         self.calls = []
+        self.rowcount = 1
 
     def execute(self, sql, params=None):
         self.calls.append((sql, params))

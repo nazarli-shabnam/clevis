@@ -8,12 +8,13 @@ import httpx
 
 from _crypto import encrypt_job_token
 from config import settings
-from worker import MAX_RETRIES, RECLAIM_TIMEOUT_MINUTES, _reclaim_stale_jobs, process_job
+from worker import MAX_RETRIES, RECLAIM_TIMEOUT_MINUTES, _mark_done, _mark_failed, _reclaim_stale_jobs, _requeue_for_retry, process_job
 
 
 class _FakeCursor:
     def __init__(self):
         self.calls = []
+        self.rowcount = 1
 
     def execute(self, sql, params=None):
         self.calls.append((sql, params))
@@ -582,3 +583,36 @@ def test_process_job_dispatches_known_job_type_to_its_handler():
     sql, params = conn._cursor.calls[0]
     assert "status='done'" in sql
     assert params[1] == 7
+
+
+def test_fenced_status_update_reports_whether_it_applied(caplog):
+    conn = _FakeConn()
+    assert _mark_done(conn, 1, {"ok": True}, 0) is True
+    assert _mark_failed(conn, 1, "boom", 0) is True
+    assert _requeue_for_retry(conn, 1, 0, "boom") is True
+
+    conn._cursor.rowcount = 0  # a second worker already reclaimed/finished the job
+    with caplog.at_level("WARNING", logger="worker"):
+        assert _mark_done(conn, 1, {"ok": True}, 0) is False
+        assert _mark_failed(conn, 1, "boom", 0) is False
+        assert _requeue_for_retry(conn, 1, MAX_RETRIES, "boom") is False
+    assert caplog.text.count("already claimed by another worker") == 3
+
+
+def test_handler_does_not_log_done_when_fence_no_ops(caplog):
+    conn = _FakeConn()
+    conn._cursor.rowcount = 0
+
+    mock_response = MagicMock()
+    mock_response.status_code = 204
+    with patch("worker.httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.delete = MagicMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+        with caplog.at_level("INFO", logger="worker"):
+            process_job(conn, 7, "github.clear_actions_cache", _payload())
+
+    assert "job 7 done" not in caplog.text
+    assert "already claimed by another worker" in caplog.text
