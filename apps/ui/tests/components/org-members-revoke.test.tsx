@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -34,10 +34,12 @@ import OrgMembersPage from "@/app/settings/org/[login]/members/page";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function renderPage() {
@@ -64,6 +66,7 @@ describe("OrgMembersPage per-row revoke pending state", () => {
   });
 
   afterEach(() => {
+    cleanup();
     vi.restoreAllMocks();
   });
 
@@ -99,6 +102,43 @@ describe("OrgMembersPage per-row revoke pending state", () => {
     await waitFor(() => {
       expect(firstRevoke).not.toBeDisabled();
     });
+  });
+
+  it("attributes a failure to its own invitation when a second revoke started later", async () => {
+    const first = deferred<void>();
+    const second = deferred<void>();
+    revokeMock.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("a@example.com")).toBeInTheDocument();
+    });
+
+    const [firstRevoke, secondRevoke] = screen.getAllByRole("button", { name: /revoke/i });
+
+    await act(async () => {
+      firstRevoke.click();
+    });
+    await act(async () => {
+      secondRevoke.click();
+    });
+    expect(firstRevoke).toBeDisabled();
+    expect(secondRevoke).toBeDisabled();
+
+    await act(async () => {
+      first.reject(new Error("Invitation already accepted"));
+      await first.promise.catch(() => {});
+    });
+
+    const firstRow = screen.getByText("a@example.com").closest("tr")!;
+    const secondRow = screen.getByText("b@example.com").closest("tr")!;
+    await waitFor(() => {
+      expect(firstRow).toHaveTextContent("Invitation already accepted");
+    });
+    expect(firstRevoke).not.toBeDisabled();
+    expect(secondRevoke).toBeDisabled();
+    expect(secondRow).not.toHaveTextContent("Invitation already accepted");
   });
 
   it("shows the error when revoking an invitation fails", async () => {
