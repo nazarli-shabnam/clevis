@@ -4,13 +4,12 @@ import { usePathname } from "next/navigation"
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/app-sidebar"
 import { Breadcrumb } from "@/components/breadcrumb"
-
-const SHELL_EXCLUDED = ["/login", "/setup", "/register"]
+import { isPublicRoute } from "@/lib/public-routes"
 
 export function ShellRouter({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
 
-  if (SHELL_EXCLUDED.includes(pathname)) {
+  if (isPublicRoute(pathname)) {
     return <>{children}</>
   }
 
