@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import User, get_db
-from src.repositories import installation_repo, org_membership_repo, org_repo
+from src.repositories import scan_results_repo, installation_repo, org_membership_repo, org_repo
 from src.routers.analytics import router
 
 
@@ -260,3 +260,19 @@ def test_org_overview_fires_score_drop_notification_against_the_previous_scan(ht
         http.post("/orgs/acme/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
 
     notify.assert_called_once_with(db, org.tenant_id, "acme", 90, 60)
+
+
+def test_score_drop_ignores_another_tenants_scan_of_the_same_owner(http, db, mock_user):
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
+    other_org = org_repo.get_or_create(db, github_login="other")
+    scan_results_repo.insert(
+        db, owner="acme", score=99, total_checks=6, failed_checks=0, checks=[], tenant_id=other_org.tenant_id
+    )
+    with (
+        patch("src.routers.analytics.get_overview", return_value={**MOCK_OVERVIEW, "score": 50}),
+        patch("src.routers.analytics.notifications.notify_score_drop") as notify,
+    ):
+        http.post("/orgs/acme/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
+
+    notify.assert_not_called()

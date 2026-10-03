@@ -128,7 +128,7 @@ async def org_analytics_overview(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     result = await _run_overview(payload.owner, token)
-    previous = scan_results_repo.list_recent(db, payload.owner, limit=1)
+    previous = scan_results_repo.list_recent(db, payload.owner, limit=1, tenant_id=ctx.org.tenant_id)
     _persist_scan(db, result, tenant_id=ctx.org.tenant_id)
     if previous:
         await anyio.to_thread.run_sync(

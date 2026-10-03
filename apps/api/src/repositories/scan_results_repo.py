@@ -45,7 +45,11 @@ def exists_for_user(db: Session, owner: str, user_id: int) -> bool:
 
 
 def list_recent(
-    db: Session, owner: str, limit: int = 30, scanned_by_user_id: int | None = None
+    db: Session,
+    owner: str,
+    limit: int = 30,
+    scanned_by_user_id: int | None = None,
+    tenant_id: int | None = None,
 ) -> list[dict]:
     """Newest-first scan summaries for ``owner``.
 
@@ -53,6 +57,10 @@ def list_recent(
     query = db.query(ScanResult).filter(ScanResult.owner == owner)
     if scanned_by_user_id is not None:
         query = query.filter(ScanResult.scanned_by_user_id == scanned_by_user_id)
+    if tenant_id is not None:
+        # Explicit even though RLS scopes rows: with RLS inert (default superuser deployment) another
+        # tenant's scan of the same owner login would otherwise count as "the previous scan".
+        query = query.filter(ScanResult.tenant_id == tenant_id)
     rows = (
         query.order_by(ScanResult.created_at.desc(), ScanResult.id.desc())
         .limit(limit)
