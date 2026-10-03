@@ -13,6 +13,7 @@ from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role
 from src.repositories import installation_repo
 from src.schemas.repos import (
     RepoListInput,
+    RepoFlowMetricsResponse,
     RepoListResponse,
     RepoPullsInput,
     RepoPullsResponse,
@@ -21,6 +22,7 @@ from src.schemas.repos import (
     RepoStatsInput,
     RepoStatsResponse,
 )
+from src.services import flow_metrics
 from src.services.github_client import GitHubClient, github_error as _github_error
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token
 
@@ -231,6 +233,39 @@ def org_repo_stats(
         return _cached_stats(owner, repo, token, db, ctx.org.tenant_id, connected)
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise _github_error(exc) from exc
+
+
+_flow_cache: dict[tuple[int, str, str, str], tuple[float, dict]] = {}
+
+
+@router.post("/orgs/{org_login}/repos/{owner}/{repo}/flow-metrics", response_model=RepoFlowMetricsResponse)
+def org_repo_flow_metrics(
+    org_login: str,
+    owner: str,
+    repo: str,
+    payload: RepoStatsInput,
+    ctx: OrgContext = Depends(require_org_role(min_role="member")),
+    db: Session = Depends(get_db),
+):
+    assert_owner_matches_org(owner, ctx)
+    try:
+        token = resolve_org_token(db, org_id=ctx.org.id, account_login=owner, client_token=_client_token(payload))
+    except NoGitHubTokenAvailable as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    key = (ctx.org.tenant_id, owner, repo, _token_hash(token))
+    now = time.monotonic()
+    cached = _flow_cache.get(key)
+    if cached and now - cached[0] < _STATS_CACHE_TTL_SECONDS:
+        return cached[1]
+    try:
+        result = flow_metrics.compute(GitHubClient(token), owner, repo)
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        raise _github_error(exc) from exc
+    _flow_cache[key] = (now, result)
+    # Same sweep as _stats_cache: rotating installation tokens add a key each hour.
+    for stale in [k for k, (at, _) in _flow_cache.items() if now - at >= _STATS_CACHE_TTL_SECONDS]:
+        del _flow_cache[stale]
+    return result
 
 
 @router.post("/orgs/{org_login}/repos/{owner}/{repo}/pulls", response_model=RepoPullsResponse)
