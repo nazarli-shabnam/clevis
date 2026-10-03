@@ -168,6 +168,15 @@ def test_scan_without_github_credentials_is_a_400(db, acme):
     assert resp.status_code == 400
 
 
+def test_score_finds_a_scan_stored_under_a_different_owner_case(db, acme):
+    token = _new_token(db, acme)
+    scan_results_repo.insert(
+        db, owner="Acme", score=66, total_checks=1, failed_checks=0, checks=[], tenant_id=acme["org"].tenant_id
+    )
+    resp = _client(db).get("/api/v1/orgs/acme/score", headers=_bearer(token))
+    assert resp.status_code == 200 and resp.json()["score"] == 66
+
+
 # --- badge ---
 
 def test_badge_is_opt_in_and_shows_only_the_score(db, acme):
