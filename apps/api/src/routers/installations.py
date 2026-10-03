@@ -18,6 +18,7 @@ from src.core.db import Org, User, get_db
 from src.core.rbac import OrgContext, require_org_role, resolve_org_role, set_tenant_session_context
 from src.repositories import audit_repo, installation_repo, org_membership_repo, org_repo, tenant_repo
 from src.schemas.installation import (
+    AutomationPermissionOut,
     BlockedFeatureOut,
     InstallationLookupOut,
     InstallationOut,
@@ -117,6 +118,16 @@ def _to_installation_out(row) -> InstallationOut:
         if row.permissions_synced_at is not None
         else []
     )
+    synced = row.permissions_synced_at is not None
+    automations = [
+        AutomationPermissionOut(
+            feature=feature_id,
+            label=spec.label,
+            required=spec.permissions,
+            missing=app_permissions.missing_permissions(row.granted_permissions, spec.permissions) if synced else {},
+        )
+        for feature_id, spec in app_permissions.FEATURE_PERMISSIONS.items()
+    ]
     return InstallationOut(
         id=row.id,
         account_login=row.account_login,
@@ -127,7 +138,17 @@ def _to_installation_out(row) -> InstallationOut:
         blocked_features=[
             BlockedFeatureOut(feature=b.feature, label=b.label, missing=b.missing) for b in blocked
         ],
+        automations=automations,
     )
+
+
+def _refresh_permissions(db: Session, installation_id: int):
+    """Re-read the installation's permissions from GitHub and persist them. The caller has
+    already confirmed the row belongs to the requester; returns the updated row."""
+    permissions = _fetch_installation(installation_id).get("permissions")
+    if not isinstance(permissions, dict):
+        raise HTTPException(status_code=502, detail="GitHub did not return installation permissions")
+    installation_repo.update_permissions(db, installation_id=installation_id, permissions=permissions)
 
 
 @router.get("/me/installations/lookup/{installation_id}", response_model=InstallationLookupOut)
@@ -141,6 +162,31 @@ def lookup_installation(
         "account_login": account.get("login", ""),
         "account_type": account.get("type", ""),
     }
+
+
+@router.post(
+    "/orgs/{org_login}/installations/{installation_id}/refresh-permissions", response_model=InstallationOut
+)
+def refresh_org_installation_permissions(
+    installation_id: int,
+    ctx: OrgContext = Depends(require_org_role(min_role="admin")),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    row = installation_repo.get_by_installation_id_for_org(db, org_id=ctx.org.id, installation_id=installation_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Installation not found for this organization")
+    _refresh_permissions(db, installation_id)
+    audit_repo.write(
+        db,
+        actor=user.email,
+        action="installation.permissions_refreshed",
+        target=ctx.org.github_login,
+        payload={"installation_id": installation_id},
+        tenant_id=ctx.org.tenant_id,
+    )
+    db.refresh(row)
+    return _to_installation_out(row)
 
 
 @router.get("/orgs/{org_login}/installations", response_model=list[InstallationOut])
@@ -317,6 +363,30 @@ def delete_personal_installation(
         payload={"installation_id": installation_id, "rows_deleted": count},
         tenant_id=tenant_id,
     )
+
+
+@router.post("/me/installations/{installation_id}/refresh-permissions", response_model=InstallationOut)
+def refresh_personal_installation_permissions(
+    installation_id: int,
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    row = installation_repo.get_by_installation_id_for_user(db, owner_user_id=user.id, installation_id=installation_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Installation not found")
+    personal_tenant = tenant_repo.ensure_personal_tenant(db, user.id)
+    set_tenant_session_context(db, personal_tenant.id, user.id)
+    _refresh_permissions(db, installation_id)
+    audit_repo.write(
+        db,
+        actor=user.email,
+        action="installation.permissions_refreshed.personal",
+        target=row.account_login,
+        payload={"installation_id": installation_id},
+        tenant_id=personal_tenant.id,
+    )
+    db.refresh(row)
+    return _to_installation_out(row)
 
 
 @router.post("/me/installations/sync", response_model=SyncInstallationsResponse)
