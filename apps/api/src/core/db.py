@@ -126,7 +126,7 @@ class WebhookDelivery(Base):
     # Exact verified raw bytes, so what HMAC was checked against is preserved for re-verification.
     payload: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     # queued | queue_failed (XADD failed, retried by webhook_requeue_sweep) | queue_abandoned
-    # (past max retry age, never retried again).
+    # (past max retry age, never retried again) | processed (handled by the worker's event consumer).
     status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
