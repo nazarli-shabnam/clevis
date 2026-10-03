@@ -141,6 +141,9 @@ class PRSummary(BaseModel):
     repository: str
     html_url: str
     updated_at: datetime
+    # When the PR was opened -- the review-wait proxy (GitHub search doesn't expose when the
+    # review was requested). None only if GitHub omitted it.
+    created_at: datetime | None = None
 
 
 class IssueSummary(BaseModel):
