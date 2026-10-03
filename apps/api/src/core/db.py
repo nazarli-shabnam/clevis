@@ -448,6 +448,27 @@ class AutomationRepoSetting(Base):
     )
 
 
+class NotificationDestination(Base):
+    """A per-tenant chat/webhook destination for alerts. The URL (a bearer-style secret for
+    Slack/Teams incoming webhooks) and the optional signing secret are Fernet-encrypted."""
+
+    __tablename__ = "notification_destinations"
+    __table_args__ = (Index("ix_notification_destinations_tenant_id", "tenant_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False)
+    kind: Mapped[str] = mapped_column(String, nullable=False)  # slack | teams | generic
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    encrypted_url: Mapped[str] = mapped_column(Text, nullable=False)
+    # HMAC-SHA256 signing secret, `generic` destinations only.
+    encrypted_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
+    events: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    # `score_drop` fires when a scan's score falls by at least this many points.
+    min_score_drop: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("10"))
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 engine = create_engine(settings.database_url.get_secret_value())
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
