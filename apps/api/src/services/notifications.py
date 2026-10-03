@@ -14,6 +14,7 @@ import ipaddress
 import json
 import logging
 import socket
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
@@ -31,6 +32,9 @@ KINDS = ("slack", "teams", "generic")
 EVENT_SCORE_DROP = "score_drop"
 EVENTS = (EVENT_SCORE_DROP,)
 _TIMEOUT_SECONDS = 5
+# Destinations are messaged in parallel so one slow endpoint can't stall a scan request for
+# (destinations x timeout).
+_MAX_PARALLEL_SENDS = 5
 
 
 class UnsafeDestinationURL(ValueError):
@@ -93,7 +97,11 @@ def send(dest: NotificationDestination, event: str, text: str, data: dict | None
         headers = {"Content-Type": "application/json", "X-Clevis-Event": event}
         if dest.kind == "generic" and dest.encrypted_secret:
             headers["X-Clevis-Signature"] = sign(decrypt_job_token(dest.encrypted_secret, key), body)
-        resp = httpx.post(url, content=body, headers=headers, timeout=_TIMEOUT_SECONDS, follow_redirects=False)
+        # stream(): only the status is needed, so a hostile endpoint can't make us buffer a huge body.
+        with httpx.stream(
+            "POST", url, content=body, headers=headers, timeout=_TIMEOUT_SECONDS, follow_redirects=False
+        ) as resp:
+            status_code, success = resp.status_code, resp.is_success
     except UnsafeDestinationURL as exc:
         return False, str(exc)
     except httpx.HTTPError:
@@ -101,7 +109,7 @@ def send(dest: NotificationDestination, event: str, text: str, data: dict | None
     except Exception:  # decrypt failures etc.: don't let one bad destination break the caller
         logger.exception("notification destination %s could not be sent", dest.id)
         return False, "internal error"
-    return (True, f"HTTP {resp.status_code}") if resp.is_success else (False, f"HTTP {resp.status_code}")
+    return success, f"HTTP {status_code}"
 
 
 def notify_score_drop(db: Session, tenant_id: int, org_login: str, previous: int, current: int) -> None:
@@ -113,10 +121,17 @@ def notify_score_drop(db: Session, tenant_id: int, org_login: str, previous: int
     if drop <= 0:
         return
     text = f"Clevis: security score for {org_login} dropped {drop} points ({previous} -> {current})."
-    for dest in notification_repo.list_for_tenant(db, tenant_id):
-        if not dest.enabled or EVENT_SCORE_DROP not in dest.events or drop < dest.min_score_drop:
-            continue
-        ok, detail = send(dest, EVENT_SCORE_DROP, text, {"org": org_login, "previous": previous, "current": current})
+    data = {"org": org_login, "previous": previous, "current": current}
+    targets = [
+        d
+        for d in notification_repo.list_for_tenant(db, tenant_id)
+        if d.enabled and EVENT_SCORE_DROP in d.events and drop >= d.min_score_drop
+    ]
+    if not targets:
+        return
+    with ThreadPoolExecutor(max_workers=_MAX_PARALLEL_SENDS) as pool:
+        results = list(pool.map(lambda d: send(d, EVENT_SCORE_DROP, text, data), targets))
+    for dest, (ok, detail) in zip(targets, results):
         audit_repo.write(
             db,
             actor="system",

@@ -27,6 +27,13 @@ def _public_dns():
     return patch("src.services.notifications.socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))])
 
 
+def _stream_cm(status_code: int):
+    """Stand-in for httpx.stream(...): a context manager yielding a response with that status."""
+    cm = MagicMock()
+    cm.__enter__.return_value = httpx.Response(status_code)
+    return cm
+
+
 def _make_user(db, email: str) -> UserOut:
     user = User(email=email, name=None, password_hash=None, is_workspace_admin=False)
     db.add(user)
@@ -166,12 +173,12 @@ def test_test_send_posts_signed_body_and_audits_without_the_url(db, acme):
     client = _client(db, acme["admin"])
     dest_id = _create(client, kind="generic", secret="topsecret").json()["id"]
 
-    with _public_dns(), patch("src.services.notifications.httpx.post", return_value=httpx.Response(200)) as post:
+    with _public_dns(), patch("src.services.notifications.httpx.stream", return_value=_stream_cm(200)) as post:
         resp = client.post(f"/orgs/acme/notification-destinations/{dest_id}/test")
 
     assert resp.json() == {"ok": True, "detail": "HTTP 200"}
     kwargs = post.call_args.kwargs
-    assert post.call_args.args[0] == HOOK
+    assert post.call_args.args[:2] == ("POST", HOOK)
     assert kwargs["follow_redirects"] is False
     assert kwargs["headers"]["X-Clevis-Signature"] == notifications.sign("topsecret", kwargs["content"])
     log = db.query(AuditLog).filter(AuditLog.action == "notification.test_sent").one()
@@ -183,7 +190,7 @@ def test_test_send_failure_reports_a_reason_without_leaking_the_url(db, acme):
     dest_id = _create(client).json()["id"]
 
     with _public_dns(), patch(
-        "src.services.notifications.httpx.post", side_effect=httpx.ConnectError(f"cannot reach {HOOK}")
+        "src.services.notifications.httpx.stream", side_effect=httpx.ConnectError(f"cannot reach {HOOK}")
     ):
         resp = client.post(f"/orgs/acme/notification-destinations/{dest_id}/test")
 
@@ -193,7 +200,7 @@ def test_test_send_failure_reports_a_reason_without_leaking_the_url(db, acme):
 def test_test_send_non_2xx_is_a_failure(db, acme):
     client = _client(db, acme["admin"])
     dest_id = _create(client).json()["id"]
-    with _public_dns(), patch("src.services.notifications.httpx.post", return_value=httpx.Response(404)):
+    with _public_dns(), patch("src.services.notifications.httpx.stream", return_value=_stream_cm(404)):
         assert client.post(f"/orgs/acme/notification-destinations/{dest_id}/test").json() == {"ok": False, "detail": "HTTP 404"}
 
 
@@ -202,7 +209,7 @@ def test_send_revalidates_the_url_at_delivery_time(db, acme):
     dest = db.get(NotificationDestination, dest_id)
     # DNS now points at an internal address: the stored destination must be refused, not called.
     with patch("src.services.notifications.socket.getaddrinfo", return_value=[(2, 1, 6, "", ("10.0.0.9", 443))]), patch(
-        "src.services.notifications.httpx.post"
+        "src.services.notifications.httpx.stream"
     ) as post:
         ok, detail = notifications.send(dest, "test", "hi")
     assert ok is False and "public address" in detail
