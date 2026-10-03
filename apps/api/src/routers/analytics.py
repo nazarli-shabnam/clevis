@@ -34,6 +34,7 @@ from src.schemas.analytics import (
     ScanExportResponse,
     ScanHistoryEntry,
 )
+from src.services import notifications
 from src.services.analytics_service import get_account_type, get_overview
 from src.services.github_client import GitHubClient, github_error as _github_error, list_owner_repos
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token, resolve_owner_token
@@ -81,6 +82,15 @@ def _persist_scan(db: Session, result: dict, tenant_id: int | None, scanned_by_u
     )
 
 
+def _notify_score_drop_best_effort(db: Session, ctx: OrgContext, previous: int, current: int) -> None:
+    # A chat-webhook problem must never fail or slow-fail the scan the user actually asked for.
+    try:
+        notifications.notify_score_drop(db, ctx.org.tenant_id, ctx.org.github_login, previous, current)
+    except Exception:
+        db.rollback()
+        logger.exception("score-drop notification failed for %s", ctx.org.github_login)
+
+
 def _user_history_scope(db: Session, user: UserOut, owner: str) -> str | None:
     """How much of `owner`'s scan history this user may read (a local DB read, so it needs its own gate).
 
@@ -118,7 +128,12 @@ async def org_analytics_overview(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     result = await _run_overview(payload.owner, token)
+    previous = scan_results_repo.list_recent(db, payload.owner, limit=1)
     _persist_scan(db, result, tenant_id=ctx.org.tenant_id)
+    if previous:
+        await anyio.to_thread.run_sync(
+            lambda: _notify_score_drop_best_effort(db, ctx, previous[0]["score"], result["score"])
+        )
     return result
 
 

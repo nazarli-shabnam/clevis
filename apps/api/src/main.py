@@ -24,6 +24,7 @@ from src.routers import (
     invitations,
     issues,
     jobs,
+    notifications,
     orgs,
     pr_nudges,
     remediation,
@@ -103,6 +104,7 @@ app.include_router(remediation.router, tags=["security"])
 app.include_router(automation.router, tags=["automation"])
 app.include_router(pr_nudges.router, tags=["pull-requests"])
 app.include_router(branch_protection.router, tags=["automation"])
+app.include_router(notifications.router, tags=["notifications"])
 app.include_router(workflow_lint.router, tags=["automation"])
 app.include_router(dependabot_triage.router, tags=["automation"])
 app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])

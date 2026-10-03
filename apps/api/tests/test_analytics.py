@@ -245,3 +245,18 @@ def test_org_overview_no_installation_and_no_token_returns_400(http, db, mock_us
 def test_personal_overview_no_installation_and_no_token_returns_400(http):
     resp = http.post("/me/analytics/overview", json={"owner": "acme"})
     assert resp.status_code == 400
+
+
+def test_org_overview_fires_score_drop_notification_against_the_previous_scan(http, db, mock_user):
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
+    scans = [{**MOCK_OVERVIEW, "score": 90}, {**MOCK_OVERVIEW, "score": 60}]
+    with (
+        patch("src.routers.analytics.get_overview", side_effect=scans),
+        patch("src.routers.analytics.notifications.notify_score_drop") as notify,
+    ):
+        http.post("/orgs/acme/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
+        notify.assert_not_called()  # first scan: nothing to compare against
+        http.post("/orgs/acme/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
+
+    notify.assert_called_once_with(db, org.tenant_id, "acme", 90, 60)
