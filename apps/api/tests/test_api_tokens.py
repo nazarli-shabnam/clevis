@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
@@ -256,4 +257,23 @@ def test_action_main_maps_http_and_network_errors_to_exit_2(capsys):
         assert check.main(env) == 2
     with patch.object(check, "fetch_score", side_effect=urllib.error.URLError("down")):
         assert check.main(env) == 2
+    assert "clv_secret" not in capsys.readouterr().err
+
+
+def test_action_never_sends_the_token_over_plain_http_or_to_a_redirect_target(capsys):
+    import urllib.error
+
+    check = _load_check()
+    base = {"CLEVIS_ORG": "acme", "CLEVIS_TOKEN": "clv_secret"}
+    for url in ("http://clevis.example.com", "ftp://clevis.example.com", "clevis.example.com"):
+        with patch.object(check, "fetch_score") as fetch:
+            assert check.main({**base, "CLEVIS_API_URL": url}) == 2
+            fetch.assert_not_called()
+    check.check_api_url("http://localhost:8080")  # local dev is allowed
+    check.check_api_url("https://clevis.example.com")
+
+    # A redirect is surfaced as an HTTP error instead of being followed with the Authorization header.
+    req = urllib.request.Request("https://clevis.example.com/x", headers={"Authorization": "Bearer clv_secret"})
+    handler = check._NoRedirect()
+    assert handler.redirect_request(req, None, 302, "Found", {}, "https://evil.example.com/") is None
     assert "clv_secret" not in capsys.readouterr().err

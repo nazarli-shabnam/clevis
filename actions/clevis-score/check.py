@@ -17,6 +17,24 @@ import urllib.parse
 import urllib.request
 
 _FAILING = {"fail", "error"}
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib re-sends custom headers (our bearer token) to wherever a redirect points, so never follow one."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def check_api_url(api_url: str) -> None:
+    """The bearer token must only ever travel over https (plain http only for a local dev server)."""
+    parts = urllib.parse.urlsplit(api_url)
+    if parts.scheme == "https" and parts.hostname:
+        return
+    if parts.scheme == "http" and parts.hostname in _LOCAL_HOSTS:
+        return
+    raise ValueError("api-url must be an https URL")
 
 
 def evaluate(data: dict, threshold: int, required_checks: list[str]) -> list[str]:
@@ -43,7 +61,7 @@ def _request(method: str, url: str, token: str) -> dict:
         method=method,
         headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": "clevis-score-action"},
     )
-    with urllib.request.urlopen(req, timeout=120) as resp:  # scans can take a while
+    with urllib.request.build_opener(_NoRedirect).open(req, timeout=120) as resp:  # scans can take a while
         return json.loads(resp.read().decode())
 
 
@@ -62,6 +80,11 @@ def main(env: dict[str, str] | None = None) -> int:
         threshold = int(env.get("CLEVIS_THRESHOLD") or 0)
     except ValueError:
         print("threshold must be an integer", file=sys.stderr)
+        return 2
+    try:
+        check_api_url(api_url)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
         return 2
     required = [c.strip() for c in (env.get("CLEVIS_FAIL_ON_CHECKS") or "").split(",") if c.strip()]
     refresh = (env.get("CLEVIS_REFRESH") or "").lower() == "true"
