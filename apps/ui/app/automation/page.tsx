@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -184,6 +185,11 @@ export default function AutomationPage() {
       <PageHeader
         title="Automation"
         description="Trigger GitHub Actions workflows and review run history — dispatch is audit-logged and requires org admin."
+        actions={
+          <Link href="/automation/permissions" className="text-xs text-primary hover:underline">
+            Check permissions
+          </Link>
+        }
       />
 
       {driftInstalls.length > 0 && (

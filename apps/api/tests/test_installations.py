@@ -13,7 +13,7 @@ from src.core.auth import UserOut, require_auth
 from src.core.db import AuditLog, Job, User, get_db
 from src.repositories import installation_repo, org_membership_repo, org_repo
 from src.routers.installations import router as inst_router
-from src.services import github_app
+from src.services import app_permissions, github_app
 
 _OUTSIDER = UserOut(id=99999, email="outsider@e.com", name=None, is_workspace_admin=False)
 
@@ -764,3 +764,94 @@ def test_list_installations_never_permission_checked_has_empty_blocked_features(
     data = resp.json()[0]
     assert data["permissions_synced_at"] is None
     assert data["blocked_features"] == []
+
+
+def test_list_org_installations_includes_every_automation_with_requirements(db, acme_org):
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app",
+        installation_id=42, org_id=acme_org["org"].id,
+    )
+    installation_repo.update_permissions(db, installation_id=42, permissions={"actions": "write", "metadata": "read"})
+
+    data = _client(db, acme_org["admin"]).get("/orgs/acme/installations").json()[0]
+    by_feature = {a["feature"]: a for a in data["automations"]}
+    assert set(by_feature) == set(app_permissions.FEATURE_PERMISSIONS)
+    assert by_feature["workflow_dispatch"]["required"] == {"actions": "write"}
+    assert by_feature["workflow_dispatch"]["missing"] == {}
+    assert by_feature["fix_this"]["missing"] == {"administration": "write"}
+
+
+def test_list_installations_never_checked_reports_requirements_but_nothing_missing(db, acme_org):
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app",
+        installation_id=42, org_id=acme_org["org"].id,
+    )
+    data = _client(db, acme_org["admin"]).get("/orgs/acme/installations").json()[0]
+    assert data["permissions_synced_at"] is None
+    assert data["automations"] and all(a["missing"] == {} and a["required"] for a in data["automations"])
+
+
+def test_refresh_org_installation_permissions_updates_and_audits(db, acme_org):
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app",
+        installation_id=42, org_id=acme_org["org"].id,
+    )
+    with patch(
+        "src.routers.installations.github_app.get_installation",
+        return_value={"permissions": {"issues": "write", "metadata": "read"}},
+    ):
+        resp = _client(db, acme_org["admin"]).post("/orgs/acme/installations/42/refresh-permissions")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["permissions_synced_at"] is not None
+    assert "file_as_issue" not in {b["feature"] for b in body["blocked_features"]}
+    row = installation_repo.get_by_installation_id_for_org(db, org_id=acme_org["org"].id, installation_id=42)
+    assert row.granted_permissions == {"issues": "write", "metadata": "read"}
+    assert db.query(AuditLog).filter(AuditLog.action == "installation.permissions_refreshed").count() == 1
+
+
+def test_refresh_org_installation_permissions_requires_admin(db, acme_org):
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app",
+        installation_id=42, org_id=acme_org["org"].id,
+    )
+    with patch("src.routers.installations.github_app.get_installation") as mock_get:
+        resp = _client(db, acme_org["member"]).post("/orgs/acme/installations/42/refresh-permissions")
+    assert resp.status_code == 403
+    mock_get.assert_not_called()
+
+
+def test_refresh_org_installation_permissions_404_for_unknown_installation(db, acme_org):
+    resp = _client(db, acme_org["admin"]).post("/orgs/acme/installations/999/refresh-permissions")
+    assert resp.status_code == 404
+
+
+def test_refresh_org_installation_permissions_502_when_github_returns_no_permissions(db, acme_org):
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app",
+        installation_id=42, org_id=acme_org["org"].id,
+    )
+    with patch("src.routers.installations.github_app.get_installation", return_value={"account": {}}):
+        resp = _client(db, acme_org["admin"]).post("/orgs/acme/installations/42/refresh-permissions")
+    assert resp.status_code == 502
+
+
+def test_refresh_personal_installation_permissions_only_for_owner(db):
+    owner = _make_user(db, "owner@e.com", github_login="owner")
+    other = _make_user(db, "other@e.com", github_login="other")
+    with _mock_installation("owner", "User"):
+        _client(db, owner).post(
+            "/me/installations/sync",
+            json={"account_login": "owner", "account_type": "User", "installation_id": 77},
+        )
+    with patch(
+        "src.routers.installations.github_app.get_installation",
+        return_value={"permissions": {"administration": "write"}},
+    ):
+        ok = _client(db, owner).post("/me/installations/77/refresh-permissions")
+        denied = _client(db, other).post("/me/installations/77/refresh-permissions")
+
+    assert ok.status_code == 200
+    assert "fix_this" not in {b["feature"] for b in ok.json()["blocked_features"]}
+    assert denied.status_code == 404
