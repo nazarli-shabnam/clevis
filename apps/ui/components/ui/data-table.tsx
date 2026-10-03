@@ -92,22 +92,28 @@ export function DataTable<T>({
                     className={cn(
                       "font-medium px-4 py-2 text-muted-foreground",
                       col.align === "right" ? "text-right" : "text-left",
-                      col.sortValue && "cursor-pointer select-none hover:text-foreground",
+                      col.sortValue && "select-none hover:text-foreground",
                       col.headerClassName,
                     )}
-                    onClick={col.sortValue ? () => toggleSort(col.key) : undefined}
                     aria-sort={isSorted ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
                   >
-                    <span className="inline-flex items-center gap-1">
-                      {col.header}
-                      {col.sortValue && (
-                        isSorted ? (
+                    {col.sortValue ? (
+                      // A real button so sorting is reachable and operable from the keyboard.
+                      <button
+                        type="button"
+                        onClick={() => toggleSort(col.key)}
+                        className="inline-flex cursor-pointer items-center gap-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      >
+                        {col.header}
+                        {isSorted ? (
                           sortDir === "asc" ? <CaretUp className="size-3" /> : <CaretDown className="size-3" />
                         ) : (
                           <CaretUpDown className="size-3 opacity-40" />
-                        )
-                      )}
-                    </span>
+                        )}
+                      </button>
+                    ) : (
+                      <span className="inline-flex items-center gap-1">{col.header}</span>
+                    )}
                   </th>
                 )
               })}
