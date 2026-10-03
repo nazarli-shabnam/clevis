@@ -356,12 +356,14 @@ export default function ReposPage() {
                 {listMutation.data && (
                   <>
                     <Input
+                      aria-label="Filter repositories by name"
                       placeholder="Filter by name…"
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
                       className="h-7 w-40 text-xs"
                     />
                     <select
+                      aria-label="Sort repositories"
                       value={sort}
                       onChange={(e) => setSort(e.target.value as SortKey)}
                       className="text-xs card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"

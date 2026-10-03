@@ -179,12 +179,14 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
         {tab === "members" && (
           <>
             <Input
+              aria-label="Search members by login"
               placeholder="Search by login…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="max-w-48 h-7 text-xs"
             />
             <select
+              aria-label="Filter by role"
               value={roleFilter}
               onChange={(e) => setRoleFilter(e.target.value as "all" | "member" | "admin")}
               className="text-xs card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
@@ -450,8 +452,9 @@ export default function OrgMembersPage() {
           </div>
           <div className="p-4 flex flex-col gap-3">
             <div>
-              <label className="text-xs font-medium text-foreground block mb-1.5">Email</label>
+              <label htmlFor="invite-email" className="text-xs font-medium text-foreground block mb-1.5">Email</label>
               <Input
+                id="invite-email"
                 placeholder="teammate@example.com"
                 type="email"
                 value={email}
