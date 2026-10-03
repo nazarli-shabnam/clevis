@@ -7,6 +7,7 @@ import { useParams } from "next/navigation"
 import Link from "next/link"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
+import { FlowMetricsCard } from "@/components/flow-metrics-card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { SectionError } from "@/components/section-error"
 import { GitPullRequest, ArrowSquareOut, Star, GitFork, Eye, ShieldCheck, ShieldWarning, Shield } from "@phosphor-icons/react"
@@ -304,6 +305,8 @@ export default function RepoDetailPage() {
             )}
           </div>
         </div>
+
+        <FlowMetricsCard org={owner} owner={owner} repo={repo} token={token} />
 
         {statsQuery.isError && (
           <p className="text-xs text-destructive lg:col-span-2">{statsQuery.error.message}</p>

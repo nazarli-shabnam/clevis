@@ -151,6 +151,29 @@ export interface LatestRelease {
   html_url: string
 }
 
+export interface FlowWorkflowMetrics {
+  name: string
+  runs: number
+  failure_rate: number | null
+  avg_duration_seconds: number | null
+  // Commits on which the workflow both failed and passed.
+  flaky_commits: number
+}
+
+export interface RepoFlowMetricsResponse {
+  repository: string
+  window_days: number
+  prs: {
+    merged_count: number
+    median_cycle_hours: number | null
+    median_first_review_hours: number | null
+    review_sample_size: number
+    merged_without_review: number
+  }
+  workflows: FlowWorkflowMetrics[]
+  workflows_truncated: boolean
+}
+
 export interface RepoStatsResponse {
   repository: string
   commit_activity: CommitActivityWeek[]
