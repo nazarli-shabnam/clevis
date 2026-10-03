@@ -817,9 +817,12 @@ def _my_login(client: GitHubClient, fallback_login: str | None = None) -> str | 
         return fallback_login
 
 
-def _search_items(client: GitHubClient, query: str, per_page: int = 10) -> list[dict]:
+def _search_items(client: GitHubClient, query: str, per_page: int = 10, sort_oldest: bool = False) -> list[dict]:
+    params: dict = {"q": query, "per_page": per_page}
+    if sort_oldest:
+        params.update(sort="created", order="asc")
     try:
-        result = client.request("GET", "/search/issues", params={"q": query, "per_page": per_page})
+        result = client.request("GET", "/search/issues", params=params)
         return result.get("items", []) if isinstance(result, dict) else []
     except (httpx.HTTPStatusError, httpx.RequestError):
         return []
@@ -833,6 +836,7 @@ def _pr_summaries(items: list[dict]) -> list[PRSummary]:
             repository=i.get("repository_url", "").split("/repos/")[-1],
             html_url=i.get("html_url", ""),
             updated_at=i["updated_at"],
+            created_at=i.get("created_at"),
         )
         for i in items
         if "number" in i and "updated_at" in i
@@ -911,7 +915,7 @@ async def my_view(
 
     (my_open_prs_raw, review_requests_raw, assigned_issues_raw, my_recent_runs) = await asyncio.gather(
         anyio.to_thread.run_sync(lambda: _search_items(client, f"is:pr is:open author:{login}")),
-        anyio.to_thread.run_sync(lambda: _search_items(client, f"is:pr is:open review-requested:{login}")),
+        anyio.to_thread.run_sync(lambda: _search_items(client, f"is:pr is:open review-requested:{login}", sort_oldest=True)),
         anyio.to_thread.run_sync(lambda: _search_items(client, f"is:issue is:open assignee:{login}")),
         anyio.to_thread.run_sync(lambda: _safe_my_recent_runs(client, owner, login, repo_names)),
     )
@@ -931,9 +935,14 @@ async def my_view(
 _MAX_SEARCH_RESULTS = 1000
 
 
-def _search_items_page(client: GitHubClient, query: str, page: int, per_page: int) -> tuple[list[dict], int]:
+def _search_items_page(
+    client: GitHubClient, query: str, page: int, per_page: int, sort_oldest: bool = False
+) -> tuple[list[dict], int]:
+    params: dict = {"q": query, "per_page": per_page, "page": page}
+    if sort_oldest:
+        params.update(sort="created", order="asc")
     try:
-        result = client.request("GET", "/search/issues", params={"q": query, "per_page": per_page, "page": page})
+        result = client.request("GET", "/search/issues", params=params)
         if not isinstance(result, dict):
             return [], 0
         return result.get("items", []), result.get("total_count", 0)
@@ -951,6 +960,7 @@ async def _my_items_list(
     response_cls,
     page: int,
     per_page: int,
+    sort_oldest: bool = False,
 ):
     try:
         token = await anyio.to_thread.run_sync(
@@ -968,7 +978,7 @@ async def _my_items_list(
         return response_cls(total_count=_MAX_SEARCH_RESULTS, page=page, per_page=per_page)
 
     query = query_template.format(login=login)
-    items_raw, total_count = await anyio.to_thread.run_sync(lambda: _search_items_page(client, query, page, per_page))
+    items_raw, total_count = await anyio.to_thread.run_sync(lambda: _search_items_page(client, query, page, per_page, sort_oldest))
     # Cap the reported total to what's reachable so the UI's Next button disables at the true boundary.
     return response_cls(
         items=mapper(items_raw), total_count=min(total_count, _MAX_SEARCH_RESULTS), page=page, per_page=per_page
@@ -1008,6 +1018,7 @@ async def my_reviews(
         MyPrListResponse,
         page,
         per_page,
+        sort_oldest=True,
     )
 
 
