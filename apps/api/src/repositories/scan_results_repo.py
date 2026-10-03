@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from src.core.db import ScanResult
@@ -77,6 +77,25 @@ def list_recent(
         }
         for r in rows
     ]
+
+
+def latest_with_checks(db: Session, owner: str, tenant_id: int) -> dict | None:
+    """Newest scan for ``owner`` within ``tenant_id``, with per-check results, or None."""
+    row = (
+        db.query(ScanResult)
+        .filter(func.lower(ScanResult.owner) == owner.lower(), ScanResult.tenant_id == tenant_id)
+        .order_by(ScanResult.created_at.desc(), ScanResult.id.desc())
+        .first()
+    )
+    if row is None:
+        return None
+    return {
+        "score": row.score,
+        "total_checks": row.total_checks,
+        "failed_checks": row.failed_checks,
+        "scanned_at": row.created_at.isoformat() if row.created_at else None,
+        "checks": _parse_checks(row.checks_json),
+    }
 
 
 def _parse_checks(checks_json: str | None) -> list[dict]:
