@@ -36,6 +36,7 @@ import type {
   PrNudgeResponse,
   ReleaseTimelineResponse,
   RepoListResponse,
+  RepoFlowMetricsResponse,
   RepoPullsResponse,
   RepoSecurityResponse,
   DependabotBurndown,
@@ -167,6 +168,10 @@ function normalizeCheckValue(id: string, raw: unknown): CheckValue {
   }
   if (typeof raw === "object" && raw !== null) {
     const r = raw as Record<string, unknown>
+    if ("checked" in r && "missing" in r) {
+      // Hygiene checks: repos that have the thing / repos evaluated.
+      return { type: "ratio", numerator: Number(r.checked) - Number(r.missing), denominator: Number(r.checked) }
+    }
     if ("checked" in r && "protected" in r) {
       return { type: "ratio", numerator: Number(r.protected), denominator: Number(r.checked) }
     }
@@ -292,6 +297,11 @@ export const api = {
     stats: (org: string, owner: string, repo: string, token: string) =>
       post<RepoStatsResponse>(
         `/orgs/${encodeURIComponent(org)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/stats`,
+        { token: token || undefined },
+      ),
+    flowMetrics: (org: string, owner: string, repo: string, token: string) =>
+      post<RepoFlowMetricsResponse>(
+        `/orgs/${encodeURIComponent(org)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/flow-metrics`,
         { token: token || undefined },
       ),
     pulls: (org: string, owner: string, repo: string, token: string) =>
@@ -432,6 +442,17 @@ export const api = {
         : post<SyncInstallationsResponse>(
             `/orgs/${encodeURIComponent(target.orgLogin)}/installations/sync`,
             body,
+          ),
+    // Re-reads the installation's granted permissions from GitHub and returns the updated row.
+    refreshPermissions: (
+      target: { scope: "me" } | { scope: "org"; orgLogin: string },
+      installationId: number,
+    ) =>
+      target.scope === "me"
+        ? post<InstallationMeta>(`/me/installations/${installationId}/refresh-permissions`, {})
+        : post<InstallationMeta>(
+            `/orgs/${encodeURIComponent(target.orgLogin)}/installations/${installationId}/refresh-permissions`,
+            {},
           ),
     // Uninstalls the App on GitHub's side (a real revocation), then removes the local row.
     remove: (

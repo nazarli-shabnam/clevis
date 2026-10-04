@@ -1,0 +1,48 @@
+name: Clevis score gate
+description: Fail a job when an organization's Clevis security score is below a threshold or a named check fails.
+author: clevis
+branding:
+  icon: shield
+  color: green
+
+inputs:
+  api-url:
+    description: Base URL of your Clevis API (for example https://clevis.example.com).
+    required: true
+  org:
+    description: GitHub organization login whose score to check.
+    required: true
+  token:
+    description: Clevis API token (create one in the org's API tokens). Pass it from a repository secret.
+    required: true
+  threshold:
+    description: Minimum acceptable score (0-100). The job fails below it.
+    required: false
+    default: "0"
+  fail-on-checks:
+    description: Comma-separated check ids that must not be failing (for example "organization_members_mfa_required,repository_secret_scanning_enabled").
+    required: false
+    default: ""
+  refresh:
+    description: Run a fresh scan first ("true") instead of reading the latest stored one.
+    required: false
+    default: "false"
+
+outputs:
+  score:
+    description: The security score that was evaluated.
+    value: ${{ steps.gate.outputs.score }}
+
+runs:
+  using: composite
+  steps:
+    - id: gate
+      shell: bash
+      env:
+        CLEVIS_API_URL: ${{ inputs.api-url }}
+        CLEVIS_ORG: ${{ inputs.org }}
+        CLEVIS_TOKEN: ${{ inputs.token }}
+        CLEVIS_THRESHOLD: ${{ inputs.threshold }}
+        CLEVIS_FAIL_ON_CHECKS: ${{ inputs.fail-on-checks }}
+        CLEVIS_REFRESH: ${{ inputs.refresh }}
+      run: python3 "${{ github.action_path }}/check.py"

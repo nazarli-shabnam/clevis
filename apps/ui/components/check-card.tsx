@@ -288,6 +288,7 @@ export function CheckCard({ check, owner, token, onRemediated }: CheckCardProps)
               {check.severity}
             </span>
           )}
+          {check.informational && !notApplicable && <span className="stat-chip">Informational</span>}
         </div>
         <p className="text-xs text-muted-foreground leading-relaxed">{check.remediation}</p>
         <CheckValueDisplay value={check.value} />

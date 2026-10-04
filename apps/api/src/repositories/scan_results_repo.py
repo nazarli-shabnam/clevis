@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from src.core.db import ScanResult
@@ -45,7 +45,11 @@ def exists_for_user(db: Session, owner: str, user_id: int) -> bool:
 
 
 def list_recent(
-    db: Session, owner: str, limit: int = 30, scanned_by_user_id: int | None = None
+    db: Session,
+    owner: str,
+    limit: int = 30,
+    scanned_by_user_id: int | None = None,
+    tenant_id: int | None = None,
 ) -> list[dict]:
     """Newest-first scan summaries for ``owner``.
 
@@ -53,6 +57,10 @@ def list_recent(
     query = db.query(ScanResult).filter(ScanResult.owner == owner)
     if scanned_by_user_id is not None:
         query = query.filter(ScanResult.scanned_by_user_id == scanned_by_user_id)
+    if tenant_id is not None:
+        # Explicit even though RLS scopes rows: with RLS inert (default superuser deployment) another
+        # tenant's scan of the same owner login would otherwise count as "the previous scan".
+        query = query.filter(ScanResult.tenant_id == tenant_id)
     rows = (
         query.order_by(ScanResult.created_at.desc(), ScanResult.id.desc())
         .limit(limit)
@@ -69,6 +77,25 @@ def list_recent(
         }
         for r in rows
     ]
+
+
+def latest_with_checks(db: Session, owner: str, tenant_id: int) -> dict | None:
+    """Newest scan for ``owner`` within ``tenant_id``, with per-check results, or None."""
+    row = (
+        db.query(ScanResult)
+        .filter(func.lower(ScanResult.owner) == owner.lower(), ScanResult.tenant_id == tenant_id)
+        .order_by(ScanResult.created_at.desc(), ScanResult.id.desc())
+        .first()
+    )
+    if row is None:
+        return None
+    return {
+        "score": row.score,
+        "total_checks": row.total_checks,
+        "failed_checks": row.failed_checks,
+        "scanned_at": row.created_at.isoformat() if row.created_at else None,
+        "checks": _parse_checks(row.checks_json),
+    }
 
 
 def _parse_checks(checks_json: str | None) -> list[dict]:

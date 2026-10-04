@@ -5,17 +5,14 @@ import { useRouter, usePathname } from "next/navigation"
 import { X } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
-
-const PUBLIC_ROUTES = ["/login", "/setup", "/register", "/verify-email"]
-const PUBLIC_ROUTE_PREFIXES = ["/invite/"]
+import { isPublicRoute } from "@/lib/public-routes"
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, isLoading, logout, authUnconfirmed, pendingInvitations, dismissPendingInvitations } = useAuth()
   const router = useRouter()
   const pathname = usePathname()
 
-  const isPublic =
-    PUBLIC_ROUTES.includes(pathname) || PUBLIC_ROUTE_PREFIXES.some((prefix) => pathname.startsWith(prefix))
+  const isPublic = isPublicRoute(pathname)
 
   useEffect(() => {
     if (isLoading) return

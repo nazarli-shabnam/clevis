@@ -39,7 +39,7 @@ def test_run_all_checks_fetches_repos_once():
         "https://api.github.com", "/orgs/acme/repos", "tok"
     )
 
-    assert len(result["checks"]) == 6
+    assert len(result["checks"]) == 11
     check_ids = {c["id"] for c in result["checks"]}
     assert "organization_members_mfa_required" in check_ids
     assert "repository_default_branch_protection_enabled" in check_ids

@@ -252,6 +252,29 @@ describe("api.analytics value normalization", () => {
     expect(result.checks[0].value).toEqual({ type: "ratio", numerator: 1, denominator: 2 });
   });
 
+  it("normalizes a hygiene check's checked/missing counts into a ratio value", async () => {
+    stubOkJson({
+      owner: "acme",
+      score: 100,
+      total_checks: 1,
+      failed_checks: 0,
+      repo_count: 10,
+      checks: [
+        {
+          id: "repository_has_codeowners",
+          title: "CODEOWNERS present",
+          severity: "low",
+          remediation: "n/a",
+          status: "pass",
+          informational: true,
+          value: { checked: 10, missing: 4 },
+        },
+      ],
+    });
+    const result = await api.analytics.overview("acme", "ghp_test");
+    expect(result.checks[0].value).toEqual({ type: "ratio", numerator: 6, denominator: 10 });
+  });
+
   it("GETs /me/analytics/cockpit/{owner} with no body and no token header when omitted", async () => {
     stubOkJson({
       repo_count: 1, member_count: 2, latest_score: 90, score_trend: [90],
@@ -444,6 +467,14 @@ describe("api.repos", () => {
     const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(String(url)).toContain("/orgs/acme/repos/acme/demo/pulls");
     expect(JSON.parse(init.body as string)).toEqual({ token: undefined });
+  });
+
+  it("POSTs to /orgs/{org}/repos/{owner}/{repo}/flow-metrics", async () => {
+    stubOkJson({ repository: "acme/demo" });
+    await api.repos.flowMetrics("acme", "acme", "demo", "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/orgs/acme/repos/acme/demo/flow-metrics");
+    expect(JSON.parse(init.body as string)).toEqual({ token: "ghp_test" });
   });
 });
 
@@ -768,6 +799,28 @@ describe("installations.lookup / installations.sync", () => {
     const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(String(url)).toContain("/orgs/acme/installations/42");
     expect(init.method).toBe("DELETE");
+  });
+});
+
+describe("installations.refreshPermissions", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("POSTs to /me/installations/{id}/refresh-permissions for scope: me", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("{}", { status: 200 }))));
+    await api.installations.refreshPermissions({ scope: "me" }, 7);
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/installations/7/refresh-permissions");
+    expect(init.method).toBe("POST");
+  });
+
+  it("POSTs to /orgs/{orgLogin}/installations/{id}/refresh-permissions for scope: org", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("{}", { status: 200 }))));
+    await api.installations.refreshPermissions({ scope: "org", orgLogin: "acme" }, 42);
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/orgs/acme/installations/42/refresh-permissions");
   });
 });
 

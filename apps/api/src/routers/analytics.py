@@ -34,6 +34,7 @@ from src.schemas.analytics import (
     ScanExportResponse,
     ScanHistoryEntry,
 )
+from src.services import notifications
 from src.services.analytics_service import get_account_type, get_overview
 from src.services.github_client import GitHubClient, github_error as _github_error, list_owner_repos
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token, resolve_owner_token
@@ -81,6 +82,15 @@ def _persist_scan(db: Session, result: dict, tenant_id: int | None, scanned_by_u
     )
 
 
+def _notify_score_drop_best_effort(db: Session, ctx: OrgContext, previous: int, current: int) -> None:
+    # A chat-webhook problem must never fail or slow-fail the scan the user actually asked for.
+    try:
+        notifications.notify_score_drop(db, ctx.org.tenant_id, ctx.org.github_login, previous, current)
+    except Exception:
+        db.rollback()
+        logger.exception("score-drop notification failed for %s", ctx.org.github_login)
+
+
 def _user_history_scope(db: Session, user: UserOut, owner: str) -> str | None:
     """How much of `owner`'s scan history this user may read (a local DB read, so it needs its own gate).
 
@@ -118,7 +128,12 @@ async def org_analytics_overview(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     result = await _run_overview(payload.owner, token)
+    previous = scan_results_repo.list_recent(db, payload.owner, limit=1, tenant_id=ctx.org.tenant_id)
     _persist_scan(db, result, tenant_id=ctx.org.tenant_id)
+    if previous:
+        await anyio.to_thread.run_sync(
+            lambda: _notify_score_drop_best_effort(db, ctx, previous[0]["score"], result["score"])
+        )
     return result
 
 
@@ -817,9 +832,12 @@ def _my_login(client: GitHubClient, fallback_login: str | None = None) -> str | 
         return fallback_login
 
 
-def _search_items(client: GitHubClient, query: str, per_page: int = 10) -> list[dict]:
+def _search_items(client: GitHubClient, query: str, per_page: int = 10, sort_oldest: bool = False) -> list[dict]:
+    params: dict = {"q": query, "per_page": per_page}
+    if sort_oldest:
+        params.update(sort="created", order="asc")
     try:
-        result = client.request("GET", "/search/issues", params={"q": query, "per_page": per_page})
+        result = client.request("GET", "/search/issues", params=params)
         return result.get("items", []) if isinstance(result, dict) else []
     except (httpx.HTTPStatusError, httpx.RequestError):
         return []
@@ -833,6 +851,7 @@ def _pr_summaries(items: list[dict]) -> list[PRSummary]:
             repository=i.get("repository_url", "").split("/repos/")[-1],
             html_url=i.get("html_url", ""),
             updated_at=i["updated_at"],
+            created_at=i.get("created_at"),
         )
         for i in items
         if "number" in i and "updated_at" in i
@@ -911,7 +930,7 @@ async def my_view(
 
     (my_open_prs_raw, review_requests_raw, assigned_issues_raw, my_recent_runs) = await asyncio.gather(
         anyio.to_thread.run_sync(lambda: _search_items(client, f"is:pr is:open author:{login}")),
-        anyio.to_thread.run_sync(lambda: _search_items(client, f"is:pr is:open review-requested:{login}")),
+        anyio.to_thread.run_sync(lambda: _search_items(client, f"is:pr is:open review-requested:{login}", sort_oldest=True)),
         anyio.to_thread.run_sync(lambda: _search_items(client, f"is:issue is:open assignee:{login}")),
         anyio.to_thread.run_sync(lambda: _safe_my_recent_runs(client, owner, login, repo_names)),
     )
@@ -931,9 +950,14 @@ async def my_view(
 _MAX_SEARCH_RESULTS = 1000
 
 
-def _search_items_page(client: GitHubClient, query: str, page: int, per_page: int) -> tuple[list[dict], int]:
+def _search_items_page(
+    client: GitHubClient, query: str, page: int, per_page: int, sort_oldest: bool = False
+) -> tuple[list[dict], int]:
+    params: dict = {"q": query, "per_page": per_page, "page": page}
+    if sort_oldest:
+        params.update(sort="created", order="asc")
     try:
-        result = client.request("GET", "/search/issues", params={"q": query, "per_page": per_page, "page": page})
+        result = client.request("GET", "/search/issues", params=params)
         if not isinstance(result, dict):
             return [], 0
         return result.get("items", []), result.get("total_count", 0)
@@ -951,6 +975,7 @@ async def _my_items_list(
     response_cls,
     page: int,
     per_page: int,
+    sort_oldest: bool = False,
 ):
     try:
         token = await anyio.to_thread.run_sync(
@@ -968,7 +993,7 @@ async def _my_items_list(
         return response_cls(total_count=_MAX_SEARCH_RESULTS, page=page, per_page=per_page)
 
     query = query_template.format(login=login)
-    items_raw, total_count = await anyio.to_thread.run_sync(lambda: _search_items_page(client, query, page, per_page))
+    items_raw, total_count = await anyio.to_thread.run_sync(lambda: _search_items_page(client, query, page, per_page, sort_oldest))
     # Cap the reported total to what's reachable so the UI's Next button disables at the true boundary.
     return response_cls(
         items=mapper(items_raw), total_count=min(total_count, _MAX_SEARCH_RESULTS), page=page, per_page=per_page
@@ -1008,6 +1033,7 @@ async def my_reviews(
         MyPrListResponse,
         page,
         per_page,
+        sort_oldest=True,
     )
 
 

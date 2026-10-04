@@ -1,6 +1,7 @@
 import httpx
 from checks.runner import run_all_checks
 
+from src.core.app_config import get_config
 from src.core.config import settings
 
 
@@ -21,7 +22,12 @@ def get_overview(owner: str, token: str, account_type: str = "Organization") -> 
     base_url = settings.github_api_base
     report = run_all_checks(owner=owner, token=token, base_url=base_url, account_type=account_type)
     checks = report["checks"]
-    scored = [c for c in checks if c["status"] != "not_applicable"]
+    score_hygiene = get_config("score_hygiene_checks", "false") == "true"
+    # Stamp the policy onto each check: it is persisted with the scan, so later readers (the digest)
+    # explain a stored score with the policy it was computed under, not whatever the config says now.
+    for c in checks:
+        c["scored"] = c["status"] != "not_applicable" and (score_hygiene or not c.get("informational"))
+    scored = [c for c in checks if c["scored"]]
     failed = [c for c in scored if c["status"] in ("fail", "error")]
     score = 100 - int((len(failed) / max(1, len(scored))) * 100)
     return {

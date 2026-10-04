@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { EmptyStateNoAccount } from "@/components/empty-state"
 import { MyItemsList } from "@/components/my-items-list"
+import { DeveloperInbox } from "@/components/developer-inbox"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
 
@@ -87,6 +88,8 @@ export default function MyWorkPage() {
   return (
     <>
       <PageHeader title="My Work" description={config.description} />
+
+      {org && !resolveQuery.isLoading && <DeveloperInbox org={org} token={resolveQuery.data?.token} />}
 
       <div className="flex items-center gap-1.5 mb-5">
         {TABS.map((t) => {

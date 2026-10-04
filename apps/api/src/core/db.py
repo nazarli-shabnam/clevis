@@ -126,7 +126,7 @@ class WebhookDelivery(Base):
     # Exact verified raw bytes, so what HMAC was checked against is preserved for re-verification.
     payload: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     # queued | queue_failed (XADD failed, retried by webhook_requeue_sweep) | queue_abandoned
-    # (past max retry age, never retried again).
+    # (past max retry age, never retried again) | processed (handled by the worker's event consumer).
     status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -329,6 +329,8 @@ class Org(Base):
     github_org_id: Mapped[int | None] = mapped_column(Integer, nullable=True, unique=True)
     github_login: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Opt-in public score badge; off by default.
+    badge_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     # Stays nullable: a new Org and its Tenant reference each other, and NOT NULL can't be deferred
     # like a FK can. org_repo.get_or_create self-heals missing values.
     tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -446,6 +448,45 @@ class AutomationRepoSetting(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class NotificationDestination(Base):
+    """A per-tenant chat/webhook destination for alerts. The URL (a bearer-style secret for
+    Slack/Teams incoming webhooks) and the optional signing secret are Fernet-encrypted."""
+
+    __tablename__ = "notification_destinations"
+    __table_args__ = (Index("ix_notification_destinations_tenant_id", "tenant_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False)
+    kind: Mapped[str] = mapped_column(String, nullable=False)  # slack | teams | generic
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    encrypted_url: Mapped[str] = mapped_column(Text, nullable=False)
+    # HMAC-SHA256 signing secret, `generic` destinations only.
+    encrypted_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
+    events: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    # `score_drop` fires when a scan's score falls by at least this many points.
+    min_score_drop: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("10"))
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ApiToken(Base):
+    """Scoped, revocable machine token. Only a SHA-256 hash is stored; the plaintext is shown once."""
+
+    __tablename__ = "api_tokens"
+    __table_args__ = (Index("ix_api_tokens_tenant_id", "tenant_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    prefix: Mapped[str] = mapped_column(String, nullable=False)
+    scope: Mapped[str] = mapped_column(String, nullable=False, server_default="read")
+    created_by: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 engine = create_engine(settings.database_url.get_secret_value())

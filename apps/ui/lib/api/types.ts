@@ -30,6 +30,8 @@ export interface CheckResult {
   title: string
   severity: "high" | "medium" | "low"
   remediation: string
+  // Hygiene checks: shown, but excluded from the score unless the instance opts in.
+  informational?: boolean
   status: "pass" | "fail" | "error" | "not_applicable"
   value: CheckValue
 }
@@ -151,6 +153,29 @@ export interface LatestRelease {
   html_url: string
 }
 
+export interface FlowWorkflowMetrics {
+  name: string
+  runs: number
+  failure_rate: number | null
+  avg_duration_seconds: number | null
+  // Commits on which the workflow both failed and passed.
+  flaky_commits: number
+}
+
+export interface RepoFlowMetricsResponse {
+  repository: string
+  window_days: number
+  prs: {
+    merged_count: number
+    median_cycle_hours: number | null
+    median_first_review_hours: number | null
+    review_sample_size: number
+    merged_without_review: number
+  }
+  workflows: FlowWorkflowMetrics[]
+  workflows_truncated: boolean
+}
+
 export interface RepoStatsResponse {
   repository: string
   commit_activity: CommitActivityWeek[]
@@ -264,6 +289,14 @@ export interface BlockedFeature {
   missing: Record<string, string>
 }
 
+export interface AutomationPermission {
+  feature: string
+  label: string
+  required: Record<string, string>
+  // Empty when everything is granted *or* permissions were never synced (see permissions_synced_at).
+  missing: Record<string, string>
+}
+
 export interface InstallationMeta {
   id: number
   account_login: string
@@ -274,6 +307,7 @@ export interface InstallationMeta {
   // Optional so fixtures that omit them still typecheck; the API always includes them.
   permissions_synced_at?: string | null
   blocked_features?: BlockedFeature[]
+  automations?: AutomationPermission[]
 }
 
 export interface InstallationLookup {
@@ -457,6 +491,8 @@ export interface MyViewPRSummary {
   repository: string
   html_url: string
   updated_at: string
+  // When the PR was opened (the review-wait proxy); absent only if GitHub omitted it.
+  created_at?: string | null
 }
 
 export interface MyViewIssueSummary {

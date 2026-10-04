@@ -76,6 +76,34 @@ class RepoPullsResponse(BaseModel):
     pulls: list[PullSummary]
 
 
+class FlowPrMetrics(BaseModel):
+    merged_count: int
+    # None when there is nothing to measure (no merged PRs / no reviewed PRs in the sample).
+    median_cycle_hours: float | None = None
+    median_first_review_hours: float | None = None
+    # Reviews are looked up for only the most recent merged PRs (bounded GitHub calls).
+    review_sample_size: int
+    merged_without_review: int
+
+
+class FlowWorkflowMetrics(BaseModel):
+    name: str
+    runs: int
+    failure_rate: float | None = None
+    avg_duration_seconds: int | None = None
+    # Commits on which this workflow both failed and passed (the flaky signal).
+    flaky_commits: int
+
+
+class RepoFlowMetricsResponse(BaseModel):
+    repository: str
+    window_days: int
+    prs: FlowPrMetrics
+    workflows: list[FlowWorkflowMetrics]
+    # True when the workflow-run page cap was hit, so figures cover only the newest runs.
+    workflows_truncated: bool = False
+
+
 class RepoSecurityInput(BaseModel):
     token: SecretStr | None = None
 

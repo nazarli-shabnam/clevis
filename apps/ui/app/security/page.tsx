@@ -446,6 +446,7 @@ export default function SecurityPage() {
                 </div>
                 {tab === "severity" && (
                   <select
+                    aria-label="Filter by severity"
                     value={severityFilter}
                     onChange={(e) => setFilter("severity", e.target.value)}
                     className="text-xs card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
@@ -603,6 +604,7 @@ export default function SecurityPage() {
               </span>
               {matrixMutation.data && matrixMutation.data.repos.length > 0 && (
                 <select
+                  aria-label="Repository"
                   value={selectedRepo}
                   onChange={(e) => setSelectedRepo(e.target.value)}
                   className="text-xs card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"

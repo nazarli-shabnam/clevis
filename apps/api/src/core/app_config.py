@@ -24,6 +24,7 @@ _ACCEPTED_KEYS = {
     "webhook_requeue_poll_seconds",
     "dependabot_sla_critical_days",
     "dependabot_sla_high_days",
+    "score_hygiene_checks",
 }
 _TTL = 60.0
 _cache: dict[str, tuple[str, float]] = {}

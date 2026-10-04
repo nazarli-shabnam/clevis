@@ -31,7 +31,7 @@ _INT_KEYS = {
     "dependabot_sla_critical_days",
     "dependabot_sla_high_days",
 }
-_BOOL_KEYS = {"registration_enabled"}
+_BOOL_KEYS = {"registration_enabled", "score_hygiene_checks"}
 # key -> allowed values, for small closed-vocabulary settings.
 _ENUM_KEYS = {
     "digest_cadence": {"off", "weekly", "monthly"},

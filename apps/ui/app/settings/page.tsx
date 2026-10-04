@@ -574,6 +574,7 @@ const CONFIG_FIELDS: {
   { key: "worker_poll_seconds", label: "Worker Poll Interval",    description: "Seconds between job queue polls.", type: "number" },
   { key: "dependabot_sla_critical_days", label: "Critical Alert SLA", description: "Days a critical Dependabot alert may stay open before it counts as an SLA breach (default 7).", type: "number" },
   { key: "dependabot_sla_high_days", label: "High Alert SLA", description: "Days a high-severity Dependabot alert may stay open before it counts as an SLA breach (default 30).", type: "number" },
+  { key: "score_hygiene_checks", label: "Score Hygiene Checks", description: "Count CODEOWNERS, SECURITY.md, license, stale-branch and unpinned-Action checks toward the security score (off: informational only).", type: "boolean" },
   { key: "registration_enabled", label: "Self-Registration",     description: "Allow anyone to create an account via /register.", type: "boolean" },
   {
     key: "digest_cadence",
@@ -673,7 +674,7 @@ function InstanceConfigSection() {
               {field.type === "boolean" ? (
                 <select
                   id={fieldId}
-                  value={values[field.key] ?? "true"}
+                  value={values[field.key] ?? (field.key === "score_hygiene_checks" ? "false" : "true")}
                   onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
                   className="h-8 border border-border bg-transparent px-2 font-mono text-xs"
                 >
