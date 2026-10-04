@@ -303,3 +303,55 @@ def test_falls_back_to_client_supplied_token_header(http):
 
     assert resp.status_code == 200
     assert resp.json()["items"] == []
+
+
+def test_my_reviews_asks_github_for_oldest_first_and_maps_created_at(http):
+    pr_item = {
+        "number": 5,
+        "title": "Old PR",
+        "repository_url": "https://api.github.com/repos/acme/api",
+        "html_url": "https://github.com/acme/api/pull/5",
+        "created_at": "2026-06-01T00:00:00Z",
+        "updated_at": "2026-07-20T00:00:00Z",
+    }
+    seen = {}
+
+    def _request_side_effect(method, path, params=None):
+        if path == "/user":
+            return {"login": "octocat"}
+        if path == "/search/issues":
+            seen.update(params)
+            return {"items": [pr_item], "total_count": 1}
+        return {}
+
+    with (
+        patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
+        patch("src.routers.analytics.GitHubClient") as mock_client,
+    ):
+        mock_client.return_value.request.side_effect = _request_side_effect
+        resp = http.get("/me/github/my-reviews?owner=acme")
+
+    assert resp.status_code == 200
+    assert (seen["sort"], seen["order"]) == ("created", "asc")
+    assert resp.json()["items"][0]["created_at"].startswith("2026-06-01")
+
+
+def test_my_prs_keeps_githubs_default_sort(http):
+    seen = {}
+
+    def _request_side_effect(method, path, params=None):
+        if path == "/user":
+            return {"login": "octocat"}
+        if path == "/search/issues":
+            seen.update(params)
+            return {"items": [], "total_count": 0}
+        return {}
+
+    with (
+        patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
+        patch("src.routers.analytics.GitHubClient") as mock_client,
+    ):
+        mock_client.return_value.request.side_effect = _request_side_effect
+        http.get("/me/github/my-prs?owner=acme")
+
+    assert "sort" not in seen

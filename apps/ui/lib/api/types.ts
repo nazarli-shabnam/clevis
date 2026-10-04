@@ -489,6 +489,8 @@ export interface MyViewPRSummary {
   repository: string
   html_url: string
   updated_at: string
+  // When the PR was opened (the review-wait proxy); absent only if GitHub omitted it.
+  created_at?: string | null
 }
 
 export interface MyViewIssueSummary {
