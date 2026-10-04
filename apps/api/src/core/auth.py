@@ -135,32 +135,38 @@ def require_auth(
     )
 
 
-def revoke_presented_token(db: Session, token: str | None) -> None:
-    """Denylist the session JWT in ``token`` until its own expiry (single-session logout).
+def revoke_presented_tokens(db: Session, *tokens: str | None) -> None:
+    """Denylist each session JWT in ``tokens`` until its own expiry (single-session logout).
 
-    Best-effort and silent: a missing, malformed, badly signed or already-expired token, a token
-    from before ``jti`` existed, and a user that no longer exists are all no-ops, because logout
-    must always succeed and there is nothing left to revoke in any of those cases. Expired
+    Logout passes both the Bearer token and the session cookie: a browser can hold two different
+    sessions (e.g. a stale localStorage token after a GitHub OAuth login), and ending only the one
+    ``require_auth`` happens to prefer would leave the other alive.
+
+    Best-effort and silent per token: a missing, malformed, badly signed or already-expired token,
+    a token from before ``jti`` existed, and a user that no longer exists are all no-ops, because
+    logout must always succeed and there is nothing left to revoke in any of those cases. Expired
     denylist rows are purged here since they can no longer matter.
     """
-    if not token:
-        return
-    try:
-        payload = jwt.decode(token, settings.auth_secret.get_secret_value(), algorithms=[_ALGORITHM])
-        jti = payload["jti"]
-        user_id = int(payload["sub"])
-        expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
-    except (jwt.InvalidTokenError, KeyError, ValueError, TypeError):
-        return
-    if db.get(User, user_id) is None:
-        return
-    db.execute(delete(RevokedToken).where(RevokedToken.expires_at < datetime.now(timezone.utc)))
-    db.execute(
-        pg_insert(RevokedToken)
-        .values(jti=jti, user_id=user_id, expires_at=expires_at)
-        .on_conflict_do_nothing(index_elements=["jti"])
-    )
-    db.commit()
+    revoked_any = False
+    for token in dict.fromkeys(t for t in tokens if t):
+        try:
+            payload = jwt.decode(token, settings.auth_secret.get_secret_value(), algorithms=[_ALGORITHM])
+            jti = payload["jti"]
+            user_id = int(payload["sub"])
+            expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+        except (jwt.InvalidTokenError, KeyError, ValueError, TypeError):
+            continue
+        if db.get(User, user_id) is None:
+            continue
+        db.execute(
+            pg_insert(RevokedToken)
+            .values(jti=jti, user_id=user_id, expires_at=expires_at)
+            .on_conflict_do_nothing(index_elements=["jti"])
+        )
+        revoked_any = True
+    if revoked_any:
+        db.execute(delete(RevokedToken).where(RevokedToken.expires_at < datetime.now(timezone.utc)))
+        db.commit()
 
 
 def require_workspace_admin(user: UserOut = Depends(require_auth)) -> UserOut:

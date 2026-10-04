@@ -25,7 +25,7 @@ from src.core.auth import (
     clear_session_cookie,
     create_access_token,
     require_auth,
-    revoke_presented_token,
+    revoke_presented_tokens,
 )
 from src.core.config import settings
 from src.core.db import Org, User, get_db, set_session_user
@@ -315,12 +315,12 @@ def logout(
     session: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
     db: Session = Depends(get_db),
 ):
-    """End this session: revoke the presented JWT server-side and clear the httpOnly cookie.
+    """End this session: revoke the presented JWT(s) server-side and clear the httpOnly cookie.
 
-    A copied token stops working immediately; the user's other sessions are untouched (use
+    Both the Bearer token and the session cookie are revoked when present. A copied token stops working immediately; the user's other sessions are untouched (use
     ``/me/revoke-sessions`` to end them all). Always succeeds, even without a valid token.
     """
-    revoke_presented_token(db, credentials.credentials if credentials else session)
+    revoke_presented_tokens(db, credentials.credentials if credentials else None, session)
     clear_session_cookie(response)
     return {"ok": True}
 

@@ -177,3 +177,23 @@ def test_revoke_sessions_still_ends_every_session_including_other_unrevoked_ones
     client.post("/auth/me/revoke-sessions", headers=_bearer(owner_token))
 
     assert client.get("/auth/me", headers=_bearer(other)).status_code == 401
+
+
+def test_logout_revokes_both_the_bearer_token_and_a_different_session_cookie(client, owner_token):
+    # e.g. a stale localStorage token alongside the cookie a later GitHub OAuth login set.
+    cookie_session = _login(client)
+    cookie = {"Cookie": f"{SESSION_COOKIE_NAME}={cookie_session}"}
+    assert client.get("/auth/me", headers=cookie).status_code == 200
+
+    client.post("/auth/logout", headers={**_bearer(owner_token), **cookie})
+
+    assert client.get("/auth/me", headers=_bearer(owner_token)).status_code == 401
+    assert client.get("/auth/me", headers=cookie).status_code == 401
+
+
+def test_logout_with_the_same_token_in_header_and_cookie_stores_one_row(client, owner_token, db):
+    both = {**_bearer(owner_token), "Cookie": f"{SESSION_COOKIE_NAME}={owner_token}"}
+
+    assert client.post("/auth/logout", headers=both).status_code == 200
+
+    assert db.query(RevokedToken).count() == 1
