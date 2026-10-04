@@ -533,6 +533,21 @@ describe("AutomationPage", () => {
       expect(triageGetRepoMock).not.toHaveBeenCalled();
     });
 
+    it("holds the card back until the role is known, so a plain member never triggers the admin-only read", async () => {
+      let resolveMine!: (v: { org_login: string; role: "member" }[]) => void;
+      orgsMineMock.mockReturnValue(new Promise((res) => { resolveMine = res; }));
+      renderPage();
+      await enterOwnerAndSelectRepo("acme", "demo");
+
+      expect(await screen.findByText("Checking your access…")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Save settings" })).not.toBeInTheDocument();
+      expect(triageGetRepoMock).not.toHaveBeenCalled();
+
+      resolveMine([{ org_login: "acme", role: "member" }]);
+      expect(await screen.findByText(/available to organization admins/)).toBeInTheDocument();
+      expect(triageGetRepoMock).not.toHaveBeenCalled();
+    });
+
     it("explains that an org Clevis has no admin membership for can't use auto-triage", async () => {
       orgsMineMock.mockResolvedValue([{ org_login: "other", role: "admin" }]);
       renderPage();

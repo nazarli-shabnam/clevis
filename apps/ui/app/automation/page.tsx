@@ -529,7 +529,14 @@ export default function AutomationPage() {
       </div>
 
       <div className="mt-4">
-        {owner.trim().length > 0 && triageRole !== undefined && triageRole !== "admin" ? (
+        {owner.trim().length > 0 && membershipsQuery.isLoading ? (
+          // Hold the card until the role is known: mounting it first would fire the admin-only
+          // read for a plain member and flash a 403 before the note replaces it.
+          <div className="card px-4 py-4">
+            <span className="section-title">Dependabot auto-triage</span>
+            <p className="text-xs text-muted-foreground mt-1">Checking your access…</p>
+          </div>
+        ) : owner.trim().length > 0 && triageRole !== undefined && triageRole !== "admin" ? (
           <div className="card px-4 py-4">
             <span className="section-title">Dependabot auto-triage</span>
             <p className="text-xs text-muted-foreground mt-1">
