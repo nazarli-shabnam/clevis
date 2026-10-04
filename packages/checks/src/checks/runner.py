@@ -27,7 +27,9 @@ def _fetch_repos(base_url: str, owner: str, token: str, account_type: str) -> li
         return _get_all_pages(base_url, "/installation/repositories", token, items_key="repositories")
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code in (401, 403):
-            return _get_all_pages(base_url, "/user/repos?affiliation=owner&type=all", token)
+            # `type` is mutually exclusive with `affiliation` on this endpoint (GitHub answers 422),
+            # and `all` is its default anyway.
+            return _get_all_pages(base_url, "/user/repos?affiliation=owner", token)
         raise
 
 
