@@ -119,4 +119,43 @@ describe("PermissionsPage", () => {
 
     expect(await screen.findByText(/No GitHub App installation is connected for acme/)).toBeInTheDocument()
   })
+
+  it("asks to select an account when no scope is active", async () => {
+    localStorage.clear()
+    renderPage()
+
+    expect(await screen.findByText("Select an account in the sidebar first.")).toBeInTheDocument()
+    expect(listForOrgMock).not.toHaveBeenCalled()
+    expect(listMock).not.toHaveBeenCalled()
+  })
+
+  it("shows the load error and retries", async () => {
+    listForOrgMock.mockRejectedValueOnce(new Error("boom")).mockResolvedValue([install()])
+    renderPage()
+
+    expect(await screen.findByText("boom")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }))
+
+    expect(await screen.findByText("Workflow dispatch (Automation page)")).toBeInTheDocument()
+  })
+
+  it("re-syncs a personal installation and shows progress while pending", async () => {
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "personal", login: "me" }))
+    listMock.mockResolvedValue([install({ account_type: "User", account_login: "me" })])
+    refreshMock.mockReturnValue(new Promise(() => {}))
+    renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Re-sync permissions" }))
+
+    expect(await screen.findByRole("button", { name: "Re-syncing…" })).toBeDisabled()
+    expect(refreshMock).toHaveBeenCalledWith({ scope: "me" }, 42)
+  })
+
+  it("renders an installation that reports no automations", async () => {
+    listForOrgMock.mockResolvedValue([install({ automations: undefined })])
+    renderPage()
+
+    expect(await screen.findByText("Permissions synced", { exact: false })).toBeInTheDocument()
+    expect(screen.queryByText("Ready")).toBeNull()
+  })
 })

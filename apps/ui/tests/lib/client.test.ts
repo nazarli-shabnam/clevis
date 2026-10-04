@@ -771,6 +771,28 @@ describe("installations.lookup / installations.sync", () => {
   });
 });
 
+describe("installations.refreshPermissions", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("POSTs to /me/installations/{id}/refresh-permissions for scope: me", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("{}", { status: 200 }))));
+    await api.installations.refreshPermissions({ scope: "me" }, 7);
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/installations/7/refresh-permissions");
+    expect(init.method).toBe("POST");
+  });
+
+  it("POSTs to /orgs/{orgLogin}/installations/{id}/refresh-permissions for scope: org", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("{}", { status: 200 }))));
+    await api.installations.refreshPermissions({ scope: "org", orgLogin: "acme" }, 42);
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/orgs/acme/installations/42/refresh-permissions");
+  });
+});
+
 describe("api.auth email verification (issue #217)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
