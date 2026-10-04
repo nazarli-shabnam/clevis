@@ -48,7 +48,9 @@ def _repo_paths(base_url: str, owner: str, repo: dict, token: str) -> tuple[set[
             f"{base_url}/repos/{owner}/{repo['name']}/git/trees/{repo.get('default_branch')}?recursive=1", token
         )
     except httpx.HTTPStatusError as exc:
-        if exc.response.status_code in (404, 409):  # no default branch / empty repository
+        # 409: empty repository. 404 only means "empty" when there is no default branch to look up;
+        # otherwise it's a failed request (missing tree permission, vanished branch) -> unknown.
+        if exc.response.status_code == 409 or (exc.response.status_code == 404 and not repo.get("default_branch")):
             repo[_TREE_KEY] = None
             return None
         raise
@@ -225,6 +227,8 @@ class UnpinnedActions(_PerRepoCheck):
             body = _gh._get(f"{base_url}/repos/{owner}/{repo['name']}/contents/{path}", token)
             text = base64.b64decode(body.get("content", "")).decode("utf-8", errors="replace")
             unpinned += len(unpinned_third_party_uses(text, owner))
+        if unpinned == 0 and found[1]:
+            return None, 0  # a truncated tree may omit workflow files, so "none found" proves nothing
         return unpinned == 0, unpinned
 
 

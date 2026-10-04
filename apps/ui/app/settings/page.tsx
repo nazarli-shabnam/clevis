@@ -672,7 +672,7 @@ function InstanceConfigSection() {
               {field.type === "boolean" ? (
                 <select
                   id={fieldId}
-                  value={values[field.key] ?? "true"}
+                  value={values[field.key] ?? (field.key === "score_hygiene_checks" ? "false" : "true")}
                   onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
                   className="h-8 border border-border bg-transparent px-2 font-mono text-xs"
                 >

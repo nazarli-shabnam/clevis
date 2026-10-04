@@ -11,7 +11,6 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from src.core.app_config import get_config
 from src.core.db import ScanResult
 
 logger = logging.getLogger(__name__)
@@ -65,14 +64,14 @@ def build_digest(db: Session, *, tenant_id: int, org_login: str, period_label: s
             # "error" counts toward failed_checks / the score in analytics_service, so it
             # must show up as a risk item here too -- otherwise the digest can say
             # "score down 14" with "open risk items: none".
-            # Informational (hygiene) checks only count when scoring them is on, same as the score.
-            score_hygiene = get_config("score_hygiene_checks", "false") == "true"
+            # Only checks the scan actually scored; scans stored before the "scored" stamp predate
+            # hygiene checks, so for them "scored" means "not informational".
             failing = [
                 str(c.get("title") or c.get("id") or "unknown check")
                 for c in checks
                 if isinstance(c, dict)
                 and c.get("status") in ("fail", "error")
-                and (score_hygiene or not c.get("informational"))
+                and c.get("scored", not c.get("informational"))
             ][:_MAX_RISK_ITEMS]
 
     # Inclusive lower bound: the window is _ACTIVITY_WINDOW_DAYS days counting today --

@@ -131,3 +131,32 @@ def test_tree_is_fetched_once_per_repo_across_checks():
         h.CodeownersPresent().run("acme", "t", repos=[repo])
         h.SecurityPolicyPresent().run("acme", "t", repos=[repo])
     assert len(calls) == 1
+
+
+def test_tree_404_is_empty_only_without_a_default_branch():
+    gone = lambda u, t: (_ for _ in ()).throw(_status_error(404))  # noqa: E731
+    failed = _run(h.CodeownersPresent(), [_repo()], gone)
+    assert failed["status"] == "error" and failed["value"]["unknown"] == 1
+    # No default branch -> nothing to look up, so it's an empty repo and passes.
+    empty = _run(h.CodeownersPresent(), [_repo(default_branch=None)], gone)
+    assert empty["status"] == "pass" and empty["value"]["unknown"] == 0
+
+
+def test_unpinned_actions_truncated_tree_is_unknown_unless_a_violation_was_seen():
+    wf = base64.b64encode(b"steps:\n  - uses: thirdparty/tool@v2\n").decode()
+
+    def get(url, token):
+        if "/git/trees/" in url:
+            return _tree("README.md", truncated=True)
+        return {"content": wf}
+
+    out = _run(h.UnpinnedActions(), [_repo()], get)
+    assert out["status"] == "error" and out["value"]["unknown"] == 1
+
+    def get_with_wf(url, token):
+        if "/git/trees/" in url:
+            return _tree(".github/workflows/ci.yml", truncated=True)
+        return {"content": wf}
+
+    failing = _run(h.UnpinnedActions(), [_repo()], get_with_wf)
+    assert failing["status"] == "fail" and failing["value"]["unpinned_uses"] == 1

@@ -91,3 +91,5 @@ def test_informational_checks_do_not_affect_the_score_unless_opted_in():
             on = get_overview("acme", "t")
     assert (off["score"], off["total_checks"], off["failed_checks"]) == (100, 1, 0)
     assert (on["score"], on["total_checks"], on["failed_checks"]) == (50, 2, 1)
+    assert [c["scored"] for c in off["checks"]] == [True, False]
+    assert [c["scored"] for c in on["checks"]] == [True, True]
