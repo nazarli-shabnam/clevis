@@ -36,6 +36,7 @@ import type {
   PrNudgeResponse,
   ReleaseTimelineResponse,
   RepoListResponse,
+  RepoFlowMetricsResponse,
   RepoPullsResponse,
   RepoSecurityResponse,
   RepoStatsResponse,
@@ -289,6 +290,11 @@ export const api = {
     stats: (org: string, owner: string, repo: string, token: string) =>
       post<RepoStatsResponse>(
         `/orgs/${encodeURIComponent(org)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/stats`,
+        { token: token || undefined },
+      ),
+    flowMetrics: (org: string, owner: string, repo: string, token: string) =>
+      post<RepoFlowMetricsResponse>(
+        `/orgs/${encodeURIComponent(org)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/flow-metrics`,
         { token: token || undefined },
       ),
     pulls: (org: string, owner: string, repo: string, token: string) =>
