@@ -445,6 +445,14 @@ describe("api.repos", () => {
     expect(String(url)).toContain("/orgs/acme/repos/acme/demo/pulls");
     expect(JSON.parse(init.body as string)).toEqual({ token: undefined });
   });
+
+  it("POSTs to /orgs/{org}/repos/{owner}/{repo}/flow-metrics", async () => {
+    stubOkJson({ repository: "acme/demo" });
+    await api.repos.flowMetrics("acme", "acme", "demo", "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/orgs/acme/repos/acme/demo/flow-metrics");
+    expect(JSON.parse(init.body as string)).toEqual({ token: "ghp_test" });
+  });
 });
 
 describe("api.audit", () => {

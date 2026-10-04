@@ -67,6 +67,23 @@ describe("FlowMetricsCard", () => {
     expect(screen.getByText("2 commits")).toBeInTheDocument()
   })
 
+  it("ranks flaky workflows by flaky commits and says so when there is nothing to flag", async () => {
+    flowMock.mockResolvedValue({
+      ...DATA,
+      workflows: [
+        { name: "A", runs: 5, failure_rate: 0.1, avg_duration_seconds: null, flaky_commits: 1 },
+        { name: "B", runs: 5, failure_rate: 0.1, avg_duration_seconds: null, flaky_commits: 3 },
+      ],
+    })
+    renderCard()
+    fireEvent.click(screen.getByRole("button", { name: "Load metrics" }))
+
+    expect(await screen.findByText("3 commits")).toBeInTheDocument()
+    expect(screen.getByText("1 commit")).toBeInTheDocument()
+    expect(screen.getAllByText("B")[0].compareDocumentPosition(screen.getAllByText("A")[0])).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(screen.getByText("Nothing to flag.")).toBeInTheDocument()
+  })
+
   it("shows the error message when loading fails", async () => {
     flowMock.mockRejectedValue(new Error("GitHub API error"))
     renderCard()
