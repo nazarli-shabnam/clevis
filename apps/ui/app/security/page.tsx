@@ -10,6 +10,7 @@ import { CheckCard } from "@/components/check-card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { SectionError } from "@/components/section-error"
 import { Warning, Key, ShieldWarning, DownloadSimple } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { toCsv } from "@/lib/csv"
@@ -67,7 +68,7 @@ function ScoreGauge({ score, failed, total }: { score: number; failed: number; t
   )
 }
 
-const SEVERITY_ORDER = { high: 0, medium: 1, low: 2 }
+const SEVERITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 }
 
 function sortChecks(checks: CheckResult[]): CheckResult[] {
   return [...checks].sort((a, b) => {
@@ -208,6 +209,17 @@ export default function SecurityPage() {
     enabled: !!selectedRepo && !!matrixMutation.data,
   })
 
+  // A failed history fetch must not look like "never scanned": the trend sections would otherwise
+  // just vanish (or say "run more scans") with no way to tell the two apart or retry.
+  const historyFailed = historyQuery.isError && !historyQuery.data
+  const historyError = historyFailed ? (
+    <SectionError
+      message={`Couldn't load scan history: ${historyQuery.error?.message}`}
+      onRetry={() => historyQuery.refetch()}
+      retrying={historyQuery.isFetching}
+    />
+  ) : null
+
   const trendData = (historyQuery.data ?? [])
     .slice(0, 10)
     .reverse()
@@ -344,6 +356,7 @@ export default function SecurityPage() {
                 {scan.error.message}
               </div>
             )}
+            {historyError}
             {(historyQuery.data?.length ?? 0) > 0 && (
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -659,7 +672,9 @@ export default function SecurityPage() {
               <span className="section-title">Remediation Trend</span>
             </div>
             <div className="p-4">
-              {remediationTrendData.length > 1 ? (
+              {historyFailed ? (
+                historyError
+              ) : remediationTrendData.length > 1 ? (
                 <AreaTimeChart data={remediationTrendData} label="checks passing" color={CHART_COLORS.series[1]} height={180} />
               ) : (
                 <p className="text-sm text-muted-foreground">Run more scans to see a trend</p>
