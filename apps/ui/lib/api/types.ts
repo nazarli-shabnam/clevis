@@ -503,6 +503,26 @@ export interface MyIssueListResponse {
   identity_unresolved: boolean
 }
 
+export interface DependabotBurndown {
+  window_days: number
+  severities: {
+    severity: string
+    open: number
+    median_age_days: number | null
+    oldest_age_days: number | null
+    sla_days: number | null
+    breaches: number
+  }[]
+  repos: {
+    repo: string
+    open: Record<string, number>
+    breaches: number
+    oldest_age_days: number
+    oldest_alert_number: number
+  }[]
+  trend: { date: string; critical: number; high: number; medium: number; low: number }[]
+}
+
 export interface WorkflowSummary {
   id: number
   name: string

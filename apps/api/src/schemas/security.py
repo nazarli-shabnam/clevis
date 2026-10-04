@@ -64,3 +64,37 @@ class SecretScanningResponse(BaseModel):
     repository: str
     alerts: list[SecretAlert]
     source: Literal["github", "aggregate"] = "github"
+
+
+class BurndownSeverity(BaseModel):
+    severity: str
+    open: int
+    median_age_days: float | None = None
+    oldest_age_days: float | None = None
+    # None = no SLA configured for this severity (only critical and high have one).
+    sla_days: int | None = None
+    breaches: int
+
+
+class BurndownRepo(BaseModel):
+    repo: str
+    open: dict[str, int]
+    breaches: int
+    oldest_age_days: float
+    # Link target: the oldest open alert, preferring one that breaches its SLA.
+    oldest_alert_number: int
+
+
+class BurndownPoint(BaseModel):
+    date: str
+    critical: int
+    high: int
+    medium: int
+    low: int
+
+
+class DependabotBurndownResponse(BaseModel):
+    window_days: int
+    severities: list[BurndownSeverity]
+    repos: list[BurndownRepo]
+    trend: list[BurndownPoint]

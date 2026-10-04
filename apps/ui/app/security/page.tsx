@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
@@ -259,6 +260,11 @@ export default function SecurityPage() {
       <PageHeader
         title="Health & Security"
         description="Run security checks against a GitHub organization."
+        actions={
+          <Link href="/security/burndown" className="text-xs text-primary hover:underline">
+            Dependabot burn-down
+          </Link>
+        }
       />
 
       {scopeChecked && !scope && (

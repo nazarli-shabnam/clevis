@@ -572,6 +572,8 @@ const CONFIG_FIELDS: {
   options?: { value: string; label: string }[]
 }[] = [
   { key: "worker_poll_seconds", label: "Worker Poll Interval",    description: "Seconds between job queue polls.", type: "number" },
+  { key: "dependabot_sla_critical_days", label: "Critical Alert SLA", description: "Days a critical Dependabot alert may stay open before it counts as an SLA breach (default 7).", type: "number" },
+  { key: "dependabot_sla_high_days", label: "High Alert SLA", description: "Days a high-severity Dependabot alert may stay open before it counts as an SLA breach (default 30).", type: "number" },
   { key: "registration_enabled", label: "Self-Registration",     description: "Allow anyone to create an account via /register.", type: "boolean" },
   {
     key: "digest_cadence",

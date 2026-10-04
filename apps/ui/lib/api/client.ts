@@ -38,6 +38,7 @@ import type {
   RepoListResponse,
   RepoPullsResponse,
   RepoSecurityResponse,
+  DependabotBurndown,
   RepoStatsResponse,
   RunsResponse,
   SavedTokenMeta,
@@ -233,6 +234,8 @@ export const api = {
       ),
   },
   security: {
+    dependabotBurndown: (orgLogin: string, days = 30) =>
+      get<DependabotBurndown>(`/orgs/${encodeURIComponent(orgLogin)}/security/dependabot-burndown?days=${days}`),
     matrix: (owner: string, token?: string) =>
       get<SecurityMatrixResponse>(
         `/me/analytics/security-matrix/${encodeURIComponent(owner)}`,

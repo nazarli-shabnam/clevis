@@ -23,7 +23,7 @@ Tables managed by Alembic — no runtime DDL. (Not an exhaustive list of every t
 - **`audit_logs`** — immutable audit trail; every significant action (cache clear, dry-run, etc.) writes here with actor, action, target, and payload JSON.
 - **`jobs`** — job queue; composite index on `(status, job_type)` for efficient worker polling. Status lifecycle: `queued → processing → done/failed`. The `result` column stores JSON on success or a raw exception string on failure. `retry_count` caps both reclaim-after-crash and transient-failure retries at `MAX_RETRIES`, and a requeued job isn't re-claimed until an exponential backoff (60s doubling, capped at 480s) has passed since its `updated_at`; `heartbeat_at` lets a long-running-but-alive job survive the reclaim sweep past `RECLAIM_TIMEOUT_MINUTES`.
 - **`scan_results`** — historical security-scan snapshots (score, checks JSON) powering the score-trend chart; `scanned_by_user_id` scopes personal-endpoint scan history when there's no org membership to gate on.
-- **`app_config`** — DB-backed, Settings-page-editable runtime config. Eleven keys are currently accepted (`apps/api/src/core/app_config.py`'s `_ACCEPTED_KEYS`); see Development setup below for the full list.
+- **`app_config`** — DB-backed, Settings-page-editable runtime config. Thirteen keys are currently accepted (`apps/api/src/core/app_config.py`'s `_ACCEPTED_KEYS`); see Development setup below for the full list.
 - **`webhook_deliveries`** — durable landing spot for verified GitHub webhook payloads (raw `bytea` body, delivery id, event type, resolved `tenant_id` when resolvable) before they're queued onto Redis Streams for later processing. `status` (`queued`/`queue_failed`) lets a re-enqueue sweep (`webhook_requeue_sweep.py`) retry anything the queue write itself failed on. Not deduplicated by `delivery_id` here — GitHub redelivers on retry, and dedupe is the event-processor's job, not this table's.
 - **`repo_events`** / **`repo_event_daily_counts`** — normalized event model (migrations 0036/0037): individual GitHub events deduplicated by webhook delivery ID, plus a per-(tenant, repo, event_type, day) rollup, both populated by `apps/worker`'s Redis Streams consumer (`event_consumer.py`).
 - **`security_alerts`** — normalized Dependabot/code-scanning/secret-scanning alert state (migration 0039), upserted by the same event consumer from `dependabot_alert`/`code_scanning_alert`/`secret_scanning_alert` webhooks; read by `routers/security.py`.
@@ -110,6 +110,7 @@ Key variables:
 - `pr_nudge_stale_days` / `pr_nudge_mode` — the stale-PR/stale-review nudge sweep: how many days idle counts as stale, and its notification mode.
 - `digest_poll_seconds` / `digest_cadence` — the scheduled leadership-digest loop's poll interval and send cadence.
 - `webhook_requeue_poll_seconds` — how often the sweep re-enqueues `webhook_deliveries` rows stuck at `status='queue_failed'`.
+- `dependabot_sla_critical_days` / `dependabot_sla_high_days` — defaults `7` / `30`; the SLA windows the Dependabot burn-down (`GET /orgs/{org}/security/dependabot-burndown`, UI `/security/burndown`) measures open critical/high alerts against.
 
 The full accepted-key list lives in `apps/api/src/core/app_config.py`'s `_ACCEPTED_KEYS` — treat that as the source of truth over this doc if they ever drift.
 
