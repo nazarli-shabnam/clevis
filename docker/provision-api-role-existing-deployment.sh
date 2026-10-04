@@ -173,6 +173,17 @@ BEGIN
 END
 $do$;
 
+-- revoked_tokens (migration 0050): the per-session logout denylist require_auth reads and the
+-- logout endpoint writes. Natural text primary key, so no sequence. No RLS (not tenant data).
+-- Skipped in CI for the same reason as the tables above.
+DO $do$
+BEGIN
+  IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'revoked_tokens') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON revoked_tokens TO clevis_api;
+  END IF;
+END
+$do$;
+
 -- resolve_installation_tenant_id() (migration 0035) REVOKEs its default PUBLIC EXECUTE
 -- and re-GRANTs it only to clevis_api -- but that migration's own GRANT is conditional
 -- on clevis_api already existing, which isn't true the first time this script runs.

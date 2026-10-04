@@ -1,18 +1,22 @@
 """JWT helpers and FastAPI auth dependencies (org-scoped roles live in src/core/rbac.py).
 
-require_auth checks token_version against the DB on every request so revoked sessions end immediately.
+require_auth checks token_version (log out everywhere) and the per-token ``jti`` denylist (single-session
+logout) against the DB on every request so revoked sessions end immediately.
 """
 
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import jwt
 from fastapi import Cookie, Depends, HTTPException, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
+from sqlalchemy import delete
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from src.core.config import settings
-from src.core.db import User, get_db, set_session_user
+from src.core.db import RevokedToken, User, get_db, set_session_user
 
 _ALGORITHM = "HS256"
 _TOKEN_EXPIRE_DAYS = 30
@@ -68,6 +72,8 @@ def create_access_token(
         "is_workspace_admin": is_workspace_admin,
         "name": name,
         "token_version": token_version,
+        # Unique per token so logout can revoke this one session without touching the user's others.
+        "jti": uuid.uuid4().hex,
         "exp": datetime.now(timezone.utc) + timedelta(days=_TOKEN_EXPIRE_DAYS),
     }
     return jwt.encode(payload, settings.auth_secret.get_secret_value(), algorithm=_ALGORITHM)
@@ -110,6 +116,11 @@ def require_auth(
     db_user = db.query(User).filter(User.id == user_id).first()
     if db_user is None or db_user.token_version != payload.get("token_version", 0):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked")
+    # Tokens issued before `jti` existed carry none and stay valid until they expire (or the user
+    # revokes all sessions); every token minted since is checked against the logout denylist.
+    jti = payload.get("jti")
+    if jti and db.get(RevokedToken, jti) is not None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked")
     # Set app.user_id for RLS self-access checks on routes that never resolve a tenant
     # (see migration 0031).
     set_session_user(db, user_id)
@@ -122,6 +133,34 @@ def require_auth(
         is_workspace_admin=db_user.is_workspace_admin,
         github_login=db_user.github_login,
     )
+
+
+def revoke_presented_token(db: Session, token: str | None) -> None:
+    """Denylist the session JWT in ``token`` until its own expiry (single-session logout).
+
+    Best-effort and silent: a missing, malformed, badly signed or already-expired token, a token
+    from before ``jti`` existed, and a user that no longer exists are all no-ops, because logout
+    must always succeed and there is nothing left to revoke in any of those cases. Expired
+    denylist rows are purged here since they can no longer matter.
+    """
+    if not token:
+        return
+    try:
+        payload = jwt.decode(token, settings.auth_secret.get_secret_value(), algorithms=[_ALGORITHM])
+        jti = payload["jti"]
+        user_id = int(payload["sub"])
+        expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+    except (jwt.InvalidTokenError, KeyError, ValueError, TypeError):
+        return
+    if db.get(User, user_id) is None:
+        return
+    db.execute(delete(RevokedToken).where(RevokedToken.expires_at < datetime.now(timezone.utc)))
+    db.execute(
+        pg_insert(RevokedToken)
+        .values(jti=jti, user_id=user_id, expires_at=expires_at)
+        .on_conflict_do_nothing(index_elements=["jti"])
+    )
+    db.commit()
 
 
 def require_workspace_admin(user: UserOut = Depends(require_auth)) -> UserOut:

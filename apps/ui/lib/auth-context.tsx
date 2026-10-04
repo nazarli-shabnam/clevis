@@ -88,7 +88,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(() => {
     bumpSessionEpoch()
-    fetch(`${BASE}/auth/logout`, { method: "POST", credentials: "include" })
+    // Present the bearer token so the server can revoke this session's JWT (the cookie, if any,
+    // is sent by credentials: "include"). Read before it's removed from storage below.
+    const stored = localStorage.getItem(_TOKEN_KEY)
+    fetch(`${BASE}/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+      headers: stored ? { Authorization: `Bearer ${stored}` } : undefined,
+    })
       .then((res) => {
         if (!res.ok) setLogoutWarning(_LOGOUT_WARNING)
       })

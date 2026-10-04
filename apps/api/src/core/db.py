@@ -489,6 +489,21 @@ class ApiToken(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class RevokedToken(Base):
+    """A session JWT that was logged out before it expired, keyed by its ``jti`` claim.
+
+    Not tenant data (no RLS): require_auth checks it before any tenant context exists. Rows are only
+    needed until the token's own ``exp`` and are purged opportunistically on logout.
+    """
+
+    __tablename__ = "revoked_tokens"
+    __table_args__ = (Index("ix_revoked_tokens_expires_at", "expires_at"),)
+
+    jti: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 engine = create_engine(settings.database_url.get_secret_value())
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 

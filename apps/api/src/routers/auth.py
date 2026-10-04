@@ -10,14 +10,23 @@ import logging
 import secrets
 
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.app_config import get_config
-from src.core.auth import SETUP_LOCK_KEY, UserOut, clear_session_cookie, create_access_token, require_auth
+from src.core.auth import (
+    SESSION_COOKIE_NAME,
+    SETUP_LOCK_KEY,
+    UserOut,
+    clear_session_cookie,
+    create_access_token,
+    require_auth,
+    revoke_presented_token,
+)
 from src.core.config import settings
 from src.core.db import Org, User, get_db, set_session_user
 from src.core.rate_limit import check_account_rate_limit, rate_limit
@@ -296,9 +305,22 @@ def resend_verification(
     return {"ok": True}
 
 
+_http_bearer = HTTPBearer(auto_error=False)
+
+
 @router.post("/logout")
-def logout(response: Response):
-    """Clear the httpOnly session cookie. Bearer-token clients also drop their local token."""
+def logout(
+    response: Response,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+    session: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+    db: Session = Depends(get_db),
+):
+    """End this session: revoke the presented JWT server-side and clear the httpOnly cookie.
+
+    A copied token stops working immediately; the user's other sessions are untouched (use
+    ``/me/revoke-sessions`` to end them all). Always succeeds, even without a valid token.
+    """
+    revoke_presented_token(db, credentials.credentials if credentials else session)
     clear_session_cookie(response)
     return {"ok": True}
 
