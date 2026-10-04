@@ -1,0 +1,76 @@
+name: Delete merged branch
+
+on:
+  # pull_request_target runs this file from the base branch and never checks out PR code,
+  # same as triage.yml. Fork PRs are skipped below, so the write token is only ever used
+  # on this repo's own branches.
+  pull_request_target:
+    types: [closed]
+
+permissions: {}
+
+jobs:
+  delete-branch:
+    # Closed-without-merge PRs keep their branch; only merges into main are cleaned up.
+    if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # delete the head ref
+      pull-requests: read # check for open PRs stacked on this branch
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const repo = context.repo;
+            const branch = pr.head.ref;
+            const defaultBranch = context.payload.repository.default_branch;
+
+            // Long-lived branches are never deleted, whatever a PR's head turns out to be.
+            const KEEP_EXACT = new Set([defaultBranch, "main", "master", "develop", "gh-pages"]);
+            const KEEP_PREFIXES = ["release/"];
+
+            const skip = (reason) => core.info(`Keeping "${branch}": ${reason}`);
+
+            // 1. Only this repo's own branches (a fork's branch isn't ours to delete).
+            const headRepo = pr.head.repo && pr.head.repo.full_name;
+            if (!headRepo || headRepo.toLowerCase() !== `${repo.owner}/${repo.repo}`.toLowerCase()) {
+              return skip("head branch lives in a fork");
+            }
+
+            // 2. Long-lived branch names.
+            if (KEEP_EXACT.has(branch) || KEEP_PREFIXES.some((p) => branch.startsWith(p))) {
+              return skip("long-lived branch");
+            }
+
+            // 3. Protected branch, and 4. tip moved after the merge (someone kept working on it).
+            let info;
+            try {
+              info = await github.rest.repos.getBranch({ ...repo, branch });
+            } catch (e) {
+              if (e.status === 404) return core.notice(`Branch "${branch}" is already gone.`);
+              throw e;
+            }
+            if (info.data.protected) return skip("branch is protected");
+            if (info.data.commit.sha !== pr.head.sha) {
+              return skip(`it has new commits after the merge (${info.data.commit.sha.slice(0, 7)} != ${pr.head.sha.slice(0, 7)})`);
+            }
+
+            // 5. Deleting the base of an open PR closes that PR (stacked PRs), so leave it.
+            const stacked = await github.paginate(github.rest.pulls.list, {
+              ...repo, state: "open", base: branch, per_page: 100,
+            });
+            if (stacked.length) {
+              return skip(`open PR(s) are based on it: ${stacked.map((p) => `#${p.number}`).join(", ")}`);
+            }
+
+            try {
+              await github.rest.git.deleteRef({ ...repo, ref: `heads/${branch}` });
+              core.info(`Deleted branch "${branch}" after PR #${pr.number} merged into ${pr.base.ref}.`);
+            } catch (e) {
+              // Already removed, e.g. by the repo's "Automatically delete head branches" setting.
+              if (e.status === 404 || e.status === 422) {
+                return core.notice(`Branch "${branch}" was already deleted.`);
+              }
+              throw e;
+            }
