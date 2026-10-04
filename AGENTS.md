@@ -31,6 +31,7 @@ Tables managed by Alembic — no runtime DDL. (Not an exhaustive list of every t
 - **`activity_sync_cursors`** / **`org_membership_sync_cursors`** — per-tenant watermarks (migrations 0038/0041) recording how far event backfill and membership reconciliation have progressed, read by the gap-heal sweep and membership-reconcile loop respectively to decide what's stale.
 - **`automation_repo_settings`** — per-(tenant, repo, feature) opt-in switch and saved options (migration 0043) for write automations (bulk branch protection, Dependabot triage), read/written via `repositories/automation_settings_repo.py`.
 - **`notification_destinations`** — per-tenant Slack/Teams/generic-webhook alert targets (migration 0048); the URL and optional HMAC signing secret are Fernet-encrypted, and the API (not the worker) sends score-drop messages, SSRF-checking the URL at create and send time (`services/notifications.py`).
+- **`api_tokens`** — scoped, revocable, org-bound read-only machine tokens for CI (migration 0049); only a SHA-256 hash is stored, and `resolve_api_token()` (SECURITY DEFINER) resolves a bearer token to its tenant before any RLS context exists. `orgs.badge_enabled` gates the public `/badges/{org}/score.svg` (read through `public_badge_score()`). The `actions/clevis-score` composite Action calls `/api/v1/orgs/{org}/score`.
 
 ### Job queue flow
 
