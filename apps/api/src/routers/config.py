@@ -29,7 +29,7 @@ _INT_KEYS = {
     "digest_poll_seconds",
     "webhook_requeue_poll_seconds",
 }
-_BOOL_KEYS = {"registration_enabled"}
+_BOOL_KEYS = {"registration_enabled", "score_hygiene_checks"}
 # key -> allowed values, for small closed-vocabulary settings.
 _ENUM_KEYS = {
     "digest_cadence": {"off", "weekly", "monthly"},

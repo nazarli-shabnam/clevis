@@ -7,6 +7,8 @@ class CheckMetadata:
     title: str
     severity: str
     remediation: str
+    # Shown with the results but excluded from the score unless the instance opts in.
+    informational: bool = False
 
 
 class Check:

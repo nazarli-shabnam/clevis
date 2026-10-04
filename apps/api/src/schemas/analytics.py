@@ -27,6 +27,8 @@ class CheckResult(BaseModel):
     title: str
     severity: str
     remediation: str
+    # Hygiene checks: shown, but only scored when the instance opts in.
+    informational: bool = False
     status: Literal["pass", "fail", "error", "not_applicable"]
     value: bool | str | dict[str, int] | None = None
 

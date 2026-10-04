@@ -22,6 +22,7 @@ _ACCEPTED_KEYS = {
     "digest_poll_seconds",
     "digest_cadence",
     "webhook_requeue_poll_seconds",
+    "score_hygiene_checks",
 }
 _TTL = 60.0
 _cache: dict[str, tuple[str, float]] = {}

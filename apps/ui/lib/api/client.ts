@@ -167,6 +167,10 @@ function normalizeCheckValue(id: string, raw: unknown): CheckValue {
   }
   if (typeof raw === "object" && raw !== null) {
     const r = raw as Record<string, unknown>
+    if ("checked" in r && "missing" in r) {
+      // Hygiene checks: repos that have the thing / repos evaluated.
+      return { type: "ratio", numerator: Number(r.checked) - Number(r.missing), denominator: Number(r.checked) }
+    }
     if ("checked" in r && "protected" in r) {
       return { type: "ratio", numerator: Number(r.protected), denominator: Number(r.checked) }
     }

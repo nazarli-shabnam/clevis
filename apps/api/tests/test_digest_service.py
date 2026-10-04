@@ -127,3 +127,36 @@ def test_old_push_events_are_outside_the_activity_window(db):
     _set_tenant(db, org.tenant_id)
     content = digest_service.build_digest(db, tenant_id=org.tenant_id, org_login="digest-stale-activity", period_label="weekly")
     assert content.push_events_7d == 0
+
+
+def test_risk_items_follow_the_scoring_policy_the_scan_was_stored_with(db):
+    org = org_repo.get_or_create(db, github_login="digest-hygiene")
+    hygiene = {"id": "repository_codeowners_present", "title": "CODEOWNERS", "status": "fail", "informational": True}
+    real = {"id": "a", "title": "Real risk", "status": "fail"}
+    # "scored" is stamped per check at scan time (analytics_service); the digest must not re-read config.
+    scan_results_repo.insert(
+        db, owner="digest-hygiene", score=50, total_checks=2, failed_checks=2,
+        checks=[{**real, "scored": True}, {**hygiene, "scored": True}], tenant_id=org.tenant_id,
+    )
+    _set_tenant(db, org.tenant_id)
+    content = digest_service.build_digest(db, tenant_id=org.tenant_id, org_login="digest-hygiene", period_label="weekly")
+    assert content.failing_checks == ["Real risk", "CODEOWNERS"]
+
+    org2 = org_repo.get_or_create(db, github_login="digest-hygiene-off")
+    scan_results_repo.insert(
+        db, owner="digest-hygiene-off", score=100, total_checks=1, failed_checks=1,
+        checks=[{**real, "scored": True}, {**hygiene, "scored": False}], tenant_id=org2.tenant_id,
+    )
+    _set_tenant(db, org2.tenant_id)
+    content = digest_service.build_digest(db, tenant_id=org2.tenant_id, org_login="digest-hygiene-off", period_label="weekly")
+    assert content.failing_checks == ["Real risk"]
+
+    # Scans stored before the stamp existed: informational checks were never scored.
+    org3 = org_repo.get_or_create(db, github_login="digest-hygiene-legacy")
+    scan_results_repo.insert(
+        db, owner="digest-hygiene-legacy", score=50, total_checks=1, failed_checks=1,
+        checks=[real, hygiene], tenant_id=org3.tenant_id,
+    )
+    _set_tenant(db, org3.tenant_id)
+    content = digest_service.build_digest(db, tenant_id=org3.tenant_id, org_login="digest-hygiene-legacy", period_label="weekly")
+    assert content.failing_checks == ["Real risk"]

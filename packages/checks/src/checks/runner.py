@@ -11,6 +11,7 @@ from checks.github_checks import (
     SecretScanningEnabled,
     _get_all_pages,
 )
+from checks.hygiene_checks import HYGIENE_CHECKS
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ def run_all_checks(
         DependabotAlertsCheck(),
         CodeScanningCheck(),
         DefaultBranchNoForcePushCheck(),
+        *(cls() for cls in HYGIENE_CHECKS),
     ]
 
     # The prefetch feeds every check, so degrade to per-check "error" results here too.
@@ -53,6 +55,7 @@ def run_all_checks(
                 "title": check.metadata.title,
                 "severity": check.metadata.severity,
                 "remediation": check.metadata.remediation,
+                "informational": check.metadata.informational,
                 "status": "error",
                 "value": "Check failed: could not fetch repository list",
             }
@@ -78,6 +81,7 @@ def run_all_checks(
             "title": check.metadata.title,
             "severity": check.metadata.severity,
             "remediation": check.metadata.remediation,
+            "informational": check.metadata.informational,
             "status": output["status"],
             "value": output["value"],
         })

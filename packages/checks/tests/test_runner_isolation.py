@@ -26,5 +26,5 @@ def test_run_all_checks_degrades_to_error_results_when_the_repo_list_prefetch_fa
         result = run_all_checks(owner="acme", token="tok")
 
     assert result["repo_count"] == 0
-    assert len(result["checks"]) == 6
+    assert len(result["checks"]) == 11
     assert all(c["status"] == "error" for c in result["checks"])
