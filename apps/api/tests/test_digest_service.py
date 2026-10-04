@@ -127,3 +127,20 @@ def test_old_push_events_are_outside_the_activity_window(db):
     _set_tenant(db, org.tenant_id)
     content = digest_service.build_digest(db, tenant_id=org.tenant_id, org_login="digest-stale-activity", period_label="weekly")
     assert content.push_events_7d == 0
+
+
+def test_informational_failures_are_risk_items_only_when_hygiene_scoring_is_on(db):
+    from unittest.mock import patch
+
+    org = org_repo.get_or_create(db, github_login="digest-hygiene")
+    checks = [
+        {"id": "a", "title": "Real risk", "status": "fail"},
+        {"id": "repository_codeowners_present", "title": "CODEOWNERS", "status": "fail", "informational": True},
+    ]
+    scan_results_repo.insert(db, owner="digest-hygiene", score=50, total_checks=1, failed_checks=1, checks=checks, tenant_id=org.tenant_id)
+    _set_tenant(db, org.tenant_id)
+
+    for setting, expected in (("false", ["Real risk"]), ("true", ["Real risk", "CODEOWNERS"])):
+        with patch("src.services.digest_service.get_config", return_value=setting):
+            content = digest_service.build_digest(db, tenant_id=org.tenant_id, org_login="digest-hygiene", period_label="weekly")
+        assert content.failing_checks == expected
