@@ -79,12 +79,15 @@ def test_informational_checks_do_not_affect_the_score_unless_opted_in():
 
     from src.services.analytics_service import get_overview
 
-    checks = [
-        {"id": "a", "status": "pass"},
-        {"id": "hygiene", "status": "fail", "informational": True},
-    ]
-    report = {"checks": checks, "repo_count": 1}
-    with patch("src.services.analytics_service.run_all_checks", return_value=report):
+    def report():
+        # fresh dicts per scan: get_overview stamps "scored" onto them in place
+        checks = [
+            {"id": "a", "status": "pass"},
+            {"id": "hygiene", "status": "fail", "informational": True},
+        ]
+        return {"checks": checks, "repo_count": 1}
+
+    with patch("src.services.analytics_service.run_all_checks", side_effect=lambda **_: report()):
         with patch("src.services.analytics_service.get_config", return_value="false"):
             off = get_overview("acme", "t")
         with patch("src.services.analytics_service.get_config", return_value="true"):

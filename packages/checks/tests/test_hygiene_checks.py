@@ -55,10 +55,18 @@ def test_security_policy_pass_and_truncated_tree_is_unknown_not_missing():
     assert trunc["status"] == "error" and trunc["value"]["unknown"] == 1
 
 
-def test_license_uses_the_repo_listing_without_any_api_call():
-    repos = [_repo("a"), _repo("b", license=None)]
-    out = _run(h.LicensePresent(), repos, lambda u, t: (_ for _ in ()).throw(AssertionError("no calls expected")))
-    assert out["status"] == "fail" and out["value"]["missing"] == 1
+def test_license_falls_back_to_the_tree_when_github_detects_none():
+    repos = [_repo("a"), _repo("custom", license=None), _repo("bare", license=None)]
+
+    def get(url, token):
+        if "/custom/git/trees" in url:
+            return _tree("LICENSE")
+        if "/bare/git/trees" in url:
+            return _tree("README.md")
+        raise AssertionError("licensed repo must not hit the API")
+
+    out = _run(h.LicensePresent(), repos, get)
+    assert out["status"] == "fail" and out["value"]["missing"] == 1 and out["value"]["checked"] == 3
 
 
 def test_stale_branches_ignore_default_protected_and_recent_ones():

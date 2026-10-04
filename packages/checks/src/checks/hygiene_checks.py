@@ -150,7 +150,7 @@ class SecurityPolicyPresent(_FilePresentCheck):
     paths = ("SECURITY.md", ".github/SECURITY.md", "docs/SECURITY.md")
 
 
-class LicensePresent(_PerRepoCheck):
+class LicensePresent(_FilePresentCheck):
     metadata = CheckMetadata(
         check_id="repository_license_present",
         title="License present",
@@ -159,9 +159,14 @@ class LicensePresent(_PerRepoCheck):
         informational=True,
     )
 
+    paths = ("LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING", "UNLICENSE")
+
     def _inspect(self, base_url, owner, repo, token):
-        # Free: GitHub's repo listing already carries the detected license (null when none).
-        return repo.get("license") is not None, 0
+        # Free path: the repo listing carries GitHub's detected license. It is null for a custom or
+        # unrecognized LICENSE file too, so only then fall back to looking for the file itself.
+        if repo.get("license") is not None:
+            return True, 0
+        return super()._inspect(base_url, owner, repo, token)
 
 
 class StaleBranches(_PerRepoCheck):
