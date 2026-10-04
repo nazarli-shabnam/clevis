@@ -572,6 +572,7 @@ const CONFIG_FIELDS: {
   options?: { value: string; label: string }[]
 }[] = [
   { key: "worker_poll_seconds", label: "Worker Poll Interval",    description: "Seconds between job queue polls.", type: "number" },
+  { key: "score_hygiene_checks", label: "Score Hygiene Checks", description: "Count CODEOWNERS, SECURITY.md, license, stale-branch and unpinned-Action checks toward the security score (off: informational only).", type: "boolean" },
   { key: "registration_enabled", label: "Self-Registration",     description: "Allow anyone to create an account via /register.", type: "boolean" },
   {
     key: "digest_cadence",

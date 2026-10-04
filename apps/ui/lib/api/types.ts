@@ -30,6 +30,8 @@ export interface CheckResult {
   title: string
   severity: "high" | "medium" | "low"
   remediation: string
+  // Hygiene checks: shown, but excluded from the score unless the instance opts in.
+  informational?: boolean
   status: "pass" | "fail" | "error" | "not_applicable"
   value: CheckValue
 }

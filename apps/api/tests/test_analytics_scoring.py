@@ -72,3 +72,22 @@ def test_overview_total_checks_excludes_not_applicable():
     # total_checks must reflect the same scored set as failed_checks/score, not the raw list.
     assert overview["total_checks"] == 2
     assert overview["failed_checks"] == 1
+
+
+def test_informational_checks_do_not_affect_the_score_unless_opted_in():
+    from unittest.mock import patch
+
+    from src.services.analytics_service import get_overview
+
+    checks = [
+        {"id": "a", "status": "pass"},
+        {"id": "hygiene", "status": "fail", "informational": True},
+    ]
+    report = {"checks": checks, "repo_count": 1}
+    with patch("src.services.analytics_service.run_all_checks", return_value=report):
+        with patch("src.services.analytics_service.get_config", return_value="false"):
+            off = get_overview("acme", "t")
+        with patch("src.services.analytics_service.get_config", return_value="true"):
+            on = get_overview("acme", "t")
+    assert (off["score"], off["total_checks"], off["failed_checks"]) == (100, 1, 0)
+    assert (on["score"], on["total_checks"], on["failed_checks"]) == (50, 2, 1)

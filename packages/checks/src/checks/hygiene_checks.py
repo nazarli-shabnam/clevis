@@ -1,0 +1,231 @@
+"""Repository-hygiene checks: CODEOWNERS, SECURITY.md, license, stale branches, unpinned Actions.
+
+All informational (`CheckMetadata.informational`): they show up next to the security checks but
+don't affect the score unless the instance opts in (see `analytics_service`).
+
+Scan cost is bounded: only the `_MAX_REPOS` most recently pushed active repos are inspected
+(`sampled` in the result says when that cut repos off), each repo's file tree is fetched once and
+shared by the file-presence and workflow checks, and the branch/workflow lookups are capped per repo.
+"""
+
+from __future__ import annotations
+
+import base64
+import re
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+
+import httpx
+
+from checks.base import Check, CheckMetadata
+from checks import github_checks as _gh
+
+_MAX_REPOS = 30
+_MAX_BRANCH_LOOKUPS = 10
+_MAX_WORKFLOW_FILES = 10
+_WORKERS = 8
+STALE_DAYS = 90
+# Actions from these owners are treated as first-party (still worth pinning, but not "third-party").
+_FIRST_PARTY_OWNERS = {"actions", "github"}
+
+_USES_RE = re.compile(r"^\s*-?\s*uses:\s*['\"]?([^\s'\"#]+)", re.MULTILINE)
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+# Key under which one scan's per-repo tree lookup is memoized on the repo dict the runner shares
+# between checks, so CODEOWNERS/SECURITY.md/workflows cost one tree request per repo, not three.
+_TREE_KEY = "_hygiene_paths"
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _repo_paths(base_url: str, owner: str, repo: dict, token: str) -> tuple[set[str], bool] | None:
+    """(file paths on the default branch, whether GitHub truncated the tree), or None for an empty repo."""
+    if _TREE_KEY in repo:
+        return repo[_TREE_KEY]
+    try:
+        tree = _gh._get(
+            f"{base_url}/repos/{owner}/{repo['name']}/git/trees/{repo.get('default_branch')}?recursive=1", token
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (404, 409):  # no default branch / empty repository
+            repo[_TREE_KEY] = None
+            return None
+        raise
+    result = ({e["path"] for e in tree.get("tree", []) if e.get("type") == "blob"}, bool(tree.get("truncated")))
+    repo[_TREE_KEY] = result
+    return result
+
+
+class _PerRepoCheck(Check):
+    """Runs `_inspect` over a bounded sample of repos and aggregates pass/fail like the other checks.
+
+    `_inspect` returns (ok, extra): ok is True/False for evaluable repos, None when the repo can't be
+    judged (API error); `extra` is a count to total up (stale branches, unpinned uses), or 0.
+    """
+
+    def _inspect(self, base_url: str, owner: str, repo: dict, token: str) -> tuple[bool | None, int]:
+        raise NotImplementedError
+
+    def run(
+        self,
+        owner: str,
+        token: str,
+        base_url: str = "https://api.github.com",
+        repos: list | None = None,
+        account_type: str = "Organization",
+    ) -> dict:
+        if repos is None:
+            repos = _gh._get_all_pages(base_url, f"/orgs/{owner}/repos", token)
+        active = [r for r in repos if not r.get("archived")]
+        if not active:
+            return {"status": "not_applicable", "value": {"checked": 0, "missing": 0, "unknown": 0, "sampled": 0}}
+        active.sort(key=lambda r: r.get("pushed_at") or "", reverse=True)
+        sample = active[:_MAX_REPOS]
+
+        def safe(repo: dict) -> tuple[bool | None, int]:
+            try:
+                return self._inspect(base_url, owner, repo, token)
+            except httpx.HTTPError:
+                return None, 0
+
+        with ThreadPoolExecutor(max_workers=_WORKERS) as pool:
+            outcomes = list(pool.map(safe, sample))
+
+        # `None` = unknown (API error); `skip` repos (empty) report ok=True with no extra, so they pass.
+        unknown = sum(1 for ok, _ in outcomes if ok is None)
+        evaluable = [o for o in outcomes if o[0] is not None]
+        if not evaluable:
+            return {"status": "error", "value": {"checked": 0, "missing": 0, "unknown": unknown, "sampled": 0}}
+        missing = sum(1 for ok, _ in evaluable if not ok)
+        value = {
+            "checked": len(evaluable),
+            "missing": missing,
+            "unknown": unknown,
+            "sampled": 1 if len(active) > _MAX_REPOS else 0,
+        }
+        extra_total = sum(extra for _, extra in evaluable)
+        if extra_total:
+            value[self.extra_label] = extra_total
+        return {"status": "pass" if missing == 0 else "fail", "value": value}
+
+    extra_label = "count"
+
+
+class _FilePresentCheck(_PerRepoCheck):
+    paths: tuple[str, ...] = ()
+
+    def _inspect(self, base_url, owner, repo, token):
+        found = _repo_paths(base_url, owner, repo, token)
+        if found is None:
+            return True, 0  # empty repository: nothing to require
+        present, truncated = found
+        if any(p in present for p in self.paths):
+            return True, 0
+        # A truncated tree may simply not list the file, so don't call that a miss.
+        return (None if truncated else False), 0
+
+
+class CodeownersPresent(_FilePresentCheck):
+    metadata = CheckMetadata(
+        check_id="repository_codeowners_present",
+        title="CODEOWNERS file present",
+        severity="low",
+        remediation="Add a CODEOWNERS file (.github/CODEOWNERS) so reviews are routed to owners.",
+        informational=True,
+    )
+    paths = ("CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS")
+
+
+class SecurityPolicyPresent(_FilePresentCheck):
+    metadata = CheckMetadata(
+        check_id="repository_security_policy_present",
+        title="SECURITY.md present",
+        severity="low",
+        remediation="Add a SECURITY.md describing how to report vulnerabilities.",
+        informational=True,
+    )
+    paths = ("SECURITY.md", ".github/SECURITY.md", "docs/SECURITY.md")
+
+
+class LicensePresent(_PerRepoCheck):
+    metadata = CheckMetadata(
+        check_id="repository_license_present",
+        title="License present",
+        severity="low",
+        remediation="Add a LICENSE file so others know how they may use the code.",
+        informational=True,
+    )
+
+    def _inspect(self, base_url, owner, repo, token):
+        # Free: GitHub's repo listing already carries the detected license (null when none).
+        return repo.get("license") is not None, 0
+
+
+class StaleBranches(_PerRepoCheck):
+    metadata = CheckMetadata(
+        check_id="repository_no_stale_branches",
+        title=f"No branches idle for {STALE_DAYS}+ days",
+        severity="low",
+        remediation="Delete or merge branches that have had no commits in 90 days.",
+        informational=True,
+    )
+    extra_label = "stale_branches"
+
+    def _inspect(self, base_url, owner, repo, token):
+        branches = _gh._get(f"{base_url}/repos/{owner}/{repo['name']}/branches?per_page=100", token)
+        # Protected branches (release lines, etc.) are deliberately long-lived.
+        candidates = [
+            b for b in branches if b.get("name") != repo.get("default_branch") and not b.get("protected")
+        ][:_MAX_BRANCH_LOOKUPS]
+        cutoff = _now() - timedelta(days=STALE_DAYS)
+        stale = 0
+        for b in candidates:
+            commit = _gh._get(f"{base_url}/repos/{owner}/{repo['name']}/commits/{b['commit']['sha']}", token)
+            when = ((commit.get("commit") or {}).get("committer") or {}).get("date")
+            if when and datetime.fromisoformat(when.replace("Z", "+00:00")) < cutoff:
+                stale += 1
+        return stale == 0, stale
+
+
+def unpinned_third_party_uses(workflow_text: str, owner: str) -> list[str]:
+    """`uses:` references to third-party actions that aren't pinned to a full commit SHA."""
+    bad = []
+    for ref in _USES_RE.findall(workflow_text):
+        if ref.startswith(("./", "docker://")) or "@" not in ref:
+            continue  # local action, container image, or malformed
+        name, _, version = ref.partition("@")
+        action_owner = name.split("/", 1)[0].lower()
+        if action_owner in _FIRST_PARTY_OWNERS or action_owner == owner.lower():
+            continue
+        if not _SHA_RE.match(version):
+            bad.append(ref)
+    return bad
+
+
+class UnpinnedActions(_PerRepoCheck):
+    metadata = CheckMetadata(
+        check_id="repository_actions_pinned_to_sha",
+        title="Third-party Actions pinned to a commit SHA",
+        severity="low",
+        remediation="Pin third-party actions to a full commit SHA instead of a tag or branch.",
+        informational=True,
+    )
+    extra_label = "unpinned_uses"
+
+    def _inspect(self, base_url, owner, repo, token):
+        found = _repo_paths(base_url, owner, repo, token)
+        if found is None:
+            return True, 0
+        files = sorted(
+            p for p in found[0] if p.startswith(".github/workflows/") and p.endswith((".yml", ".yaml"))
+        )[:_MAX_WORKFLOW_FILES]
+        unpinned = 0
+        for path in files:
+            body = _gh._get(f"{base_url}/repos/{owner}/{repo['name']}/contents/{path}", token)
+            text = base64.b64decode(body.get("content", "")).decode("utf-8", errors="replace")
+            unpinned += len(unpinned_third_party_uses(text, owner))
+        return unpinned == 0, unpinned
+
+
+HYGIENE_CHECKS = (CodeownersPresent, SecurityPolicyPresent, LicensePresent, StaleBranches, UnpinnedActions)
