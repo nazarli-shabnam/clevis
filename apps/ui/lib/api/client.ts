@@ -430,6 +430,17 @@ export const api = {
             `/orgs/${encodeURIComponent(target.orgLogin)}/installations/sync`,
             body,
           ),
+    // Re-reads the installation's granted permissions from GitHub and returns the updated row.
+    refreshPermissions: (
+      target: { scope: "me" } | { scope: "org"; orgLogin: string },
+      installationId: number,
+    ) =>
+      target.scope === "me"
+        ? post<InstallationMeta>(`/me/installations/${installationId}/refresh-permissions`, {})
+        : post<InstallationMeta>(
+            `/orgs/${encodeURIComponent(target.orgLogin)}/installations/${installationId}/refresh-permissions`,
+            {},
+          ),
     // Uninstalls the App on GitHub's side (a real revocation), then removes the local row.
     remove: (
       target: { scope: "me" } | { scope: "org"; orgLogin: string },

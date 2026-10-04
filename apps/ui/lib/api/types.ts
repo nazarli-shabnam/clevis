@@ -264,6 +264,14 @@ export interface BlockedFeature {
   missing: Record<string, string>
 }
 
+export interface AutomationPermission {
+  feature: string
+  label: string
+  required: Record<string, string>
+  // Empty when everything is granted *or* permissions were never synced (see permissions_synced_at).
+  missing: Record<string, string>
+}
+
 export interface InstallationMeta {
   id: number
   account_login: string
@@ -274,6 +282,7 @@ export interface InstallationMeta {
   // Optional so fixtures that omit them still typecheck; the API always includes them.
   permissions_synced_at?: string | null
   blocked_features?: BlockedFeature[]
+  automations?: AutomationPermission[]
 }
 
 export interface InstallationLookup {
