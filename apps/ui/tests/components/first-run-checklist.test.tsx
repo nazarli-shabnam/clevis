@@ -125,4 +125,16 @@ describe("FirstRunChecklist", () => {
     const { container } = renderChecklist()
     expect(container).toBeEmptyDOMElement()
   })
+
+  it("still shows the checklist when localStorage is unavailable", async () => {
+    listForOrgMock.mockResolvedValue([])
+    const spy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked")
+    })
+    renderChecklist()
+
+    expect(await screen.findByText("Install the GitHub App")).toBeInTheDocument()
+    expect(screen.getByText("Getting started — 1 step left")).toBeInTheDocument()
+    spy.mockRestore()
+  })
 })
