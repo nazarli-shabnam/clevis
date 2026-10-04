@@ -14,6 +14,7 @@ from checks.github_checks import (
     DefaultBranchNoForcePushCheck,
     DependabotAlertsCheck,
     OrgMFARequired,
+    PaginationTruncatedError,
     SecretScanningEnabled,
     _get,
     _get_all_pages,
@@ -269,7 +270,7 @@ def test_get_all_pages_follows_link_header_across_pages():
     assert results == [{"id": 1}, {"id": 2}, {"id": 3}]
 
 
-def test_get_all_pages_truncates_after_max_pages_and_logs_warning(caplog):
+def test_get_all_pages_raises_instead_of_returning_a_partial_list_at_the_page_cap():
     call_count = 0
 
     def fake_get(url, headers):
@@ -279,13 +280,42 @@ def test_get_all_pages_truncates_after_max_pages_and_logs_warning(caplog):
         return httpx.Response(200, json=[{"id": call_count}], headers={"Link": link}, request=httpx.Request("GET", url))
 
     with patch("httpx.Client.get", side_effect=fake_get):
-        with caplog.at_level("WARNING"):
-            results = _get_all_pages("https://x", "/y", "tok")
+        with pytest.raises(PaginationTruncatedError) as excinfo:
+            _get_all_pages("https://x", "/y", "tok")
 
-    # Stops at the cap even though the Link header is still present.
-    assert len(results) == _MAX_PAGES
+    # Stops at the cap even though the Link header is still present, and says what it had.
     assert call_count == _MAX_PAGES
-    assert "Truncating pagination" in caplog.text
+    assert len(excinfo.value.results) == _MAX_PAGES
+    assert excinfo.value.path == "/y"
+    assert "exceeded" in str(excinfo.value)
+
+
+def test_get_all_pages_does_not_raise_when_the_last_allowed_page_is_the_last_page():
+    def fake_get(url, headers):
+        page = int(url.split("&page=")[-1]) if "&page=" in url else 1
+        if page < _MAX_PAGES:
+            link = f'<https://x/y?per_page=100&page={page + 1}>; rel="next"'
+            return httpx.Response(200, json=[{"id": page}], headers={"Link": link}, request=httpx.Request("GET", url))
+        return httpx.Response(200, json=[{"id": page}], request=httpx.Request("GET", url))
+
+    with patch("httpx.Client.get", side_effect=fake_get):
+        results = _get_all_pages("https://x", "/y", "tok")
+    assert len(results) == _MAX_PAGES
+
+
+def test_force_push_check_raises_rather_than_passing_when_rulesets_exceed_the_page_cap():
+    # Classic protection allows force pushes, so the ruleset listing decides. If that listing is
+    # cut off at the page cap the answer is unknown -- it must not read as "no blocking rule".
+    def fake_get(url, headers):
+        link = '<https://x/rules?page=next>; rel="next"'
+        return httpx.Response(200, json=[{"type": "update"}], headers={"Link": link}, request=httpx.Request("GET", url))
+
+    with (
+        patch("checks.github_checks._get", return_value={"allow_force_pushes": {"enabled": True}}),
+        patch("httpx.Client.get", side_effect=fake_get),
+    ):
+        with pytest.raises(PaginationTruncatedError):
+            DefaultBranchNoForcePushCheck().run(owner="acme", token="tok", repos=[{"name": "api", "default_branch": "main"}])
 
 
 # ── DependabotAlertsCheck ────────────────────────────────────────────────────

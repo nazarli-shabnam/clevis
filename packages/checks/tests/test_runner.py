@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 
+from checks.github_checks import PaginationTruncatedError
 from checks.runner import run_all_checks
 
 
@@ -119,3 +120,32 @@ def test_archived_repos_are_excluded():
     ):
         result = run_all_checks(owner="acme", token="tok")
     assert result["repo_count"] == 2
+
+
+def test_a_truncated_ruleset_listing_errors_that_check_instead_of_passing_it():
+    """A repo whose rules overflow the page cap must come out as "error", never a false "pass"."""
+    def pages(base_url, path, token, items_key=None):
+        if "/rules/branches/" in path:
+            raise PaginationTruncatedError(path, [])
+        return []
+
+    def fake_get(url, token):
+        if "/protection" in url:
+            return {"allow_force_pushes": {"enabled": True}}  # classic protection allows force pushes
+        if "/branches/" in url:
+            return FAKE_BRANCH
+        return FAKE_ORG if "/repos/" not in url else []
+
+    with (
+        patch("checks.runner._get_all_pages", return_value=FAKE_REPOS),
+        patch("checks.github_checks._get_all_pages", side_effect=pages),
+        patch("checks.github_checks._get", side_effect=fake_get),
+    ):
+        result = run_all_checks(owner="acme", token="tok")
+
+    force_push = next(c for c in result["checks"] if c["id"] == "repository_default_branch_no_force_push")
+    assert force_push["status"] == "error"
+    assert force_push["value"] == "Check failed: repository_default_branch_no_force_push"
+    # An unrelated check in the same run is not dragged down with it.
+    mfa = next(c for c in result["checks"] if c["id"] == "organization_members_mfa_required")
+    assert mfa["status"] == "pass"
