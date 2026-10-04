@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { membersHref } from "@/lib/members-href"
+import { membersHref, orgRoleFor } from "@/lib/members-href"
 import type { MyOrgMembership } from "@/lib/api/types"
 
 const admin = (org_login: string): MyOrgMembership => ({ org_login, role: "admin" })
@@ -31,5 +31,21 @@ describe("membersHref", () => {
 
   it("encodes org logins with URL-unsafe characters", () => {
     expect(membersHref([admin("a/b")], null)).toBe("/settings/org/a%2Fb/members")
+  })
+})
+
+describe("orgRoleFor", () => {
+  it("returns the caller's role in the org", () => {
+    expect(orgRoleFor([admin("acme"), member("widgets-inc")], "acme")).toBe("admin")
+    expect(orgRoleFor([admin("acme"), member("widgets-inc")], "widgets-inc")).toBe("member")
+  })
+
+  it("matches logins case-insensitively", () => {
+    expect(orgRoleFor([admin("Acme")], "acme")).toBe("admin")
+  })
+
+  it("returns null for an owner the caller has no Clevis membership in", () => {
+    expect(orgRoleFor([admin("acme")], "octocat")).toBeNull()
+    expect(orgRoleFor([], "acme")).toBeNull()
   })
 })

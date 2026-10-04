@@ -18,7 +18,8 @@ import { CHART_COLORS } from "@/lib/charts/theme"
 import { WorkflowLintCard } from "@/components/automation/workflow-lint-card"
 import { PermissionDriftNotice } from "@/components/permission-drift-notice"
 import { relativeTime } from "@/lib/format"
-import type { InstallationMeta, RunSummary, WorkflowSummary } from "@/lib/api/types"
+import { orgRoleFor } from "@/lib/members-href"
+import type { InstallationMeta, MyOrgMembership, RunSummary, WorkflowSummary } from "@/lib/api/types"
 
 // > 0, not > 1: valid GitHub org logins can be a single character.
 const MIN_OWNER_LEN_FOR_REPO_LOOKUP = 1
@@ -52,6 +53,14 @@ export default function AutomationPage() {
   useEffect(() => {
     if (scopeLogin) setOwner(scopeLogin)
   }, [scopeLogin])
+
+  // Dependabot auto-triage reads and writes admin-only endpoints. Gate it on the caller's role; if
+  // the membership lookup itself fails, don't guess -- the card surfaces its own error.
+  const membershipsQuery = useQuery<MyOrgMembership[]>({
+    queryKey: ["my-orgs"],
+    queryFn: () => api.orgs.mine(),
+  })
+  const triageRole = membershipsQuery.data ? orgRoleFor(membershipsQuery.data, owner.trim()) : undefined
 
   const { data: installs = [] } = useQuery<InstallationMeta[]>({
     queryKey: ["installations"],
@@ -520,13 +529,24 @@ export default function AutomationPage() {
       </div>
 
       <div className="mt-4">
-        <DependabotTriageCard
-          key={`${owner.trim()}|${owner.trim()}|${repo.trim()}`}
-          org={owner.trim()}
-          owner={owner.trim()}
-          repo={repo.trim()}
-          token={token}
-        />
+        {owner.trim().length > 0 && triageRole !== undefined && triageRole !== "admin" ? (
+          <div className="card px-4 py-4">
+            <span className="section-title">Dependabot auto-triage</span>
+            <p className="text-xs text-muted-foreground mt-1">
+              {triageRole === "member"
+                ? `Dependabot auto-triage is available to organization admins. You're a member of ${owner.trim()}, not an admin.`
+                : `Dependabot auto-triage needs an organization connected to Clevis where you're an admin, and ${owner.trim()} isn't one.`}
+            </p>
+          </div>
+        ) : (
+          <DependabotTriageCard
+            key={`${owner.trim()}|${owner.trim()}|${repo.trim()}`}
+            org={owner.trim()}
+            owner={owner.trim()}
+            repo={repo.trim()}
+            token={token}
+          />
+        )}
       </div>
     </>
   )

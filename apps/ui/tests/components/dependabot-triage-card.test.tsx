@@ -100,8 +100,7 @@ describe("DependabotTriageCard", () => {
 
   it("disables the approve button until the repo is enabled", async () => {
     renderCard()
-    await waitFor(() => expect(mockGetRepo).toHaveBeenCalled())
-    expect(screen.getByRole("button", { name: "Approve eligible PRs" })).toBeDisabled()
+    expect(await screen.findByRole("button", { name: "Approve eligible PRs" })).toBeDisabled()
   })
 
   it("blocks a real run while the form differs from the saved setting", async () => {
@@ -117,8 +116,47 @@ describe("DependabotTriageCard", () => {
   it("surfaces a permission error from the run", async () => {
     mockRun.mockRejectedValueOnce(new Error("GitHub returned 403 ... 'Pull requests' ... See docs/self-hosting.md."))
     renderCard()
-    await waitFor(() => expect(mockGetRepo).toHaveBeenCalled())
-    fireEvent.click(screen.getByRole("button", { name: "Dry run" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Dry run" }))
     await waitFor(() => expect(screen.getByText(/Pull requests/)).toBeInTheDocument())
+  })
+
+  it("shows an error with Retry, and no controls, when the saved setting can't be read", async () => {
+    // A non-admin's 403 (or any failed read) must not render the defaults as if they were the real
+    // setting -- "disabled / approve_only" would read as "auto-merge is off".
+    mockGetRepo.mockRejectedValueOnce(new Error("Org admin access required"))
+    renderCard()
+
+    expect(await screen.findByText(/Couldn't load the saved setting: Org admin access required/)).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Save settings" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Dry run" })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/Enabled for api/)).not.toBeInTheDocument()
+    expect(mockSetRepo).not.toHaveBeenCalled()
+    expect(mockRun).not.toHaveBeenCalled()
+  })
+
+  it("loads the real setting after Retry succeeds", async () => {
+    mockGetRepo
+      .mockRejectedValueOnce(new Error("temporarily unavailable"))
+      .mockResolvedValue({ enabled: true, mode: "approve_and_merge", merge_method: "rebase" })
+    renderCard()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry" }))
+
+    await waitFor(() => expect(screen.getByLabelText(/Enabled for api/)).toBeChecked())
+    expect(screen.getByLabelText("Mode")).toHaveValue("approve_and_merge")
+    expect(screen.queryByText(/Couldn't load the saved setting/)).not.toBeInTheDocument()
+  })
+
+  it("shows a loading state instead of editable defaults while the saved setting loads", async () => {
+    let resolveRead!: (value: unknown) => void
+    mockGetRepo.mockReturnValueOnce(new Promise((resolve) => { resolveRead = resolve }))
+    renderCard()
+
+    expect(await screen.findByText("Loading the saved setting…")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Save settings" })).not.toBeInTheDocument()
+
+    resolveRead({ enabled: true, mode: "approve_only", merge_method: "squash" })
+    await waitFor(() => expect(screen.getByLabelText(/Enabled for api/)).toBeChecked())
+    expect(screen.queryByText("Loading the saved setting…")).not.toBeInTheDocument()
   })
 })

@@ -10,6 +10,8 @@ const dispatchAllMock = vi.fn();
 const reposListMock = vi.fn();
 const installationsListMock = vi.fn();
 const installationsListForOrgMock = vi.fn();
+const orgsMineMock = vi.fn();
+const triageGetRepoMock = vi.fn();
 
 vi.mock("@/lib/api/client", () => ({
   api: {
@@ -29,6 +31,12 @@ vi.mock("@/lib/api/client", () => ({
     installations: {
       list: (...args: unknown[]) => installationsListMock(...args),
       listForOrg: (...args: unknown[]) => installationsListForOrgMock(...args),
+    },
+    orgs: { mine: (...args: unknown[]) => orgsMineMock(...args) },
+    dependabotTriage: {
+      getRepo: (...args: unknown[]) => triageGetRepoMock(...args),
+      setRepo: vi.fn(),
+      run: vi.fn(),
     },
   },
 }));
@@ -81,6 +89,10 @@ describe("AutomationPage", () => {
     installationsListMock.mockResolvedValue([]);
     installationsListForOrgMock.mockReset();
     installationsListForOrgMock.mockResolvedValue([]);
+    orgsMineMock.mockReset();
+    orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "admin" }]);
+    triageGetRepoMock.mockReset();
+    triageGetRepoMock.mockResolvedValue({ enabled: false, mode: "approve_only", merge_method: "squash" });
     localStorage.clear();
   });
 
@@ -497,6 +509,63 @@ describe("AutomationPage", () => {
     fireEvent.click(screen.getByText("Confirm dispatch"));
     await waitFor(() => {
       expect(dispatchMock).toHaveBeenCalledWith("acme", "demo", 1, { token: "", ref: "master" });
+    });
+  });
+
+
+  describe("Dependabot auto-triage gating", () => {
+    it("shows the triage card, and reads its setting, for an org the caller admins", async () => {
+      renderPage();
+      await enterOwnerAndSelectRepo("acme", "demo");
+
+      await waitFor(() => expect(triageGetRepoMock).toHaveBeenCalledWith("acme", "acme", "demo"));
+      expect(await screen.findByRole("button", { name: "Save settings" })).toBeInTheDocument();
+    });
+
+    it("replaces the card with an admins-only note for a plain member, and never calls the admin-only read", async () => {
+      orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "member" }]);
+      renderPage();
+      await enterOwnerAndSelectRepo("acme", "demo");
+
+      expect(await screen.findByText(/available to organization admins/)).toBeInTheDocument();
+      expect(screen.getByText(/You're a member of acme, not an admin/)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Save settings" })).not.toBeInTheDocument();
+      expect(triageGetRepoMock).not.toHaveBeenCalled();
+    });
+
+    it("explains that an org Clevis has no admin membership for can't use auto-triage", async () => {
+      orgsMineMock.mockResolvedValue([{ org_login: "other", role: "admin" }]);
+      renderPage();
+      await enterOwnerAndSelectRepo("acme", "demo");
+
+      expect(await screen.findByText(/needs an organization connected to Clevis where you're an admin/)).toBeInTheDocument();
+      expect(triageGetRepoMock).not.toHaveBeenCalled();
+    });
+
+    it("matches the owner case-insensitively when deciding the caller is an admin", async () => {
+      orgsMineMock.mockResolvedValue([{ org_login: "Acme", role: "admin" }]);
+      renderPage();
+      await enterOwnerAndSelectRepo("acme", "demo");
+
+      await waitFor(() => expect(triageGetRepoMock).toHaveBeenCalled());
+      expect(screen.queryByText(/available to organization admins/)).not.toBeInTheDocument();
+    });
+
+    it("does not guess when the membership lookup fails: the card renders and shows its own state", async () => {
+      orgsMineMock.mockRejectedValue(new Error("memberships unavailable"));
+      renderPage();
+      await enterOwnerAndSelectRepo("acme", "demo");
+
+      await waitFor(() => expect(triageGetRepoMock).toHaveBeenCalled());
+      expect(screen.queryByText(/available to organization admins/)).not.toBeInTheDocument();
+    });
+
+    it("keeps the (disabled) card, not a note, before any owner is entered", async () => {
+      renderPage();
+
+      expect(await screen.findByText("Dependabot auto-triage")).toBeInTheDocument();
+      expect(screen.queryByText(/available to organization admins/)).not.toBeInTheDocument();
+      expect(triageGetRepoMock).not.toHaveBeenCalled();
     });
   });
 });
