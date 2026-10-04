@@ -11,7 +11,7 @@ from sqlalchemy import text
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import Job, User, get_db
-from src.repositories import installation_repo, org_membership_repo, org_repo, scan_results_repo
+from src.repositories import installation_repo, org_membership_repo, org_repo, scan_results_repo, tenant_repo
 from src.routers.analytics import router
 
 _HTTP_ERROR = httpx.HTTPStatusError(
@@ -195,6 +195,37 @@ def test_cockpit_shows_own_byo_pat_scans_when_caller_has_no_org_membership(http,
     # Only mock_user's own scan (60), not the other user's (90).
     assert body["latest_score"] == 60
     assert body["score_trend"] == [60]
+
+
+def test_cockpit_trend_ignores_a_non_members_scan_of_the_orgs_login(http, db, mock_user):
+    # Any user can scan any login with their own token, so a stranger's newer row carrying
+    # owner="acme" must not become the member's "latest score" or part of their trend (#530).
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
+    stranger = User(email="stranger-cockpit@example.com", name=None, is_workspace_admin=False)
+    db.add(stranger)
+    db.flush()
+    scan_results_repo.insert(
+        db, owner="acme", score=70, total_checks=5, failed_checks=1, checks=[],
+        tenant_id=org.tenant_id, scanned_by_user_id=mock_user.id,
+    )
+    scan_results_repo.insert(
+        db, owner="acme", score=5, total_checks=5, failed_checks=5, checks=[],
+        tenant_id=tenant_repo.ensure_personal_tenant(db, stranger.id).id, scanned_by_user_id=stranger.id,
+    )
+
+    patchers = _patch_all()
+    _start_all(patchers)
+    try:
+        with patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"):
+            resp = http.get("/me/analytics/cockpit/acme")
+    finally:
+        _stop_all(patchers)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["latest_score"] == 70
+    assert body["score_trend"] == [70]
 
 
 def test_cockpit_no_cache_jobs_yet(http, db, mock_user):
