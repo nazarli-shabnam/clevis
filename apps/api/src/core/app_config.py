@@ -22,6 +22,8 @@ _ACCEPTED_KEYS = {
     "digest_poll_seconds",
     "digest_cadence",
     "webhook_requeue_poll_seconds",
+    "dependabot_sla_critical_days",
+    "dependabot_sla_high_days",
     "score_hygiene_checks",
 }
 _TTL = 60.0

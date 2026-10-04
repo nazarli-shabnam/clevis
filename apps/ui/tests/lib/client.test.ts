@@ -824,6 +824,22 @@ describe("installations.refreshPermissions", () => {
   });
 });
 
+describe("api.security.dependabotBurndown", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("GETs the org burndown with the default and an explicit window", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("{}", { status: 200 }))));
+    await api.security.dependabotBurndown("ac me");
+    await api.security.dependabotBurndown("acme", 90);
+    const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls;
+    expect(String(calls[0][0])).toContain("/orgs/ac%20me/security/dependabot-burndown?days=30");
+    expect(String(calls[1][0])).toContain("/orgs/acme/security/dependabot-burndown?days=90");
+  });
+});
+
 describe("api.auth email verification (issue #217)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

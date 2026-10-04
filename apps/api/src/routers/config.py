@@ -28,6 +28,8 @@ _INT_KEYS = {
     "pr_nudge_stale_days",
     "digest_poll_seconds",
     "webhook_requeue_poll_seconds",
+    "dependabot_sla_critical_days",
+    "dependabot_sla_high_days",
 }
 _BOOL_KEYS = {"registration_enabled", "score_hygiene_checks"}
 # key -> allowed values, for small closed-vocabulary settings.

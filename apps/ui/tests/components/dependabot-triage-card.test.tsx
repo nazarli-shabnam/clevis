@@ -71,6 +71,8 @@ describe("DependabotTriageCard", () => {
       decisions: [{ repo: "acme/api", number: 12, title: "Bump lodash", action: "approved", reason: "" }],
     })
     renderCard()
+    // wait for the persisted setting to hydrate, else a late hydration can reset the confirm step
+    await waitFor(() => expect(screen.getByLabelText(/Enabled for api/)).toBeChecked())
     await waitFor(() => expect(screen.getByRole("button", { name: "Approve eligible PRs" })).toBeEnabled())
 
     fireEvent.click(screen.getByRole("button", { name: "Approve eligible PRs" }))
