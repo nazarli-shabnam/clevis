@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -82,5 +82,24 @@ describe("DependabotBurndownPage", () => {
     renderPage()
     expect(screen.getByText(/Select an organization/)).toBeInTheDocument()
     expect(burndownMock).not.toHaveBeenCalled()
+  })
+
+  it("retries a failed load", async () => {
+    burndownMock.mockRejectedValueOnce(new Error("Forbidden")).mockResolvedValue(DATA)
+    renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry" }))
+
+    expect(await screen.findByText("1 SLA breach")).toBeInTheDocument()
+  })
+
+  it("pluralises the breach count", async () => {
+    burndownMock.mockResolvedValue({
+      ...DATA,
+      severities: DATA.severities.map((s) => ({ ...s, breaches: 0 })),
+    })
+    renderPage()
+
+    expect(await screen.findByText("0 SLA breaches")).toBeInTheDocument()
   })
 })
