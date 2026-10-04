@@ -40,6 +40,12 @@ describe("CheckCard", () => {
     expect(screen.getByText("✓ Enabled")).toBeInTheDocument();
   });
 
+  it("labels informational checks", () => {
+    render(<CheckCard check={{ ...baseCheck, informational: true }} />);
+
+    expect(screen.getByText("Informational")).toBeInTheDocument();
+  });
+
   it("renders a failing check with a ratio value", () => {
     render(
       <CheckCard

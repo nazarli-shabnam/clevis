@@ -117,4 +117,18 @@ describe("DataTable", () => {
     expect(refEl).not.toBeNull();
     expect(refEl!).toHaveTextContent("Alice");
   });
+
+  it("renders sortable headers as real buttons so sorting works from the keyboard", () => {
+    render(<DataTable columns={COLUMNS} data={ROWS} getRowKey={(r) => r.id} />);
+    const button = screen.getByRole("button", { name: "Name" });
+    expect(button.tagName).toBe("BUTTON");
+    fireEvent.click(button);
+    expect(button.closest("th")).toHaveAttribute("aria-sort", "ascending");
+  });
+
+  it("does not render a button for columns without sortValue", () => {
+    const columns: DataTableColumn<Row>[] = [{ key: "name", header: "Name", render: (r) => r.name }];
+    render(<DataTable columns={columns} data={ROWS} getRowKey={(r) => r.id} />);
+    expect(screen.queryByRole("button", { name: "Name" })).toBeNull();
+  });
 });

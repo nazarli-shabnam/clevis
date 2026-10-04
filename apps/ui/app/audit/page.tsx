@@ -133,6 +133,7 @@ export default function AuditPage() {
           <span className="section-label">Events</span>
           <div className="flex items-center gap-3">
             <select
+              aria-label="Filter by action"
               value={actionFilter}
               onChange={(e) => setActionFilter(e.target.value)}
               className="bg-elevated border border-border rounded-md text-xs text-muted-foreground font-mono px-2 py-1 focus:outline-none focus:border-primary"

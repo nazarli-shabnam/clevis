@@ -471,4 +471,32 @@ describe("AutomationPage", () => {
       expect(screen.getByText("GitHub API error: 422")).toBeInTheDocument();
     });
   });
+
+  it("prefills the dispatch ref from the selected repo's default branch and keeps it editable", async () => {
+    reposListMock.mockResolvedValue({
+      org: "acme",
+      total: 2,
+      repos: [{ ...DEMO_REPO, default_branch: "master" }, { ...DEMO_REPO, name: "other", default_branch: "develop" }],
+    });
+    workflowsMock.mockResolvedValue({
+      repository: "acme/demo",
+      workflows: [{ id: 1, name: "CI", path: ".github/workflows/ci.yml", state: "active", last_run_status: null, last_run_conclusion: null, last_run_at: null }],
+    });
+    runsMock.mockResolvedValue({ repository: "acme/demo", runs: [] });
+    dispatchMock.mockResolvedValue({ dispatched: true, message: "Workflow dispatched." });
+
+    renderPage();
+
+    await enterOwnerAndSelectRepo("acme", "demo");
+    fireEvent.click(screen.getByText("Load workflows"));
+    await waitFor(() => expect(screen.getByText("CI")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /Dispatch/i }));
+
+    expect(screen.getByDisplayValue("master")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Dispatch workflow"));
+    fireEvent.click(screen.getByText("Confirm dispatch"));
+    await waitFor(() => {
+      expect(dispatchMock).toHaveBeenCalledWith("acme", "demo", 1, { token: "", ref: "master" });
+    });
+  });
 });
