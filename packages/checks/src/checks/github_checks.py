@@ -151,6 +151,7 @@ class OrgMFARequired(Check):
         severity="high",
         remediation="Require two-factor authentication for all org members in org settings.",
     )
+    requires_repos = False  # org-level: reads /orgs/{owner}, never the repo list
 
     def run(
         self,

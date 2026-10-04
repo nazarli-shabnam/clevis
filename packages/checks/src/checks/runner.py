@@ -44,38 +44,34 @@ def run_all_checks(
         *(cls() for cls in HYGIENE_CHECKS),
     ]
 
-    # The prefetch feeds every check, so degrade to per-check "error" results here too.
+    # The prefetch feeds the per-repo checks. If it fails they degrade to per-check "error" results,
+    # but a check that doesn't read the repo list (org MFA) still runs on its own: a transient
+    # failure here must not also fail a check that never needed it.
+    repos: list = []
+    prefetch_failed = False
     try:
-        repos = _fetch_repos(base_url, owner, token, account_type)
+        fetched = _fetch_repos(base_url, owner, token, account_type)
     except Exception:
         logger.exception("failed to fetch repo list for %s", owner)
-        results = [
-            {
-                "id": check.metadata.check_id,
-                "title": check.metadata.title,
-                "severity": check.metadata.severity,
-                "remediation": check.metadata.remediation,
-                "informational": check.metadata.informational,
-                "status": "error",
-                "value": "Check failed: could not fetch repository list",
-            }
-            for check in checks
-        ]
-        return {"checks": results, "repo_count": 0}
-    # Archived repos are read-only: nothing "Fix this" can change, so they don't count against
-    # the score. (Empty repos are handled per check: their default branch doesn't exist.)
-    repos = [r for r in repos if not r.get("archived")]
+        prefetch_failed = True
+    else:
+        # Archived repos are read-only: nothing "Fix this" can change, so they don't count against
+        # the score. (Empty repos are handled per check: their default branch doesn't exist.)
+        repos = [r for r in fetched if not r.get("archived")]
 
     results = []
     for check in checks:
-        try:
-            output = check.run(owner=owner, token=token, base_url=base_url, repos=repos, account_type=account_type)
-        except Exception:
-            logger.exception("check %s failed", check.metadata.check_id)
-            output = {
-                "status": "error",
-                "value": f"Check failed: {check.metadata.check_id}",
-            }
+        if prefetch_failed and check.requires_repos:
+            output = {"status": "error", "value": "Check failed: could not fetch repository list"}
+        else:
+            try:
+                output = check.run(owner=owner, token=token, base_url=base_url, repos=repos, account_type=account_type)
+            except Exception:
+                logger.exception("check %s failed", check.metadata.check_id)
+                output = {
+                    "status": "error",
+                    "value": f"Check failed: {check.metadata.check_id}",
+                }
         results.append({
             "id": check.metadata.check_id,
             "title": check.metadata.title,

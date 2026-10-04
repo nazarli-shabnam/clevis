@@ -13,6 +13,9 @@ class CheckMetadata:
 
 class Check:
     metadata: CheckMetadata
+    # False for a check that never reads the `repos` argument (org-level checks). The runner force-fails
+    # only the checks that need the prefetched repo list when that prefetch fails.
+    requires_repos: bool = True
 
     def run(
         self,
