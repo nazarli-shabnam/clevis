@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from src.core.db import ScanResult
+from src.repositories import scan_results_repo
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ def build_digest(db: Session, *, tenant_id: int, org_login: str, period_label: s
     RLS session context already (scan_results / repo_event_daily_counts are tenant-scoped)."""
     scans = (
         db.query(ScanResult)
-        .filter(ScanResult.owner == org_login)
+        .filter(scan_results_repo.org_scope_filter(org_login, tenant_id))
         .order_by(ScanResult.created_at.desc(), ScanResult.id.desc())
         .limit(2)
         .all()

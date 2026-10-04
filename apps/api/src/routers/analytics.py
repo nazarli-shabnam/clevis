@@ -2,6 +2,7 @@ import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
+from typing import Literal, NamedTuple
 
 import anyio
 import httpx
@@ -69,10 +70,16 @@ async def _get_account_type(owner: str, token: str) -> str:
         raise HTTPException(status_code=503, detail="GitHub API unreachable")
 
 
-def _persist_scan(db: Session, result: dict, tenant_id: int | None, scanned_by_user_id: int | None = None) -> None:
+def _persist_scan(
+    db: Session,
+    result: dict,
+    tenant_id: int | None,
+    scanned_by_user_id: int | None = None,
+    owner: str | None = None,
+) -> None:
     scan_results_repo.insert(
         db,
-        owner=result["owner"],
+        owner=owner or result["owner"],
         score=result["score"],
         total_checks=result["total_checks"],
         failed_checks=result["failed_checks"],
@@ -91,26 +98,62 @@ def _notify_score_drop_best_effort(db: Session, ctx: OrgContext, previous: int, 
         logger.exception("score-drop notification failed for %s", ctx.org.github_login)
 
 
-def _user_history_scope(db: Session, user: UserOut, owner: str) -> str | None:
+class HistoryScope(NamedTuple):
+    """Which of an owner's scan rows a user may read. ``org``: the Clevis org's scans (``org_tenant_id``,
+    ``org_login`` set). ``own``: only scans this user ran themselves."""
+
+    kind: Literal["org", "own"]
+    org_tenant_id: int | None = None
+    org_login: str | None = None
+
+
+def _user_history_scope(db: Session, user: UserOut, owner: str) -> HistoryScope | None:
     """How much of `owner`'s scan history this user may read (a local DB read, so it needs its own gate).
 
-    ``"all"``: workspace Org member or personal installation for that login. ``"own"``: only their
-    own BYO-PAT scans (`scanned_by_user_id`). ``None``: no access.
+    ``org``: the user is a member of the Clevis org for that login, so they see the org's scans, not
+    every row that happens to carry the same owner string (any user can scan any login with their own
+    token). ``own``: only scans they ran themselves (`scanned_by_user_id`), which also covers a
+    personal installation. ``None``: no access.
     """
-    org = org_repo.get_by_login(db, owner)
+    org = org_repo.get_by_login_ci(db, owner)
     if org is not None:
         org = org_repo.ensure_tenant_linked(db, org)
         if tenant_repo.get_membership(db, org.tenant_id, user.id) is not None:
-            return "all"
-    if installation_repo.get_for_user(db, owner_user_id=user.id, account_login=owner) is not None:
-        return "all"
-    if scan_results_repo.exists_for_user(db, owner=owner, user_id=user.id):
-        return "own"
+            # The org scope subqueries `memberships`, which under enforced RLS shows every member only
+            # with the tenant context set (membership is already confirmed above).
+            set_tenant_session_context(db, org.tenant_id, user.id)
+            return HistoryScope("org", org.tenant_id, org.github_login)
+    if (
+        installation_repo.get_for_user(db, owner_user_id=user.id, account_login=owner) is not None
+        or scan_results_repo.exists_for_user(db, owner=owner, user_id=user.id)
+    ):
+        return HistoryScope("own")
     return None
 
 
-def _user_can_read_history(db: Session, user: UserOut, owner: str) -> bool:
-    return _user_history_scope(db, user, owner) is not None
+def _scope_filters(scope: HistoryScope, owner: str, user: UserOut) -> dict:
+    """Keyword arguments for ``scan_results_repo.list_recent`` / ``list_for_export``."""
+    if scope.kind == "org":
+        return {"owner": scope.org_login, "org_tenant_id": scope.org_tenant_id}
+    return {"owner": owner, "scanned_by_user_id": user.id}
+
+
+def _persist_personal_scan(db: Session, user: UserOut, result: dict) -> None:
+    """Store a scan run through the personal endpoint.
+
+    A member of the Clevis org for the scanned owner stores it under the org's tenant (canonical
+    login), so it shows up in the org's history, export, digest and score API. Anyone else scanning
+    an arbitrary login with their own token (BYO-token) stays in their personal tenant and can never
+    write into an org's tenant.
+    """
+    org = org_repo.get_by_login_ci(db, result["owner"])
+    if org is not None:
+        org = org_repo.ensure_tenant_linked(db, org)
+        if tenant_repo.get_membership(db, org.tenant_id, user.id) is not None:
+            _persist_scan(db, result, tenant_id=org.tenant_id, scanned_by_user_id=user.id, owner=org.github_login)
+            return
+    personal_tenant = tenant_repo.ensure_personal_tenant(db, user.id)
+    _persist_scan(db, result, tenant_id=personal_tenant.id, scanned_by_user_id=user.id)
 
 
 @router.post("/orgs/{org_login}/analytics/overview", response_model=AnalyticsResponse)
@@ -152,10 +195,9 @@ async def personal_analytics_overview(
         raise HTTPException(status_code=400, detail=str(exc))
     account_type = await _get_account_type(payload.owner, token)
     result = await _run_overview(payload.owner, token, account_type=account_type)
-    # owner can be any account the user has a token for (BYO-token), so the scan is recorded under
-    # the scanning user's personal tenant.
-    personal_tenant = tenant_repo.ensure_personal_tenant(db, user.id)
-    _persist_scan(db, result, tenant_id=personal_tenant.id, scanned_by_user_id=user.id)
+    # owner can be any account the user has a token for (BYO-token); where the scan is stored depends
+    # on whether they belong to that org (see _persist_personal_scan).
+    await anyio.to_thread.run_sync(lambda: _persist_personal_scan(db, user, result))
     return result
 
 
@@ -164,7 +206,9 @@ def org_analytics_history(
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     db: Session = Depends(get_db),
 ):
-    return scan_results_repo.list_recent(db, owner=ctx.org.github_login, limit=30)
+    return scan_results_repo.list_recent(
+        db, owner=ctx.org.github_login, limit=30, org_tenant_id=ctx.org.tenant_id
+    )
 
 
 def _billing_num(value: object) -> float:
@@ -246,9 +290,10 @@ def personal_analytics_history(
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
-    if not _user_can_read_history(db, user, owner):
+    scope = _user_history_scope(db, user, owner)
+    if scope is None:
         raise HTTPException(status_code=403, detail="You don't have access to this owner's scan history")
-    return scan_results_repo.list_recent(db, owner=owner, limit=30)
+    return scan_results_repo.list_recent(db, limit=30, **_scope_filters(scope, owner, user))
 
 
 # Compliance export: scan history with per-check breakdown over an optional [since, until] window.
@@ -285,7 +330,12 @@ def org_analytics_export(
 ):
     since_dt, until_dt = _export_window(since, until)
     rows = scan_results_repo.list_for_export(
-        db, owner=ctx.org.github_login, since=since_dt, until=until_dt, limit=limit
+        db,
+        owner=ctx.org.github_login,
+        since=since_dt,
+        until=until_dt,
+        limit=limit,
+        org_tenant_id=ctx.org.tenant_id,
     )
     return _build_export_response(rows, limit)
 
@@ -305,12 +355,11 @@ def personal_analytics_export(
     since_dt, until_dt = _export_window(since, until)
     rows = scan_results_repo.list_for_export(
         db,
-        owner=owner,
         since=since_dt,
         until=until_dt,
         limit=limit,
         # "own" scope: don't hand over scans other users (or an org) ran.
-        scanned_by_user_id=user.id if scope == "own" else None,
+        **_scope_filters(scope, owner, user),
     )
     return _build_export_response(rows, limit)
 
@@ -739,12 +788,7 @@ async def personal_analytics_cockpit(
     # A caller with no claim still gets the rest of the cockpit, just no trend.
     history_scope = await anyio.to_thread.run_sync(lambda: _user_history_scope(db, user, owner))
     scans = (
-        scan_results_repo.list_recent(
-            db,
-            owner=owner,
-            limit=10,
-            scanned_by_user_id=user.id if history_scope == "own" else None,
-        )
+        scan_results_repo.list_recent(db, limit=10, **_scope_filters(history_scope, owner, user))
         if history_scope is not None
         else []
     )
