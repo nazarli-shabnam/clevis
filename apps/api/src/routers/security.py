@@ -365,7 +365,14 @@ def org_dependabot_burndown(
     db: Session = Depends(get_db),
 ):
     rows = (
-        db.query(SecurityAlert)
+        db.query(
+            SecurityAlert.repo,
+            SecurityAlert.number,
+            SecurityAlert.state,
+            SecurityAlert.severity,
+            SecurityAlert.created_at,
+            SecurityAlert.updated_at,
+        )
         .filter(SecurityAlert.tenant_id == ctx.org.tenant_id, SecurityAlert.kind == "dependabot")
         .all()
     )

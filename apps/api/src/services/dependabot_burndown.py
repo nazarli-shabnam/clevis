@@ -74,19 +74,28 @@ def by_repo(rows: list, now: datetime, sla_days: dict[str, int | None]) -> list[
 
 
 def trend(rows: list, today: date, days: int) -> list[dict]:
-    """Open alerts per severity at the end of each of the last `days` days."""
+    """Open alerts per severity at the end of each of the last `days` days.
+
+    One pass over the alerts: an alert counts from the day it opened up to (not including) the day
+    it closed, clipped to the window, recorded as +1/-1 in a per-severity difference array.
+    """
+    start = today - timedelta(days=days - 1)
+    diff = {sev: [0] * (days + 1) for sev in SEVERITIES}
+    for r in rows:
+        if r.severity not in diff:
+            continue
+        lo = max((r.created_at.astimezone(timezone.utc).date() - start).days, 0)
+        closed = _closed_at(r)
+        hi = days if closed is None else min((closed.astimezone(timezone.utc).date() - start).days, days)
+        if lo < hi:
+            diff[r.severity][lo] += 1
+            diff[r.severity][hi] -= 1
     out = []
-    for offset in range(days - 1, -1, -1):
-        day = today - timedelta(days=offset)
-        end = datetime.combine(day, time.max, tzinfo=timezone.utc)
-        counts = dict.fromkeys(SEVERITIES, 0)
-        for r in rows:
-            if r.severity not in counts or r.created_at > end:
-                continue
-            closed = _closed_at(r)
-            if closed is None or closed > end:
-                counts[r.severity] += 1
-        out.append({"date": day.isoformat(), **counts})
+    running = dict.fromkeys(SEVERITIES, 0)
+    for i in range(days):
+        for sev in SEVERITIES:
+            running[sev] += diff[sev][i]
+        out.append({"date": (start + timedelta(days=i)).isoformat(), **running})
     return out
 
 
