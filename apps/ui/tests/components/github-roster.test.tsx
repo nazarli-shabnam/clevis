@@ -124,7 +124,7 @@ describe("GithubRoster (Collaborators page)", () => {
     let rows = screen.getAllByRole("row").slice(1);
     expect(rows[0]).toHaveTextContent("zoe");
 
-    fireEvent.click(screen.getByRole("columnheader", { name: "Member" }));
+    fireEvent.click(screen.getByRole("button", { name: "Member" }));
 
     rows = screen.getAllByRole("row").slice(1);
     expect(rows[0]).toHaveTextContent("alice");
