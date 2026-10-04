@@ -489,7 +489,37 @@ class ApiToken(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-engine = create_engine(settings.database_url.get_secret_value())
+# Pool sizing. require_auth opens a transaction at the start of every request, so a connection stays
+# checked out for the whole request, including slow GitHub calls; the default 5 + 10 overflow and a
+# 30s checkout wait let ~15 concurrent proxying requests starve everything else for half a minute.
+# Hard-coded (not env vars) because a wrong value is an outage, not a preference; keep the total
+# (pool_size + max_overflow) well under Postgres' max_connections once the worker is counted.
+_POOL_SIZE = 10
+_MAX_OVERFLOW = 10
+# Fail a request that can't get a connection quickly, rather than hold it open for 30s first.
+_POOL_TIMEOUT_SECONDS = 10
+# Retire connections before a proxy/firewall idle timeout silently drops them.
+_POOL_RECYCLE_SECONDS = 1800
+# Matches the worker's bound on a connect (apps/worker/src/worker.py): a dead host must not hang a
+# request thread indefinitely.
+_CONNECT_TIMEOUT_SECONDS = 5
+
+
+def _build_engine(url: str):
+    """The API's engine. ``pool_pre_ping`` makes a connection killed by a Postgres restart or a
+    network blip get replaced transparently instead of failing the first request that draws it."""
+    return create_engine(
+        url,
+        pool_size=_POOL_SIZE,
+        max_overflow=_MAX_OVERFLOW,
+        pool_timeout=_POOL_TIMEOUT_SECONDS,
+        pool_recycle=_POOL_RECYCLE_SECONDS,
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": _CONNECT_TIMEOUT_SECONDS},
+    )
+
+
+engine = _build_engine(settings.database_url.get_secret_value())
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
