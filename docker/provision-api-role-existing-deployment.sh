@@ -142,6 +142,19 @@ BEGIN
 END
 $do$;
 
+-- notification_destinations (migration 0048): the API owns chat/webhook alert destination
+-- CRUD, so all four DML privileges plus the surrogate id sequence. Same existence guard +
+-- CI-runs-as-clevis_api reasoning as the tables above (migration 0048's own GRANT is
+-- skipped in CI because clevis_api doesn't exist yet when Alembic runs).
+DO $do$
+BEGIN
+  IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'notification_destinations') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON notification_destinations TO clevis_api;
+    GRANT USAGE, SELECT ON notification_destinations_id_seq TO clevis_api;
+  END IF;
+END
+$do$;
+
 -- resolve_installation_tenant_id() (migration 0035) REVOKEs its default PUBLIC EXECUTE
 -- and re-GRANTs it only to clevis_api -- but that migration's own GRANT is conditional
 -- on clevis_api already existing, which isn't true the first time this script runs.
