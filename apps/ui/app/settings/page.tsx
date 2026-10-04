@@ -55,13 +55,15 @@ function ProfileSection() {
   async function save() {
     setIsSaving(true)
     setSaveError(null)
+    // A previous "Saved" must not linger beside (or hide) the outcome of this attempt.
+    clearTimeout(savedTimer.current)
+    setSaved(false)
     try {
       if (name.trim() !== (user?.name || "")) {
         const updated = await api.auth.patchMe(name.trim())
         updateUser({ name: updated.name })
       }
       setSaved(true)
-      clearTimeout(savedTimer.current)
       savedTimer.current = setTimeout(() => setSaved(false), 2000)
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Couldn't save your profile.")

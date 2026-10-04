@@ -586,6 +586,30 @@ describe("SettingsPage", () => {
     expect(screen.queryByText("Name is too long")).not.toBeInTheDocument();
   });
 
+  it("clears a previous \"Saved\" as soon as the next profile save starts, so a failure isn't shown as saved", async () => {
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([]);
+    configGetAllMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true" });
+    patchMeMock
+      .mockResolvedValueOnce({ id: 1, email: "admin@example.com", name: "First", is_workspace_admin: true })
+      .mockRejectedValueOnce(new Error("Second save failed"));
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("Your name"), { target: { value: "First" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
+    expect(await screen.findByRole("button", { name: /Saved/ })).toBeInTheDocument();
+
+    // Save again inside the 2s "Saved" window and fail.
+    fireEvent.change(screen.getByPlaceholderText("Your name"), { target: { value: "Second" } });
+    fireEvent.click(screen.getByRole("button", { name: /Saved/ }));
+
+    expect(await screen.findByText("Second save failed")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Saved/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save profile" })).toBeEnabled();
+  });
+
   it("says the sessions were not revoked, and keeps the user signed in, when sign-out-everywhere fails", async () => {
     orgsMineMock.mockResolvedValue([]);
     installationsListMock.mockResolvedValue([]);
