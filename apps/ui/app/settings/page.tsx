@@ -570,12 +570,14 @@ const CONFIG_FIELDS: {
   description: string
   type?: string
   options?: { value: string; label: string }[]
+  // What the server uses while the key is unset; shown (and saved) for a key that isn't persisted yet.
+  defaultValue?: string
 }[] = [
   { key: "worker_poll_seconds", label: "Worker Poll Interval",    description: "Seconds between job queue polls.", type: "number" },
   { key: "dependabot_sla_critical_days", label: "Critical Alert SLA", description: "Days a critical Dependabot alert may stay open before it counts as an SLA breach (default 7).", type: "number" },
   { key: "dependabot_sla_high_days", label: "High Alert SLA", description: "Days a high-severity Dependabot alert may stay open before it counts as an SLA breach (default 30).", type: "number" },
-  { key: "score_hygiene_checks", label: "Score Hygiene Checks", description: "Count CODEOWNERS, SECURITY.md, license, stale-branch and unpinned-Action checks toward the security score (off: informational only).", type: "boolean" },
-  { key: "registration_enabled", label: "Self-Registration",     description: "Allow anyone to create an account via /register.", type: "boolean" },
+  { key: "score_hygiene_checks", label: "Score Hygiene Checks", description: "Count CODEOWNERS, SECURITY.md, license, stale-branch and unpinned-Action checks toward the security score (off: informational only).", type: "boolean", defaultValue: "false" },
+  { key: "registration_enabled", label: "Self-Registration",     description: "Allow anyone to create an account via /register.", type: "boolean", defaultValue: "true" },
   {
     key: "digest_cadence",
     label: "Leadership Digest",
@@ -621,11 +623,17 @@ function InstanceConfigSection() {
     if (config) setValues((prev) => initialConfigValues(prev, config))
   }, [config])
 
-  async function saveKey(key: string, explicitValue?: string) {
+  // The value the field currently shows: the loaded/edited value, else the key's documented default.
+  // Display and Save both use it, so what Save writes is always what the admin sees.
+  function visibleValue(field: (typeof CONFIG_FIELDS)[number]): string {
+    return values[field.key] ?? field.defaultValue ?? field.options?.[0]?.value ?? ""
+  }
+
+  async function saveKey(key: string, value: string) {
     setSaving(key)
     setErrors((prev) => ({ ...prev, [key]: "" }))
     try {
-      await api.config.update(key, explicitValue ?? values[key] ?? "")
+      await api.config.update(key, value)
       const updated = await qc.fetchQuery<Record<string, string>>({
         queryKey: ["config"],
         queryFn: api.config.getAll,
@@ -646,12 +654,31 @@ function InstanceConfigSection() {
     )
   }
 
+  const header = (
+    <div className="px-4 py-3 border-b border-border">
+      <span className="section-label">Instance configuration</span>
+      <p className="text-xs text-muted-foreground mt-0.5">Visible to instance owner only.</p>
+    </div>
+  )
+
+  // Nothing has ever loaded: render no fields at all. Showing the form here would present invented
+  // defaults as the real settings, and Save would write them over the server's values.
+  if (isError && !config) {
+    return (
+      <div className="card">
+        {header}
+        <SectionError
+          message={error instanceof Error ? error.message : "Failed to load config."}
+          onRetry={() => refetch()}
+          retrying={isFetching}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="card">
-      <div className="px-4 py-3 border-b border-border">
-        <span className="section-label">Instance configuration</span>
-        <p className="text-xs text-muted-foreground mt-0.5">Visible to instance owner only.</p>
-      </div>
+      {header}
       {isError && (
         <SectionError
           message={error instanceof Error ? error.message : "Failed to load config."}
@@ -664,8 +691,7 @@ function InstanceConfigSection() {
           const isSavingField = saving === field.key
           const saveContent: React.ReactNode = isSavingField ? <CircleNotch className="size-3 animate-spin" /> : "Save"
           const fieldId = `cfg-${field.key}`
-          // A select shows its first option until the key is persisted ("" for non-select fields).
-          const firstOption = field.options?.[0]?.value ?? ""
+          const shown = visibleValue(field)
 
           return (
           <div key={field.key} className="p-4 max-w-lg">
@@ -674,7 +700,7 @@ function InstanceConfigSection() {
               {field.type === "boolean" ? (
                 <select
                   id={fieldId}
-                  value={values[field.key] ?? (field.key === "score_hygiene_checks" ? "false" : "true")}
+                  value={shown}
                   onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
                   className="h-8 border border-border bg-transparent px-2 font-mono text-xs"
                 >
@@ -684,7 +710,7 @@ function InstanceConfigSection() {
               ) : field.type === "select" ? (
                 <select
                   id={fieldId}
-                  value={values[field.key] ?? firstOption}
+                  value={shown}
                   onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
                   className="h-8 border border-border bg-transparent px-2 font-mono text-xs"
                 >
@@ -695,7 +721,7 @@ function InstanceConfigSection() {
               ) : (
                 <Input
                   id={fieldId}
-                  value={values[field.key] ?? ""}
+                  value={shown}
                   onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
                   type={field.type === "number" ? "number" : "text"}
                   className="font-mono text-xs"
@@ -704,16 +730,7 @@ function InstanceConfigSection() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() =>
-                  saveKey(
-                    field.key,
-                    // A select with no persisted value shows its first option but has
-                    // no entry in `values` yet -- save that visible value, not "".
-                    field.type === "select"
-                      ? (values[field.key] ?? firstOption)
-                      : undefined,
-                  )
-                }
+                onClick={() => saveKey(field.key, shown)}
                 disabled={isSavingField}
               >
                 {saveContent}

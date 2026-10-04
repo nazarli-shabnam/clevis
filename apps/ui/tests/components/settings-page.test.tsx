@@ -262,6 +262,51 @@ describe("SettingsPage", () => {
     expect(screen.getByDisplayValue("Monthly")).toBe(cadence);
   });
 
+  it("renders no config fields when the config fails to load, and shows the real values after Retry", async () => {
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([]);
+    configGetAllMock
+      .mockRejectedValueOnce(new Error("config unavailable"))
+      .mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "false" });
+
+    renderPage();
+
+    expect(await screen.findByText("config unavailable")).toBeInTheDocument();
+    // No invented "Enabled" default to look at, and nothing for Save to overwrite the server with.
+    expect(screen.queryByLabelText("Self-Registration")).not.toBeInTheDocument();
+    expect(screen.queryAllByRole("button", { name: "Save" })).toHaveLength(0);
+    expect(configUpdateMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    const registration = (await screen.findByLabelText("Self-Registration")) as HTMLSelectElement;
+    expect(registration.value).toBe("false");
+  });
+
+  it("shows and saves the documented default for boolean keys that were never persisted", async () => {
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([]);
+    // Both booleans are absent from the (successfully loaded) config.
+    configGetAllMock.mockResolvedValue({ worker_poll_seconds: "5" });
+    configUpdateMock.mockResolvedValue({});
+
+    renderPage();
+
+    const registration = (await screen.findByLabelText("Self-Registration")) as HTMLSelectElement;
+    const hygiene = screen.getByLabelText("Score Hygiene Checks") as HTMLSelectElement;
+    expect(registration.value).toBe("true");
+    expect(hygiene.value).toBe("false");
+
+    fireEvent.click(within(registration.closest("div")!.parentElement!).getByRole("button", { name: "Save" }));
+    // Must send the visible value, not "" (which the API rejects for a boolean key).
+    await waitFor(() => expect(configUpdateMock).toHaveBeenCalledWith("registration_enabled", "true"));
+
+    fireEvent.click(within(hygiene.closest("div")!.parentElement!).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(configUpdateMock).toHaveBeenCalledWith("score_hygiene_checks", "false"));
+  });
+
   it("shows a success banner and strips the query param when landing with ?installed=1", async () => {
     searchParams = new URLSearchParams({ installed: "1" });
     orgsMineMock.mockResolvedValue([]);
