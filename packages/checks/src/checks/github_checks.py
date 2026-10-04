@@ -282,8 +282,10 @@ class DependabotAlertsCheck(Check):
         disabled = 0
         for repo in repos:
             try:
-                alerts = _get(
-                    f"{base_url}/repos/{owner}/{repo['name']}/dependabot/alerts?state=open", token
+                # Paginated: GitHub returns 30 alerts per page by default, and counts past page 1
+                # would otherwise be dropped (a repo with 30+ low alerts hides its criticals).
+                alerts = _get_all_pages(
+                    base_url, f"/repos/{owner}/{repo['name']}/dependabot/alerts?state=open", token
                 )
             except httpx.HTTPStatusError as exc:
                 # 404 = alerts disabled (a real "no alerts"). 403 = missing scope, so the
@@ -340,8 +342,8 @@ class CodeScanningCheck(Check):
         disabled = 0
         for repo in repos:
             try:
-                alerts = _get(
-                    f"{base_url}/repos/{owner}/{repo['name']}/code-scanning/alerts?state=open", token
+                alerts = _get_all_pages(
+                    base_url, f"/repos/{owner}/{repo['name']}/code-scanning/alerts?state=open", token
                 )
             except httpx.HTTPStatusError as exc:
                 # 404 = code scanning not enabled (a real "no alerts"). 403 = no access,

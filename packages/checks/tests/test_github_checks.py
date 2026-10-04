@@ -291,6 +291,56 @@ def test_get_all_pages_truncates_after_max_pages_and_logs_warning(caplog):
 # ── DependabotAlertsCheck ────────────────────────────────────────────────────
 
 
+def _paged(fake_get):
+    """Adapt a ``fake_get(url, token)`` fake to the ``_get_all_pages(base_url, path, token)`` signature."""
+    return lambda base_url, path, token, items_key=None: fake_get(f"{base_url}{path}", token)
+
+
+def _two_page_alerts(first_page: list, second_page: list):
+    """A ``httpx.Client.get`` fake serving ``first_page`` then ``second_page`` behind a Link header."""
+
+    def fake_get(url, headers):
+        if "page=2" in url:
+            return httpx.Response(200, json=second_page, request=httpx.Request("GET", url))
+        link = '<https://api.github.com/repos/acme/api/alerts?state=open&per_page=100&page=2>; rel="next"'
+        return httpx.Response(200, json=first_page, headers={"Link": link}, request=httpx.Request("GET", url))
+
+    return fake_get
+
+
+def test_dependabot_counts_alerts_past_the_first_page():
+    # 100 low alerts fill page 1; the only critical alert is on page 2. Reading just page 1 would
+    # report "pass" for a repo that has an open critical alert.
+    page1 = [{"security_advisory": {"severity": "low"}}] * 100
+    page2 = [{"security_advisory": {"severity": "critical"}}]
+    with patch("httpx.Client.get", side_effect=_two_page_alerts(page1, page2)):
+        result = DependabotAlertsCheck().run(owner="acme", token="tok", repos=[{"name": "api"}])
+    assert result["status"] == "fail"
+    assert result["value"] == {"critical": 1, "high": 0, "medium": 0, "low": 100}
+
+
+def test_code_scanning_counts_alerts_past_the_first_page():
+    page1 = [{"number": n} for n in range(100)]
+    page2 = [{"number": 100}, {"number": 101}]
+    with patch("httpx.Client.get", side_effect=_two_page_alerts(page1, page2)):
+        result = CodeScanningCheck().run(owner="acme", token="tok", repos=[{"name": "api"}])
+    assert result["status"] == "fail"
+    assert result["value"] == {"open": 102, "repos_with_alerts": 1, "total_repos": 1}
+
+
+def test_alert_checks_treat_a_first_page_404_from_the_real_pager_as_no_alerts():
+    # 404 = the feature is off for the repo, a real "no alerts"; it must behave the same through
+    # the paginating helper as it did with the single-page one.
+    def fake_get(url, headers):
+        return httpx.Response(404, json={"message": "Not Found"}, request=httpx.Request("GET", url))
+
+    with patch("httpx.Client.get", side_effect=fake_get):
+        dependabot = DependabotAlertsCheck().run(owner="acme", token="tok", repos=[{"name": "api"}])
+        code_scanning = CodeScanningCheck().run(owner="acme", token="tok", repos=[{"name": "api"}])
+    assert dependabot["status"] == "pass"
+    assert code_scanning["status"] == "pass"
+
+
 def test_dependabot_empty_org_is_not_applicable():
     check = DependabotAlertsCheck()
     result = check.run(owner="acme", token="tok", repos=[])
@@ -313,7 +363,7 @@ def test_dependabot_aggregates_severity_counts_across_repos():
         raise AssertionError(f"unexpected url {url}")
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("checks.github_checks._get", fake_get)
+        mp.setattr("checks.github_checks._get_all_pages", _paged(fake_get))
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "fail"
     assert result["value"] == {"critical": 1, "high": 1, "medium": 0, "low": 1}
@@ -327,7 +377,7 @@ def test_dependabot_passes_when_no_critical_or_high():
         return [{"security_advisory": {"severity": "low"}}]
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("checks.github_checks._get", fake_get)
+        mp.setattr("checks.github_checks._get_all_pages", _paged(fake_get))
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "pass"
 
@@ -341,7 +391,7 @@ def test_dependabot_disabled_repo_404_counts_as_zero_alerts():
         raise httpx.HTTPStatusError("not found", request=response.request, response=response)
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("checks.github_checks._get", fake_get)
+        mp.setattr("checks.github_checks._get_all_pages", _paged(fake_get))
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "pass"
     assert result["value"] == {"critical": 0, "high": 0, "medium": 0, "low": 0}
@@ -357,7 +407,7 @@ def test_dependabot_all_repos_forbidden_returns_error_not_false_pass():
         raise httpx.HTTPStatusError("forbidden", request=response.request, response=response)
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("checks.github_checks._get", fake_get)
+        mp.setattr("checks.github_checks._get_all_pages", _paged(fake_get))
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "error"
 
@@ -374,7 +424,7 @@ def test_dependabot_mixed_403_and_otherwise_clean_repos_reports_error_not_false_
         return []
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("checks.github_checks._get", fake_get)
+        mp.setattr("checks.github_checks._get_all_pages", _paged(fake_get))
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "error"
 
@@ -391,7 +441,7 @@ def test_dependabot_mixed_403_and_a_real_alert_still_fails():
         return [{"security_advisory": {"severity": "critical"}}]
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("checks.github_checks._get", fake_get)
+        mp.setattr("checks.github_checks._get_all_pages", _paged(fake_get))
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "fail"
 
@@ -405,7 +455,7 @@ def test_dependabot_non_404_403_error_propagates():
         raise httpx.HTTPStatusError("server error", request=response.request, response=response)
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("checks.github_checks._get", fake_get)
+        mp.setattr("checks.github_checks._get_all_pages", _paged(fake_get))
         with pytest.raises(httpx.HTTPStatusError):
             check.run(owner="acme", token="tok", repos=repos)
 
@@ -430,7 +480,7 @@ def test_code_scanning_counts_open_alerts_and_affected_repos():
         return []
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("checks.github_checks._get", fake_get)
+        mp.setattr("checks.github_checks._get_all_pages", _paged(fake_get))
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "fail"
     assert result["value"] == {"open": 2, "repos_with_alerts": 1, "total_repos": 2}
@@ -445,7 +495,7 @@ def test_code_scanning_disabled_repo_404_counts_as_zero_alerts():
         raise httpx.HTTPStatusError("not found", request=response.request, response=response)
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("checks.github_checks._get", fake_get)
+        mp.setattr("checks.github_checks._get_all_pages", _paged(fake_get))
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "pass"
     assert result["value"] == {"open": 0, "repos_with_alerts": 0, "total_repos": 1}
@@ -460,7 +510,7 @@ def test_code_scanning_all_repos_forbidden_returns_error_not_false_pass():
         raise httpx.HTTPStatusError("forbidden", request=response.request, response=response)
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("checks.github_checks._get", fake_get)
+        mp.setattr("checks.github_checks._get_all_pages", _paged(fake_get))
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "error"
 
@@ -477,7 +527,7 @@ def test_code_scanning_mixed_403_and_otherwise_clean_repos_reports_error_not_fal
         return []
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("checks.github_checks._get", fake_get)
+        mp.setattr("checks.github_checks._get_all_pages", _paged(fake_get))
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "error"
 
@@ -493,7 +543,7 @@ def test_code_scanning_mixed_403_and_a_real_alert_still_fails():
         return [{"number": 1}]
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("checks.github_checks._get", fake_get)
+        mp.setattr("checks.github_checks._get_all_pages", _paged(fake_get))
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "fail"
 
@@ -585,7 +635,7 @@ def test_dependabot_feature_disabled_403_is_not_applicable_not_error():
         _raise(403, url, {"message": "Dependabot alerts are disabled for this repository."})
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("checks.github_checks._get", fake_get)
+        mp.setattr("checks.github_checks._get_all_pages", _paged(fake_get))
         result = DependabotAlertsCheck().run(owner="acme", token="tok", repos=[{"name": "api"}])
     assert result["status"] == "not_applicable"
 
@@ -597,7 +647,7 @@ def test_code_scanning_disabled_repo_does_not_mask_a_clean_pass():
         return []
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("checks.github_checks._get", fake_get)
+        mp.setattr("checks.github_checks._get_all_pages", _paged(fake_get))
         result = CodeScanningCheck().run(owner="acme", token="tok", repos=[{"name": "api"}, {"name": "ui"}])
     assert result["status"] == "pass"
 
