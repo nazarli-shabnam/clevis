@@ -17,6 +17,7 @@ import { CHART_COLORS } from "@/lib/charts/theme"
 import { relativeTime } from "@/lib/format"
 import { SectionError } from "@/components/section-error"
 import { EmptyStateNoAccount } from "@/components/empty-state"
+import { FirstRunChecklist } from "@/components/first-run-checklist"
 import type { MyOrgMembership, MyViewIssueSummary, MyViewPRSummary } from "@/lib/api/types"
 
 const MY_VIEW_TABS = [
@@ -190,6 +191,15 @@ export default function OverviewPage() {
           <Warning size={16} weight="fill" />
           <span>Some data below may be incomplete — a GitHub call failed while loading this page.</span>
         </div>
+      )}
+
+      {org && (
+        <FirstRunChecklist
+          scope={scope}
+          hasScan={cockpitQuery.isSuccess ? cockpit?.latest_score != null : null}
+          canInvite={scope?.kind === "org" && memberships.some((m) => m.org_login === scope.login && m.role === "admin")}
+          membersUrl={membersUrl}
+        />
       )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-px mb-6 border border-border bg-border">
