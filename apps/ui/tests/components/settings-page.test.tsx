@@ -8,6 +8,7 @@ const installationsListForOrgMock = vi.fn();
 const installationsRemoveMock = vi.fn();
 const tokensListMock = vi.fn();
 const tokensUpsertMock = vi.fn();
+const tokensDeleteMock = vi.fn();
 const configGetAllMock = vi.fn();
 const patchMeMock = vi.fn();
 const revokeSessionsMock = vi.fn();
@@ -35,6 +36,7 @@ vi.mock("@/lib/api/client", () => ({
     tokens: {
       list: (...args: unknown[]) => tokensListMock(...args),
       upsert: (...args: unknown[]) => tokensUpsertMock(...args),
+      delete: (...args: unknown[]) => tokensDeleteMock(...args),
     },
     config: {
       getAll: (...args: unknown[]) => configGetAllMock(...args),
@@ -49,10 +51,12 @@ vi.mock("@/lib/api/client", () => ({
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 import { AuthProvider } from "@/lib/auth-context";
@@ -100,6 +104,7 @@ describe("SettingsPage", () => {
     installationsRemoveMock.mockReset();
     tokensListMock.mockReset();
     tokensUpsertMock.mockReset();
+    tokensDeleteMock.mockReset();
     configGetAllMock.mockReset();
     patchMeMock.mockReset();
     revokeSessionsMock.mockReset();
@@ -554,6 +559,94 @@ describe("SettingsPage", () => {
     await waitFor(() =>
       expect(tokensUpsertMock).toHaveBeenCalledWith("acme", "ghp_manual_token", "ci"),
     );
+  });
+
+  it("shows the error and lets the user retry when saving the profile fails", async () => {
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([]);
+    configGetAllMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true" });
+    patchMeMock
+      .mockRejectedValueOnce(new Error("Name is too long"))
+      .mockResolvedValue({ id: 1, email: "admin@example.com", name: "New Name", is_workspace_admin: true });
+
+    renderPage();
+
+    fireEvent.change(screen.getByPlaceholderText("Your name"), { target: { value: "New Name" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
+
+    expect(await screen.findByText("Name is too long")).toBeInTheDocument();
+    // No "Saved" confirmation for a failed save, and the button is usable again.
+    expect(screen.queryByRole("button", { name: /Saved/ })).not.toBeInTheDocument();
+    const retry = screen.getByRole("button", { name: "Save profile" });
+    expect(retry).toBeEnabled();
+
+    fireEvent.click(retry);
+    expect(await screen.findByRole("button", { name: /Saved/ })).toBeInTheDocument();
+    expect(screen.queryByText("Name is too long")).not.toBeInTheDocument();
+  });
+
+  it("says the sessions were not revoked, and keeps the user signed in, when sign-out-everywhere fails", async () => {
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([]);
+    configGetAllMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true" });
+    revokeSessionsMock.mockRejectedValue(new Error("Server unavailable"));
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: /sign out of all devices/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /click again to confirm/i }));
+
+    const alert = await screen.findByText(/Your sessions were not revoked/);
+    expect(alert).toHaveTextContent("Server unavailable");
+    // Not logged out locally, and back to the first click so it can be retried.
+    expect(localStorage.getItem(TOKEN_KEY)).not.toBeNull();
+    expect(screen.getByRole("button", { name: /sign out of all devices/i })).toBeEnabled();
+  });
+
+  it("reports a failed saved-token delete on its own row without locking the other rows", async () => {
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([
+      { org: "acme", label: null, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" },
+      { org: "beta", label: null, created_at: "2026-01-02T00:00:00Z", updated_at: "2026-01-02T00:00:00Z" },
+    ]);
+    configGetAllMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true" });
+    const acmeGate = deferred<void>();
+    const betaGate = deferred<void>();
+    tokensDeleteMock.mockImplementation((org: string) => (org === "acme" ? acmeGate.promise : betaGate.promise));
+
+    renderPage();
+
+    const deleteAcme = await screen.findByRole("button", { name: "Delete token for acme" });
+    const deleteBeta = screen.getByRole("button", { name: "Delete token for beta" });
+    fireEvent.click(deleteAcme);
+    fireEvent.click(deleteBeta);
+    await waitFor(() => expect(deleteAcme).toBeDisabled());
+    expect(deleteBeta).toBeDisabled();
+
+    // The first delete fails after the second has started: its error must land on its own row.
+    await act(async () => {
+      acmeGate.reject(new Error("Token is in use"));
+      await acmeGate.promise.catch(() => {});
+    });
+
+    const acmeRow = deleteAcme.closest("tr")!;
+    const betaRow = deleteBeta.closest("tr")!;
+    await waitFor(() => expect(within(acmeRow).getByRole("alert")).toHaveTextContent("Token is in use"));
+    expect(deleteAcme).toBeEnabled();
+    expect(deleteBeta).toBeDisabled();
+    expect(within(betaRow).queryByRole("alert")).not.toBeInTheDocument();
+
+    // A successful delete refreshes the list.
+    const listCalls = tokensListMock.mock.calls.length;
+    await act(async () => {
+      betaGate.resolve();
+      await betaGate.promise;
+    });
+    await waitFor(() => expect(tokensListMock.mock.calls.length).toBeGreaterThan(listCalls));
+    await waitFor(() => expect(deleteBeta).toBeEnabled());
   });
 
 });
