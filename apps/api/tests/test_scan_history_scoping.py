@@ -199,6 +199,31 @@ def test_a_former_members_older_scans_are_no_longer_in_the_orgs_history(db, org,
     assert _scores(_client(db, member).get("/orgs/acme/analytics/history").json()) == []
 
 
+def test_a_previous_scan_stored_under_the_canonical_login_is_found_whatever_casing_is_asked_for(db):
+    # The score-drop baseline asks for the owner as the caller typed it; org-tenant rows carry the
+    # canonical login, and a casing mismatch would silently skip the alert.
+    org = org_repo.get_or_create(db, github_login="Acme")
+    _seed(db, "Acme", 66, org.tenant_id)
+
+    rows = scan_results_repo.list_recent(db, "acme", limit=1, tenant_id=org.tenant_id)
+
+    assert _scores(rows) == [66]
+
+
+def test_a_former_member_can_still_read_the_scans_they_ran_themselves(db):
+    org = org_repo.get_or_create(db, github_login="Acme")
+    user = _user(db, "leaver@example.com")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=user.id, role="member")
+    http = _client(db, user)
+    _scan_via_personal_route(http, score=58, owner="acme")  # stored as "Acme" under the org tenant
+    org_membership_repo.delete(db, org_id=org.id, user_id=user.id)
+
+    resp = http.get("/me/analytics/history?owner=acme")
+
+    assert resp.status_code == 200
+    assert _scores(resp.json()) == [58]
+
+
 # ── digest ───────────────────────────────────────────────────────────────────
 
 

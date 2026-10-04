@@ -35,10 +35,16 @@ def insert(
     db.commit()
 
 
+def _owner_is(owner: str):
+    """Owner logins compare case-insensitively, like GitHub's. A member's scan is stored under the
+    org's canonical login whatever casing they typed, so exact matching would lose their rows."""
+    return func.lower(ScanResult.owner) == owner.lower()
+
+
 def exists_for_user(db: Session, owner: str, user_id: int) -> bool:
     return (
         db.query(ScanResult.id)
-        .filter(ScanResult.owner == owner, ScanResult.scanned_by_user_id == user_id)
+        .filter(_owner_is(owner), ScanResult.scanned_by_user_id == user_id)
         .first()
         is not None
     )
@@ -56,7 +62,7 @@ def org_scope_filter(org_login: str, org_tenant_id: int):
     """
     member_ids = select(Membership.user_id).where(Membership.tenant_id == org_tenant_id)
     return and_(
-        func.lower(ScanResult.owner) == org_login.lower(),
+        _owner_is(org_login),
         or_(ScanResult.tenant_id == org_tenant_id, ScanResult.scanned_by_user_id.in_(member_ids)),
     )
 
@@ -77,7 +83,7 @@ def list_recent(
     if org_tenant_id is not None:
         query = db.query(ScanResult).filter(org_scope_filter(owner, org_tenant_id))
     else:
-        query = db.query(ScanResult).filter(ScanResult.owner == owner)
+        query = db.query(ScanResult).filter(_owner_is(owner))
     if scanned_by_user_id is not None:
         query = query.filter(ScanResult.scanned_by_user_id == scanned_by_user_id)
     if tenant_id is not None:
@@ -153,7 +159,7 @@ def list_for_export(
     if org_tenant_id is not None:
         query = db.query(ScanResult).filter(org_scope_filter(owner, org_tenant_id))
     else:
-        query = db.query(ScanResult).filter(ScanResult.owner == owner)
+        query = db.query(ScanResult).filter(_owner_is(owner))
     if since is not None:
         query = query.filter(ScanResult.created_at >= since)
     if until is not None:
