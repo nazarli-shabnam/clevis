@@ -147,6 +147,14 @@ export default function AutomationPage() {
     setDispatchAllArmed(false)
   }
 
+  // Picking a repo prefills the ref with its default branch (still editable): a hardcoded
+  // "main" makes GitHub reject the dispatch with a 422 on repos whose default is e.g. "master".
+  const handleRepoChange = (name: string) => {
+    setRepo(name)
+    const defaultBranch = repoOptions.find((r) => r.name === name)?.default_branch
+    if (defaultBranch) handleRefChange(defaultBranch)
+  }
+
   // Auto-disarm if not confirmed within a few seconds (same as the Actions Cache "Clear" button).
   useEffect(() => {
     if (!dispatchArmed) return
@@ -216,7 +224,7 @@ export default function AutomationPage() {
               <select
                 id="repository"
                 value={repo}
-                onChange={(e) => setRepo(e.target.value)}
+                onChange={(e) => handleRepoChange(e.target.value)}
                 disabled={!owner.trim() || reposListQuery.isLoading}
                 className="h-8 w-full min-w-0 rounded-md border border-input bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 dark:bg-input/30"
               >
