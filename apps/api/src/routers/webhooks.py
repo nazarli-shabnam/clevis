@@ -8,6 +8,7 @@ import hmac
 import json
 import logging
 
+import anyio
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -107,6 +108,16 @@ async def github_webhook(request: Request, db: Session = Depends(get_db)):
     event = request.headers.get("X-GitHub-Event", "")
     delivery_id = request.headers.get("X-GitHub-Delivery", "")
 
+    # Everything past this point is blocking I/O (Postgres commits, a synchronous Redis XADD with a
+    # 2s timeout). Run it in a worker thread so a slow dependency stalls this one delivery, not
+    # every in-flight request (health checks included) on the event loop.
+    await anyio.to_thread.run_sync(_dispatch_event, db, event, delivery_id, raw_body, payload)
+
+    return {"ok": True}
+
+
+def _dispatch_event(db: Session, event: str, delivery_id: str, raw_body: bytes, payload: dict) -> None:
+    """Act on one verified webhook delivery. Synchronous: callers run it off the event loop."""
     if event == "installation" and payload.get("action") == "deleted":
         _handle_installation_deleted(db, payload)
     elif event == "installation" and payload.get("action") == "new_permissions_accepted":
@@ -129,8 +140,6 @@ async def github_webhook(request: Request, db: Session = Depends(get_db)):
     # the installation itself, not per-repo access. Accepted (200) so GitHub doesn't retry.
     elif event in _INGESTED_EVENT_TYPES:
         _handle_ingested_event(db, event, delivery_id, raw_body, payload)
-
-    return {"ok": True}
 
 
 def _resolve_event_installation_id(payload: dict) -> int | None:

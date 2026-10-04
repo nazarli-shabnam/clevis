@@ -58,8 +58,12 @@ async def run_sweep_loop(
             await asyncio.to_thread(_run_sweep, sweep_fn)
         except Exception:
             log.exception("%s sweep iteration failed", label)
-        await asyncio.sleep(
-            _read_poll_seconds(
-                config_key=config_key, default_seconds=default_seconds, min_seconds=min_seconds, max_seconds=max_seconds
-            )
+        # get_config is a synchronous DB read on a cache miss, so keep it off the event loop too.
+        poll_seconds = await asyncio.to_thread(
+            _read_poll_seconds,
+            config_key=config_key,
+            default_seconds=default_seconds,
+            min_seconds=min_seconds,
+            max_seconds=max_seconds,
         )
+        await asyncio.sleep(poll_seconds)
