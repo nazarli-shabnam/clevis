@@ -1,6 +1,6 @@
 "use client"
 
-import { Fragment, useEffect, useState } from "react"
+import { Fragment, useEffect, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Trash, Plus, CircleNotch, Check, ArrowSquareOut, CheckCircle } from "@phosphor-icons/react"
@@ -27,13 +27,19 @@ function ProfileSection() {
   const [name, setName] = useState(user?.name || "")
   const [saved, setSaved] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [revokeArmed, setRevokeArmed] = useState(false)
 
   const revokeSessions = useMutation({
     mutationFn: () => api.auth.revokeSessions(),
     // Bumping token_version invalidates this device's token too, so log out locally.
     onSuccess: () => logout(),
+    // Back to the first click so the admin can retry; the error is shown below the button.
+    onError: () => setRevokeArmed(false),
   })
+
+  useEffect(() => () => clearTimeout(savedTimer.current), [])
 
   // Auto-disarm if not confirmed within a few seconds (same as the cache-clear confirm).
   useEffect(() => {
@@ -48,13 +54,19 @@ function ProfileSection() {
 
   async function save() {
     setIsSaving(true)
+    setSaveError(null)
+    // A previous "Saved" must not linger beside (or hide) the outcome of this attempt.
+    clearTimeout(savedTimer.current)
+    setSaved(false)
     try {
       if (name.trim() !== (user?.name || "")) {
         const updated = await api.auth.patchMe(name.trim())
         updateUser({ name: updated.name })
       }
       setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
+      savedTimer.current = setTimeout(() => setSaved(false), 2000)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Couldn't save your profile.")
     } finally {
       setIsSaving(false)
     }
@@ -92,6 +104,11 @@ function ProfileSection() {
         <Button onClick={save} disabled={isSaving} className="mt-1 w-fit">
           {buttonContent}
         </Button>
+        {saveError && (
+          <p role="alert" className="text-xs text-destructive">
+            {saveError}
+          </p>
+        )}
       </div>
       <div className="px-4 py-3 border-t border-border flex flex-col gap-2 items-start">
         <p className="text-xs text-muted-foreground max-w-sm">
@@ -118,6 +135,12 @@ function ProfileSection() {
             "Sign out of all devices"
           )}
         </Button>
+        {revokeSessions.isError && (
+          <p role="alert" className="text-xs text-destructive">
+            Your sessions were not revoked.{" "}
+            {revokeSessions.error instanceof Error ? revokeSessions.error.message : "Please try again."}
+          </p>
+        )}
       </div>
     </div>
   )
@@ -434,8 +457,25 @@ function SavedTokensSection() {
     },
   })
 
+  // useMutation keeps only the latest call's pending/error state, so deletes are tracked per org:
+  // one row's request can't lock the others, and each failure is reported on its own row.
+  const [deletingOrgs, setDeletingOrgs] = useState<Set<string>>(() => new Set())
+  const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({})
+
   const remove = useMutation({
     mutationFn: (org: string) => api.tokens.delete(org),
+    onMutate: (org) => {
+      setDeleteErrors(({ [org]: _cleared, ...rest }) => rest)
+      setDeletingOrgs((prev) => new Set(prev).add(org))
+    },
+    onError: (error, org) =>
+      setDeleteErrors((prev) => ({ ...prev, [org]: error instanceof Error ? error.message : "Delete failed." })),
+    onSettled: (_data, _error, org) =>
+      setDeletingOrgs((prev) => {
+        const next = new Set(prev)
+        next.delete(org)
+        return next
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["tokens"] }),
   })
 
@@ -484,7 +524,14 @@ function SavedTokensSection() {
             <tbody className="divide-y divide-border">
               {tokens.map((t: SavedTokenMeta) => (
                 <tr key={t.org} className="hover:bg-elevated transition-colors">
-                  <td className="px-4 py-2.5 font-mono text-foreground/80">{t.org}</td>
+                  <td className="px-4 py-2.5 font-mono text-foreground/80">
+                    {t.org}
+                    {deleteErrors[t.org] && (
+                      <p role="alert" className="mt-1 font-sans text-xs text-destructive">
+                        {deleteErrors[t.org]}
+                      </p>
+                    )}
+                  </td>
                   <td className="px-4 py-2.5 text-muted-foreground">{t.label ?? "—"}</td>
                   <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
                     {new Date(t.created_at).toLocaleDateString(undefined, {
@@ -494,7 +541,7 @@ function SavedTokensSection() {
                   <td className="px-4 py-2.5 text-right">
                     <button
                       onClick={() => remove.mutate(t.org)}
-                      disabled={remove.isPending}
+                      disabled={deletingOrgs.has(t.org)}
                       className="text-muted-foreground hover:text-destructive transition-colors"
                       aria-label={`Delete token for ${t.org}`}
                     >
