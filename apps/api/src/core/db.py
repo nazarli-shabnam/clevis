@@ -407,7 +407,11 @@ class Invitation(Base):
 
 class ScanResult(Base):
     __tablename__ = "scan_results"
-    __table_args__ = (Index("ix_scan_results_owner_created_at", "owner", "created_at"),)
+    __table_args__ = (
+        Index("ix_scan_results_owner_created_at", "owner", "created_at"),
+        # Serves the tenant-scoped "latest scan" reads (public badge, /orgs/{org}/score).
+        Index("ix_scan_results_tenant_id_created_at", "tenant_id", text("created_at DESC")),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     owner: Mapped[str] = mapped_column(String, nullable=False)

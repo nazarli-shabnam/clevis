@@ -58,6 +58,18 @@ def _new_token(db, acme) -> str:
     return resp.json()["token"]
 
 
+@pytest.fixture(autouse=True)
+def _reset_badge_state():
+    from src.core import rate_limit
+    from src.routers import api_tokens
+
+    api_tokens._badge_cache.clear()
+    rate_limit._account_buckets.clear()
+    yield
+    api_tokens._badge_cache.clear()
+    rate_limit._account_buckets.clear()
+
+
 def _scan(db, org, score=80, checks=CHECKS):
     scan_results_repo.insert(
         db, owner="acme", score=score, total_checks=len(checks), failed_checks=1, checks=checks, tenant_id=org.tenant_id
@@ -198,6 +210,28 @@ def test_badge_is_opt_in_and_shows_only_the_score(db, acme):
 
     admin.put("/orgs/acme/badge", json={"enabled": False})
     assert _client(db).get("/badges/acme/score.svg").status_code == 404
+
+
+def test_badge_reads_are_cached_and_opting_out_takes_effect_at_once(db, acme):
+    _scan(db, acme["org"], score=95)
+    admin = _client(db, acme["admin"])
+    admin.put("/orgs/acme/badge", json={"enabled": True})
+    public = _client(db)
+    assert "95" in public.get("/badges/acme/score.svg").text
+
+    _scan(db, acme["org"], score=40)  # newer scan, but the cached answer is still served
+    assert "95" in public.get("/badges/acme/score.svg").text
+
+    admin.put("/orgs/acme/badge", json={"enabled": False})  # invalidates the cache entry
+    assert public.get("/badges/acme/score.svg").status_code == 404
+
+
+def test_badge_cache_misses_are_rate_limited_per_ip_not_per_org(db, acme):
+    public = _client(db)
+    codes = [public.get(f"/badges/org-{i}/score.svg").status_code for i in range(62)]
+    assert codes[:60] == [404] * 60
+    assert codes[60:] == [429, 429]  # cycling through org names doesn't dodge the limit
+    assert public.get("/badges/org-0/score.svg").status_code == 404  # cached answers stay free
 
 
 def test_badge_404s_look_identical_for_unknown_and_never_scanned_orgs(db, acme):
