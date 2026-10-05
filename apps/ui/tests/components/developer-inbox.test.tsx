@@ -147,4 +147,21 @@ describe("DeveloperInbox", () => {
 
     expect(await screen.findByText("Recovered")).toBeInTheDocument()
   })
+
+  it("falls back to a generic message when the failure isn't an Error", async () => {
+    myViewMock.mockRejectedValue("nope")
+    renderInbox()
+
+    expect(await screen.findByText("Failed to load your inbox.")).toBeInTheDocument()
+  })
+
+  it("dates a waiting review by its last update when GitHub omitted the opened time", async () => {
+    myViewMock.mockResolvedValue(
+      view({ review_requests_total: 1, review_requests: [pr({ title: "No created_at", created_at: null, updated_at: "2026-10-01T12:00:00Z" })] }),
+    )
+    renderInbox()
+
+    expect(await screen.findByText("No created_at")).toBeInTheDocument()
+    expect(screen.getByText(/^PR opened /)).toBeInTheDocument()
+  })
 })
