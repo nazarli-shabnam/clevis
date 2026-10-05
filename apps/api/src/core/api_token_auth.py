@@ -25,7 +25,6 @@ def require_api_token(authorization: str | None = Header(default=None), db: Sess
         )
     # The RLS policies key off this; tokens are bound to exactly one org's tenant.
     db.execute(text(f"SET app.tenant_id = {int(resolved.tenant_id)}"))
-    api_token_repo.touch(db, resolved.token_id)
     return resolved
 
 
@@ -36,10 +35,12 @@ def require_scope(required: str):
     enforced by default instead of silently ignored."""
     required_rank = _SCOPE_RANK[required]
 
-    def dependency(token: ResolvedToken = Depends(require_api_token)) -> ResolvedToken:
+    def dependency(token: ResolvedToken = Depends(require_api_token), db: Session = Depends(get_db)) -> ResolvedToken:
         rank = _SCOPE_RANK.get(token.scope)
         if rank is None or rank < required_rank:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"API token lacks the '{required}' scope")
+        # Only a token that is actually allowed in counts as "used".
+        api_token_repo.touch(db, token.token_id)
         return token
 
     return dependency

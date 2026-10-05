@@ -290,6 +290,7 @@ def test_token_with_an_unrecognised_scope_is_rejected_by_machine_endpoints(db, a
     machine = _client(db)
     assert machine.get("/api/v1/orgs/acme/score", headers=_bearer(token)).status_code == 403
     assert machine.post("/api/v1/orgs/acme/scan", headers=_bearer(token)).status_code == 403
+    assert db.query(ApiToken).one().last_used_at is None  # a rejected token is not "used"
 
 
 def test_expiring_token_works_until_it_expires_and_never_expires_by_default(db, acme):
@@ -348,3 +349,28 @@ def test_scan_is_audited_under_the_token_and_so_are_its_alerts(db, acme):
     assert entry.actor == f"api_token:{token_id}"
     assert json.loads(entry.payload) == {"token_id": token_id, "score": 60, "previous_score": 90}
     assert notify.call_args.kwargs["actor"] == f"api_token:{token_id}"
+
+
+def test_expired_tokens_do_not_count_toward_the_active_cap(db, acme):
+    client = _client(db, acme["admin"])
+    for i in range(20):
+        assert client.post("/orgs/acme/api-tokens", json={"name": f"t{i}", "expires_in_days": 1}).status_code == 201
+    assert client.post("/orgs/acme/api-tokens", json={"name": "extra"}).status_code == 409
+
+    db.execute(text("UPDATE api_tokens SET expires_at = now() - interval '1 hour'"))
+    db.expire_all()  # the raw UPDATE bypasses the ORM identity map
+
+    assert client.post("/orgs/acme/api-tokens", json={"name": "extra"}).status_code == 201
+
+
+def test_a_failing_scan_audit_write_does_not_fail_the_stored_scan(db, acme):
+    token = _new_token(db, acme)
+    overview = {"owner": "acme", "score": 70, "total_checks": 2, "failed_checks": 1, "repo_count": 3, "checks": CHECKS}
+    with (
+        patch("src.routers.api_tokens.resolve_org_token", return_value="ghs_x"),
+        patch("src.routers.analytics.get_overview", return_value=overview),
+        patch("src.routers.api_tokens.audit_repo.write", side_effect=RuntimeError("audit down")),
+    ):
+        resp = _client(db).post("/api/v1/orgs/acme/scan", headers=_bearer(token))
+
+    assert resp.status_code == 200 and resp.json()["score"] == 70

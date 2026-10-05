@@ -4,6 +4,9 @@ Tokens are org-scoped and read-only: they can read the latest scan and trigger a
 only reads GitHub and stores a snapshot), nothing that changes configuration.
 """
 
+import logging
+from datetime import datetime, timezone
+
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import text
@@ -27,6 +30,7 @@ from src.schemas.api_token import (
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _MAX_TOKENS_PER_ORG = 20
 
@@ -45,7 +49,12 @@ def create_token(
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
-    active = [t for t in api_token_repo.list_for_tenant(db, ctx.org.tenant_id) if t.revoked_at is None]
+    now = datetime.now(timezone.utc)
+    active = [
+        t
+        for t in api_token_repo.list_for_tenant(db, ctx.org.tenant_id)
+        if t.revoked_at is None and (t.expires_at is None or t.expires_at > now)
+    ]
     if len(active) >= _MAX_TOKENS_PER_ORG:
         raise HTTPException(status_code=409, detail=f"At most {_MAX_TOKENS_PER_ORG} active tokens per organization")
     row, token = api_token_repo.create(
@@ -157,18 +166,24 @@ async def run_scan(org_login: str, token: ResolvedToken = Depends(require_scope(
     def _record_and_notify() -> dict:
         previous = scan_results_repo.list_recent(db, token.org_login, limit=1, tenant_id=token.tenant_id)
         _persist_scan(db, result, tenant_id=token.tenant_id)
-        audit_repo.write(
-            db,
-            actor=actor,
-            action="api_token.scan",
-            target=token.org_login,
-            payload={
-                "token_id": token.token_id,
-                "score": result["score"],
-                "previous_score": previous[0]["score"] if previous else None,
-            },
-            tenant_id=token.tenant_id,
-        )
+        # The scan is already stored; a failing audit write must not 500 it (a CI retry would just
+        # scan twice) or skip the alert below.
+        try:
+            audit_repo.write(
+                db,
+                actor=actor,
+                action="api_token.scan",
+                target=token.org_login,
+                payload={
+                    "token_id": token.token_id,
+                    "score": result["score"],
+                    "previous_score": previous[0]["score"] if previous else None,
+                },
+                tenant_id=token.tenant_id,
+            )
+        except Exception:
+            db.rollback()
+            logger.exception("could not audit the api-token scan for %s", token.org_login)
         if previous:
             org = org_repo.get_by_id(db, token.org_id)
             _notify_score_drop_best_effort(db, _Ctx(org), previous[0]["score"], result["score"], actor=actor)
