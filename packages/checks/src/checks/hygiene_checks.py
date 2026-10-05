@@ -34,8 +34,10 @@ _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 # between checks, so CODEOWNERS/SECURITY.md/workflows cost one tree request per repo, not three.
 _TREE_KEY = "_hygiene_paths"
 # Set on the repo dict by a check that had to look at only part of a repo (e.g. only some branches), so
-# `run` can report `sampled` for it the same way it does when only some repos were inspected.
-_PARTIAL_KEY = "_hygiene_partial"
+# `run` can report `sampled` for it the same way it does when only some repos were inspected. The runner
+# shares one repo list across checks, so the key carries the check id: one check's partial view must not
+# mark another check (which saw the whole repo) as sampled.
+_PARTIAL_KEY = "_hygiene_partial:"
 _BRANCHES_PAGE_SIZE = 100
 
 
@@ -108,7 +110,7 @@ class _PerRepoCheck(Check):
             "checked": len(evaluable),
             "missing": missing,
             "unknown": unknown,
-            "sampled": 1 if len(active) > _MAX_REPOS or any(r.get(_PARTIAL_KEY) for r in sample) else 0,
+            "sampled": 1 if len(active) > _MAX_REPOS or any(r.get(_PARTIAL_KEY + self.metadata.check_id) for r in sample) else 0,
         }
         extra_total = sum(extra for _, extra in evaluable)
         if extra_total:
@@ -192,7 +194,7 @@ class StaleBranches(_PerRepoCheck):
         # Each branch costs a commit lookup, so only some are checked; say so when others were left out
         # (a full first page means there may be more branches than we even listed).
         if len(candidates) > _MAX_BRANCH_LOOKUPS or len(branches) >= _BRANCHES_PAGE_SIZE:
-            repo[_PARTIAL_KEY] = True
+            repo[_PARTIAL_KEY + self.metadata.check_id] = True
         cutoff = _now() - timedelta(days=STALE_DAYS)
         stale = 0
         for b in candidates[:_MAX_BRANCH_LOOKUPS]:
