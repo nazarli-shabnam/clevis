@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { CircleNotch } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
@@ -8,10 +8,17 @@ import { Button } from "@/components/ui/button"
 import { SectionError } from "@/components/section-error"
 import { badgeHtml, badgeMarkdown, badgeUrl } from "@/lib/badge"
 
-const RATE_LIMIT_ISSUE = "https://github.com/nazarli-shabam/clevis/issues/577"
+const RATE_LIMIT_ISSUE = "https://github.com/nazarli-shabnam/clevis/issues/577"
 
 function Snippet({ label, value }: { label: string; value: string }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle")
+  // Reset after a moment; keyed on state so rapid clicks restart one timer and unmount clears it.
+  useEffect(() => {
+    if (state === "idle") return
+    const t = setTimeout(() => setState("idle"), 2000)
+    return () => clearTimeout(t)
+  }, [state])
+
   async function copy() {
     try {
       await navigator.clipboard.writeText(value)
@@ -19,7 +26,6 @@ function Snippet({ label, value }: { label: string; value: string }) {
     } catch {
       setState("failed")
     }
-    setTimeout(() => setState("idle"), 2000)
   }
   return (
     <div className="flex flex-col gap-1">
