@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react-query"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const mockGetRepo = vi.fn()
@@ -158,5 +158,20 @@ describe("DependabotTriageCard", () => {
     resolveRead({ enabled: true, mode: "approve_only", merge_method: "squash" })
     await waitFor(() => expect(screen.getByLabelText(/Enabled for api/)).toBeChecked())
     expect(screen.queryByText("Loading the saved setting…")).not.toBeInTheDocument()
+  })
+
+  it("keeps the form hidden while the first read is paused (offline), not just while it is fetching", async () => {
+    // A paused query is pending but not fetching, so `isLoading` is false there and the form with
+    // invented defaults used to show; `isPending` covers it.
+    onlineManager.setOnline(false)
+    try {
+      renderCard()
+
+      expect(await screen.findByText("Loading the saved setting…")).toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: "Save settings" })).not.toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: "Dry run" })).not.toBeInTheDocument()
+    } finally {
+      onlineManager.setOnline(true)
+    }
   })
 })
