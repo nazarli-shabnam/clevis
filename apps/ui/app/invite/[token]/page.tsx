@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
@@ -52,12 +53,22 @@ export default function InviteAcceptPage() {
               <CircleNotch className="size-3.5 animate-spin" /> Loading…
             </div>
           ) : isError || !preview ? (
+            <>
             <p className="text-sm text-destructive flex items-center gap-1.5">
               <Warning className="size-3.5" />
               {error instanceof Error ? error.message : "Invitation not found"}
             </p>
+            <Link href="/" className="text-sm text-primary hover:underline">
+              Back to Clevis
+            </Link>
+            </>
           ) : preview.status !== "pending" ? (
-            <p className="text-sm text-muted-foreground">This invitation is no longer valid.</p>
+            <>
+              <p className="text-sm text-muted-foreground">This invitation is no longer valid.</p>
+              <Link href="/" className="text-sm text-primary hover:underline">
+                Back to Clevis
+              </Link>
+            </>
           ) : (
             <>
               <p className="text-sm text-foreground">

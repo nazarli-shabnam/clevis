@@ -57,9 +57,14 @@ export default function VerifyEmailPage() {
               </Link>
             </>
           ) : (
-            <p className="text-sm text-destructive flex items-center gap-1.5">
-              <Warning className="size-3.5" /> {errorMessage}
-            </p>
+            <>
+              <p className="text-sm text-destructive flex items-center gap-1.5">
+                <Warning className="size-3.5" /> {errorMessage}
+              </p>
+              <Link href="/" className="text-sm text-primary hover:underline">
+                Back to Clevis
+              </Link>
+            </>
           )}
         </div>
       </div>

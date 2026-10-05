@@ -68,3 +68,29 @@ describe("ShellRouter", () => {
     },
   )
 })
+
+describe("AuthGuard + ShellRouter wiring", () => {
+  it.each(["/verify-email", "/invite/abc123"])("lets a signed-out visitor reach %s without a redirect or the shell", async (path) => {
+    vi.resetModules()
+    const replace = vi.fn()
+    vi.doMock("next/navigation", () => ({ usePathname: () => path, useRouter: () => ({ replace }) }))
+    vi.doMock("@/lib/auth-context", () => ({
+      useAuth: () => ({ user: null, isLoading: false, logout: vi.fn(), authUnconfirmed: false, pendingInvitations: [], dismissPendingInvitations: vi.fn() }),
+    }))
+    const { AuthGuard } = await import("@/components/auth-guard")
+    const { ShellRouter: Router } = await import("@/components/shell-router")
+
+    render(
+      <AuthGuard>
+        <Router>
+          <p>page content</p>
+        </Router>
+      </AuthGuard>,
+    )
+
+    expect(screen.getByText("page content")).toBeInTheDocument()
+    expect(screen.queryByTestId("sidebar")).not.toBeInTheDocument()
+    expect(replace).not.toHaveBeenCalled()
+    vi.doUnmock("@/lib/auth-context")
+  })
+})

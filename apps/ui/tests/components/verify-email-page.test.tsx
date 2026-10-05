@@ -50,6 +50,7 @@ describe("VerifyEmailPage", () => {
     render(<VerifyEmailPage />);
 
     await screen.findByText(/invalid or expired verification link/i);
+    expect(screen.getByRole("link", { name: "Back to Clevis" })).toHaveAttribute("href", "/");
   });
 
   it("shows an error immediately when the URL has no token", async () => {
