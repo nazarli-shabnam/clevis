@@ -20,9 +20,12 @@ def get_account_type(owner: str, token: str, base_url: str | None = None) -> str
 
 def get_overview(owner: str, token: str, account_type: str = "Organization") -> dict:
     base_url = settings.github_api_base
-    report = run_all_checks(owner=owner, token=token, base_url=base_url, account_type=account_type)
-    checks = report["checks"]
     score_hygiene = get_config("score_hygiene_checks", "false") == "true"
+    # Unscored hygiene checks cost hundreds of GitHub calls per scan for a result that changes nothing.
+    report = run_all_checks(
+        owner=owner, token=token, base_url=base_url, account_type=account_type, include_hygiene=score_hygiene
+    )
+    checks = report["checks"]
     # Stamp the policy onto each check: it is persisted with the scan, so later readers (the digest)
     # explain a stored score with the policy it was computed under, not whatever the config says now.
     for c in checks:
