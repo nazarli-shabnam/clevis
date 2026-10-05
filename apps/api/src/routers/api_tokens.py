@@ -4,6 +4,7 @@ Tokens are org-scoped and read-only: they can read the latest scan and trigger a
 only reads GitHub and stores a snapshot), nothing that changes configuration.
 """
 
+import threading
 import time
 
 import anyio
@@ -181,7 +182,7 @@ def set_badge_setting(
     db.commit()
     # Drop this process's cached answer so opting out takes effect at once here (other replicas
     # keep serving theirs for up to _BADGE_CACHE_TTL_SECONDS).
-    _badge_cache.pop(ctx.org.github_login.lower(), None)
+    _badge_invalidate(ctx.org.github_login)
     return BadgeSettings(enabled=body.enabled)
 
 
@@ -207,11 +208,26 @@ _BADGE_CACHE_TTL_SECONDS = 60
 _BADGE_CACHE_MAX_ENTRIES = 1024
 _BADGE_MISS_LIMIT_PER_MINUTE = 60
 _badge_cache: dict[str, tuple[float, int | None]] = {}
+# Guards the cache and `_badge_epoch`. The epoch is bumped by every invalidation; a lookup records it
+# before reading the database and only stores its answer if it is unchanged afterwards, so a read that
+# started before an opt-out cannot write the pre-opt-out score back after the entry was dropped. One
+# counter for all logins is deliberate: a change elsewhere only makes an in-flight lookup skip caching.
+_badge_lock = threading.Lock()
+_badge_epoch = 0
+
+
+def _badge_invalidate(org_login: str) -> None:
+    global _badge_epoch
+    with _badge_lock:
+        _badge_epoch += 1
+        _badge_cache.pop(org_login.lower(), None)
 
 
 def _badge_score(db: Session, request: Request, org_login: str) -> int | None:
     key = org_login.lower()
-    hit = _badge_cache.get(key)
+    with _badge_lock:
+        hit = _badge_cache.get(key)
+        epoch = _badge_epoch
     if hit is not None and time.monotonic() - hit[0] < _BADGE_CACHE_TTL_SECONDS:
         return hit[1]
     # Keyed by client IP alone (not path): a per-path key would let a caller dodge the limit by
@@ -219,9 +235,11 @@ def _badge_score(db: Session, request: Request, org_login: str) -> int | None:
     ip = request.client.host if request.client else "unknown"
     check_account_rate_limit(f"badge:{ip}", max_requests=_BADGE_MISS_LIMIT_PER_MINUTE)
     score = db.execute(text("SELECT public_badge_score(:login)"), {"login": org_login}).scalar()
-    if len(_badge_cache) >= _BADGE_CACHE_MAX_ENTRIES:
-        _badge_cache.clear()
-    _badge_cache[key] = (time.monotonic(), score)
+    with _badge_lock:
+        if epoch == _badge_epoch:
+            if len(_badge_cache) >= _BADGE_CACHE_MAX_ENTRIES:
+                _badge_cache.clear()
+            _badge_cache[key] = (time.monotonic(), score)
     return score
 
 

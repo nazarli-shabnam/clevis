@@ -391,3 +391,43 @@ def test_action_score_summary_line_cannot_smuggle_a_workflow_command(capsys):
 
     out_lines = capsys.readouterr().out.splitlines()
     assert not any(line.startswith("::error::fake") for line in out_lines)
+
+
+def test_an_in_flight_badge_lookup_cannot_repopulate_the_cache_after_an_opt_out(db):
+    """A lookup that read the old (opted-in) score before an opt-out invalidated the entry must not write
+    that score back afterwards, or the badge keeps showing for up to the cache TTL."""
+    from types import SimpleNamespace
+
+    from src.routers import api_tokens
+
+    api_tokens._badge_cache.clear()
+
+    class _SlowDb:
+        def execute(self, *_args, **_kwargs):
+            api_tokens._badge_invalidate("Acme")  # the opt-out lands while this read is in flight
+            return SimpleNamespace(scalar=lambda: 80)
+
+    request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.9"))
+
+    assert api_tokens._badge_score(_SlowDb(), request, "Acme") == 80  # this request still gets its read
+    assert "acme" not in api_tokens._badge_cache  # but the stale answer is not cached
+
+
+def test_an_undisturbed_badge_lookup_is_still_cached(db):
+    from types import SimpleNamespace
+
+    from src.routers import api_tokens
+
+    api_tokens._badge_cache.clear()
+    calls = []
+
+    class _Db:
+        def execute(self, *_args, **_kwargs):
+            calls.append(1)
+            return SimpleNamespace(scalar=lambda: 91)
+
+    request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.10"))
+
+    assert api_tokens._badge_score(_Db(), request, "Quiet") == 91
+    assert api_tokens._badge_score(_Db(), request, "Quiet") == 91
+    assert len(calls) == 1
