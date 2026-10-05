@@ -479,6 +479,9 @@ export const api = {
   },
   orgs: {
     mine: () => get<MyOrgMembership[]>("/me/orgs"),
+    badge: (orgLogin: string) => get<{ enabled: boolean }>(`/orgs/${encodeURIComponent(orgLogin)}/badge`),
+    setBadge: (orgLogin: string, enabled: boolean) =>
+      put<{ enabled: boolean }>(`/orgs/${encodeURIComponent(orgLogin)}/badge`, { enabled }),
   },
   invitations: {
     create: (orgLogin: string, email: string) =>

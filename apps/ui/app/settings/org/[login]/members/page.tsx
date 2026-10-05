@@ -13,6 +13,7 @@ import { addRevokingId, isRevoking, removeRevokingId } from "@/lib/revoke-pendin
 import { relativeTime } from "@/lib/format"
 import { orgRoleFor } from "@/lib/members-href"
 import { SectionError } from "@/components/section-error"
+import { BadgeSettingsCard } from "@/components/badge-settings-card"
 import type { GithubOrgMember, InvitationOut, MyOrgMembership } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
 
@@ -567,6 +568,8 @@ export default function OrgMembersPage() {
           </div>
         </div>
       )}
+
+      {!rolePending && !notAdmin && <BadgeSettingsCard orgLogin={orgLogin} />}
 
       <div className="mt-4">
         <GithubRoster orgLogin={orgLogin} />
