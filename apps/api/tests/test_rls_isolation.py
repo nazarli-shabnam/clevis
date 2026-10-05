@@ -123,6 +123,8 @@ _EXPECTED_FORCE_RLS_TABLES = {
     "repo_collaborators",
     "org_membership_sync_cursors",
     "automation_repo_settings",
+    "notification_destinations",
+    "api_tokens",
 }
 
 
@@ -134,3 +136,34 @@ def test_every_tenant_table_has_force_rls(db):
         )
     ).fetchall()
     assert {row[0] for row in rows} == _EXPECTED_FORCE_RLS_TABLES
+
+
+def test_resolve_api_token_still_works_when_the_owner_is_subject_to_rls(db):
+    """FORCE RLS applies the policies to the table owner, which is who the SECURITY DEFINER lookup runs as.
+
+    Hands api_tokens and the function to a fresh non-superuser role inside the test transaction (rolled
+    back afterwards), then resolves a token with no tenant context. Needs a superuser connection."""
+    if not db.execute(text("SELECT rolsuper FROM pg_roles WHERE rolname = current_user")).scalar():
+        pytest.skip("needs a superuser connection to create a throwaway owner role")
+    from src.repositories import api_token_repo, org_repo
+
+    org = org_repo.get_or_create(db, github_login="force-rls-org")
+    _, token = api_token_repo.create(db, tenant_id=org.tenant_id, name="ci", created_by="t@e.com")
+    db.flush()
+    db.execute(text("CREATE ROLE rls_probe_owner NOSUPERUSER NOBYPASSRLS"))
+    db.execute(text("GRANT USAGE ON SCHEMA public TO rls_probe_owner"))
+    db.execute(text("GRANT SELECT ON orgs TO rls_probe_owner"))
+    db.execute(text("ALTER TABLE api_tokens OWNER TO rls_probe_owner"))
+    db.execute(text("ALTER FUNCTION resolve_api_token(text) OWNER TO rls_probe_owner"))
+    db.execute(text("RESET app.tenant_id"))
+    db.execute(text("SET LOCAL ROLE rls_probe_owner"))
+    try:
+        # As the owner with no tenant context, a plain read sees nothing (FORCE) ...
+        assert db.execute(text("SELECT count(*) FROM api_tokens")).scalar() == 0
+        # ... yet the definer lookup still resolves the token.
+        row = db.execute(
+            text("SELECT org_login FROM resolve_api_token(:h)"), {"h": api_token_repo.hash_token(token)}
+        ).first()
+        assert row is not None and row[0] == "force-rls-org"
+    finally:
+        db.execute(text("RESET ROLE"))
