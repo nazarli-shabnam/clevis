@@ -195,7 +195,7 @@ def test_personal_overview_scan_persists_a_history_row(http, db):
 
 def test_org_overview_scan_persists_a_history_row(http, db, mock_user):
     org = org_repo.get_or_create(db, github_login="acme")
-    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="admin")
     with patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW):
         resp = http.post("/orgs/acme/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
     assert resp.status_code == 200

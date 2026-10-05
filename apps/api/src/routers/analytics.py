@@ -38,7 +38,12 @@ from src.schemas.analytics import (
 from src.services import notifications
 from src.services.analytics_service import get_account_type, get_overview
 from src.services.github_client import GitHubClient, github_error as _github_error, list_owner_repos
-from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token, resolve_owner_token
+from src.services.token_resolution import (
+    InsufficientOrgRole,
+    NoGitHubTokenAvailable,
+    resolve_org_token,
+    resolve_owner_token,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -166,8 +171,18 @@ async def org_analytics_overview(
     client_token = payload.token.get_secret_value() if payload.token else None
     try:
         token = await anyio.to_thread.run_sync(
-            lambda: resolve_org_token(db, org_id=ctx.org.id, account_login=payload.owner, client_token=client_token)
+            lambda: resolve_org_token(
+                db,
+                org_id=ctx.org.id,
+                account_login=payload.owner,
+                client_token=client_token,
+                # The scan is stored as the org's latest score (badge, score API, alerts). A member's own
+                # token could be deliberately under-privileged so checks error out and the score drops.
+                allow_client_token=ctx.membership.role == "admin",
+            )
         )
+    except InsufficientOrgRole as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     result = await _run_overview(payload.owner, token)
@@ -194,8 +209,12 @@ async def personal_analytics_overview(
     client_token = payload.token.get_secret_value() if payload.token else None
     try:
         token = await anyio.to_thread.run_sync(
-            lambda: resolve_owner_token(db, user_id=user.id, owner=payload.owner, client_token=client_token)
+            lambda: resolve_owner_token(
+                db, user_id=user.id, owner=payload.owner, client_token=client_token, client_token_min_role="admin"
+            )
         )
+    except InsufficientOrgRole as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     account_type = await _get_account_type(payload.owner, token)

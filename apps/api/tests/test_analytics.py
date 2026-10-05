@@ -197,11 +197,67 @@ def test_org_overview_outsider_forbidden(http, db):
     assert resp.status_code == 403
 
 
-def test_org_overview_member_ok(http, db, mock_user):
+def test_org_overview_admin_can_scan_with_their_own_token(http, db, mock_user):
     org = org_repo.get_or_create(db, github_login="acme")
-    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="admin")
     with patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW):
         resp = http.post("/orgs/acme/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
+    assert resp.status_code == 200
+
+
+def test_org_overview_member_cannot_scan_with_their_own_token_on_a_pat_only_org(http, db, mock_user):
+    """A member-supplied PAT could be deliberately low-privilege, turning every check into an error and
+    dragging down the stored score that feeds the badge, score API and alerts (#582)."""
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
+    with patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW) as overview:
+        resp = http.post("/orgs/acme/analytics/overview", json={"owner": "acme", "token": "ghp_lowpriv"})
+    assert resp.status_code == 403
+    overview.assert_not_called()
+    assert scan_results_repo.latest_with_checks(db, "acme", org.tenant_id) is None  # nothing stored
+
+
+def test_org_overview_member_can_scan_through_the_installation_and_their_token_is_ignored(
+    http, db, mock_user, monkeypatch
+):
+    from pydantic import SecretStr
+
+    from src.core.config import settings
+
+    monkeypatch.setattr(settings, "github_app_id", "123")
+    monkeypatch.setattr(settings, "github_app_private_key", SecretStr("dummy-pem"))
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id
+    )
+    with (
+        patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW) as overview,
+        patch("src.services.token_resolution.github_app.get_installation_token", return_value="minted-token"),
+    ):
+        resp = http.post("/orgs/acme/analytics/overview", json={"owner": "acme", "token": "ghp_lowpriv"})
+    assert resp.status_code == 200
+    assert overview.call_args.kwargs["token"] == "minted-token"
+
+
+def test_personal_overview_member_cannot_scan_their_org_with_their_own_token(http, db, mock_user):
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
+    with (
+        patch("src.routers.analytics.get_account_type", return_value="Organization"),
+        patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW) as overview,
+    ):
+        resp = http.post("/me/analytics/overview", json={"owner": "acme", "token": "ghp_lowpriv"})
+    assert resp.status_code == 403
+    overview.assert_not_called()
+
+
+def test_personal_overview_byo_token_scan_of_a_non_org_login_is_unaffected(http, db):
+    with (
+        patch("src.routers.analytics.get_account_type", return_value="User"),
+        patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW),
+    ):
+        resp = http.post("/me/analytics/overview", json={"owner": "octocat", "token": "ghp_mine"})
     assert resp.status_code == 200
 
 
@@ -249,7 +305,7 @@ def test_personal_overview_no_installation_and_no_token_returns_400(http):
 
 def test_org_overview_fires_score_drop_notification_against_the_previous_scan(http, db, mock_user):
     org = org_repo.get_or_create(db, github_login="acme")
-    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="admin")
     scans = [{**MOCK_OVERVIEW, "score": 90}, {**MOCK_OVERVIEW, "score": 60}]
     with (
         patch("src.routers.analytics.get_overview", side_effect=scans),
@@ -264,7 +320,7 @@ def test_org_overview_fires_score_drop_notification_against_the_previous_scan(ht
 
 def test_score_drop_ignores_another_tenants_scan_of_the_same_owner(http, db, mock_user):
     org = org_repo.get_or_create(db, github_login="acme")
-    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="admin")
     other_org = org_repo.get_or_create(db, github_login="other")
     scan_results_repo.insert(
         db, owner="acme", score=99, total_checks=6, failed_checks=0, checks=[], tenant_id=other_org.tenant_id
