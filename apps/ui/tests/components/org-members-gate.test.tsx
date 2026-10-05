@@ -11,6 +11,7 @@ vi.mock("next/navigation", () => ({
 const mineMock = vi.fn();
 const listMock = vi.fn();
 const rosterMock = vi.fn();
+const createMock = vi.fn();
 
 vi.mock("@/lib/api/client", () => ({
   api: {
@@ -18,7 +19,7 @@ vi.mock("@/lib/api/client", () => ({
     invitations: {
       list: (...args: unknown[]) => listMock(...args),
       revoke: vi.fn(),
-      create: vi.fn(),
+      create: (...args: unknown[]) => createMock(...args),
     },
     collab: {
       members: (...args: unknown[]) => rosterMock(...args),
@@ -49,6 +50,7 @@ describe("OrgMembersPage admin gate", () => {
     mineMock.mockReset();
     listMock.mockReset();
     rosterMock.mockReset();
+    createMock.mockReset();
     rosterMock.mockResolvedValue({ org: "acme", members: [], two_factor_overlay_available: false });
     listMock.mockResolvedValue([]);
   });
@@ -138,5 +140,51 @@ describe("OrgMembersPage admin gate", () => {
 
     expect(await screen.findByText("a@example.com")).toBeInTheDocument();
     expect(screen.queryByText(/Couldn't load invitations/)).not.toBeInTheDocument();
+  });
+
+  describe("invite form (admin)", () => {
+    beforeEach(() => {
+      mineMock.mockResolvedValue([{ org_login: "acme", role: "admin" }]);
+    });
+
+    it("keeps Send invite disabled until an email is typed", async () => {
+      renderPage();
+      const send = await screen.findByRole("button", { name: /send invite/i });
+      expect(send).toBeDisabled();
+
+      fireEvent.change(screen.getByLabelText("Email"), { target: { value: "a@example.com" } });
+      expect(send).toBeEnabled();
+    });
+
+    it("sends the invite on click, shows the shareable link and clears the field", async () => {
+      createMock.mockResolvedValue({ invitation: { id: 1 }, invite_link: "https://app/invite/tok" });
+      renderPage();
+      fireEvent.change(await screen.findByLabelText("Email"), { target: { value: " a@example.com " } });
+      fireEvent.click(screen.getByRole("button", { name: /send invite/i }));
+
+      expect(await screen.findByText("https://app/invite/tok")).toBeInTheDocument();
+      expect(createMock).toHaveBeenCalledWith("acme", "a@example.com");
+      expect(screen.getByLabelText("Email")).toHaveValue("");
+    });
+
+    it("sends the invite when Enter is pressed in the email field", async () => {
+      createMock.mockResolvedValue({ invitation: { id: 1 }, invite_link: "https://app/invite/enter" });
+      renderPage();
+      const input = await screen.findByLabelText("Email");
+      fireEvent.change(input, { target: { value: "b@example.com" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(await screen.findByText("https://app/invite/enter")).toBeInTheDocument();
+      expect(createMock).toHaveBeenCalledWith("acme", "b@example.com");
+    });
+
+    it("shows the API's message when the invite fails", async () => {
+      createMock.mockRejectedValue(new Error("User is already a member"));
+      renderPage();
+      fireEvent.change(await screen.findByLabelText("Email"), { target: { value: "c@example.com" } });
+      fireEvent.click(screen.getByRole("button", { name: /send invite/i }));
+
+      expect(await screen.findByText("User is already a member")).toBeInTheDocument();
+    });
   });
 });
