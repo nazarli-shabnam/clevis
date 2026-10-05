@@ -4,6 +4,7 @@ Before, logout only cleared the cookie, so a copied bearer token stayed valid fo
 life. Session JWTs now carry a ``jti`` that logout denylists until the token's own ``exp``.
 """
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import jwt
 import pytest
@@ -244,3 +245,24 @@ def test_logout_with_the_same_token_in_header_and_cookie_stores_one_row(client, 
     assert client.post("/auth/logout", headers=both).status_code == 200
 
     assert db.query(RevokedToken).count() == 1
+
+
+def test_a_database_failure_still_clears_the_cookie_and_reports_503(client, owner_token, caplog):
+    cookie = {"Cookie": f"{SESSION_COOKIE_NAME}={owner_token}"}
+
+    with patch("src.routers.auth.revoke_presented_tokens", side_effect=RuntimeError("db down")):
+        resp = client.post("/auth/logout", headers=cookie)
+
+    assert resp.status_code == 503
+    assert "could not be revoked" in resp.json()["detail"]
+    set_cookie = resp.headers.get("set-cookie", "")
+    assert SESSION_COOKIE_NAME in set_cookie and ("Max-Age=0" in set_cookie or "expires=" in set_cookie.lower())
+    assert "could not revoke" in caplog.text
+
+
+def test_a_failed_revocation_leaves_the_bearer_token_honestly_unrevoked(client, owner_token):
+    with patch("src.routers.auth.revoke_presented_tokens", side_effect=RuntimeError("db down")):
+        client.post("/auth/logout", headers=_bearer(owner_token))
+
+    # Not revoked, which is why the client is told (503) rather than shown a success.
+    assert client.get("/auth/me", headers=_bearer(owner_token)).status_code == 200

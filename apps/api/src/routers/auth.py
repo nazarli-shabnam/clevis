@@ -11,6 +11,7 @@ import secrets
 
 import bcrypt
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy import func, text
@@ -318,9 +319,23 @@ def logout(
     """End this session: revoke the presented JWT(s) server-side and clear the httpOnly cookie.
 
     Both the Bearer token and the session cookie are revoked when present. A copied token stops working immediately; the user's other sessions are untouched (use
-    ``/me/revoke-sessions`` to end them all). Always succeeds, even without a valid token.
+    ``/me/revoke-sessions`` to end them all). Succeeds even without a valid token; if the denylist
+    write fails it still clears the cookie but answers 503.
     """
-    revoke_presented_tokens(db, credentials.credentials if credentials else None, session)
+    try:
+        revoke_presented_tokens(db, credentials.credentials if credentials else None, session)
+    except Exception:
+        # The denylist is unreachable. Still delete the cookie -- otherwise an unrevoked cookie would
+        # sign the browser back in once the DB recovers -- and say so, so the client warns the user that
+        # the server-side session may still be live. (An HTTPException would drop the cookie header.)
+        logger.exception("logout could not revoke the presented session token(s)")
+        db.rollback()
+        failed = JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"detail": "Signed out locally, but the session could not be revoked on the server. Try again."},
+        )
+        clear_session_cookie(failed)
+        return failed
     clear_session_cookie(response)
     return {"ok": True}
 
