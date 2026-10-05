@@ -132,6 +132,21 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
     expect(JSON.parse(runInit.body as string)).toEqual({ repos: ["acme/api"], dry_run: true, token: undefined });
   });
 
+  it("GET/PUTs the org's badge setting", async () => {
+    stubOkJson({ enabled: false });
+    await api.orgs.badge("acme");
+    const [getUrl, getInit] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(getUrl).toContain("/orgs/acme/badge");
+    expect(getInit.method).toBeUndefined();
+
+    stubOkJson({ enabled: true });
+    await api.orgs.setBadge("acme", true);
+    const [putUrl, putInit] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(putUrl).toContain("/orgs/acme/badge");
+    expect(putInit.method).toBe("PUT");
+    expect(JSON.parse(putInit.body as string)).toEqual({ enabled: true });
+  });
+
   it("builds the analytics.exportHistory URL with only owner when no window is given", async () => {
     stubOkJson({ truncated: false, row_count: 0, entries: [] });
     await api.analytics.exportHistory("acme corp");
