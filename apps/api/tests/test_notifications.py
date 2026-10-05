@@ -133,6 +133,12 @@ def test_post_connects_to_the_pinned_ip_but_verifies_and_names_the_hostname():
     assert kwargs["extensions"] == {"sni_hostname": "hooks.slack.com"}
 
 
+def test_pin_prefers_ipv4_over_an_earlier_ipv6_record():
+    infos = [(socket.AF_INET6, 1, 6, "", ("2001:4860::1", 443, 0, 0)), (socket.AF_INET, 1, 6, "", ("8.8.8.8", 443))]
+    with patch("src.services.notifications.socket.getaddrinfo", return_value=infos):
+        assert notifications._resolve_public_ip(HOOK) == "8.8.8.8"
+
+
 def test_post_brackets_ipv6_pins():
     client_cm = _client_cm(200)
     with patch("src.services.notifications.httpx.Client", return_value=client_cm):

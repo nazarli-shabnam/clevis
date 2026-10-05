@@ -64,7 +64,8 @@ def _resolve_public_ip(url: str) -> str:
         ip = ipaddress.ip_address(info[4][0])
         if not ip.is_global or ip.is_multicast:
             raise UnsafeDestinationURL("destination host must resolve to a public address")
-    return infos[0][4][0]
+    # Pin to one address, so prefer IPv4: a host without IPv6 routing can't fall back to another record.
+    return next((i[4][0] for i in infos if i[0] == socket.AF_INET), infos[0][4][0])
 
 
 def validate_destination_url(url: str) -> None:
