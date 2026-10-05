@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { CircleNotch } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
+import { SectionError } from "@/components/section-error"
 import { api } from "@/lib/api/client"
 import type { DependabotTriageResponse } from "@/lib/api/types"
 
@@ -61,6 +63,12 @@ export function DependabotTriageCard({ org, owner, repo, token }: Props) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: settingKey }),
   })
 
+  // The saved setting could not be read and nothing has ever loaded (403 for a non-admin, 404 for an
+  // org Clevis doesn't know, a network error). The form below would show invented defaults
+  // (disabled / approve_only) as if they were the real setting, and Save would write them over it.
+  const loadFailed = ready && current.isError && !current.data
+  const loading = ready && current.isLoading
+
   // A real run uses the *saved* setting server-side, so the run button reflects the saved
   // setting and is blocked while the form has unsaved changes.
   const saved = current.data
@@ -90,6 +98,19 @@ export function DependabotTriageCard({ org, owner, repo, token }: Props) {
         </p>
       </div>
 
+      {loadFailed ? (
+        <SectionError
+          message={`Couldn't load the saved setting: ${
+            current.error instanceof Error ? current.error.message : "request failed"
+          }`}
+          onRetry={() => current.refetch()}
+          retrying={current.isFetching}
+        />
+      ) : loading ? (
+        <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
+          <CircleNotch className="size-3.5 animate-spin" /> Loading the saved setting…
+        </div>
+      ) : (
       <div className="p-4 flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-4 text-xs">
           <label className="flex items-center gap-1.5">
@@ -196,6 +217,7 @@ export function DependabotTriageCard({ org, owner, repo, token }: Props) {
           </div>
         )}
       </div>
+      )}
     </div>
   )
 }

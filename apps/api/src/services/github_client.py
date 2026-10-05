@@ -111,5 +111,6 @@ def list_owner_repos(client: "GitHubClient", owner: str, account_type: str) -> l
         return client.request_paginated("/installation/repositories", items_key="repositories")
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code in (401, 403):
-            return client.request_paginated("/user/repos", params={"affiliation": "owner", "type": "all", "sort": "pushed"})
+            # `type` is mutually exclusive with `affiliation` on this endpoint (GitHub answers 422).
+            return client.request_paginated("/user/repos", params={"affiliation": "owner", "sort": "pushed"})
         raise

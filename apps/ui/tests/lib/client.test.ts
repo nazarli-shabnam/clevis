@@ -871,3 +871,36 @@ describe("api.auth email verification (issue #217)", () => {
     expect(result).toEqual({ ok: true, already_verified: false });
   });
 });
+
+describe("analytics.history", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function stubStatus(status: number, body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status }))),
+    );
+  }
+
+  it("treats the API's 403 (no scans or installation for this owner) as an empty history", async () => {
+    stubStatus(403, { detail: "You don't have access to this owner's scan history" });
+
+    await expect(api.analytics.history("never-scanned")).resolves.toEqual([]);
+  });
+
+  it("still rejects, with the API's message, on other failures", async () => {
+    stubStatus(500, { detail: "database unavailable" });
+
+    await expect(api.analytics.history("acme")).rejects.toThrow("database unavailable");
+  });
+
+  it("returns the rows on success", async () => {
+    const rows = [{ id: 1, owner: "acme", score: 70, total_checks: 2, failed_checks: 1, created_at: "2026-07-10T00:00:00Z" }];
+    stubStatus(200, rows);
+
+    await expect(api.analytics.history("acme")).resolves.toEqual(rows);
+  });
+});

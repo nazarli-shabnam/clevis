@@ -10,6 +10,12 @@ export function membersHref(memberships: MyOrgMembership[], scope: ActiveScope |
   return target ? `/settings/org/${encodeURIComponent(target.org_login)}/members` : "/settings"
 }
 
+// The caller's role in `owner`'s org, or null when they have no Clevis membership there (a personal
+// account, an org Clevis hasn't connected, or one they don't belong to). Case-insensitive, like GitHub logins.
+export function orgRoleFor(memberships: MyOrgMembership[], owner: string): MyOrgMembership["role"] | null {
+  return memberships.find((x) => x.org_login.toLowerCase() === owner.toLowerCase())?.role ?? null
+}
+
 // True when the caller is a plain (non-admin) member of `owner`'s org, so org-admin-only
 // actions (Fix this, File as issue, nudges) would just 403. Unknown owners stay allowed:
 // the API may still accept a caller-supplied token for an org Clevis hasn't connected.

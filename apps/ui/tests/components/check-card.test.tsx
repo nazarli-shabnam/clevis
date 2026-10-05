@@ -33,6 +33,14 @@ describe("CheckCard", () => {
     cleanup();
   });
 
+  it("renders a severity the UI doesn't know about, as plain text", () => {
+    render(<CheckCard check={{ ...baseCheck, severity: "critical" }} />);
+
+    const chip = screen.getByText("critical");
+    expect(chip).toBeInTheDocument();
+    expect(chip.className).toContain("text-muted-foreground");
+  });
+
   it("renders a passing check with its boolean value", () => {
     render(<CheckCard check={baseCheck} />);
 

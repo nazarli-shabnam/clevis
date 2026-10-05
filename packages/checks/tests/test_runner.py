@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 
+from checks.github_checks import PaginationTruncatedError
 from checks.runner import run_all_checks
 
 
@@ -57,15 +58,16 @@ def test_run_all_checks_passes_repos_to_checks():
 
     with (
         patch("checks.runner._get_all_pages", return_value=sentinel),
-        patch("checks.github_checks._get_all_pages") as mock_check_pages,
+        patch("checks.github_checks._get_all_pages", return_value=[]) as mock_check_pages,
         patch("checks.github_checks._get") as mock_get,
     ):
         mock_get.return_value = FAKE_ORG
 
         run_all_checks(owner="acme", token="tok")
 
-    # _get_all_pages inside github_checks must NOT be called (repos passed in)
-    mock_check_pages.assert_not_called()
+    # The repo list must not be re-fetched inside the checks (repos passed in). The alert checks do
+    # page through each repo's own alerts, so only the org repo-list path is forbidden.
+    assert [c.args[1] for c in mock_check_pages.call_args_list if c.args[1] == "/orgs/acme/repos"] == []
 
 
 def test_run_all_checks_personal_account_uses_installation_repos():
@@ -97,7 +99,9 @@ def test_run_all_checks_personal_account_falls_back_to_user_repos_on_auth_mismat
     def fake_pages(base_url, path, token, items_key=None):
         if path == "/installation/repositories":
             raise forbidden
-        assert path == "/user/repos?affiliation=owner&type=all"
+        # GitHub rejects `type` together with `affiliation` (422), so the fallback must not send it.
+        assert path == "/user/repos?affiliation=owner"
+        assert "type=" not in path
         return FAKE_REPOS
 
     with (
@@ -119,3 +123,32 @@ def test_archived_repos_are_excluded():
     ):
         result = run_all_checks(owner="acme", token="tok")
     assert result["repo_count"] == 2
+
+
+def test_a_truncated_ruleset_listing_errors_that_check_instead_of_passing_it():
+    """A repo whose rules overflow the page cap must come out as "error", never a false "pass"."""
+    def pages(base_url, path, token, items_key=None):
+        if "/rules/branches/" in path:
+            raise PaginationTruncatedError(path, [])
+        return []
+
+    def fake_get(url, token):
+        if "/protection" in url:
+            return {"allow_force_pushes": {"enabled": True}}  # classic protection allows force pushes
+        if "/branches/" in url:
+            return FAKE_BRANCH
+        return FAKE_ORG if "/repos/" not in url else []
+
+    with (
+        patch("checks.runner._get_all_pages", return_value=FAKE_REPOS),
+        patch("checks.github_checks._get_all_pages", side_effect=pages),
+        patch("checks.github_checks._get", side_effect=fake_get),
+    ):
+        result = run_all_checks(owner="acme", token="tok")
+
+    force_push = next(c for c in result["checks"] if c["id"] == "repository_default_branch_no_force_push")
+    assert force_push["status"] == "error"
+    assert force_push["value"] == "Check failed: repository_default_branch_no_force_push"
+    # An unrelated check in the same run is not dragged down with it.
+    mfa = next(c for c in result["checks"] if c["id"] == "organization_members_mfa_required")
+    assert mfa["status"] == "pass"

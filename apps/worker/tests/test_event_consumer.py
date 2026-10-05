@@ -899,6 +899,83 @@ def test_organization_event_db_error_still_releases_the_tenant_lock(pg_conn, ten
         other_conn.close()
 
 
+def _visible_to_another_connection(sql: str, params: tuple, tenant_id: int):
+    """Run a read on a fresh connection, so it only sees what was actually committed."""
+    other_conn = psycopg.connect(_DB_URL, autocommit=True)
+    try:
+        with other_conn.cursor() as cur:
+            cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+            cur.execute(sql, params)
+            return cur.fetchone()
+    finally:
+        other_conn.close()
+
+
+def _tenant_lock_is_free(tenant_id: int) -> bool:
+    other_conn = psycopg.connect(_DB_URL, autocommit=True)
+    try:
+        with other_conn.cursor() as cur:
+            cur.execute("SELECT pg_try_advisory_lock(hashtext(%s), %s)", ("org_membership_reconcile", tenant_id))
+            acquired = cur.fetchone()[0]
+            if acquired:
+                cur.execute("SELECT pg_advisory_unlock(hashtext(%s), %s)", ("org_membership_reconcile", tenant_id))
+            return acquired
+    finally:
+        other_conn.close()
+
+
+def test_member_event_non_db_error_after_a_write_rolls_back_instead_of_committing_it(pg_conn, tenant_id, monkeypatch):
+    # release_tenant_lock commits. A non-psycopg error raised after the write must be rolled back
+    # first, or the lock release commits a half-applied event that is then reprocessed on top.
+    conn, state = pg_conn
+    real_upsert = event_consumer.org_membership_store.upsert_repo_collaborator
+
+    def _write_then_fail(*args, **kwargs):
+        real_upsert(*args, **kwargs)
+        raise KeyError("simulated bug after the write")
+
+    monkeypatch.setattr(event_consumer.org_membership_store, "upsert_repo_collaborator", _write_then_fail)
+    payload = {"action": "added", "repository": {"full_name": "acme/rollback-widgets"}, "member": {"login": "rollback-octocat"}}
+    row_id = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-member-nondb-1", event_type="member", payload=payload)
+
+    redis_client = _FakeRedis()
+    with pytest.raises(KeyError):
+        event_consumer._process_entry(conn, redis_client, "1-0", _entry_fields(row_id, "member", tenant_id))
+
+    assert redis_client.acked == []  # left pending, so it is retried
+    assert _visible_to_another_connection(
+        "SELECT 1 FROM repo_collaborators WHERE tenant_id = %s AND repo = %s AND login = %s",
+        (tenant_id, "acme/rollback-widgets", "rollback-octocat"),
+        tenant_id,
+    ) is None
+    status = _visible_to_another_connection("SELECT status FROM webhook_deliveries WHERE id = %s", (row_id,), tenant_id)
+    assert status[0] == "queued"
+    assert _tenant_lock_is_free(tenant_id)
+
+
+def test_organization_event_non_db_error_after_a_write_rolls_back_instead_of_committing_it(pg_conn, tenant_id, monkeypatch):
+    conn, state = pg_conn
+    real_upsert = event_consumer.org_membership_store.upsert_org_member
+
+    def _write_then_fail(*args, **kwargs):
+        real_upsert(*args, **kwargs)
+        raise TypeError("simulated bug after the write")
+
+    monkeypatch.setattr(event_consumer.org_membership_store, "upsert_org_member", _write_then_fail)
+    payload = {"action": "member_added", "membership": {"role": "member", "user": {"login": "rollback-hubot", "avatar_url": ""}}}
+    row_id = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-org-nondb-1", event_type="organization", payload=payload)
+
+    redis_client = _FakeRedis()
+    with pytest.raises(TypeError):
+        event_consumer._process_entry(conn, redis_client, "1-0", _entry_fields(row_id, "organization", tenant_id))
+
+    assert redis_client.acked == []
+    assert _visible_to_another_connection(
+        "SELECT 1 FROM org_members WHERE tenant_id = %s AND login = %s", (tenant_id, "rollback-hubot"), tenant_id
+    ) is None
+    assert _tenant_lock_is_free(tenant_id)
+
+
 def test_process_entry_drops_malformed_json_payload(pg_conn, tenant_id):
     conn, state = pg_conn
     with conn.cursor() as cur:

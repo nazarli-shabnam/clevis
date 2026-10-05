@@ -1,15 +1,24 @@
-import logging
 import time
 
 import httpx
 
 from checks.base import Check, CheckMetadata
 
-logger = logging.getLogger(__name__)
-
-# Page cap (5,000 items at per_page=100) so a huge org can't OOM the api process;
-# truncating with a warning degrades completeness instead of crashing the scan.
+# Page cap (5,000 items at per_page=100) so a huge org can't OOM the api process. Hitting it raises
+# PaginationTruncatedError rather than returning a partial list: a check scored over part of the
+# data would report "pass" for resources it never looked at.
 _MAX_PAGES = 50
+
+
+class PaginationTruncatedError(RuntimeError):
+    """More pages remained after _MAX_PAGES. The affected check reports "error" (counted against the
+    score) instead of a false "pass". `results` holds what was fetched, for a caller that can
+    tolerate a partial list."""
+
+    def __init__(self, path: str, results: list):
+        super().__init__(f"pagination for {path} exceeded {_MAX_PAGES} pages ({len(results)} items fetched)")
+        self.path = path
+        self.results = results
 
 
 def _is_secondary_rate_limit(r: httpx.Response) -> bool:
@@ -102,13 +111,7 @@ def _get_all_pages(base_url: str, path: str, token: str, items_key: str | None =
                 if 'rel="next"' in part:
                     url = part.split(";")[0].strip().strip("<>")
             if url and pages_fetched >= _MAX_PAGES:
-                logger.warning(
-                    "Truncating pagination for %s after %d pages (%d items) -- more pages were available",
-                    path,
-                    pages_fetched,
-                    len(results),
-                )
-                break
+                raise PaginationTruncatedError(path, results)
     return results
 
 
@@ -151,6 +154,7 @@ class OrgMFARequired(Check):
         severity="high",
         remediation="Require two-factor authentication for all org members in org settings.",
     )
+    requires_repos = False  # org-level: reads /orgs/{owner}, never the repo list
 
     def run(
         self,
@@ -282,8 +286,10 @@ class DependabotAlertsCheck(Check):
         disabled = 0
         for repo in repos:
             try:
-                alerts = _get(
-                    f"{base_url}/repos/{owner}/{repo['name']}/dependabot/alerts?state=open", token
+                # Paginated: GitHub returns 30 alerts per page by default, and counts past page 1
+                # would otherwise be dropped (a repo with 30+ low alerts hides its criticals).
+                alerts = _get_all_pages(
+                    base_url, f"/repos/{owner}/{repo['name']}/dependabot/alerts?state=open", token
                 )
             except httpx.HTTPStatusError as exc:
                 # 404 = alerts disabled (a real "no alerts"). 403 = missing scope, so the
@@ -340,8 +346,8 @@ class CodeScanningCheck(Check):
         disabled = 0
         for repo in repos:
             try:
-                alerts = _get(
-                    f"{base_url}/repos/{owner}/{repo['name']}/code-scanning/alerts?state=open", token
+                alerts = _get_all_pages(
+                    base_url, f"/repos/{owner}/{repo['name']}/code-scanning/alerts?state=open", token
                 )
             except httpx.HTTPStatusError as exc:
                 # 404 = code scanning not enabled (a real "no alerts"). 403 = no access,

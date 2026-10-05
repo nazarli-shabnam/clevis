@@ -83,6 +83,13 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Re
   }
 }
 
+// An Error that also carries the HTTP status, so a caller can treat one specific status as data.
+class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message)
+  }
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   const json = await res.json().catch(() => null)
   if (res.status === 401) {
@@ -90,7 +97,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
     if (typeof window !== "undefined") localStorage.removeItem(_TOKEN_KEY)
     window.dispatchEvent(new Event("clevis:unauthorized"))
   }
-  if (!res.ok) throw new Error((json as { detail?: string } | null)?.detail ?? `Request failed: ${res.status}`)
+  if (!res.ok) throw new ApiError((json as { detail?: string } | null)?.detail ?? `Request failed: ${res.status}`, res.status)
   return json as T
 }
 
@@ -201,8 +208,15 @@ export const api = {
         checks: data.checks.map((c) => ({ ...c, value: normalizeCheckValue(c.id, c.value) })),
       }
     },
+    // The API answers 403 when the caller has no scans or installation for this owner -- the normal
+    // never-scanned state, not a failure -- so that reads as an empty history.
     history: (owner: string) =>
-      get<AnalyticsHistoryResponse>(`/me/analytics/history?owner=${encodeURIComponent(owner)}`),
+      get<AnalyticsHistoryResponse>(`/me/analytics/history?owner=${encodeURIComponent(owner)}`).catch(
+        (err: unknown) => {
+          if (err instanceof ApiError && err.status === 403) return []
+          throw err
+        },
+      ),
     // Admin-only; needs an App permission not requested by default, so a missing-permission
     // 403 comes back as a 400 (the Overview card hides itself on error).
     actionsUsage: (org: string, token?: string) =>

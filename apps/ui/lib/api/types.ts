@@ -28,7 +28,9 @@ export type CheckValue = MFACheckValue | RatioCheckValue | SeverityCountsValue |
 export interface CheckResult {
   id: string
   title: string
-  severity: "high" | "medium" | "low"
+  // The API keeps severity open-ended (a future check may emit e.g. "critical"), so the known
+  // values stay for autocomplete but an unknown one is still a valid, renderable value.
+  severity: "high" | "medium" | "low" | (string & {})
   remediation: string
   // Hygiene checks: shown, but excluded from the score unless the instance opts in.
   informational?: boolean
@@ -335,9 +337,10 @@ export interface InvitationOut {
   id: number
   org_id: number
   email: string
-  status: "pending" | "accepted" | "revoked"
+  status: "pending" | "accepted" | "revoked" | "expired"
   created_at: string
   accepted_at: string | null
+  expires_at: string
 }
 
 export interface InvitationCreateResponse {
