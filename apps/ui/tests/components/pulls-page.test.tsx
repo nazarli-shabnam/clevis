@@ -143,6 +143,26 @@ describe("PullRequestsPage", () => {
     renderPage();
 
     expect(await screen.findByText(/Still shows up/)).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/1 repository could not be loaded \(api\)/);
+  });
+
+  it("shows an error, not 'No open pull requests', when every repo's fetch fails", async () => {
+    localStorage.setItem("default_org", "acme");
+    reposListMock.mockResolvedValue({
+      org: "acme",
+      total: 2,
+      repos: [
+        { name: "api", full_name: "acme/api", private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: "https://github.com/acme/api" },
+        { name: "web", full_name: "acme/web", private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: "https://github.com/acme/web" },
+      ],
+    });
+    reposPullsMock.mockRejectedValue(new Error("Bad credentials"));
+
+    renderPage();
+
+    expect(await screen.findByText("Bad credentials")).toBeInTheDocument();
+    expect(screen.queryByText("No open pull requests")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
   });
 
   it("shows an error with retry when the repo list fails to load", async () => {
