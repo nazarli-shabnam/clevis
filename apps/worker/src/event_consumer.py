@@ -330,9 +330,11 @@ def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry
             pg_conn.commit()
             redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
             return
-        except psycopg.Error:
-            # Roll back before release_tenant_lock: pg_advisory_unlock on an aborted
-            # transaction would fail and leak the lock. Re-raised for the caller's handling.
+        except BaseException:
+            # Any failure, not just psycopg.Error, must roll back before release_tenant_lock:
+            # that call commits, so a KeyError/TypeError raised after a write would otherwise
+            # commit the partial write. For a DB error it also avoids pg_advisory_unlock failing
+            # on an aborted transaction and leaking the lock. Re-raised for the caller's handling.
             pg_conn.rollback()
             raise
         finally:
