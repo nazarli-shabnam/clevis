@@ -4,6 +4,7 @@ Before, logout only cleared the cookie, so a copied bearer token stayed valid fo
 life. Session JWTs now carry a ``jti`` that logout denylists until the token's own ``exp``.
 """
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from unittest.mock import patch
 
 import jwt
@@ -67,6 +68,20 @@ def _claims(token: str) -> dict:
 def _encode(**claims) -> str:
     """Sign custom claims with the configured test secret."""
     return jwt.encode(claims, settings.auth_secret.get_secret_value(), algorithm="HS256")
+
+
+def _assert_session_cookie_deleted(response) -> None:
+    """The session cookie is present and already expired (Max-Age=0, or an Expires in the past)."""
+    set_cookie = response.headers.get("set-cookie", "")
+    assert SESSION_COOKIE_NAME in set_cookie
+    if "Max-Age=0" in set_cookie:
+        return
+    expires = next(
+        (part.split("=", 1)[1].strip() for part in set_cookie.split(";") if part.strip().lower().startswith("expires=")),
+        None,
+    )
+    assert expires is not None, f"cookie is not being deleted: {set_cookie!r}"
+    assert parsedate_to_datetime(expires) < datetime.now(timezone.utc)
 
 
 def test_every_issued_token_carries_a_unique_jti():
@@ -255,9 +270,29 @@ def test_a_database_failure_still_clears_the_cookie_and_reports_503(client, owne
 
     assert resp.status_code == 503
     assert "could not be revoked" in resp.json()["detail"]
-    set_cookie = resp.headers.get("set-cookie", "")
-    assert SESSION_COOKIE_NAME in set_cookie and ("Max-Age=0" in set_cookie or "expires=" in set_cookie.lower())
+    _assert_session_cookie_deleted(resp)
     assert "could not revoke" in caplog.text
+
+
+def test_the_cookie_is_still_cleared_when_the_rollback_after_a_failed_revocation_also_fails(client, owner_token, db):
+    cookie = {"Cookie": f"{SESSION_COOKIE_NAME}={owner_token}"}
+
+    with (
+        patch("src.routers.auth.revoke_presented_tokens", side_effect=RuntimeError("db down")),
+        patch.object(db, "rollback", side_effect=RuntimeError("connection is gone")),
+    ):
+        resp = client.post("/auth/logout", headers=cookie)
+
+    assert resp.status_code == 503
+    _assert_session_cookie_deleted(resp)
+
+
+def test_the_cookie_deletion_helper_rejects_a_future_expiry():
+    class _Resp:
+        headers = {"set-cookie": f"{SESSION_COOKIE_NAME}=; Expires=Wed, 01 Jan 2031 00:00:00 GMT; Path=/"}
+
+    with pytest.raises(AssertionError):
+        _assert_session_cookie_deleted(_Resp())
 
 
 def test_a_failed_revocation_leaves_the_bearer_token_honestly_unrevoked(client, owner_token):
