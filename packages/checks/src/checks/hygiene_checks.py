@@ -33,6 +33,10 @@ _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 # Key under which one scan's per-repo tree lookup is memoized on the repo dict the runner shares
 # between checks, so CODEOWNERS/SECURITY.md/workflows cost one tree request per repo, not three.
 _TREE_KEY = "_hygiene_paths"
+# Set on the repo dict by a check that had to look at only part of a repo (e.g. only some branches), so
+# `run` can report `sampled` for it the same way it does when only some repos were inspected.
+_PARTIAL_KEY = "_hygiene_partial"
+_BRANCHES_PAGE_SIZE = 100
 
 
 def _now() -> datetime:
@@ -104,7 +108,7 @@ class _PerRepoCheck(Check):
             "checked": len(evaluable),
             "missing": missing,
             "unknown": unknown,
-            "sampled": 1 if len(active) > _MAX_REPOS else 0,
+            "sampled": 1 if len(active) > _MAX_REPOS or any(r.get(_PARTIAL_KEY) for r in sample) else 0,
         }
         extra_total = sum(extra for _, extra in evaluable)
         if extra_total:
@@ -180,18 +184,25 @@ class StaleBranches(_PerRepoCheck):
     extra_label = "stale_branches"
 
     def _inspect(self, base_url, owner, repo, token):
-        branches = _gh._get(f"{base_url}/repos/{owner}/{repo['name']}/branches?per_page=100", token)
+        branches = _gh._get(
+            f"{base_url}/repos/{owner}/{repo['name']}/branches?per_page={_BRANCHES_PAGE_SIZE}", token
+        )
         # Protected branches (release lines, etc.) are deliberately long-lived.
-        candidates = [
-            b for b in branches if b.get("name") != repo.get("default_branch") and not b.get("protected")
-        ][:_MAX_BRANCH_LOOKUPS]
+        candidates = [b for b in branches if b.get("name") != repo.get("default_branch") and not b.get("protected")]
+        # Each branch costs a commit lookup, so only some are checked; say so when others were left out
+        # (a full first page means there may be more branches than we even listed).
+        if len(candidates) > _MAX_BRANCH_LOOKUPS or len(branches) >= _BRANCHES_PAGE_SIZE:
+            repo[_PARTIAL_KEY] = True
         cutoff = _now() - timedelta(days=STALE_DAYS)
         stale = 0
-        for b in candidates:
+        for b in candidates[:_MAX_BRANCH_LOOKUPS]:
             commit = _gh._get(f"{base_url}/repos/{owner}/{repo['name']}/commits/{b['commit']['sha']}", token)
             when = ((commit.get("commit") or {}).get("committer") or {}).get("date")
-            if when and datetime.fromisoformat(when.replace("Z", "+00:00")) < cutoff:
-                stale += 1
+            try:
+                if when and datetime.fromisoformat(when.replace("Z", "+00:00")) < cutoff:
+                    stale += 1
+            except ValueError:
+                continue  # one unparsable date must not make the whole check unknown
         return stale == 0, stale
 
 
