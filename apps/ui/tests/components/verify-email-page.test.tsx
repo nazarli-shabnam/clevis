@@ -38,6 +38,9 @@ describe("VerifyEmailPage", () => {
 
     await screen.findByText(/your email is verified/i);
     expect(verifyEmailMock).toHaveBeenCalledWith("good-token");
+    // A logged-in user landing here from the email has no shell/sidebar, so the page must lead back.
+    expect(screen.getByRole("link", { name: "Continue" })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("main")).toBeInTheDocument();
   });
 
   it("shows the server's error message when verification fails", async () => {
@@ -47,6 +50,7 @@ describe("VerifyEmailPage", () => {
     render(<VerifyEmailPage />);
 
     await screen.findByText(/invalid or expired verification link/i);
+    expect(screen.getByRole("link", { name: "Back to Clevis" })).toHaveAttribute("href", "/");
   });
 
   it("shows an error immediately when the URL has no token", async () => {

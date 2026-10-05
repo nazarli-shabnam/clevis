@@ -23,9 +23,10 @@ export function ShellRouter({ children }: { children: React.ReactNode }) {
             <Breadcrumb />
           </div>
         </header>
-        <main className="flex-1 p-5">
+        {/* SidebarInset already renders the page's <main>; a second one would nest landmarks. */}
+        <div className="flex-1 p-5">
           {children}
-        </main>
+        </div>
       </SidebarInset>
     </SidebarProvider>
   )

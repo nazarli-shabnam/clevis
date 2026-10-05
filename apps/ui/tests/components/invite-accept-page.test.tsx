@@ -98,6 +98,15 @@ describe("InviteAcceptPage", () => {
     vi.restoreAllMocks();
   });
 
+  it("owns a main landmark, including for an invalid invitation (public routes render outside the shell)", async () => {
+    previewMock.mockRejectedValue(new Error("Invitation not found"));
+
+    renderPage();
+
+    expect(await screen.findByText("Invitation not found")).toBeInTheDocument();
+    expect(screen.getByRole("main")).toBeInTheDocument();
+  });
+
   it("shows a resend-verification button when accept fails because the email isn't verified", async () => {
     previewMock.mockResolvedValue({ org_login: "acme", status: "pending" });
     acceptMock.mockRejectedValue(new Error("Verify your email before accepting this invitation"));

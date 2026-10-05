@@ -61,7 +61,7 @@ export default function SetupPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center px-4">
+    <main className="min-h-screen bg-background flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8">
           <p className="text-[0.6875rem] font-medium text-muted-foreground uppercase tracking-[0.12em] mb-1">
@@ -128,6 +128,6 @@ export default function SetupPage() {
           </Button>
         </form>
       </div>
-    </div>
+    </main>
   )
 }
