@@ -61,6 +61,12 @@ describe("RegisterPage", () => {
     vi.restoreAllMocks();
   });
 
+  it("renders inside a main landmark (public routes get no shell <main>)", () => {
+    renderPage();
+
+    expect(screen.getByRole("main")).toBeInTheDocument();
+  });
+
   it("carries pending_invitations from the register response into the auth context", async () => {
     registerMock.mockResolvedValue({
       access_token: "a.b.c",

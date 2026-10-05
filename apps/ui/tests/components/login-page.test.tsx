@@ -56,6 +56,13 @@ describe("LoginPage GitHub OAuth button", () => {
     vi.restoreAllMocks();
   });
 
+  it("renders inside a main landmark (public routes get no shell <main>)", async () => {
+    renderPage();
+
+    await screen.findByRole("button", { name: /sign in with github/i });
+    expect(screen.getByRole("main")).toBeInTheDocument();
+  });
+
   it("appends the current next param to the GitHub OAuth login URL", async () => {
     searchParams = new URLSearchParams({ next: "/invite/abc123" });
     renderPage();
