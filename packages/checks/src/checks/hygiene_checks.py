@@ -1,7 +1,7 @@
 """Repository-hygiene checks: CODEOWNERS, SECURITY.md, license, stale branches, unpinned Actions.
 
-All informational (`CheckMetadata.informational`): they show up next to the security checks but
-don't affect the score unless the instance opts in (see `analytics_service`).
+All informational (`CheckMetadata.informational`): they don't affect the score unless the instance
+opts in, and `analytics_service` only runs them at all when it will score them (see `run_all_checks`).
 
 Scan cost is bounded: only the `_MAX_REPOS` most recently pushed active repos are inspected
 (`sampled` in the result says when that cut repos off), each repo's file tree is fetched once and
@@ -20,9 +20,9 @@ import httpx
 from checks.base import Check, CheckMetadata
 from checks import github_checks as _gh
 
-_MAX_REPOS = 30
-_MAX_BRANCH_LOOKUPS = 10
-_MAX_WORKFLOW_FILES = 10
+_MAX_REPOS = 15
+_MAX_BRANCH_LOOKUPS = 5
+_MAX_WORKFLOW_FILES = 5
 _WORKERS = 8
 STALE_DAYS = 90
 # Actions from these owners are treated as first-party (still worth pinning, but not "third-party").

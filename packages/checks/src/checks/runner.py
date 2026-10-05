@@ -10,6 +10,7 @@ from checks.github_checks import (
     OrgMFARequired,
     SecretScanningEnabled,
     _get_all_pages,
+    shared_client,
 )
 from checks.hygiene_checks import HYGIENE_CHECKS
 
@@ -34,8 +35,21 @@ def _fetch_repos(base_url: str, owner: str, token: str, account_type: str) -> li
 
 
 def run_all_checks(
-    owner: str, token: str, base_url: str = "https://api.github.com", account_type: str = "Organization"
+    owner: str,
+    token: str,
+    base_url: str = "https://api.github.com",
+    account_type: str = "Organization",
+    include_hygiene: bool = True,
 ) -> dict:
+    """Run every check and return the per-check results.
+
+    `include_hygiene=False` skips the repo-hygiene checks entirely: they are the expensive ones
+    (a tree, branch and file lookups per repo), so callers that wouldn't score them shouldn't pay."""
+    with shared_client():
+        return _run_checks(owner, token, base_url, account_type, include_hygiene)
+
+
+def _run_checks(owner: str, token: str, base_url: str, account_type: str, include_hygiene: bool) -> dict:
     checks = [
         OrgMFARequired(),
         BranchProtectionEnabled(),
@@ -43,7 +57,7 @@ def run_all_checks(
         DependabotAlertsCheck(),
         CodeScanningCheck(),
         DefaultBranchNoForcePushCheck(),
-        *(cls() for cls in HYGIENE_CHECKS),
+        *(cls() for cls in HYGIENE_CHECKS if include_hygiene),
     ]
 
     # The prefetch feeds the per-repo checks. If it fails they degrade to per-check "error" results,

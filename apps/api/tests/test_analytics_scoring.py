@@ -96,3 +96,13 @@ def test_informational_checks_do_not_affect_the_score_unless_opted_in():
     assert (on["score"], on["total_checks"], on["failed_checks"]) == (50, 2, 1)
     assert [c["scored"] for c in off["checks"]] == [True, False]
     assert [c["scored"] for c in on["checks"]] == [True, True]
+
+
+def test_overview_only_runs_hygiene_checks_when_they_are_scored():
+    report = {"checks": [{"status": "pass"}], "repo_count": 1}
+    for configured, expected in (("false", False), ("true", True)):
+        with patch("src.services.analytics_service.get_config", return_value=configured), patch(
+            "src.services.analytics_service.run_all_checks", return_value=report
+        ) as run:
+            get_overview(owner="acme", token="tok")
+        assert run.call_args.kwargs["include_hygiene"] is expected

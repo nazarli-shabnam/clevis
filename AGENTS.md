@@ -9,7 +9,7 @@ Clevis is a GitHub analytics dashboard with three independently deployable servi
 - **`apps/api`** — FastAPI REST backend (Python). Handles auth (password + GitHub OAuth), org/membership management, analytics, RBAC, and job enqueueing. Uses SQLAlchemy 2 + Alembic against PostgreSQL.
 - **`apps/worker`** — Standalone Python process. Polls the `jobs` table using `SELECT … FOR UPDATE SKIP LOCKED` and calls the GitHub API to execute background tasks — three job types are registered in `JOB_HANDLERS` (`apps/worker/src/worker.py`): clearing Actions caches, backfilling repo events, and reconciling org membership. Uses raw psycopg3, not SQLAlchemy. A background thread (`_JobHeartbeat`) touches `jobs.heartbeat_at` every ~10s while a handler runs, so `_reclaim_stale_jobs` can tell a slow-but-alive job apart from a crashed one.
 - **`apps/ui`** — Next.js 15 / React 19 frontend. Uses TanStack Query for data fetching, Tailwind v4, Base UI primitives, shadcn components.
-- **`packages/checks`** — `clevis-checks` Python package. Defines `Check` base class and six GitHub security checks (org MFA enforcement, branch protection, secret scanning, Dependabot alerts, code scanning alerts, default-branch force-push protection) plus five informational repo-hygiene checks (`hygiene_checks.py`; excluded from the score unless `score_hygiene_checks` is on). Must be installed editable for `import checks` to work.
+- **`packages/checks`** — `clevis-checks` Python package. Defines `Check` base class and six GitHub security checks (org MFA enforcement, branch protection, secret scanning, Dependabot alerts, code scanning alerts, default-branch force-push protection) plus five informational repo-hygiene checks (`hygiene_checks.py`; not run at all, so not scored or shown, unless `score_hygiene_checks` is on). Must be installed editable for `import checks` to work.
 
 ### Database models (`apps/api/src/core/db.py`)
 
@@ -116,7 +116,7 @@ Key variables:
 - `digest_poll_seconds` / `digest_cadence` — the scheduled leadership-digest loop's poll interval and send cadence.
 - `webhook_requeue_poll_seconds` — how often the sweep re-enqueues `webhook_deliveries` rows stuck at `status='queue_failed'`.
 - `dependabot_sla_critical_days` / `dependabot_sla_high_days` — defaults `7` / `30`; the SLA windows the Dependabot burn-down (`GET /orgs/{org}/security/dependabot-burndown`, UI `/security/burndown`) measures open critical/high alerts against.
-- `score_hygiene_checks` — default `false`; when `true`, the informational repo-hygiene checks (CODEOWNERS, SECURITY.md, license, stale branches, unpinned Actions; `packages/checks/src/checks/hygiene_checks.py`) count toward the security score, otherwise they are shown but excluded.
+- `score_hygiene_checks` — default `false`; when `true`, the informational repo-hygiene checks (CODEOWNERS, SECURITY.md, license, stale branches, unpinned Actions; `packages/checks/src/checks/hygiene_checks.py`) are run and count toward the security score; otherwise they are skipped entirely (they cost hundreds of GitHub calls per scan).
 
 The full accepted-key list lives in `apps/api/src/core/app_config.py`'s `_ACCEPTED_KEYS` — treat that as the source of truth over this doc if they ever drift.
 

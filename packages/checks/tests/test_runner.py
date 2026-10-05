@@ -152,3 +152,18 @@ def test_a_truncated_ruleset_listing_errors_that_check_instead_of_passing_it():
     # An unrelated check in the same run is not dragged down with it.
     mfa = next(c for c in result["checks"] if c["id"] == "organization_members_mfa_required")
     assert mfa["status"] == "pass"
+
+
+def test_run_all_checks_skips_hygiene_checks_when_excluded():
+    from checks.hygiene_checks import HYGIENE_CHECKS
+
+    hygiene_ids = {cls.metadata.check_id for cls in HYGIENE_CHECKS}
+    with patch("checks.runner._fetch_repos", return_value=[]), patch("checks.github_checks._get_all_pages", return_value=[]), patch(
+        "checks.github_checks._get", return_value={}
+    ):
+        with_hygiene = run_all_checks(owner="acme", token="tok")
+        without = run_all_checks(owner="acme", token="tok", include_hygiene=False)
+
+    assert hygiene_ids <= {c["id"] for c in with_hygiene["checks"]}
+    assert not hygiene_ids & {c["id"] for c in without["checks"]}
+    assert len(without["checks"]) == 6

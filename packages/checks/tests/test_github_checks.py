@@ -731,3 +731,36 @@ def test_empty_repo_without_a_default_branch_is_skipped_by_branch_checks():
         protection = BranchProtectionEnabled().run(owner="acme", token="tok", repos=repos)
     assert force["value"]["force_push_allowed"] == 0
     assert protection["value"]["protected"] == 0 and protection["status"] == "error"
+
+
+def test_shared_client_is_reused_across_gets_and_closed_afterwards():
+    from checks import github_checks as gh
+
+    created = []
+
+    class FakeClient:
+        def __init__(self, **_):
+            created.append(self)
+            self.closed = False
+
+        def get(self, url, headers):
+            return httpx.Response(200, json={}, request=httpx.Request("GET", url))
+
+        def close(self):
+            self.closed = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            self.close()
+
+    with patch("checks.github_checks.httpx.Client", FakeClient):
+        with gh.shared_client():
+            with gh.shared_client():  # nested scopes share the one pool
+                gh._get("https://api.github.com/a", "t")
+            assert not created[0].closed
+            gh._get("https://api.github.com/b", "t")
+        assert len(created) == 1 and created[0].closed
+        gh._get("https://api.github.com/c", "t")  # outside a scope: its own throwaway client
+        assert len(created) == 2

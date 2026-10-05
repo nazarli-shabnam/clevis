@@ -1,4 +1,6 @@
+import threading
 import time
+from contextlib import contextmanager
 
 import httpx
 
@@ -73,13 +75,41 @@ def _get_with_retry(client: httpx.Client, url: str, headers: dict) -> httpx.Resp
     raise RuntimeError("request loop exhausted without returning")
 
 
+_shared_lock = threading.Lock()
+_shared_client: httpx.Client | None = None
+_shared_refs = 0
+
+
+@contextmanager
+def shared_client():
+    """Reuse one connection pool for every `_get` made inside the block (nestable, thread-safe).
+
+    Without it each `_get` opens and tears down its own client, which costs a TLS handshake per call."""
+    global _shared_client, _shared_refs
+    with _shared_lock:
+        if _shared_refs == 0:
+            _shared_client = httpx.Client(timeout=20)
+        _shared_refs += 1
+        client = _shared_client
+    try:
+        yield client
+    finally:
+        with _shared_lock:
+            _shared_refs -= 1
+            if _shared_refs == 0 and _shared_client is not None:
+                _shared_client.close()
+                _shared_client = None
+
+
 def _get(url: str, token: str) -> dict | list:
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
-    with httpx.Client(timeout=20) as client:
+    # Borrowing through shared_client() (rather than reading the global) pins the client open for the
+    # call; outside any outer scope this degrades to one throwaway client per call, as before.
+    with shared_client() as client:
         r = _get_with_retry(client, url, headers)
     r.raise_for_status()
     return r.json()
