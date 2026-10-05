@@ -27,6 +27,7 @@ vi.mock("@/lib/api/client", () => ({
     tokens: {
       resolve: vi.fn().mockRejectedValue(new Error("no saved token")),
     },
+    orgs: { mine: vi.fn().mockResolvedValue([{ org_login: "acme", role: "admin" }]) },
   },
 }));
 

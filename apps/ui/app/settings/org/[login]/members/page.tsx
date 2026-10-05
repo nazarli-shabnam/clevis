@@ -11,7 +11,9 @@ import { CircleNotch, EnvelopeSimple, Warning, X } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { addRevokingId, isRevoking, removeRevokingId } from "@/lib/revoke-pending"
 import { relativeTime } from "@/lib/format"
-import type { GithubOrgMember, InvitationOut } from "@/lib/api/types"
+import { orgRoleFor } from "@/lib/members-href"
+import { SectionError } from "@/components/section-error"
+import type { GithubOrgMember, InvitationOut, MyOrgMembership } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
 
 const MEMBER_COLUMNS: DataTableColumn<GithubOrgMember>[] = [
@@ -410,10 +412,24 @@ export default function OrgMembersPage() {
   const [email, setEmail] = useState("")
   const [lastLink, setLastLink] = useState<string | null>(null)
 
-  const { data: invitations = [], isLoading } = useQuery<InvitationOut[]>({
+  // Inviting and revoking are admin-only on the API. Look up the caller's role so a plain member
+  // gets an explanation instead of a form that can only 403. If the lookup itself fails, don't
+  // guess: show the admin UI and let the API's verdict surface through its own error states.
+  const membershipsQuery = useQuery<MyOrgMembership[]>({
+    queryKey: ["my-orgs"],
+    queryFn: () => api.orgs.mine(),
+  })
+  const rolePending = membershipsQuery.isLoading
+  const role = membershipsQuery.data ? orgRoleFor(membershipsQuery.data, orgLogin) : undefined
+  const notAdmin = role !== undefined && role !== "admin"
+
+  const invitationsQuery = useQuery<InvitationOut[]>({
     queryKey: ["invitations", orgLogin],
     queryFn: () => api.invitations.list(orgLogin),
+    enabled: !rolePending && !notAdmin,
   })
+  const invitations = invitationsQuery.data ?? []
+  const isLoading = invitationsQuery.isLoading
 
   const [revokingIds, setRevokingIds] = useState<Set<number>>(() => new Set())
 
@@ -445,90 +461,112 @@ export default function OrgMembersPage() {
     <>
       <PageHeader title="Members" description={`Manage who can access ${orgLogin} in Clevis.`} />
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="card">
-          <div className="px-4 py-3 border-b border-border">
-            <span className="section-title">Invite a member</span>
-          </div>
-          <div className="p-4 flex flex-col gap-3">
-            <div>
-              <label htmlFor="invite-email" className="text-xs font-medium text-foreground block mb-1.5">Email</label>
-              <Input
-                id="invite-email"
-                placeholder="teammate@example.com"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && email && !invite.isPending && invite.mutate()}
-              />
+      {rolePending ? (
+        <div className="card px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
+          <CircleNotch className="size-3.5 animate-spin" /> Checking your access…
+        </div>
+      ) : notAdmin ? (
+        <div className="card px-4 py-4">
+          <span className="section-title">Invitations</span>
+          <p className="text-xs text-muted-foreground mt-1">
+            {role === "member"
+              ? `Inviting people to ${orgLogin} in Clevis is limited to organization admins. You're a member, not an admin.`
+              : `Inviting people to ${orgLogin} in Clevis needs an admin membership, and you don't have one for this organization.`}
+          </p>
+        </div>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-3">
+          <div className="card">
+            <div className="px-4 py-3 border-b border-border">
+              <span className="section-title">Invite a member</span>
             </div>
-            <Button onClick={() => invite.mutate()} disabled={invite.isPending || !email}>
-              <EnvelopeSimple className="size-3.5" />
-              {invite.isPending ? "Inviting…" : "Send invite"}
-            </Button>
-            {invite.isError && <p className="text-xs text-destructive">{invite.error.message}</p>}
-            {lastLink && (
-              <div className="text-xs text-muted-foreground break-all bg-muted/30 border border-border/50 rounded-md p-2">
-                Share this link — no email is sent automatically:
-                <div className="font-mono text-foreground/80 mt-1">{lastLink}</div>
+            <div className="p-4 flex flex-col gap-3">
+              <div>
+                <label htmlFor="invite-email" className="text-xs font-medium text-foreground block mb-1.5">Email</label>
+                <Input
+                  id="invite-email"
+                  placeholder="teammate@example.com"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && email && !invite.isPending && invite.mutate()}
+                />
+              </div>
+              <Button onClick={() => invite.mutate()} disabled={invite.isPending || !email}>
+                <EnvelopeSimple className="size-3.5" />
+                {invite.isPending ? "Inviting…" : "Send invite"}
+              </Button>
+              {invite.isError && <p className="text-xs text-destructive">{invite.error.message}</p>}
+              {lastLink && (
+                <div className="text-xs text-muted-foreground break-all bg-muted/30 border border-border/50 rounded-md p-2">
+                  Share this link — no email is sent automatically:
+                  <div className="font-mono text-foreground/80 mt-1">{lastLink}</div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="card lg:col-span-2">
+            <div className="px-4 py-3 border-b border-border">
+              <span className="section-title">Clevis workspace invitations</span>
+            </div>
+            {isLoading ? (
+              <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
+                <CircleNotch className="size-3.5 animate-spin" /> Loading…
+              </div>
+            ) : invitationsQuery.isError && !invitationsQuery.data ? (
+              // Distinct from "No invitations yet" -- a failed load (e.g. a 403) must not read as empty.
+              <SectionError
+                message={`Couldn't load invitations: ${invitationsQuery.error.message}`}
+                onRetry={() => invitationsQuery.refetch()}
+                retrying={invitationsQuery.isFetching}
+              />
+            ) : invitations.length === 0 ? (
+              <div className="px-4 py-8">
+                <p className="text-sm text-muted-foreground">No invitations yet</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left text-muted-foreground font-medium px-4 py-2">Email</th>
+                      <th className="text-left text-muted-foreground font-medium px-4 py-2">Status</th>
+                      <th className="text-right text-muted-foreground font-medium px-4 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {invitations.map((inv) => (
+                      <tr key={inv.id}>
+                        <td className="px-4 py-2.5 text-foreground/80">
+                          {inv.email}
+                          {revokeErrors[inv.id] && (
+                            <p role="alert" className="mt-1 text-xs text-destructive">{revokeErrors[inv.id]}</p>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{inv.status}</td>
+                        <td className="px-4 py-2.5 text-right">
+                          {inv.status === "pending" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => revoke.mutate(inv.id)}
+                              disabled={isRevoking(revokingIds, inv.id)}
+                            >
+                              <X className="size-3" />
+                              Revoke
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
         </div>
-
-        <div className="card lg:col-span-2">
-          <div className="px-4 py-3 border-b border-border">
-            <span className="section-title">Clevis workspace invitations</span>
-          </div>
-          {isLoading ? (
-            <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
-              <CircleNotch className="size-3.5 animate-spin" /> Loading…
-            </div>
-          ) : invitations.length === 0 ? (
-            <div className="px-4 py-8">
-              <p className="text-sm text-muted-foreground">No invitations yet</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="text-left text-muted-foreground font-medium px-4 py-2">Email</th>
-                    <th className="text-left text-muted-foreground font-medium px-4 py-2">Status</th>
-                    <th className="text-right text-muted-foreground font-medium px-4 py-2" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {invitations.map((inv) => (
-                    <tr key={inv.id}>
-                      <td className="px-4 py-2.5 text-foreground/80">
-                        {inv.email}
-                        {revokeErrors[inv.id] && (
-                          <p role="alert" className="mt-1 text-xs text-destructive">{revokeErrors[inv.id]}</p>
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5 text-muted-foreground">{inv.status}</td>
-                      <td className="px-4 py-2.5 text-right">
-                        {inv.status === "pending" && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => revoke.mutate(inv.id)}
-                            disabled={isRevoking(revokingIds, inv.id)}
-                          >
-                            <X className="size-3" />
-                            Revoke
-                          </Button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
+      )}
 
       <div className="mt-4">
         <GithubRoster orgLogin={orgLogin} />
