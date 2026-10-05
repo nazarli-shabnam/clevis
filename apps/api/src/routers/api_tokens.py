@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from src.core.api_token_auth import require_api_token
+from src.core.api_token_auth import require_scope
 from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
 from src.core.rbac import OrgContext, require_org_role
@@ -48,13 +48,25 @@ def create_token(
     active = [t for t in api_token_repo.list_for_tenant(db, ctx.org.tenant_id) if t.revoked_at is None]
     if len(active) >= _MAX_TOKENS_PER_ORG:
         raise HTTPException(status_code=409, detail=f"At most {_MAX_TOKENS_PER_ORG} active tokens per organization")
-    row, token = api_token_repo.create(db, tenant_id=ctx.org.tenant_id, name=body.name, created_by=user.email)
+    row, token = api_token_repo.create(
+        db,
+        tenant_id=ctx.org.tenant_id,
+        name=body.name,
+        created_by=user.email,
+        expires_in_days=body.expires_in_days,
+    )
     audit_repo.write(
         db,
         actor=user.email,
         action="api_token.created",
         target=ctx.org.github_login,
-        payload={"token_id": row.id, "name": body.name, "prefix": row.prefix, "scope": row.scope},
+        payload={
+            "token_id": row.id,
+            "name": body.name,
+            "prefix": row.prefix,
+            "scope": row.scope,
+            "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+        },
         tenant_id=ctx.org.tenant_id,
         commit=False,
     )
@@ -111,7 +123,7 @@ def _own_org(org_login: str, token: ResolvedToken) -> None:
 
 
 @router.get("/api/v1/orgs/{org_login}/score", response_model=ScoreOut)
-def latest_score(org_login: str, token: ResolvedToken = Depends(require_api_token), db: Session = Depends(get_db)):
+def latest_score(org_login: str, token: ResolvedToken = Depends(require_scope("read")), db: Session = Depends(get_db)):
     _own_org(org_login, token)
     scan = scan_results_repo.latest_with_checks(db, token.org_login, token.tenant_id)
     if scan is None:
@@ -127,7 +139,7 @@ class _Ctx:
 
 
 @router.post("/api/v1/orgs/{org_login}/scan", response_model=ScoreOut)
-async def run_scan(org_login: str, token: ResolvedToken = Depends(require_api_token), db: Session = Depends(get_db)):
+async def run_scan(org_login: str, token: ResolvedToken = Depends(require_scope("read")), db: Session = Depends(get_db)):
     _own_org(org_login, token)
     try:
         github_token = await anyio.to_thread.run_sync(
@@ -137,14 +149,29 @@ async def run_scan(org_login: str, token: ResolvedToken = Depends(require_api_to
         raise HTTPException(status_code=400, detail=str(exc))
     result = await _run_overview(token.org_login, github_token)
 
+    # Attributes the scan, and any alert it triggers, to this token rather than to "system".
+    actor = f"api_token:{token.token_id}"
+
     # One thread for the whole DB sequence: a Session is not safe to share between threads at once,
     # and these steps depend on each other anyway.
     def _record_and_notify() -> dict:
         previous = scan_results_repo.list_recent(db, token.org_login, limit=1, tenant_id=token.tenant_id)
         _persist_scan(db, result, tenant_id=token.tenant_id)
+        audit_repo.write(
+            db,
+            actor=actor,
+            action="api_token.scan",
+            target=token.org_login,
+            payload={
+                "token_id": token.token_id,
+                "score": result["score"],
+                "previous_score": previous[0]["score"] if previous else None,
+            },
+            tenant_id=token.tenant_id,
+        )
         if previous:
             org = org_repo.get_by_id(db, token.org_id)
-            _notify_score_drop_best_effort(db, _Ctx(org), previous[0]["score"], result["score"])
+            _notify_score_drop_best_effort(db, _Ctx(org), previous[0]["score"], result["score"], actor=actor)
         return scan_results_repo.latest_with_checks(db, token.org_login, token.tenant_id)
 
     scan = await anyio.to_thread.run_sync(_record_and_notify)

@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import urllib.request
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -277,3 +278,73 @@ def test_action_never_sends_the_token_over_plain_http_or_to_a_redirect_target(ca
     handler = check._NoRedirect()
     assert handler.redirect_request(req, None, 302, "Found", {}, "https://evil.example.com/") is None
     assert "clv_secret" not in capsys.readouterr().err
+
+
+# --- scope, expiry, last_used throttle, scan attribution ---
+
+def test_token_with_an_unrecognised_scope_is_rejected_by_machine_endpoints(db, acme):
+    token = _new_token(db, acme)
+    _scan(db, acme["org"])
+    db.execute(text("UPDATE api_tokens SET scope = 'write'"))
+
+    machine = _client(db)
+    assert machine.get("/api/v1/orgs/acme/score", headers=_bearer(token)).status_code == 403
+    assert machine.post("/api/v1/orgs/acme/scan", headers=_bearer(token)).status_code == 403
+
+
+def test_expiring_token_works_until_it_expires_and_never_expires_by_default(db, acme):
+    admin = _client(db, acme["admin"])
+    expiring = admin.post("/orgs/acme/api-tokens", json={"name": "short", "expires_in_days": 7}).json()
+    forever = admin.post("/orgs/acme/api-tokens", json={"name": "forever"}).json()
+    assert expiring["expires_at"] is not None and forever["expires_at"] is None
+    _scan(db, acme["org"])
+    machine = _client(db)
+    assert machine.get("/api/v1/orgs/acme/score", headers=_bearer(expiring["token"])).status_code == 200
+
+    db.execute(text("UPDATE api_tokens SET expires_at = now() - interval '1 second' WHERE id = :id"), {"id": expiring["id"]})
+
+    assert machine.get("/api/v1/orgs/acme/score", headers=_bearer(expiring["token"])).status_code == 401
+    assert machine.get("/api/v1/orgs/acme/score", headers=_bearer(forever["token"])).status_code == 200
+
+
+@pytest.mark.parametrize("days", [0, -1, 3651])
+def test_expires_in_days_must_be_within_bounds(db, acme, days):
+    resp = _client(db, acme["admin"]).post("/orgs/acme/api-tokens", json={"name": "ci", "expires_in_days": days})
+    assert resp.status_code == 422
+
+
+def test_last_used_at_is_written_at_most_once_a_minute(db, acme):
+    token = _new_token(db, acme)
+    _scan(db, acme["org"])
+    machine = _client(db)
+    machine.get("/api/v1/orgs/acme/score", headers=_bearer(token))
+    first = db.query(ApiToken).one().last_used_at
+    assert first is not None
+
+    machine.get("/api/v1/orgs/acme/score", headers=_bearer(token))
+    db.expire_all()
+    assert db.query(ApiToken).one().last_used_at == first  # within the minute: not rewritten
+
+    db.execute(text("UPDATE api_tokens SET last_used_at = now() - interval '2 minutes'"))
+    machine.get("/api/v1/orgs/acme/score", headers=_bearer(token))
+    db.expire_all()
+    assert db.query(ApiToken).one().last_used_at > first - timedelta(minutes=1)
+
+
+def test_scan_is_audited_under_the_token_and_so_are_its_alerts(db, acme):
+    token = _new_token(db, acme)
+    token_id = db.query(ApiToken).one().id
+    _scan(db, acme["org"], score=90)
+    overview = {"owner": "acme", "score": 60, "total_checks": 2, "failed_checks": 1, "repo_count": 3, "checks": CHECKS}
+    with (
+        patch("src.routers.api_tokens.resolve_org_token", return_value="ghs_x"),
+        patch("src.routers.analytics.get_overview", return_value=overview),
+        patch("src.routers.analytics.notifications.notify_score_drop") as notify,
+    ):
+        resp = _client(db).post("/api/v1/orgs/acme/scan", headers=_bearer(token))
+
+    assert resp.status_code == 200
+    entry = db.query(AuditLog).filter(AuditLog.action == "api_token.scan").one()
+    assert entry.actor == f"api_token:{token_id}"
+    assert json.loads(entry.payload) == {"token_id": token_id, "score": 60, "previous_score": 90}
+    assert notify.call_args.kwargs["actor"] == f"api_token:{token_id}"
