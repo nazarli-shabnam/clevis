@@ -225,6 +225,30 @@ describe("AuthProvider logoutWarning", () => {
     vi.restoreAllMocks();
   });
 
+  it("presents the stored bearer token to /auth/logout so the server can revoke it", async () => {
+    const jwt = makeJwt(passwordUser.id, passwordUser.email);
+    localStorage.setItem(TOKEN_KEY, jwt);
+    stubFetch(() => Promise.resolve(new Response(null, { status: 204 })));
+
+    /** Supply session state to the hook under test. */
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <AuthProvider>{children}</AuthProvider>
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    await act(async () => {
+      result.current.logout();
+    });
+
+    const logoutCall = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.find(([url]) =>
+      String(url).endsWith("/auth/logout"),
+    );
+    expect(logoutCall).toBeDefined();
+    expect((logoutCall![1] as RequestInit).headers).toEqual({ Authorization: `Bearer ${jwt}` });
+    expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
+  });
+
   it("sets logoutWarning when the /auth/logout network call rejects", async () => {
     stubFetch(() => Promise.reject(new Error("network down")));
 

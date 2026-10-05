@@ -10,14 +10,24 @@ import logging
 import secrets
 
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.app_config import get_config
-from src.core.auth import SETUP_LOCK_KEY, UserOut, clear_session_cookie, create_access_token, require_auth
+from src.core.auth import (
+    SESSION_COOKIE_NAME,
+    SETUP_LOCK_KEY,
+    UserOut,
+    clear_session_cookie,
+    create_access_token,
+    require_auth,
+    revoke_presented_tokens,
+)
 from src.core.config import settings
 from src.core.db import Org, User, get_db, set_session_user
 from src.core.rate_limit import check_account_rate_limit, rate_limit
@@ -296,9 +306,36 @@ def resend_verification(
     return {"ok": True}
 
 
+_http_bearer = HTTPBearer(auto_error=False)
+
+
 @router.post("/logout")
-def logout(response: Response):
-    """Clear the httpOnly session cookie. Bearer-token clients also drop their local token."""
+def logout(
+    response: Response,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+    session: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+    db: Session = Depends(get_db),
+):
+    """End this session: revoke the presented JWT(s) server-side and clear the httpOnly cookie.
+
+    Both the Bearer token and the session cookie are revoked when present. A copied token stops working immediately; the user's other sessions are untouched (use
+    ``/me/revoke-sessions`` to end them all). Succeeds even without a valid token; if the denylist
+    write fails it still clears the cookie but answers 503.
+    """
+    try:
+        revoke_presented_tokens(db, credentials.credentials if credentials else None, session)
+    except Exception:
+        # The denylist is unreachable. Still delete the cookie -- otherwise an unrevoked cookie would
+        # sign the browser back in once the DB recovers -- and say so, so the client warns the user that
+        # the server-side session may still be live. (An HTTPException would drop the cookie header.)
+        logger.exception("logout could not revoke the presented session token(s)")
+        db.rollback()
+        failed = JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"detail": "Signed out locally, but the session could not be revoked on the server. Try again."},
+        )
+        clear_session_cookie(failed)
+        return failed
     clear_session_cookie(response)
     return {"ok": True}
 

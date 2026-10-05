@@ -489,6 +489,21 @@ class ApiToken(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class RevokedToken(Base):
+    """A session JWT that was logged out before it expired, keyed by its ``jti`` or legacy fingerprint.
+
+    Not tenant data (no RLS): require_auth checks it before any tenant context exists. Rows are only
+    needed until the token's own ``exp`` and are purged opportunistically on logout.
+    """
+
+    __tablename__ = "revoked_tokens"
+    __table_args__ = (Index("ix_revoked_tokens_expires_at", "expires_at"),)
+
+    jti: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 # Pool sizing. require_auth opens a transaction at the start of every request, so a connection stays
 # checked out for the whole request, including slow GitHub calls; the default 5 + 10 overflow and a
 # 30s checkout wait let ~15 concurrent proxying requests starve everything else for half a minute.

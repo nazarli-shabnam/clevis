@@ -1,18 +1,23 @@
 """JWT helpers and FastAPI auth dependencies (org-scoped roles live in src/core/rbac.py).
 
-require_auth checks token_version against the DB on every request so revoked sessions end immediately.
+require_auth checks token_version (log out everywhere) and the per-token ``jti`` denylist (single-session
+logout) against the DB on every request so revoked sessions end immediately.
 """
 
+import hashlib
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import jwt
 from fastapi import Cookie, Depends, HTTPException, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
+from sqlalchemy import delete
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from src.core.config import settings
-from src.core.db import User, get_db, set_session_user
+from src.core.db import RevokedToken, User, get_db, set_session_user
 
 _ALGORITHM = "HS256"
 _TOKEN_EXPIRE_DAYS = 30
@@ -62,12 +67,15 @@ class UserOut(BaseModel):
 def create_access_token(
     user_id: int, email: str, is_workspace_admin: bool, name: str | None = None, token_version: int = 0
 ) -> str:
+    """Issue a session JWT with a unique identity for individual logout revocation."""
     payload = {
         "sub": str(user_id),
         "email": email,
         "is_workspace_admin": is_workspace_admin,
         "name": name,
         "token_version": token_version,
+        # Unique per token so logout can revoke this one session without touching the user's others.
+        "jti": uuid.uuid4().hex,
         "exp": datetime.now(timezone.utc) + timedelta(days=_TOKEN_EXPIRE_DAYS),
     }
     return jwt.encode(payload, settings.auth_secret.get_secret_value(), algorithm=_ALGORITHM)
@@ -110,6 +118,8 @@ def require_auth(
     db_user = db.query(User).filter(User.id == user_id).first()
     if db_user is None or db_user.token_version != payload.get("token_version", 0):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked")
+    if db.get(RevokedToken, _revocation_key(token, payload)) is not None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked")
     # Set app.user_id for RLS self-access checks on routes that never resolve a tenant
     # (see migration 0031).
     set_session_user(db, user_id)
@@ -122,6 +132,48 @@ def require_auth(
         is_workspace_admin=db_user.is_workspace_admin,
         github_login=db_user.github_login,
     )
+
+
+def _revocation_key(token: str, payload: dict) -> str:
+    """Return a verified JWT's jti, or a namespaced fingerprint for a legacy token.
+
+    Hash only the signed header and payload so equivalent encodings of the signature
+    cannot bypass revocation. Callers must verify the JWT before using this key.
+    """
+    return payload.get("jti") or "legacy:" + hashlib.sha256(token.rsplit(".", 1)[0].encode()).hexdigest()
+
+
+def revoke_presented_tokens(db: Session, *tokens: str | None) -> None:
+    """Denylist each session JWT in ``tokens`` until its own expiry (single-session logout).
+
+    Logout passes both the Bearer token and the session cookie: a browser can hold two different
+    sessions (e.g. a stale localStorage token after a GitHub OAuth login), and ending only the one
+    ``require_auth`` happens to prefer would leave the other alive.
+
+    Tokens issued before ``jti`` existed are keyed by a fingerprint of their signed content.
+    A missing, malformed, badly signed or already-expired token, and a user that no longer
+    exists are all no-ops. Expired denylist rows are purged here since they can no longer matter.
+    """
+    revoked_any = False
+    for token in dict.fromkeys(t for t in tokens if t):
+        try:
+            payload = jwt.decode(token, settings.auth_secret.get_secret_value(), algorithms=[_ALGORITHM])
+            jti = _revocation_key(token, payload)
+            user_id = int(payload["sub"])
+            expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+        except (jwt.InvalidTokenError, KeyError, ValueError, TypeError):
+            continue
+        if db.get(User, user_id) is None:
+            continue
+        db.execute(
+            pg_insert(RevokedToken)
+            .values(jti=jti, user_id=user_id, expires_at=expires_at)
+            .on_conflict_do_nothing(index_elements=["jti"])
+        )
+        revoked_any = True
+    if revoked_any:
+        db.execute(delete(RevokedToken).where(RevokedToken.expires_at < datetime.now(timezone.utc)))
+        db.commit()
 
 
 def require_workspace_admin(user: UserOut = Depends(require_auth)) -> UserOut:
