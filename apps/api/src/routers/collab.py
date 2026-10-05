@@ -499,5 +499,5 @@ def inactive_members(
         sampled_repos=[f"{org_login}/{r}" for r in sampled_repos],
         members=inactive,
         members_total=members_total,
-        members_checked=len(members_raw),
+        members_checked=sum(1 for _, _, verified in results if verified),
     )

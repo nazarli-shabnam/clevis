@@ -417,3 +417,41 @@ def test_inactive_members_live_path_caps_members_checked(client):
     assert body["members_checked"] == _MAX_MEMBERS_FOR_LIVE_ACTIVITY
     assert len(body["members"]) == _MAX_MEMBERS_FOR_LIVE_ACTIVITY
     assert request_calls <= _MAX_MEMBERS_FOR_LIVE_ACTIVITY * _MAX_REPOS_SAMPLED_FOR_ACTIVITY
+
+
+def test_inactive_members_live_path_counts_only_verified_members_as_checked(client):
+    def _paginated_side_effect(path, params=None):
+        if path == "/orgs/acme/members" and params == {"role": "admin"}:
+            return []
+        if path == "/orgs/acme/members":
+            return [{"login": "alice", "avatar_url": ""}, {"login": "bob", "avatar_url": ""}]
+        if path == "/orgs/acme/repos":
+            return [{"name": "api"}]
+        return []
+
+    def _request(method, path, params=None):
+        if params and params.get("author") == "bob":
+            raise httpx.RequestError("boom")
+        return []
+
+    with patch("src.routers.collab.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.side_effect = _paginated_side_effect
+        mock_client.return_value.request.side_effect = _request
+        resp = client.get("/github/orgs/acme/inactive-members?days=30", headers={"X-GitHub-Token": "ghp_test"})
+
+    body = resp.json()
+    assert [m["login"] for m in body["members"]] == ["alice"]  # bob's lookup failed: unknown, not inactive
+    assert body["members_total"] == 2 and body["members_checked"] == 1
+
+
+def test_inactive_members_ingested_path_leaves_live_coverage_fields_unset(db, acme_org_with_installation):
+    _seed_both_cursors(db, acme_org_with_installation.tenant_id)
+    _insert_org_member(db, acme_org_with_installation.tenant_id, login="alice", role="member")
+    app = FastAPI()
+    app.include_router(collab_router)
+    app.dependency_overrides[require_auth] = lambda: _ADMIN
+    app.dependency_overrides[get_db] = lambda: db
+
+    body = TestClient(app).get("/github/orgs/acme/inactive-members?days=30").json()
+
+    assert body["members_total"] is None and body["members_checked"] is None
