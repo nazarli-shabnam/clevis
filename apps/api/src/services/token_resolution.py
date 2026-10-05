@@ -79,7 +79,15 @@ def _no_token_error(account_login: str, installation_exists: bool, *, personal: 
     )
 
 
-def resolve_org_token(db: Session, *, org_id: int, account_login: str, client_token: str | None) -> str:
+def resolve_org_token(
+    db: Session, *, org_id: int, account_login: str, client_token: str | None, allow_client_token: bool = True
+) -> str:
+    """Installation token first; else the caller's own token.
+
+    `allow_client_token=False` refuses that fallback with InsufficientOrgRole (callers map it to 403)
+    instead of silently using a token the caller isn't trusted to supply: a client token is attacker-
+    chosen input, so for an action whose result is stored and shown org-wide (a scan) only admins may
+    supply one. An installation token is never affected by this flag."""
     installation = (
         installation_repo.get_for_org(db, org_id=org_id, account_login=account_login)
         if _github_app_configured()
@@ -89,6 +97,11 @@ def resolve_org_token(db: Session, *, org_id: int, account_login: str, client_to
     if token:
         return token
     if client_token:
+        if not allow_client_token:
+            raise InsufficientOrgRole(
+                f"Only admins of '{account_login}' can supply their own GitHub token for this action. "
+                "Connect the GitHub App for the organization, or ask an admin."
+            )
         return client_token
     raise _no_token_error(account_login, installation is not None, personal=False)
 
@@ -133,6 +146,7 @@ def resolve_owner_token(
     owner: str,
     client_token: str | None,
     min_role: Literal["member", "admin"] = "member",
+    client_token_min_role: Literal["member", "admin"] = "member",
 ) -> str:
     """Resolve a token for the "/me/*" endpoints, which accept an arbitrary `owner` (not
     necessarily the caller's own account). If `owner` is a Clevis org the caller has at
@@ -149,6 +163,10 @@ def resolve_owner_token(
     But if a membership row exists below `min_role`, this raises InsufficientOrgRole
     rather than falling through -- honoring a client token there would let a "member"
     trigger an admin-only action just by pasting their own PAT.
+
+    `client_token_min_role` is the role a caller needs to have their own token honored for a Clevis org
+    they belong to (when no installation covers it); below it InsufficientOrgRole is raised. It does not
+    restrict the action itself, only which token backs it.
     """
     check_owner_role(db, user_id=user_id, owner=owner, min_role=min_role)
     org = org_repo.get_by_login_ci(db, owner)
@@ -156,5 +174,11 @@ def resolve_owner_token(
         org = org_repo.ensure_tenant_linked(db, org)
         membership = tenant_repo.get_membership(db, org.tenant_id, user_id)
         if membership is not None:
-            return resolve_org_token(db, org_id=org.id, account_login=owner, client_token=client_token)
+            return resolve_org_token(
+                db,
+                org_id=org.id,
+                account_login=owner,
+                client_token=client_token,
+                allow_client_token=_ROLE_RANK.get(membership.role, -1) >= _ROLE_RANK[client_token_min_role],
+            )
     return resolve_personal_token(db, owner_user_id=user_id, account_login=owner, client_token=client_token)

@@ -71,8 +71,11 @@ def org(db):
 
 @pytest.fixture()
 def member(db, org):
+    """The org's scanning member. An admin, because since #582 only admins may back a scan with a pasted
+    token; these tests are about *whose history* a scan lands in, which membership alone decides. How a
+    plain member is treated at the scan endpoints is covered in test_analytics."""
     user = _user(db, "member@example.com")
-    org_membership_repo.get_or_create(db, org_id=org.id, user_id=user.id, role="member")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=user.id, role="admin")
     return user
 
 
@@ -131,7 +134,7 @@ def test_a_members_scan_through_the_personal_route_is_stored_under_the_org_tenan
 def test_a_members_scan_is_stored_under_the_orgs_canonical_login_whatever_casing_they_typed(db):
     org = org_repo.get_or_create(db, github_login="Acme")
     member = _user(db, "casing@example.com")
-    org_membership_repo.get_or_create(db, org_id=org.id, user_id=member.id, role="member")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=member.id, role="admin")
     http = _client(db, member)
 
     _scan_via_personal_route(http, score=61, owner="acme")
@@ -144,7 +147,7 @@ def test_a_members_scan_is_stored_under_the_orgs_canonical_login_whatever_casing
 
 def test_another_member_sees_a_scan_a_colleague_ran_through_the_personal_route(db, org, member):
     colleague = _user(db, "colleague@example.com")
-    org_membership_repo.get_or_create(db, org_id=org.id, user_id=colleague.id, role="member")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=colleague.id, role="admin")
     _scan_via_personal_route(_client(db, colleague), score=64)
 
     assert _scores(_client(db, member).get("/orgs/acme/analytics/history").json()) == [64]
@@ -213,7 +216,7 @@ def test_a_previous_scan_stored_under_the_canonical_login_is_found_whatever_casi
 def test_a_former_member_can_still_read_the_scans_they_ran_themselves(db):
     org = org_repo.get_or_create(db, github_login="Acme")
     user = _user(db, "leaver@example.com")
-    org_membership_repo.get_or_create(db, org_id=org.id, user_id=user.id, role="member")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=user.id, role="admin")
     http = _client(db, user)
     _scan_via_personal_route(http, score=58, owner="acme")  # stored as "Acme" under the org tenant
     org_membership_repo.delete(db, org_id=org.id, user_id=user.id)

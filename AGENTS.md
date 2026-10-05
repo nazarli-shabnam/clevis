@@ -49,6 +49,8 @@ Access is enforced with JWT session auth, not an `X-Role` header:
 
 The old `viewer` / `analyst` / `admin` header model was removed in Phase 5.
 
+Scans (`POST /orgs/{org}/analytics/overview`, `POST /me/analytics/overview`) persist the org's latest score, which feeds the badge, score API and alerts, so in a PAT-only org (no App installation) only an org admin may back one with a pasted token (`resolve_org_token(allow_client_token=...)` / `resolve_owner_token(client_token_min_role="admin")`, 403 otherwise); members still scan through an installation.
+
 ### Auth & GitHub App
 
 Two sign-in paths, both issuing the same JWT session: password (`/auth/setup` for the first-run admin, `/auth/register` + `/auth/login` after that) and "Sign in with GitHub" OAuth (`apps/api/src/routers/github_auth.py`). Separately, a **GitHub App installation** (`apps/api/src/routers/installations.py`, `apps/api/src/routers/webhooks.py`) is how an org actually grants Clevis API access — installing lets the API mint short-lived per-installation tokens instead of relying on a browser-pasted PAT. `POST /webhooks/github` (HMAC-signature-verified) keeps `github_installations` in sync on install/uninstall lifecycle events, and persists the other subscribed events to `webhook_deliveries` and queues them on Redis Streams, where `apps/worker`'s event consumer normalizes them into `repo_events`, `security_alerts`, `org_members` and `repo_collaborators`.
