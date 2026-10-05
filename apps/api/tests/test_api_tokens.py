@@ -59,6 +59,18 @@ def _new_token(db, acme) -> str:
     return resp.json()["token"]
 
 
+@pytest.fixture(autouse=True)
+def _reset_badge_state():
+    from src.core import rate_limit
+    from src.routers import api_tokens
+
+    api_tokens._badge_cache.clear()
+    rate_limit._account_buckets.clear()
+    yield
+    api_tokens._badge_cache.clear()
+    rate_limit._account_buckets.clear()
+
+
 def _scan(db, org, score=80, checks=CHECKS):
     scan_results_repo.insert(
         db, owner="acme", score=score, total_checks=len(checks), failed_checks=1, checks=checks, tenant_id=org.tenant_id
@@ -199,6 +211,28 @@ def test_badge_is_opt_in_and_shows_only_the_score(db, acme):
 
     admin.put("/orgs/acme/badge", json={"enabled": False})
     assert _client(db).get("/badges/acme/score.svg").status_code == 404
+
+
+def test_badge_reads_are_cached_and_opting_out_takes_effect_at_once(db, acme):
+    _scan(db, acme["org"], score=95)
+    admin = _client(db, acme["admin"])
+    admin.put("/orgs/acme/badge", json={"enabled": True})
+    public = _client(db)
+    assert "95" in public.get("/badges/acme/score.svg").text
+
+    _scan(db, acme["org"], score=40)  # newer scan, but the cached answer is still served
+    assert "95" in public.get("/badges/acme/score.svg").text
+
+    admin.put("/orgs/acme/badge", json={"enabled": False})  # invalidates the cache entry
+    assert public.get("/badges/acme/score.svg").status_code == 404
+
+
+def test_badge_cache_misses_are_rate_limited_per_ip_not_per_org(db, acme):
+    public = _client(db)
+    codes = [public.get(f"/badges/org-{i}/score.svg").status_code for i in range(62)]
+    assert codes[:60] == [404] * 60
+    assert codes[60:] == [429, 429]  # cycling through org names doesn't dodge the limit
+    assert public.get("/badges/org-0/score.svg").status_code == 404  # cached answers stay free
 
 
 def test_badge_404s_look_identical_for_unknown_and_never_scanned_orgs(db, acme):
@@ -454,3 +488,35 @@ def test_action_score_summary_line_cannot_smuggle_a_workflow_command(capsys):
 
     out_lines = capsys.readouterr().out.splitlines()
     assert not any(line.startswith("::error::fake") for line in out_lines)
+
+
+def test_token_lookup_policy_is_tied_to_the_table_owner_not_a_settable_flag(db):
+    """A session setting like app.api_token_lookup can be set by any role, so the policy that lets
+    resolve_api_token read api_tokens under FORCE RLS must key on identity (current_user), and the
+    function must not rely on that setting."""
+    qual = db.execute(
+        text("SELECT qual FROM pg_policies WHERE tablename = 'api_tokens' AND policyname = 'token_lookup'")
+    ).scalar()
+    assert qual is not None and "current_user" in qual.lower() and "api_token_lookup" not in qual
+    body = db.execute(text("SELECT prosrc || coalesce(array_to_string(proconfig, ','), '') FROM pg_proc WHERE proname = 'resolve_api_token'")).scalar()
+    assert "api_token_lookup" not in body
+
+
+def test_a_non_owner_session_cannot_unlock_api_tokens_by_setting_the_old_lookup_flag(db):
+    if not db.execute(text("SELECT rolsuper FROM pg_roles WHERE rolname = current_user")).scalar():
+        pytest.skip("needs a superuser connection to create a throwaway role")
+    from src.repositories import org_repo
+
+    org = org_repo.get_or_create(db, github_login="lookup-flag-org")
+    api_token_repo.create(db, tenant_id=org.tenant_id, name="ci", created_by="t@e.com")
+    db.flush()
+    db.execute(text("CREATE ROLE rls_probe_reader NOSUPERUSER NOBYPASSRLS"))
+    db.execute(text("GRANT USAGE ON SCHEMA public TO rls_probe_reader"))
+    db.execute(text("GRANT SELECT ON api_tokens TO rls_probe_reader"))
+    db.execute(text("RESET app.tenant_id"))
+    db.execute(text("SET LOCAL ROLE rls_probe_reader"))
+    try:
+        db.execute(text("SET app.api_token_lookup = 'on'"))
+        assert db.execute(text("SELECT count(*) FROM api_tokens")).scalar() == 0
+    finally:
+        db.execute(text("RESET ROLE"))

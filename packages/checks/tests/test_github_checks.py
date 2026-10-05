@@ -764,3 +764,37 @@ def test_shared_client_is_reused_across_gets_and_closed_afterwards():
         assert len(created) == 1 and created[0].closed
         gh._get("https://api.github.com/c", "t")  # outside a scope: its own throwaway client
         assert len(created) == 2
+
+
+def test_get_all_pages_reuses_the_scan_client_and_still_works_outside_a_scan():
+    from checks import github_checks as gh
+
+    created = []
+
+    class FakeClient:
+        def __init__(self, **_):
+            created.append(self)
+            self.calls = 0
+
+        def get(self, url, headers):
+            self.calls += 1
+            link = '<https://x/y?page=2>; rel="next"' if self.calls % 2 == 1 else ""
+            return httpx.Response(200, json=[self.calls], headers={"Link": link}, request=httpx.Request("GET", url))
+
+        def close(self):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            self.close()
+
+    with patch("checks.github_checks.httpx.Client", FakeClient):
+        with gh.shared_client():
+            assert gh._get_all_pages("https://x", "/y", "t") == [1, 2]
+            assert gh._get_all_pages("https://x", "/z", "t") == [3, 4]
+        assert len(created) == 1  # both paginations (4 requests) went through the one scan client
+
+        assert gh._get_all_pages("https://x", "/y", "t") == [1, 2]  # outside a scan: its own client
+        assert len(created) == 2
