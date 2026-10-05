@@ -5,6 +5,7 @@ import importlib.util
 import json
 import ssl
 import urllib.request
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -56,6 +57,18 @@ def _new_token(db, acme) -> str:
     resp = _client(db, acme["admin"]).post("/orgs/acme/api-tokens", json={"name": "ci"})
     assert resp.status_code == 201
     return resp.json()["token"]
+
+
+@pytest.fixture(autouse=True)
+def _reset_badge_state():
+    from src.core import rate_limit
+    from src.routers import api_tokens
+
+    api_tokens._badge_cache.clear()
+    rate_limit._account_buckets.clear()
+    yield
+    api_tokens._badge_cache.clear()
+    rate_limit._account_buckets.clear()
 
 
 def _scan(db, org, score=80, checks=CHECKS):
@@ -200,6 +213,28 @@ def test_badge_is_opt_in_and_shows_only_the_score(db, acme):
     assert _client(db).get("/badges/acme/score.svg").status_code == 404
 
 
+def test_badge_reads_are_cached_and_opting_out_takes_effect_at_once(db, acme):
+    _scan(db, acme["org"], score=95)
+    admin = _client(db, acme["admin"])
+    admin.put("/orgs/acme/badge", json={"enabled": True})
+    public = _client(db)
+    assert "95" in public.get("/badges/acme/score.svg").text
+
+    _scan(db, acme["org"], score=40)  # newer scan, but the cached answer is still served
+    assert "95" in public.get("/badges/acme/score.svg").text
+
+    admin.put("/orgs/acme/badge", json={"enabled": False})  # invalidates the cache entry
+    assert public.get("/badges/acme/score.svg").status_code == 404
+
+
+def test_badge_cache_misses_are_rate_limited_per_ip_not_per_org(db, acme):
+    public = _client(db)
+    codes = [public.get(f"/badges/org-{i}/score.svg").status_code for i in range(62)]
+    assert codes[:60] == [404] * 60
+    assert codes[60:] == [429, 429]  # cycling through org names doesn't dodge the limit
+    assert public.get("/badges/org-0/score.svg").status_code == 404  # cached answers stay free
+
+
 def test_badge_404s_look_identical_for_unknown_and_never_scanned_orgs(db, acme):
     admin = _client(db, acme["admin"])
     admin.put("/orgs/acme/badge", json={"enabled": True})  # enabled but never scanned
@@ -342,6 +377,102 @@ def test_action_never_sends_the_token_over_plain_http_or_to_a_redirect_target(ca
     assert "clv_secret" not in capsys.readouterr().err
 
 
+# --- scope, expiry, last_used throttle, scan attribution ---
+
+def test_token_with_an_unrecognised_scope_is_rejected_by_machine_endpoints(db, acme):
+    token = _new_token(db, acme)
+    _scan(db, acme["org"])
+    db.execute(text("UPDATE api_tokens SET scope = 'write'"))
+
+    machine = _client(db)
+    assert machine.get("/api/v1/orgs/acme/score", headers=_bearer(token)).status_code == 403
+    assert machine.post("/api/v1/orgs/acme/scan", headers=_bearer(token)).status_code == 403
+    assert db.query(ApiToken).one().last_used_at is None  # a rejected token is not "used"
+
+
+def test_expiring_token_works_until_it_expires_and_never_expires_by_default(db, acme):
+    admin = _client(db, acme["admin"])
+    expiring = admin.post("/orgs/acme/api-tokens", json={"name": "short", "expires_in_days": 7}).json()
+    forever = admin.post("/orgs/acme/api-tokens", json={"name": "forever"}).json()
+    assert expiring["expires_at"] is not None and forever["expires_at"] is None
+    _scan(db, acme["org"])
+    machine = _client(db)
+    assert machine.get("/api/v1/orgs/acme/score", headers=_bearer(expiring["token"])).status_code == 200
+
+    db.execute(text("UPDATE api_tokens SET expires_at = now() - interval '1 second' WHERE id = :id"), {"id": expiring["id"]})
+
+    assert machine.get("/api/v1/orgs/acme/score", headers=_bearer(expiring["token"])).status_code == 401
+    assert machine.get("/api/v1/orgs/acme/score", headers=_bearer(forever["token"])).status_code == 200
+
+
+@pytest.mark.parametrize("days", [0, -1, 3651])
+def test_expires_in_days_must_be_within_bounds(db, acme, days):
+    resp = _client(db, acme["admin"]).post("/orgs/acme/api-tokens", json={"name": "ci", "expires_in_days": days})
+    assert resp.status_code == 422
+
+
+def test_last_used_at_is_written_at_most_once_a_minute(db, acme):
+    token = _new_token(db, acme)
+    _scan(db, acme["org"])
+    machine = _client(db)
+    machine.get("/api/v1/orgs/acme/score", headers=_bearer(token))
+    first = db.query(ApiToken).one().last_used_at
+    assert first is not None
+
+    machine.get("/api/v1/orgs/acme/score", headers=_bearer(token))
+    db.expire_all()
+    assert db.query(ApiToken).one().last_used_at == first  # within the minute: not rewritten
+
+    db.execute(text("UPDATE api_tokens SET last_used_at = now() - interval '2 minutes'"))
+    machine.get("/api/v1/orgs/acme/score", headers=_bearer(token))
+    db.expire_all()
+    assert db.query(ApiToken).one().last_used_at > first - timedelta(minutes=1)
+
+
+def test_scan_is_audited_under_the_token_and_so_are_its_alerts(db, acme):
+    token = _new_token(db, acme)
+    token_id = db.query(ApiToken).one().id
+    _scan(db, acme["org"], score=90)
+    overview = {"owner": "acme", "score": 60, "total_checks": 2, "failed_checks": 1, "repo_count": 3, "checks": CHECKS}
+    with (
+        patch("src.routers.api_tokens.resolve_org_token", return_value="ghs_x"),
+        patch("src.routers.analytics.get_overview", return_value=overview),
+        patch("src.routers.analytics.notifications.notify_score_drop") as notify,
+    ):
+        resp = _client(db).post("/api/v1/orgs/acme/scan", headers=_bearer(token))
+
+    assert resp.status_code == 200
+    entry = db.query(AuditLog).filter(AuditLog.action == "api_token.scan").one()
+    assert entry.actor == f"api_token:{token_id}"
+    assert json.loads(entry.payload) == {"token_id": token_id, "score": 60, "previous_score": 90}
+    assert notify.call_args.kwargs["actor"] == f"api_token:{token_id}"
+
+
+def test_expired_tokens_do_not_count_toward_the_active_cap(db, acme):
+    client = _client(db, acme["admin"])
+    for i in range(20):
+        assert client.post("/orgs/acme/api-tokens", json={"name": f"t{i}", "expires_in_days": 1}).status_code == 201
+    assert client.post("/orgs/acme/api-tokens", json={"name": "extra"}).status_code == 409
+
+    db.execute(text("UPDATE api_tokens SET expires_at = now() - interval '1 hour'"))
+    db.expire_all()  # the raw UPDATE bypasses the ORM identity map
+
+    assert client.post("/orgs/acme/api-tokens", json={"name": "extra"}).status_code == 201
+
+
+def test_a_failing_scan_audit_write_does_not_fail_the_stored_scan(db, acme):
+    token = _new_token(db, acme)
+    overview = {"owner": "acme", "score": 70, "total_checks": 2, "failed_checks": 1, "repo_count": 3, "checks": CHECKS}
+    with (
+        patch("src.routers.api_tokens.resolve_org_token", return_value="ghs_x"),
+        patch("src.routers.analytics.get_overview", return_value=overview),
+        patch("src.routers.api_tokens.audit_repo.write", side_effect=RuntimeError("audit down")),
+    ):
+        resp = _client(db).post("/api/v1/orgs/acme/scan", headers=_bearer(token))
+
+    assert resp.status_code == 200 and resp.json()["score"] == 70
+
+
 @pytest.mark.parametrize("checks", [None, 5, "x", [None, 3]])
 def test_action_malformed_checks_field_is_handled_without_a_traceback(checks):
     check = _load_check()
@@ -357,3 +488,35 @@ def test_action_score_summary_line_cannot_smuggle_a_workflow_command(capsys):
 
     out_lines = capsys.readouterr().out.splitlines()
     assert not any(line.startswith("::error::fake") for line in out_lines)
+
+
+def test_token_lookup_policy_is_tied_to_the_table_owner_not_a_settable_flag(db):
+    """A session setting like app.api_token_lookup can be set by any role, so the policy that lets
+    resolve_api_token read api_tokens under FORCE RLS must key on identity (current_user), and the
+    function must not rely on that setting."""
+    qual = db.execute(
+        text("SELECT qual FROM pg_policies WHERE tablename = 'api_tokens' AND policyname = 'token_lookup'")
+    ).scalar()
+    assert qual is not None and "current_user" in qual.lower() and "api_token_lookup" not in qual
+    body = db.execute(text("SELECT prosrc || coalesce(array_to_string(proconfig, ','), '') FROM pg_proc WHERE proname = 'resolve_api_token'")).scalar()
+    assert "api_token_lookup" not in body
+
+
+def test_a_non_owner_session_cannot_unlock_api_tokens_by_setting_the_old_lookup_flag(db):
+    if not db.execute(text("SELECT rolsuper FROM pg_roles WHERE rolname = current_user")).scalar():
+        pytest.skip("needs a superuser connection to create a throwaway role")
+    from src.repositories import org_repo
+
+    org = org_repo.get_or_create(db, github_login="lookup-flag-org")
+    api_token_repo.create(db, tenant_id=org.tenant_id, name="ci", created_by="t@e.com")
+    db.flush()
+    db.execute(text("CREATE ROLE rls_probe_reader NOSUPERUSER NOBYPASSRLS"))
+    db.execute(text("GRANT USAGE ON SCHEMA public TO rls_probe_reader"))
+    db.execute(text("GRANT SELECT ON api_tokens TO rls_probe_reader"))
+    db.execute(text("RESET app.tenant_id"))
+    db.execute(text("SET LOCAL ROLE rls_probe_reader"))
+    try:
+        db.execute(text("SET app.api_token_lookup = 'on'"))
+        assert db.execute(text("SELECT count(*) FROM api_tokens")).scalar() == 0
+    finally:
+        db.execute(text("RESET ROLE"))

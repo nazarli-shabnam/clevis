@@ -114,7 +114,9 @@ def send(dest: NotificationDestination, event: str, text: str, data: dict | None
     return success, f"HTTP {status_code}"
 
 
-def notify_score_drop(db: Session, tenant_id: int, org_login: str, previous: int, current: int) -> None:
+def notify_score_drop(
+    db: Session, tenant_id: int, org_login: str, previous: int, current: int, *, actor: str = "system"
+) -> None:
     """Message every enabled destination subscribed to score drops whose threshold is met.
 
     Best-effort by contract: a delivery problem is audit-logged and swallowed, never raised into
@@ -144,7 +146,7 @@ def notify_score_drop(db: Session, tenant_id: int, org_login: str, previous: int
             notification_repo.release_alert_claim(db, dest.id)
         audit_repo.write(
             db,
-            actor="system",
+            actor=actor,
             action="notification.sent",
             target=org_login,
             payload={"destination_id": dest.id, "kind": dest.kind, "event": EVENT_SCORE_DROP, "ok": ok, "detail": detail},

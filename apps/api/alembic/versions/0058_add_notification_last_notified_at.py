@@ -6,16 +6,16 @@ The API claims a destination with a conditional UPDATE on this column before mes
 concurrent scans (or a flapping score) alert once per cooldown window. ``clevis_api`` already holds
 table-level UPDATE on ``notification_destinations`` (0048), so no new grant is needed.
 
-Revision ID: 0051
-Revises: 0050
+Revision ID: 0058
+Revises: 0056
 Create Date: 2026-10-05
 """
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0051"
-down_revision = "0050"
+revision = "0058"
+down_revision = "0056"
 branch_labels = None
 depends_on = None
 

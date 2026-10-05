@@ -63,6 +63,9 @@ export default function PullRequestsPage() {
     queryKey: ["repos.pulls.all", org, repoNames.join(",")],
     queryFn: async () => {
       const rows: PullRow[] = []
+      // A repo whose request fails must not look like a repo with no PRs.
+      const failedRepos: string[] = []
+      let firstError = ""
       for (let i = 0; i < repoNames.length; i += REPO_BATCH_SIZE) {
         const batch = repoNames.slice(i, i + REPO_BATCH_SIZE)
         const results = await Promise.all(
@@ -70,18 +73,27 @@ export default function PullRequestsPage() {
             api.repos
               .pulls(org, org, repo, token)
               .then((r) => r.pulls.map((p) => ({ ...p, repo })))
-              .catch(() => [] as PullRow[]),
+              .catch((e: unknown) => {
+                failedRepos.push(repo)
+                if (!firstError && e instanceof Error) firstError = e.message
+                return [] as PullRow[]
+              }),
           ),
         )
         rows.push(...results.flat())
       }
-      return rows.sort((a, b) => b.created_at.localeCompare(a.created_at))
+      if (repoNames.length > 0 && failedRepos.length === repoNames.length) {
+        throw new Error(firstError || "Failed to load pull requests.")
+      }
+      rows.sort((a, b) => b.created_at.localeCompare(a.created_at))
+      return { rows, failedRepos }
     },
     enabled: queriesEnabled && !!reposQuery.data,
     retry: false,
   })
 
-  const pulls = pullsQuery.data ?? []
+  const pulls = pullsQuery.data?.rows ?? []
+  const failedRepos = pullsQuery.data?.failedRepos ?? []
   const isLoading = reposQuery.isLoading || (reposQuery.isSuccess && pullsQuery.isLoading)
 
   // Two-step confirm so a misclick can't fan public nudge comments across every repo.
@@ -187,6 +199,20 @@ export default function PullRequestsPage() {
         {nudgeMsg && (
           <p className="px-4 py-2 text-xs text-muted-foreground border-b border-border">{nudgeMsg}</p>
         )}
+        {failedRepos.length > 0 && !pullsQuery.isError && (
+          <p role="alert" className="px-4 py-2 text-xs text-destructive border-b border-border">
+            {failedRepos.length} repositor{failedRepos.length === 1 ? "y" : "ies"} could not be loaded
+            ({failedRepos.slice(0, 5).join(", ")}{failedRepos.length > 5 ? ", …" : ""}), so this list may be incomplete.{" "}
+            <button
+              type="button"
+              className="underline underline-offset-2"
+              onClick={() => pullsQuery.refetch()}
+              disabled={pullsQuery.isFetching}
+            >
+              Retry
+            </button>
+          </p>
+        )}
         {!hasOrg ? (
           <EmptyStateNoAccount bare message={scope?.kind === "personal" ? "This view lists organization repositories. Pick an organization from the profile menu." : undefined} />
         ) : reposQuery.isError ? (
@@ -195,6 +221,12 @@ export default function PullRequestsPage() {
             onRetry={() => reposQuery.refetch()}
             retrying={reposQuery.isFetching}
           />
+        ) : pullsQuery.isError ? (
+          <SectionError
+            message={pullsQuery.error instanceof Error ? pullsQuery.error.message : "Failed to load pull requests."}
+            onRetry={() => pullsQuery.refetch()}
+            retrying={pullsQuery.isFetching}
+          />
         ) : isLoading ? (
           <div className="p-4 flex flex-col gap-2">
             {Array.from({ length: 5 }).map((_, i) => (
@@ -202,7 +234,9 @@ export default function PullRequestsPage() {
             ))}
           </div>
         ) : pulls.length === 0 ? (
-          <p className="px-4 py-8 text-sm text-muted-foreground">No open pull requests</p>
+          <p className="px-4 py-8 text-sm text-muted-foreground">
+            {failedRepos.length > 0 ? "No open pull requests in the repositories that loaded" : "No open pull requests"}
+          </p>
         ) : groupBy === "author" ? (
           <div className="p-4 grid gap-3 sm:grid-cols-2">
             {[...byAuthor.entries()].map(([author, authorPulls]) => (
