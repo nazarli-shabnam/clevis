@@ -29,6 +29,9 @@ class CheckResult(BaseModel):
     remediation: str
     # Hygiene checks: shown, but only scored when the instance opts in.
     informational: bool = False
+    # Whether this scan counted the check toward the score (informational checks only do when hygiene
+    # scoring is on). None on scans stored before the stamp existed.
+    scored: bool | None = None
     status: Literal["pass", "fail", "error", "not_applicable"]
     value: bool | str | dict[str, int] | None = None
 
@@ -40,6 +43,17 @@ class AnalyticsResponse(BaseModel):
     failed_checks: int
     repo_count: int
     checks: list[CheckResult]
+
+
+class HygieneScoringUpdate(BaseModel):
+    # None clears the org's override so it follows the instance-wide setting again.
+    enabled: bool | None
+
+
+class HygieneScoringSettings(BaseModel):
+    enabled: bool | None  # the org's override; None = follows the instance
+    effective: bool  # what the next scan will actually do
+    instance_default: bool
 
 
 class ScanHistoryEntry(BaseModel):

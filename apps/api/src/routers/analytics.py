@@ -14,12 +14,14 @@ from src.core.app_config import get_config
 from src.core.auth import UserOut, require_auth
 from src.core.db import RepoEventDailyCount, get_db
 from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role, set_tenant_session_context
-from src.repositories import installation_repo, job_repo, org_repo, scan_results_repo, tenant_repo
+from src.repositories import audit_repo, installation_repo, job_repo, org_repo, scan_results_repo, tenant_repo
 from src.routers.github import _cached_events, _fetch_events_from_repo_events
 from src.schemas.analytics import (
     ActionsUsageResponse,
     AnalyticsInput,
     AnalyticsResponse,
+    HygieneScoringSettings,
+    HygieneScoringUpdate,
     AtRiskRepo,
     CockpitResponse,
     IssueSummary,
@@ -36,7 +38,12 @@ from src.schemas.analytics import (
     ScanHistoryEntry,
 )
 from src.services import notifications
-from src.services.analytics_service import get_account_type, get_overview
+from src.services.analytics_service import (
+    get_account_type,
+    get_overview,
+    instance_scores_hygiene,
+    org_scores_hygiene,
+)
 from src.services.github_client import GitHubClient, github_error as _github_error, list_owner_repos
 from src.services.token_resolution import (
     InsufficientOrgRole,
@@ -54,9 +61,13 @@ _MAX_REPOS_FOR_AGGREGATES = 30
 _CACHE_JOB_TYPE = "github.clear_actions_cache"
 
 
-async def _run_overview(owner: str, token: str, account_type: str = "Organization") -> AnalyticsResponse:
+async def _run_overview(
+    owner: str, token: str, account_type: str = "Organization", score_hygiene: bool | None = None
+) -> AnalyticsResponse:
     try:
-        return await anyio.to_thread.run_sync(lambda: get_overview(owner=owner, token=token, account_type=account_type))
+        return await anyio.to_thread.run_sync(
+            lambda: get_overview(owner=owner, token=token, account_type=account_type, score_hygiene=score_hygiene)
+        )
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=400, detail=f"GitHub API error: {exc.response.status_code}")
     except httpx.RequestError:
@@ -161,6 +172,51 @@ def _persist_personal_scan(db: Session, user: UserOut, result: dict) -> None:
     _persist_scan(db, result, tenant_id=personal_tenant.id, scanned_by_user_id=user.id)
 
 
+def _hygiene_setting_for_member(db: Session, user: UserOut, owner: str) -> bool | None:
+    """The org's hygiene-scoring setting when `owner` is a Clevis org the user belongs to (their scan is
+    stored under the org, so it must be scored the way the org's own scans are); None otherwise, which
+    means the instance-wide setting."""
+    org = org_repo.get_by_login_ci(db, owner)
+    if org is None:
+        return None
+    org = org_repo.ensure_tenant_linked(db, org)
+    if tenant_repo.get_membership(db, org.tenant_id, user.id) is None:
+        return None
+    return org_scores_hygiene(org)
+
+
+@router.get("/orgs/{org_login}/hygiene-scoring", response_model=HygieneScoringSettings)
+def get_hygiene_scoring(ctx: OrgContext = Depends(require_org_role(min_role="admin"))):
+    return HygieneScoringSettings(
+        enabled=ctx.org.score_hygiene_checks,
+        effective=org_scores_hygiene(ctx.org),
+        instance_default=instance_scores_hygiene(),
+    )
+
+
+@router.put("/orgs/{org_login}/hygiene-scoring", response_model=HygieneScoringSettings)
+def set_hygiene_scoring(
+    body: HygieneScoringUpdate,
+    ctx: OrgContext = Depends(require_org_role(min_role="admin")),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    ctx.org.score_hygiene_checks = body.enabled
+    audit_repo.write(
+        db,
+        actor=user.email,
+        action="hygiene_scoring.updated",
+        target=ctx.org.github_login,
+        payload={"enabled": body.enabled},
+        tenant_id=ctx.org.tenant_id,
+        commit=False,
+    )
+    db.commit()
+    return HygieneScoringSettings(
+        enabled=body.enabled, effective=org_scores_hygiene(ctx.org), instance_default=instance_scores_hygiene()
+    )
+
+
 @router.post("/orgs/{org_login}/analytics/overview", response_model=AnalyticsResponse)
 async def org_analytics_overview(
     payload: AnalyticsInput,
@@ -185,7 +241,7 @@ async def org_analytics_overview(
         raise HTTPException(status_code=403, detail=str(exc))
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    result = await _run_overview(payload.owner, token)
+    result = await _run_overview(payload.owner, token, score_hygiene=org_scores_hygiene(ctx.org))
 
     def _previous_then_persist() -> list[dict]:
         previous = scan_results_repo.list_recent(db, payload.owner, limit=1, tenant_id=ctx.org.tenant_id)
@@ -218,7 +274,9 @@ async def personal_analytics_overview(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     account_type = await _get_account_type(payload.owner, token)
-    result = await _run_overview(payload.owner, token, account_type=account_type)
+    result = await _run_overview(
+        payload.owner, token, account_type=account_type, score_hygiene=_hygiene_setting_for_member(db, user, payload.owner)
+    )
     # owner can be any account the user has a token for (BYO-token); where the scan is stored depends
     # on whether they belong to that org (see _persist_personal_scan).
     await anyio.to_thread.run_sync(lambda: _persist_personal_scan(db, user, result))

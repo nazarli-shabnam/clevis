@@ -15,7 +15,10 @@ const createMock = vi.fn();
 
 vi.mock("@/lib/api/client", () => ({
   api: {
-    orgs: { mine: (...args: unknown[]) => mineMock(...args) },
+    orgs: {
+      mine: (...args: unknown[]) => mineMock(...args),
+      hygieneScoring: vi.fn().mockResolvedValue({ enabled: null, effective: false, instance_default: false }),
+    },
     invitations: {
       list: (...args: unknown[]) => listMock(...args),
       revoke: vi.fn(),
