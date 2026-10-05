@@ -389,3 +389,31 @@ def test_inactive_members_does_not_flag_a_member_whose_activity_could_not_be_ver
 
     assert resp.status_code == 200
     assert resp.json()["members"] == []
+
+
+def test_inactive_members_live_path_caps_members_checked(client):
+    from src.routers.collab import _MAX_MEMBERS_FOR_LIVE_ACTIVITY, _MAX_REPOS_SAMPLED_FOR_ACTIVITY
+
+    total = _MAX_MEMBERS_FOR_LIVE_ACTIVITY + 50
+
+    def _paginated_side_effect(path, params=None):
+        if path == "/orgs/acme/members" and params == {"role": "admin"}:
+            return []
+        if path == "/orgs/acme/members":
+            return [{"login": f"user{i}", "avatar_url": ""} for i in range(total)]
+        if path == "/orgs/acme/repos":
+            return [{"name": "api"}]
+        return []
+
+    with patch("src.routers.collab.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.side_effect = _paginated_side_effect
+        mock_client.return_value.request.return_value = []
+        resp = client.get("/github/orgs/acme/inactive-members?days=30", headers={"X-GitHub-Token": "ghp_test"})
+        request_calls = mock_client.return_value.request.call_count
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["members_total"] == total
+    assert body["members_checked"] == _MAX_MEMBERS_FOR_LIVE_ACTIVITY
+    assert len(body["members"]) == _MAX_MEMBERS_FOR_LIVE_ACTIVITY
+    assert request_calls <= _MAX_MEMBERS_FOR_LIVE_ACTIVITY * _MAX_REPOS_SAMPLED_FOR_ACTIVITY
