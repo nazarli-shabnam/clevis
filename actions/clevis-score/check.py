@@ -46,7 +46,8 @@ def evaluate(data: dict, threshold: int, required_checks: list[str]) -> list[str
         return ["response did not contain a numeric score"]
     if score < threshold:
         problems.append(f"score {score} is below the threshold {threshold}")
-    by_id = {c.get("id"): c for c in data.get("checks", []) if isinstance(c, dict)}
+    checks = data.get("checks")
+    by_id = {c.get("id"): c for c in (checks if isinstance(checks, list) else []) if isinstance(c, dict)}
     for check_id in required_checks:
         check = by_id.get(check_id)
         if check is None:
@@ -106,12 +107,15 @@ def main(env: dict[str, str] | None = None) -> int:
     # OSError covers URLError, TimeoutError and the connection/SSL errors raised while reading the body
     # (ConnectionResetError, ssl.SSLError); HTTPException covers IncompleteRead and friends. All of them
     # mean "could not get a score" (exit 2), never the traceback-exit-1 that reads as a failed gate.
-    except (OSError, http.client.HTTPException, ValueError) as exc:
+    except (OSError, http.client.HTTPException) as exc:
         print(f"Could not reach the Clevis API: {type(exc).__name__}", file=sys.stderr)
+        return 2
+    except ValueError as exc:  # bad JSON / not an object: the API answered, but not with a score
+        print(f"The Clevis API returned an unreadable response: {type(exc).__name__}", file=sys.stderr)
         return 2
 
     problems = evaluate(data, threshold, required)
-    print(f"Clevis score for {org}: {data.get('score')} (threshold {threshold})")
+    print(f"Clevis score for {_workflow_command_text(org)}: {_workflow_command_text(data.get('score'))} (threshold {threshold})")
     out = env.get("GITHUB_OUTPUT")
     if out and isinstance(data.get("score"), int):
         with open(out, "a", encoding="utf-8") as fh:

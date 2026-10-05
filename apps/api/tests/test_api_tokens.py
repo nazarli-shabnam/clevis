@@ -288,7 +288,9 @@ def test_action_read_errors_exit_2_not_a_traceback_that_looks_like_a_failed_gate
 
     with patch("urllib.request.OpenerDirector.open", return_value=_Resp()):
         assert check.main(env) == 2  # a real body-read failure, not a patched fetch_score
-    assert "Could not reach the Clevis API" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    expected = "unreadable response" if isinstance(error, json.JSONDecodeError) else "Could not reach the Clevis API"
+    assert expected in err
 
 
 def test_action_rejects_a_non_object_response_with_exit_2():
@@ -338,3 +340,20 @@ def test_action_never_sends_the_token_over_plain_http_or_to_a_redirect_target(ca
     handler = check._NoRedirect()
     assert handler.redirect_request(req, None, 302, "Found", {}, "https://evil.example.com/") is None
     assert "clv_secret" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("checks", [None, 5, "x", [None, 3]])
+def test_action_malformed_checks_field_is_handled_without_a_traceback(checks):
+    check = _load_check()
+    assert check.evaluate({"score": 90, "checks": checks}, 80, []) == []
+    assert "not found" in check.evaluate({"score": 90, "checks": checks}, 80, ["a"])[0]
+
+
+def test_action_score_summary_line_cannot_smuggle_a_workflow_command(capsys):
+    check = _load_check()
+    env = {"CLEVIS_API_URL": "https://c.example", "CLEVIS_ORG": "acme", "CLEVIS_TOKEN": "clv_x"}
+    with patch.object(check, "fetch_score", return_value={"score": "1\n::error::fake", "checks": []}):
+        assert check.main(env) == 1  # non-numeric score fails the gate
+
+    out_lines = capsys.readouterr().out.splitlines()
+    assert not any(line.startswith("::error::fake") for line in out_lines)
