@@ -778,7 +778,7 @@ def test_get_all_pages_reuses_the_scan_client_and_still_works_outside_a_scan():
 
         def get(self, url, headers):
             self.calls += 1
-            link = '<https://x/y?page=2>; rel="next"' if self.calls == 1 else ""
+            link = '<https://x/y?page=2>; rel="next"' if self.calls % 2 == 1 else ""
             return httpx.Response(200, json=[self.calls], headers={"Link": link}, request=httpx.Request("GET", url))
 
         def close(self):
