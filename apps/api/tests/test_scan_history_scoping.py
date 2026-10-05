@@ -71,8 +71,9 @@ def org(db):
 
 @pytest.fixture()
 def member(db, org):
-    # An admin: scanning with a pasted (BYO) token needs it since #582. Reading org history only needs
-    # membership, which is what these tests are about; the plain-member case is covered in test_analytics.
+    """The org's scanning member. An admin, because since #582 only admins may back a scan with a pasted
+    token; these tests are about *whose history* a scan lands in, which membership alone decides. How a
+    plain member is treated at the scan endpoints is covered in test_analytics."""
     user = _user(db, "member@example.com")
     org_membership_repo.get_or_create(db, org_id=org.id, user_id=user.id, role="admin")
     return user
