@@ -128,7 +128,7 @@ def _get_all_pages(base_url: str, path: str, token: str, items_key: str | None =
     sep = "&" if "?" in path else "?"
     url: str | None = f"{base_url}{path}{sep}per_page=100"
     pages_fetched = 0
-    with httpx.Client(timeout=20) as client:
+    with shared_client() as client:
         while url:
             r = _get_with_retry(client, url, headers)
             r.raise_for_status()

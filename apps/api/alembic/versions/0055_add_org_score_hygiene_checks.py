@@ -4,16 +4,16 @@ Nullable boolean add with no backfill and no default: NULL means "follow the ins
 (``app_config.score_hygiene_checks``), which is exactly how every existing org behaves today, so
 nothing changes until an org admin sets it. Downgrade drops the column (and any overrides stored).
 
-Revision ID: 0051
-Revises: 0050
+Revision ID: 0055
+Revises: 0054
 Create Date: 2026-10-05
 """
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0051"
-down_revision = "0050"
+revision = "0055"
+down_revision = "0054"
 branch_labels = None
 depends_on = None
 

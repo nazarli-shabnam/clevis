@@ -1,7 +1,9 @@
 """Tests for API tokens, the machine score endpoints, the score badge and the CI action script."""
 
+import http.client
 import importlib.util
 import json
+import ssl
 import urllib.request
 from pathlib import Path
 from unittest.mock import patch
@@ -54,6 +56,18 @@ def _new_token(db, acme) -> str:
     resp = _client(db, acme["admin"]).post("/orgs/acme/api-tokens", json={"name": "ci"})
     assert resp.status_code == 201
     return resp.json()["token"]
+
+
+@pytest.fixture(autouse=True)
+def _reset_badge_state():
+    from src.core import rate_limit
+    from src.routers import api_tokens
+
+    api_tokens._badge_cache.clear()
+    rate_limit._account_buckets.clear()
+    yield
+    api_tokens._badge_cache.clear()
+    rate_limit._account_buckets.clear()
 
 
 def _scan(db, org, score=80, checks=CHECKS):
@@ -198,6 +212,28 @@ def test_badge_is_opt_in_and_shows_only_the_score(db, acme):
     assert _client(db).get("/badges/acme/score.svg").status_code == 404
 
 
+def test_badge_reads_are_cached_and_opting_out_takes_effect_at_once(db, acme):
+    _scan(db, acme["org"], score=95)
+    admin = _client(db, acme["admin"])
+    admin.put("/orgs/acme/badge", json={"enabled": True})
+    public = _client(db)
+    assert "95" in public.get("/badges/acme/score.svg").text
+
+    _scan(db, acme["org"], score=40)  # newer scan, but the cached answer is still served
+    assert "95" in public.get("/badges/acme/score.svg").text
+
+    admin.put("/orgs/acme/badge", json={"enabled": False})  # invalidates the cache entry
+    assert public.get("/badges/acme/score.svg").status_code == 404
+
+
+def test_badge_cache_misses_are_rate_limited_per_ip_not_per_org(db, acme):
+    public = _client(db)
+    codes = [public.get(f"/badges/org-{i}/score.svg").status_code for i in range(62)]
+    assert codes[:60] == [404] * 60
+    assert codes[60:] == [429, 429]  # cycling through org names doesn't dodge the limit
+    assert public.get("/badges/org-0/score.svg").status_code == 404  # cached answers stay free
+
+
 def test_badge_404s_look_identical_for_unknown_and_never_scanned_orgs(db, acme):
     admin = _client(db, acme["admin"])
     admin.put("/orgs/acme/badge", json={"enabled": True})  # enabled but never scanned
@@ -241,7 +277,7 @@ def test_action_main_exit_codes(tmp_path):
     assert (tmp_path / "out").read_text() == "score=80\n"
     with patch.object(check, "fetch_score", return_value={"score": 60, "checks": []}):
         assert check.main(env) == 1
-    with patch.object(check, "fetch_score", side_effect=OSError("x")), pytest.raises(OSError):
+    with patch.object(check, "fetch_score", side_effect=RuntimeError("x")), pytest.raises(RuntimeError):
         check.main(env)  # unexpected errors are not swallowed into a pass
     assert check.main({**env, "CLEVIS_TOKEN": ""}) == 2
     assert check.main({**env, "CLEVIS_THRESHOLD": "abc"}) == 2
@@ -258,6 +294,67 @@ def test_action_main_maps_http_and_network_errors_to_exit_2(capsys):
     with patch.object(check, "fetch_score", side_effect=urllib.error.URLError("down")):
         assert check.main(env) == 2
     assert "clv_secret" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ConnectionResetError("reset"),
+        ssl.SSLError("bad record mac"),
+        http.client.IncompleteRead(b"par"),
+        TimeoutError("slow"),
+        json.JSONDecodeError("bad", "", 0),
+    ],
+)
+def test_action_read_errors_exit_2_not_a_traceback_that_looks_like_a_failed_gate(error, capsys):
+    check = _load_check()
+    env = {"CLEVIS_API_URL": "https://c.example", "CLEVIS_ORG": "acme", "CLEVIS_TOKEN": "clv_secret"}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def read(self):
+            raise error
+
+    with patch("urllib.request.OpenerDirector.open", return_value=_Resp()):
+        assert check.main(env) == 2  # a real body-read failure, not a patched fetch_score
+    err = capsys.readouterr().err
+    expected = "unreadable response" if isinstance(error, json.JSONDecodeError) else "Could not reach the Clevis API"
+    assert expected in err
+
+
+def test_action_rejects_a_non_object_response_with_exit_2():
+    check = _load_check()
+    env = {"CLEVIS_API_URL": "https://c.example", "CLEVIS_ORG": "acme", "CLEVIS_TOKEN": "clv_x"}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def read(self):
+            return b"[1, 2]"
+
+    with patch("urllib.request.OpenerDirector.open", return_value=_Resp()):
+        assert check.main(env) == 2
+
+
+def test_action_error_annotations_cannot_smuggle_a_second_workflow_command(capsys):
+    check = _load_check()
+    env = {"CLEVIS_API_URL": "https://c.example", "CLEVIS_ORG": "acme", "CLEVIS_TOKEN": "clv_x", "CLEVIS_FAIL_ON_CHECKS": "a"}
+    evil = "Evil\r\n::set-output name=pwned::1\n::error::fake"
+    data = {"score": 100, "checks": [{"id": "a", "title": evil, "status": "fail"}]}
+    with patch.object(check, "fetch_score", return_value=data):
+        assert check.main(env) == 1
+
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("::")]
+    assert len(lines) == 1 and lines[0].startswith("::error::Clevis gate failed: ")
 
 
 def test_action_never_sends_the_token_over_plain_http_or_to_a_redirect_target(capsys):
@@ -277,3 +374,20 @@ def test_action_never_sends_the_token_over_plain_http_or_to_a_redirect_target(ca
     handler = check._NoRedirect()
     assert handler.redirect_request(req, None, 302, "Found", {}, "https://evil.example.com/") is None
     assert "clv_secret" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("checks", [None, 5, "x", [None, 3]])
+def test_action_malformed_checks_field_is_handled_without_a_traceback(checks):
+    check = _load_check()
+    assert check.evaluate({"score": 90, "checks": checks}, 80, []) == []
+    assert "not found" in check.evaluate({"score": 90, "checks": checks}, 80, ["a"])[0]
+
+
+def test_action_score_summary_line_cannot_smuggle_a_workflow_command(capsys):
+    check = _load_check()
+    env = {"CLEVIS_API_URL": "https://c.example", "CLEVIS_ORG": "acme", "CLEVIS_TOKEN": "clv_x"}
+    with patch.object(check, "fetch_score", return_value={"score": "1\n::error::fake", "checks": []}):
+        assert check.main(env) == 1  # non-numeric score fails the gate
+
+    out_lines = capsys.readouterr().out.splitlines()
+    assert not any(line.startswith("::error::fake") for line in out_lines)

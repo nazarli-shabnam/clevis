@@ -160,6 +160,9 @@ class PRSummary(BaseModel):
     # When the PR was opened -- the review-wait proxy (GitHub search doesn't expose when the
     # review was requested). None only if GitHub omitted it.
     created_at: datetime | None = None
+    # CI state of the PR's head commit, filled in only for the user's own open PRs (it costs GitHub
+    # calls per PR): "unknown" when it couldn't be determined, None when not looked up.
+    ci_status: Literal["passing", "failing", "pending", "unknown"] | None = None
 
 
 class IssueSummary(BaseModel):
@@ -170,27 +173,23 @@ class IssueSummary(BaseModel):
     updated_at: datetime
 
 
-class RunSummaryLite(BaseModel):
-    repository: str
-    id: int
-    name: str | None
-    status: str
-    conclusion: str | None
-    html_url: str
-    created_at: datetime
-
-
 class MyViewResponse(BaseModel):
     my_open_prs: list[PRSummary] = []
     review_requests: list[PRSummary] = []
     assigned_issues: list[IssueSummary] = []
-    my_recent_runs: list[RunSummaryLite] = []
     # True when GitHub's /user (the source of "who am I") couldn't be resolved -- an
     # installation (App) token can't call it, and the signed-in Clevis user has no
     # GitHub-OAuth-linked login to fall back on either. Distinguishes "we don't know who
     # you are on GitHub" from "you genuinely have zero open PRs/reviews/issues", which
     # would otherwise render identically as an empty list.
     identity_unresolved: bool = False
+    # True GitHub search totals: the lists above are capped at a handful of rows, so a count
+    # shown to the user must come from here, not from len(list).
+    my_open_prs_total: int = 0
+    review_requests_total: int = 0
+    assigned_issues_total: int = 0
+    # True when any of the searches failed, so empty lists mean "unknown", not "nothing waiting".
+    incomplete: bool = False
 
 
 class MyPrListResponse(BaseModel):

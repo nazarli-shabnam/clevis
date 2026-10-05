@@ -93,3 +93,8 @@ class InactiveMembersResponse(BaseModel):
     # than being an exact answer.
     sampled_repos: list[str]
     members: list[InactiveMember]
+    # Set only by the live-GitHub fallback, which checks at most a bounded number of members:
+    # members_checked counts members whose activity was actually verified; below members_total means
+    # the roster was longer than the cap or some lookups failed, so the list is incomplete.
+    members_total: int | None = None
+    members_checked: int | None = None

@@ -357,6 +357,23 @@ describe("GithubRoster (Collaborators page)", () => {
     expect(screen.getByText(/approximation, not exact/)).toBeInTheDocument();
   });
 
+  it("says so when the live inactive-members check covered only part of the roster", async () => {
+    membersMock.mockResolvedValue({ org: "acme", members: [], two_factor_overlay_available: true });
+    inactiveMembersMock.mockResolvedValue({
+      org: "acme",
+      sampled_repos: ["acme/api"],
+      members: [],
+      members_total: 250,
+      members_checked: 100,
+    });
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Audit" }));
+
+    expect(await screen.findByText(/Checked 100 of 250 members/)).toBeInTheDocument();
+  });
+
   it("shows the partial-scan note when the permission audit didn't scan every repo", async () => {
     membersMock.mockResolvedValue({ org: "acme", members: [], two_factor_overlay_available: true });
     permissionAuditMock.mockResolvedValue({

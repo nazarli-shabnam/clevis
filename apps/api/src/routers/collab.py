@@ -46,6 +46,9 @@ _MAX_REPOS_SCANNED = 50
 # commits call per (member, sampled repo) pair -- tighter caps to stay rate-limit-aware.
 _MAX_REPOS_FOR_PERMISSION_AUDIT = 20
 _MAX_REPOS_SAMPLED_FOR_ACTIVITY = 3
+# The live fallback costs up to _MAX_REPOS_SAMPLED_FOR_ACTIVITY GitHub calls per member inside one
+# request, so cap the roster it checks (the ingested path has no such cost and is uncapped).
+_MAX_MEMBERS_FOR_LIVE_ACTIVITY = 100
 
 
 def _resolve_token(db: Session, ctx: OrgContext, org_login: str, client_token: str | None) -> str:
@@ -446,6 +449,8 @@ def inactive_members(
     admin_logins = {m["login"] for m in admins_raw if "login" in m}
     sampled_repos = [r["name"] for r in repos_raw[:_MAX_REPOS_SAMPLED_FOR_ACTIVITY]]
     now = datetime.now(timezone.utc)
+    members_total = len(members_raw)
+    members_raw = members_raw[:_MAX_MEMBERS_FOR_LIVE_ACTIVITY]
 
     def _member_last_activity(member: dict) -> tuple[str | None, str | None, bool]:
         login = member.get("login")
@@ -489,4 +494,10 @@ def inactive_members(
                 )
             )
 
-    return InactiveMembersResponse(org=org_login, sampled_repos=[f"{org_login}/{r}" for r in sampled_repos], members=inactive)
+    return InactiveMembersResponse(
+        org=org_login,
+        sampled_repos=[f"{org_login}/{r}" for r in sampled_repos],
+        members=inactive,
+        members_total=members_total,
+        members_checked=sum(1 for _, _, verified in results if verified),
+    )

@@ -14,6 +14,7 @@ import { relativeTime } from "@/lib/format"
 import { orgRoleFor } from "@/lib/members-href"
 import { SectionError } from "@/components/section-error"
 import { HygieneScoringCard } from "@/components/hygiene-scoring-card"
+import { BadgeSettingsCard } from "@/components/badge-settings-card"
 import type { GithubOrgMember, InvitationOut, MyOrgMembership } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
 
@@ -366,6 +367,14 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
                 sampled from {inactiveMembersQuery.data.sampled_repos.join(", ")} — approximation, not exact
               </span>
             )}
+            {inactiveMembersQuery.data?.members_total != null &&
+              inactiveMembersQuery.data.members_checked != null &&
+              inactiveMembersQuery.data.members_checked < inactiveMembersQuery.data.members_total && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Checked {inactiveMembersQuery.data.members_checked} of {inactiveMembersQuery.data.members_total} members
+                  (live lookups are limited until the GitHub App&rsquo;s activity data has synced), so this list is incomplete.
+                </p>
+              )}
           </div>
           {inactiveMembersQuery.isLoading ? (
             <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
@@ -571,6 +580,8 @@ export default function OrgMembersPage() {
         </div>
         </>
       )}
+
+      {!rolePending && !notAdmin && <BadgeSettingsCard orgLogin={orgLogin} />}
 
       <div className="mt-4">
         <GithubRoster orgLogin={orgLogin} />

@@ -4,14 +4,17 @@ Tokens are org-scoped and read-only: they can read the latest scan and trigger a
 only reads GitHub and stores a snapshot), nothing that changes configuration.
 """
 
+import time
+
 import anyio
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from src.core.api_token_auth import require_api_token
 from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
+from src.core.rate_limit import check_account_rate_limit
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import api_token_repo, audit_repo, org_repo, scan_results_repo
 from src.repositories.api_token_repo import ResolvedToken
@@ -177,6 +180,9 @@ def set_badge_setting(
         commit=False,
     )
     db.commit()
+    # Drop this process's cached answer so opting out takes effect at once here (other replicas
+    # keep serving theirs for up to _BADGE_CACHE_TTL_SECONDS).
+    _badge_cache.pop(ctx.org.github_login.lower(), None)
     return BadgeSettings(enabled=body.enabled)
 
 
@@ -195,11 +201,36 @@ def _badge_svg(score: int) -> str:
     return _BADGE.format(w=lw + vw, lw=lw, vw=vw, color=color, label=label, lx=lw // 2, vx=lw + vw // 2)
 
 
+# The badge is unauthenticated, so reads are cached per login (including "no badge") and only cache
+# misses, which hit the database, are rate limited. Per-process: with several API replicas each keeps
+# its own cache and budget. Bounded so a stream of random logins can't grow it without limit.
+_BADGE_CACHE_TTL_SECONDS = 60
+_BADGE_CACHE_MAX_ENTRIES = 1024
+_BADGE_MISS_LIMIT_PER_MINUTE = 60
+_badge_cache: dict[str, tuple[float, int | None]] = {}
+
+
+def _badge_score(db: Session, request: Request, org_login: str) -> int | None:
+    key = org_login.lower()
+    hit = _badge_cache.get(key)
+    if hit is not None and time.monotonic() - hit[0] < _BADGE_CACHE_TTL_SECONDS:
+        return hit[1]
+    # Keyed by client IP alone (not path): a per-path key would let a caller dodge the limit by
+    # cycling through org names.
+    ip = request.client.host if request.client else "unknown"
+    check_account_rate_limit(f"badge:{ip}", max_requests=_BADGE_MISS_LIMIT_PER_MINUTE)
+    score = db.execute(text("SELECT public_badge_score(:login)"), {"login": org_login}).scalar()
+    if len(_badge_cache) >= _BADGE_CACHE_MAX_ENTRIES:
+        _badge_cache.clear()
+    _badge_cache[key] = (time.monotonic(), score)
+    return score
+
+
 @router.get("/badges/{org_login}/score.svg")
-def score_badge(org_login: str, db: Session = Depends(get_db)):
+def score_badge(org_login: str, request: Request, db: Session = Depends(get_db)):
     # Disabled, unknown and never-scanned orgs all look identical (404), so the badge can't be used
     # to discover which orgs exist or have opted out. Only the bare score ever leaves this endpoint.
-    score = db.execute(text("SELECT public_badge_score(:login)"), {"login": org_login}).scalar()
+    score = _badge_score(db, request, org_login)
     if score is None:
         raise HTTPException(status_code=404, detail="Not found")
     return Response(

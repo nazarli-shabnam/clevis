@@ -143,6 +143,75 @@ describe("PullRequestsPage", () => {
     renderPage();
 
     expect(await screen.findByText(/Still shows up/)).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/1 repository could not be loaded \(api\)/);
+  });
+
+  it("does not claim there are no pull requests when the only repos that loaded are empty and another failed", async () => {
+    localStorage.setItem("default_org", "acme");
+    reposListMock.mockResolvedValue({
+      org: "acme",
+      total: 2,
+      repos: [
+        { name: "api", full_name: "acme/api", private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: "https://github.com/acme/api" },
+        { name: "web", full_name: "acme/web", private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: "https://github.com/acme/web" },
+      ],
+    });
+    reposPullsMock.mockImplementation((_o: string, _w: string, repo: string) =>
+      repo === "api" ? Promise.reject(new Error("boom")) : Promise.resolve({ repository: "acme/web", total: 0, pulls: [] }),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText(/in the repositories that loaded/)).toBeInTheDocument();
+    expect(screen.queryByText("No open pull requests")).not.toBeInTheDocument();
+  });
+
+  it("truncates a long list of failed repos, and the banner's Retry refetches them", async () => {
+    localStorage.setItem("default_org", "acme");
+    const names = ["a", "b", "c", "d", "e", "f", "ok"];
+    reposListMock.mockResolvedValue({
+      org: "acme",
+      total: names.length,
+      repos: names.map((name) => ({ name, full_name: `acme/${name}`, private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: `https://github.com/acme/${name}` })),
+    });
+    reposPullsMock.mockImplementation((_o: string, _w: string, repo: string) =>
+      repo === "ok" ? Promise.resolve({ repository: "acme/ok", total: 1, pulls: [pull({ title: "Survivor" })] }) : Promise.reject(new Error("boom")),
+    );
+
+    renderPage();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/6 repositories could not be loaded \(a, b, c, d, e, …\)/);
+    const callsBefore = reposPullsMock.mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(reposPullsMock.mock.calls.length).toBeGreaterThan(callsBefore));
+  });
+
+  it("shows an error, not 'No open pull requests', when every repo's fetch fails", async () => {
+    localStorage.setItem("default_org", "acme");
+    reposListMock.mockResolvedValue({
+      org: "acme",
+      total: 2,
+      repos: [
+        { name: "api", full_name: "acme/api", private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: "https://github.com/acme/api" },
+        { name: "web", full_name: "acme/web", private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: "https://github.com/acme/web" },
+      ],
+    });
+    reposPullsMock.mockRejectedValue(new Error("Bad credentials"));
+
+    renderPage();
+
+    expect(await screen.findByText("Bad credentials")).toBeInTheDocument();
+    expect(screen.queryByText("No open pull requests")).not.toBeInTheDocument();
+    const callsBefore = reposPullsMock.mock.calls.length;
+    reposPullsMock.mockResolvedValue({ repository: "acme/api", total: 1, pulls: [pull({ title: "Recovered" })] });
+
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+
+    expect((await screen.findAllByText(/Recovered/)).length).toBeGreaterThan(0);
+    expect(reposPullsMock.mock.calls.length).toBeGreaterThan(callsBefore);
   });
 
   it("shows an error with retry when the repo list fails to load", async () => {

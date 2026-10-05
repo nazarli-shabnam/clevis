@@ -30,7 +30,7 @@ audit-logged. A token can read the latest score (`GET /api/v1/orgs/{org}/score`)
 |------|---------|
 | 0 | Gate passed |
 | 1 | Score below the threshold, or a named check is failing/errored/missing |
-| 2 | Could not obtain a score (bad config, HTTP error, unreachable API) |
+| 2 | Could not obtain a score (bad config, HTTP error, unreachable API, connection/TLS error or unreadable response) |
 
 The script uses only the Python standard library, so it also works as a plain CLI:
 `CLEVIS_API_URL=... CLEVIS_ORG=acme CLEVIS_TOKEN=... CLEVIS_THRESHOLD=80 python3 check.py`.
