@@ -199,10 +199,10 @@ export default function PullRequestsPage() {
         {nudgeMsg && (
           <p className="px-4 py-2 text-xs text-muted-foreground border-b border-border">{nudgeMsg}</p>
         )}
-        {failedRepos.length > 0 && (
+        {failedRepos.length > 0 && !pullsQuery.isError && (
           <p role="alert" className="px-4 py-2 text-xs text-destructive border-b border-border">
             {failedRepos.length} repositor{failedRepos.length === 1 ? "y" : "ies"} could not be loaded
-            ({failedRepos.join(", ")}), so this list may be incomplete.{" "}
+            ({failedRepos.slice(0, 5).join(", ")}{failedRepos.length > 5 ? ", …" : ""}), so this list may be incomplete.{" "}
             <button
               type="button"
               className="underline underline-offset-2"
@@ -234,7 +234,9 @@ export default function PullRequestsPage() {
             ))}
           </div>
         ) : pulls.length === 0 ? (
-          <p className="px-4 py-8 text-sm text-muted-foreground">No open pull requests</p>
+          <p className="px-4 py-8 text-sm text-muted-foreground">
+            {failedRepos.length > 0 ? "No open pull requests in the repositories that loaded" : "No open pull requests"}
+          </p>
         ) : groupBy === "author" ? (
           <div className="p-4 grid gap-3 sm:grid-cols-2">
             {[...byAuthor.entries()].map(([author, authorPulls]) => (

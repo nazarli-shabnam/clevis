@@ -146,6 +146,26 @@ describe("PullRequestsPage", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/1 repository could not be loaded \(api\)/);
   });
 
+  it("does not claim there are no pull requests when the only repos that loaded are empty and another failed", async () => {
+    localStorage.setItem("default_org", "acme");
+    reposListMock.mockResolvedValue({
+      org: "acme",
+      total: 2,
+      repos: [
+        { name: "api", full_name: "acme/api", private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: "https://github.com/acme/api" },
+        { name: "web", full_name: "acme/web", private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: "https://github.com/acme/web" },
+      ],
+    });
+    reposPullsMock.mockImplementation((_o: string, _w: string, repo: string) =>
+      repo === "api" ? Promise.reject(new Error("boom")) : Promise.resolve({ repository: "acme/web", total: 0, pulls: [] }),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText(/in the repositories that loaded/)).toBeInTheDocument();
+    expect(screen.queryByText("No open pull requests")).not.toBeInTheDocument();
+  });
+
   it("shows an error, not 'No open pull requests', when every repo's fetch fails", async () => {
     localStorage.setItem("default_org", "acme");
     reposListMock.mockResolvedValue({
