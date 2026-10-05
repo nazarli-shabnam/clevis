@@ -68,7 +68,6 @@ const EMPTY_MY_VIEW = {
   my_open_prs: [],
   review_requests: [],
   assigned_issues: [],
-  my_recent_runs: [],
   identity_unresolved: false,
 };
 
@@ -511,7 +510,6 @@ describe("OverviewPage cockpit", () => {
       assigned_issues: [
         { number: 2, title: "Investigate flake", repository: "acme/worker", html_url: "https://github.com/acme/worker/issues/2", updated_at: "2026-07-19T00:00:00Z" },
       ],
-      my_recent_runs: [],
     });
 
     renderPage();

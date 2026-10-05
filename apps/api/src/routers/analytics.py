@@ -31,7 +31,6 @@ from src.schemas.analytics import (
     PRSummary,
     PrCycleTimeWeek,
     PrWeekBucket,
-    RunSummaryLite,
     ScanExportResponse,
     ScanHistoryEntry,
 )
@@ -886,7 +885,6 @@ async def personal_analytics_cockpit(
 # My View: the token owner's open PRs, review queue, assigned issues and recent runs. Search spans
 # every repo the token can see, so only token resolution is scoped to `owner`.
 
-_MAX_REPOS_FOR_RUN_LOOKUP = 15
 
 
 def _my_login(client: GitHubClient, fallback_login: str | None = None) -> str | None:
@@ -912,6 +910,74 @@ def _search_items(client: GitHubClient, query: str, per_page: int = 10, sort_old
         return result.get("items", []) if isinstance(result, dict) else []
     except (httpx.HTTPStatusError, httpx.RequestError):
         return []
+
+
+def _search_with_total(
+    client: GitHubClient, query: str, per_page: int = 10, sort_oldest: bool = False
+) -> tuple[list[dict], int, bool]:
+    """(items, GitHub's total_count, ok). ok=False means the search itself failed (rate limit, 5xx),
+    which callers must not present as "zero results"."""
+    params: dict = {"q": query, "per_page": per_page}
+    if sort_oldest:
+        params.update(sort="created", order="asc")
+    try:
+        result = client.request("GET", "/search/issues", params=params)
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        return [], 0, False
+    if not isinstance(result, dict):
+        return [], 0, False
+    items = result.get("items", [])
+    return items, max(int(result.get("total_count", len(items)) or 0), len(items)), True
+
+
+# A completed check run only counts as green when it ended in one of these; failure, timed_out,
+# cancelled, action_required, startup_failure, stale all mean the PR is not mergeable-green.
+_PASSING_CONCLUSIONS = {"success", "neutral", "skipped"}
+# Each PR costs three GitHub calls (head sha, check runs, legacy commit status), and the inbox lists
+# only this many, so only this many are fetched (and therefore every listed PR has a CI state).
+_MAX_PRS_FOR_CI = 5
+_CHECK_RUNS_PER_PAGE = 100
+
+
+def _pr_ci_status(client: GitHubClient, repository: str, number: int) -> str:
+    """CI state of a PR's head commit from its check runs and its legacy commit statuses:
+    failing > pending > passing. "unknown" on any error, with no CI evidence at all, or when the
+    check runs were truncated at one page and nothing in that page failed."""
+    try:
+        pr = client.request("GET", f"/repos/{repository}/pulls/{number}")
+        sha = ((pr or {}).get("head") or {}).get("sha") if isinstance(pr, dict) else None
+        if not sha:
+            return "unknown"
+        runs_data = client.request(
+            "GET", f"/repos/{repository}/commits/{sha}/check-runs", params={"per_page": _CHECK_RUNS_PER_PAGE}
+        )
+        status_data = client.request("GET", f"/repos/{repository}/commits/{sha}/status")
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        return "unknown"
+    runs = runs_data.get("check_runs", []) if isinstance(runs_data, dict) else []
+    truncated = isinstance(runs_data, dict) and int(runs_data.get("total_count", 0) or 0) > len(runs)
+    statuses = status_data if isinstance(status_data, dict) else {}
+    state = statuses.get("state") if statuses.get("statuses") else None  # "state" defaults to pending when empty
+
+    if any(r.get("status") == "completed" and r.get("conclusion") not in _PASSING_CONCLUSIONS for r in runs) or state in (
+        "failure",
+        "error",
+    ):
+        return "failing"
+    if truncated:
+        return "unknown"
+    if any(r.get("status") != "completed" for r in runs) or state == "pending":
+        return "pending"
+    return "passing" if runs or state == "success" else "unknown"
+
+
+def _with_ci_status(client: GitHubClient, prs: list[PRSummary]) -> list[PRSummary]:
+    head = prs[:_MAX_PRS_FOR_CI]
+    if not head:
+        return prs
+    with ThreadPoolExecutor(max_workers=_MAX_PRS_FOR_CI) as pool:
+        statuses = list(pool.map(lambda pr: _pr_ci_status(client, pr.repository, pr.number), head))
+    return [pr.model_copy(update={"ci_status": s}) for pr, s in zip(head, statuses)] + prs[_MAX_PRS_FOR_CI:]
 
 
 def _pr_summaries(items: list[dict]) -> list[PRSummary]:
@@ -943,36 +1009,6 @@ def _issue_summaries(items: list[dict]) -> list[IssueSummary]:
     ]
 
 
-def _safe_my_recent_runs(client: GitHubClient, owner: str, login: str, repo_names: list[str]) -> list[RunSummaryLite]:
-    def _fetch(repo: str) -> list[dict]:
-        try:
-            data = client.request(
-                "GET", f"/repos/{owner}/{repo}/actions/runs", params={"actor": login, "per_page": 5}
-            )
-            return data.get("workflow_runs", []) if isinstance(data, dict) else []
-        except (httpx.HTTPStatusError, httpx.RequestError):
-            return []
-
-    runs: list[RunSummaryLite] = []
-    with ThreadPoolExecutor(max_workers=10) as pool:
-        futures = {pool.submit(_fetch, repo): repo for repo in repo_names[:_MAX_REPOS_FOR_RUN_LOOKUP]}
-        for future, repo in futures.items():
-            for r in future.result():
-                runs.append(
-                    RunSummaryLite(
-                        repository=f"{owner}/{repo}",
-                        id=r["id"],
-                        name=r.get("name"),
-                        status=r["status"],
-                        conclusion=r.get("conclusion"),
-                        html_url=r.get("html_url", ""),
-                        created_at=r["created_at"],
-                    )
-                )
-    runs.sort(key=lambda r: r.created_at, reverse=True)
-    return runs[:10]
-
-
 @router.get("/me/github/my-view", response_model=MyViewResponse)
 async def my_view(
     owner: str,
@@ -992,25 +1028,23 @@ async def my_view(
     if login is None:
         return MyViewResponse(identity_unresolved=True)
 
-    account_type = await _get_account_type(owner, token)
-    try:
-        repos = await anyio.to_thread.run_sync(lambda: _safe_list_repos(owner, token, account_type))
-    except (httpx.HTTPStatusError, httpx.RequestError):
-        repos = []
-    repo_names = [r["name"] for r in repos]
-
-    (my_open_prs_raw, review_requests_raw, assigned_issues_raw, my_recent_runs) = await asyncio.gather(
-        anyio.to_thread.run_sync(lambda: _search_items(client, f"is:pr is:open author:{login}")),
-        anyio.to_thread.run_sync(lambda: _search_items(client, f"is:pr is:open review-requested:{login}", sort_oldest=True)),
-        anyio.to_thread.run_sync(lambda: _search_items(client, f"is:issue is:open assignee:{login}")),
-        anyio.to_thread.run_sync(lambda: _safe_my_recent_runs(client, owner, login, repo_names)),
+    (my_prs_search, reviews_search, issues_search) = await asyncio.gather(
+        anyio.to_thread.run_sync(lambda: _search_with_total(client, f"is:pr is:open author:{login}", per_page=_MAX_PRS_FOR_CI)),
+        anyio.to_thread.run_sync(
+            lambda: _search_with_total(client, f"is:pr is:open review-requested:{login}", sort_oldest=True)
+        ),
+        anyio.to_thread.run_sync(lambda: _search_with_total(client, f"is:issue is:open assignee:{login}")),
     )
+    my_open_prs = await anyio.to_thread.run_sync(lambda: _with_ci_status(client, _pr_summaries(my_prs_search[0])))
 
     return MyViewResponse(
-        my_open_prs=_pr_summaries(my_open_prs_raw),
-        review_requests=_pr_summaries(review_requests_raw),
-        assigned_issues=_issue_summaries(assigned_issues_raw),
-        my_recent_runs=my_recent_runs,
+        my_open_prs=my_open_prs,
+        review_requests=_pr_summaries(reviews_search[0]),
+        assigned_issues=_issue_summaries(issues_search[0]),
+        my_open_prs_total=my_prs_search[1],
+        review_requests_total=reviews_search[1],
+        assigned_issues_total=issues_search[1],
+        incomplete=not (my_prs_search[2] and reviews_search[2] and issues_search[2]),
     )
 
 
