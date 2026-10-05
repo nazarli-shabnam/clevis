@@ -560,6 +560,13 @@ describe("AutomationPage", () => {
       await waitFor(() => expect(screen.queryByText(/Workflow dispatched —/)).not.toBeInTheDocument());
     });
 
+    it("does not wipe loaded workflows when only whitespace is added to the owner", async () => {
+      await loadDemoWithCi();
+      fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme " } });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(screen.getByText("CI")).toBeInTheDocument();
+    });
+
     it("resets the ref to the default and drops loaded results when the owner changes", async () => {
       await loadDemoWithCi();
       fireEvent.click(rowDispatch("CI"));

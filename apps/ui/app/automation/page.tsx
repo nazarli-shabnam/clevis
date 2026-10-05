@@ -166,8 +166,9 @@ export default function AutomationPage() {
     setRef("main")
     setRefEdited(false)
     resetLoadedRepoState()
+    // Keyed on the trimmed owner: requests use it, so stray whitespace must not wipe loaded state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [owner])
+  }, [owner.trim()])
 
   // One handler for every ref input: editing the ref invalidates any pending
   // confirmation, whichever button armed it.
@@ -451,7 +452,7 @@ export default function AutomationPage() {
                             <Button
                               variant="outline"
                               className="h-6 px-2 text-[0.6875rem]"
-                              onClick={() => { setSelectedWorkflow(w); setDispatchArmed(false); dispatchMutation.reset() }}
+                              onClick={() => { setSelectedWorkflow(w); setDispatchArmed(false); dispatchMutation.reset(); dispatchAllMutation.reset() }}
                             >
                               <Play className="size-3" />
                               Dispatch
