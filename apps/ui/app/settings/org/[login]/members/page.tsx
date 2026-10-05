@@ -370,7 +370,7 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
               inactiveMembersQuery.data.members_checked < inactiveMembersQuery.data.members_total && (
                 <p className="text-xs text-muted-foreground mt-1">
                   Checked {inactiveMembersQuery.data.members_checked} of {inactiveMembersQuery.data.members_total} members
-                  (live lookups are limited until the GitHub App's activity data has synced), so this list is incomplete.
+                  (live lookups are limited until the GitHub App&rsquo;s activity data has synced), so this list is incomplete.
                 </p>
               )}
           </div>
