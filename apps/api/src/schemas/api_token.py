@@ -5,6 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class ApiTokenCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
+    # Omit for a token that never expires (only revocation ends it).
+    expires_in_days: int | None = Field(default=None, ge=1, le=3650)
 
 
 class ApiTokenOut(BaseModel):
@@ -20,6 +22,7 @@ class ApiTokenOut(BaseModel):
     created_at: datetime
     last_used_at: datetime | None = None
     revoked_at: datetime | None = None
+    expires_at: datetime | None = None
 
 
 class ApiTokenCreated(ApiTokenOut):

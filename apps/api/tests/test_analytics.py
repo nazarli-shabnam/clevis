@@ -315,7 +315,7 @@ def test_org_overview_fires_score_drop_notification_against_the_previous_scan(ht
         notify.assert_not_called()  # first scan: nothing to compare against
         http.post("/orgs/acme/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
 
-    notify.assert_called_once_with(db, org.tenant_id, "acme", 90, 60)
+    notify.assert_called_once_with(db, org.tenant_id, "acme", 90, 60, actor="system")
 
 
 def test_score_drop_ignores_another_tenants_scan_of_the_same_owner(http, db, mock_user):
