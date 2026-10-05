@@ -45,6 +45,8 @@ export default function AutomationPage() {
 
   const [selectedWorkflow, setSelectedWorkflow] = useState<WorkflowSummary | null>(null)
   const [ref, setRef] = useState("main")
+  // True once the user has typed a ref themselves, so picking another repo never overwrites it.
+  const [refEdited, setRefEdited] = useState(false)
   const [dispatchArmed, setDispatchArmed] = useState(false)
   const [dispatchAllArmed, setDispatchAllArmed] = useState(false)
 
@@ -106,11 +108,6 @@ export default function AutomationPage() {
   })
   const repoOptions = reposListQuery.data?.repos ?? []
 
-  // Clear a previously entered/selected repo when the owner changes, so a stale repo
-  // name from the old owner isn't submitted against the new one's dropdown options.
-  useEffect(() => {
-    setRepo("")
-  }, [owner])
 
   const saveTokenMutation = useMutation({
     mutationFn: () => api.tokens.upsert(owner.trim(), token.trim()),
@@ -149,20 +146,46 @@ export default function AutomationPage() {
     },
   })
 
+  // Everything derived from the previously loaded repo: its workflows, the selected workflow id,
+  // dispatch results and armed confirmations. Left in place, a new repo would be paired with the
+  // old repo's workflow id on dispatch.
+  const resetLoadedRepoState = () => {
+    loadMutation.reset()
+    dispatchMutation.reset()
+    dispatchAllMutation.reset()
+    setSelectedWorkflow(null)
+    setDispatchArmed(false)
+    setDispatchAllArmed(false)
+  }
+
+  // Clear a previously entered/selected repo when the owner changes, so a stale repo name from
+  // the old owner isn't submitted against the new one's dropdown options. The ref goes back to the
+  // default too: it was the old owner's default branch (or something typed for their repo).
+  useEffect(() => {
+    setRepo("")
+    setRef("main")
+    setRefEdited(false)
+    resetLoadedRepoState()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [owner])
+
   // One handler for every ref input: editing the ref invalidates any pending
   // confirmation, whichever button armed it.
   const handleRefChange = (value: string) => {
     setRef(value)
+    setRefEdited(true)
     setDispatchArmed(false)
     setDispatchAllArmed(false)
   }
 
   // Picking a repo prefills the ref with its default branch (still editable): a hardcoded
   // "main" makes GitHub reject the dispatch with a 422 on repos whose default is e.g. "master".
+  // A ref the user typed is kept.
   const handleRepoChange = (name: string) => {
+    if (name !== repo) resetLoadedRepoState()
     setRepo(name)
     const defaultBranch = repoOptions.find((r) => r.name === name)?.default_branch
-    if (defaultBranch) handleRefChange(defaultBranch)
+    if (defaultBranch && !refEdited) setRef(defaultBranch)
   }
 
   // Auto-disarm if not confirmed within a few seconds (same as the Actions Cache "Clear" button).
@@ -428,7 +451,7 @@ export default function AutomationPage() {
                             <Button
                               variant="outline"
                               className="h-6 px-2 text-[0.6875rem]"
-                              onClick={() => { setSelectedWorkflow(w); setDispatchArmed(false) }}
+                              onClick={() => { setSelectedWorkflow(w); setDispatchArmed(false); dispatchMutation.reset() }}
                             >
                               <Play className="size-3" />
                               Dispatch

@@ -513,6 +513,78 @@ describe("AutomationPage", () => {
   });
 
 
+  describe("state left over from a previously loaded repo", () => {
+    const TWO_REPOS = {
+      org: "acme",
+      total: 2,
+      repos: [DEMO_REPO, { ...DEMO_REPO, name: "other", default_branch: "develop" }],
+    };
+    const CI = { id: 1, name: "CI", path: ".github/workflows/ci.yml", state: "active", last_run_status: null, last_run_conclusion: null, last_run_at: null };
+    const LINT = { ...CI, id: 2, name: "Lint", path: ".github/workflows/lint.yml" };
+
+    const rowDispatch = (name: string) =>
+      screen.getAllByRole("button", { name: /Dispatch/i }).find((b) => b.closest("tr")?.textContent?.includes(name))!;
+
+    async function loadDemoWithCi() {
+      reposListMock.mockResolvedValue(TWO_REPOS);
+      workflowsMock.mockResolvedValue({ repository: "acme/demo", workflows: [CI, LINT] });
+      runsMock.mockResolvedValue({ repository: "acme/demo", runs: [] });
+      dispatchMock.mockResolvedValue({ dispatched: true, message: "Workflow dispatched." });
+      renderPage();
+      await enterOwnerAndSelectRepo("acme", "demo");
+      fireEvent.click(screen.getByText("Load workflows"));
+      await waitFor(() => expect(screen.getByText("CI")).toBeInTheDocument());
+    }
+
+    it("drops the loaded workflows and selected workflow when another repo is picked, so dispatch cannot pair them", async () => {
+      await loadDemoWithCi();
+      fireEvent.click(rowDispatch("CI"));
+      expect(screen.getByText("Dispatch workflow")).toBeInTheDocument();
+
+      fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "other" } });
+
+      await waitFor(() => expect(screen.queryByText("Dispatch workflow")).not.toBeInTheDocument());
+      expect(screen.queryByText("CI")).not.toBeInTheDocument();
+      expect(dispatchMock).not.toHaveBeenCalled();
+    });
+
+    it("clears the previous workflow's 'Workflow dispatched' result when another workflow is selected", async () => {
+      await loadDemoWithCi();
+      fireEvent.click(rowDispatch("CI"));
+      fireEvent.click(screen.getByText("Dispatch workflow"));
+      fireEvent.click(screen.getByText("Confirm dispatch"));
+      expect(await screen.findByText(/Workflow dispatched —/)).toBeInTheDocument();
+
+      fireEvent.click(rowDispatch("Lint"));
+
+      await waitFor(() => expect(screen.queryByText(/Workflow dispatched —/)).not.toBeInTheDocument());
+    });
+
+    it("resets the ref to the default and drops loaded results when the owner changes", async () => {
+      await loadDemoWithCi();
+      fireEvent.click(rowDispatch("CI"));
+      fireEvent.change(screen.getAllByDisplayValue("main")[0], { target: { value: "release" } });
+      fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "someone-else" } });
+
+      await waitFor(() => expect(screen.queryByText("CI")).not.toBeInTheDocument());
+      expect(screen.queryByDisplayValue("release")).not.toBeInTheDocument();
+    });
+
+    it("keeps a ref the user typed when another repo is picked", async () => {
+      await loadDemoWithCi();
+      fireEvent.click(rowDispatch("CI"));
+      fireEvent.change(screen.getAllByDisplayValue("main")[0], { target: { value: "release/1.0" } });
+
+      fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "other" } });
+      await waitFor(() => expect(screen.queryByText("CI")).not.toBeInTheDocument());
+      fireEvent.click(screen.getByText("Load workflows"));
+      await waitFor(() => expect(screen.getByText("CI")).toBeInTheDocument());
+      fireEvent.click(rowDispatch("CI"));
+
+      expect(screen.getAllByDisplayValue("release/1.0").length).toBeGreaterThan(0);
+    });
+  });
+
   describe("Dependabot auto-triage gating", () => {
     it("shows the triage card, and reads its setting, for an org the caller admins", async () => {
       renderPage();
