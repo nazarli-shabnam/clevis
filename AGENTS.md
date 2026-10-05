@@ -116,7 +116,7 @@ Key variables:
 - `digest_poll_seconds` / `digest_cadence` — the scheduled leadership-digest loop's poll interval and send cadence.
 - `webhook_requeue_poll_seconds` — how often the sweep re-enqueues `webhook_deliveries` rows stuck at `status='queue_failed'`.
 - `dependabot_sla_critical_days` / `dependabot_sla_high_days` — defaults `7` / `30`; the SLA windows the Dependabot burn-down (`GET /orgs/{org}/security/dependabot-burndown`, UI `/security/burndown`) measures open critical/high alerts against.
-- `score_hygiene_checks` — default `false`; when `true`, the informational repo-hygiene checks (CODEOWNERS, SECURITY.md, license, stale branches, unpinned Actions; `packages/checks/src/checks/hygiene_checks.py`) are run and count toward the security score; otherwise they are skipped entirely (they cost hundreds of GitHub calls per scan).
+- `score_hygiene_checks` — default `false`; the default for orgs that have not set their own `orgs.score_hygiene_checks` override (and for scans of non-org logins); when `true`, the informational repo-hygiene checks (CODEOWNERS, SECURITY.md, license, stale branches, unpinned Actions; `packages/checks/src/checks/hygiene_checks.py`) are run and count toward the security score; otherwise they are skipped entirely (they cost hundreds of GitHub calls per scan).
 
 The full accepted-key list lives in `apps/api/src/core/app_config.py`'s `_ACCEPTED_KEYS` — treat that as the source of truth over this doc if they ever drift.
 

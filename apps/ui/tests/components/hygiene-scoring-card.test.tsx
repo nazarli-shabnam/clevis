@@ -73,6 +73,8 @@ describe("HygieneScoringCard", () => {
 
     expect(await screen.findByText(/Couldn't load the score settings: boom/)).toBeInTheDocument()
     expect(screen.queryByLabelText(/Count repo hygiene checks/)).not.toBeInTheDocument()
-    expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument()
+    getMock.mockResolvedValue({ enabled: null, effective: false, instance_default: false })
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }))
+    expect(await screen.findByLabelText(/Count repo hygiene checks/)).toBeInTheDocument()
   })
 })

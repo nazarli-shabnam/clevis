@@ -362,6 +362,11 @@ def test_admin_sets_and_clears_the_org_override_and_it_is_audited(http, db, mock
         assert cleared == {"enabled": None, "effective": False, "instance_default": False}
     assert db.query(AuditLog).filter(AuditLog.action == "hygiene_scoring.updated").count() == 2
 
+    # Re-saving the same value is a no-op: no new audit row.
+    with patch("src.services.analytics_service.get_config", return_value="false"):
+        http.put("/orgs/acme/hygiene-scoring", json={"enabled": None})
+    assert db.query(AuditLog).filter(AuditLog.action == "hygiene_scoring.updated").count() == 2
+
 
 def test_member_cannot_read_or_change_hygiene_scoring(http, db, mock_user):
     _org_with_role(db, mock_user, "member")

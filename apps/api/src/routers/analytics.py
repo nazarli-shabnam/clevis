@@ -201,17 +201,19 @@ def set_hygiene_scoring(
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
-    ctx.org.score_hygiene_checks = body.enabled
-    audit_repo.write(
-        db,
-        actor=user.email,
-        action="hygiene_scoring.updated",
-        target=ctx.org.github_login,
-        payload={"enabled": body.enabled},
-        tenant_id=ctx.org.tenant_id,
-        commit=False,
-    )
-    db.commit()
+    if ctx.org.score_hygiene_checks != body.enabled:
+        previous = ctx.org.score_hygiene_checks
+        ctx.org.score_hygiene_checks = body.enabled
+        audit_repo.write(
+            db,
+            actor=user.email,
+            action="hygiene_scoring.updated",
+            target=ctx.org.github_login,
+            payload={"enabled": body.enabled, "previous": previous},
+            tenant_id=ctx.org.tenant_id,
+            commit=False,
+        )
+        db.commit()
     return HygieneScoringSettings(
         enabled=body.enabled, effective=org_scores_hygiene(ctx.org), instance_default=instance_scores_hygiene()
     )
@@ -274,9 +276,8 @@ async def personal_analytics_overview(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     account_type = await _get_account_type(payload.owner, token)
-    result = await _run_overview(
-        payload.owner, token, account_type=account_type, score_hygiene=_hygiene_setting_for_member(db, user, payload.owner)
-    )
+    score_hygiene = await anyio.to_thread.run_sync(lambda: _hygiene_setting_for_member(db, user, payload.owner))
+    result = await _run_overview(payload.owner, token, account_type=account_type, score_hygiene=score_hygiene)
     # owner can be any account the user has a token for (BYO-token); where the scan is stored depends
     # on whether they belong to that org (see _persist_personal_scan).
     await anyio.to_thread.run_sync(lambda: _persist_personal_scan(db, user, result))

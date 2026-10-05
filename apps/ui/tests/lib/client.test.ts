@@ -132,6 +132,21 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
     expect(JSON.parse(runInit.body as string)).toEqual({ repos: ["acme/api"], dry_run: true, token: undefined });
   });
 
+  it("GET/PUTs the org's hygiene-scoring setting, sending null to clear the override", async () => {
+    stubOkJson({ enabled: null, effective: false, instance_default: false });
+    await api.orgs.hygieneScoring("acme");
+    const [getUrl, getInit] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(getUrl).toContain("/orgs/acme/hygiene-scoring");
+    expect(getInit.method).toBeUndefined();
+
+    stubOkJson({ enabled: null, effective: false, instance_default: false });
+    await api.orgs.setHygieneScoring("acme", null);
+    const [putUrl, putInit] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(putUrl).toContain("/orgs/acme/hygiene-scoring");
+    expect(putInit.method).toBe("PUT");
+    expect(JSON.parse(putInit.body as string)).toEqual({ enabled: null });
+  });
+
   it("builds the analytics.exportHistory URL with only owner when no window is given", async () => {
     stubOkJson({ truncated: false, row_count: 0, entries: [] });
     await api.analytics.exportHistory("acme corp");
