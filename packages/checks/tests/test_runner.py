@@ -98,7 +98,9 @@ def test_run_all_checks_personal_account_falls_back_to_user_repos_on_auth_mismat
     def fake_pages(base_url, path, token, items_key=None):
         if path == "/installation/repositories":
             raise forbidden
-        assert path == "/user/repos?affiliation=owner&type=all"
+        # GitHub rejects `type` together with `affiliation` (422), so the fallback must not send it.
+        assert path == "/user/repos?affiliation=owner"
+        assert "type=" not in path
         return FAKE_REPOS
 
     with (

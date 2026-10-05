@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, call, patch
 import httpx
 import pytest
 
-from src.services.github_client import GitHubClient, github_error
+from src.services.github_client import GitHubClient, github_error, list_owner_repos
 
 
 @pytest.fixture()
@@ -274,3 +274,43 @@ class TestRequestPaginated:
 
             with pytest.raises(httpx.HTTPStatusError):
                 client.request_paginated("/repos/acme/x")
+
+
+class TestListOwnerRepos:
+    """Which repo-list request each kind of owner sends. GitHub answers 422 when `type` is combined
+    with `affiliation` on /user/repos, and nothing else in the suite looked at those parameters."""
+
+    @staticmethod
+    def _forbidden():
+        request = httpx.Request("GET", "https://api.github.com/installation/repositories")
+        return httpx.HTTPStatusError(
+            "forbidden", request=request, response=httpx.Response(403, request=request)
+        )
+
+    def test_a_personal_account_with_a_pat_falls_back_to_a_valid_user_repos_query(self):
+        fake = MagicMock()
+        fake.request_paginated.side_effect = [self._forbidden(), [{"name": "dotfiles"}]]
+
+        repos = list_owner_repos(fake, "octocat", "User")
+
+        assert repos == [{"name": "dotfiles"}]
+        assert fake.request_paginated.call_args_list == [
+            call("/installation/repositories", items_key="repositories"),
+            call("/user/repos", params={"affiliation": "owner", "sort": "pushed"}),
+        ]
+
+    def test_a_personal_account_with_an_installation_token_never_hits_user_repos(self):
+        fake = MagicMock()
+        fake.request_paginated.return_value = [{"name": "dotfiles"}]
+
+        list_owner_repos(fake, "octocat", "User")
+
+        fake.request_paginated.assert_called_once_with("/installation/repositories", items_key="repositories")
+
+    def test_an_org_still_lists_with_type_all_which_is_valid_on_the_org_endpoint(self):
+        fake = MagicMock()
+        fake.request_paginated.return_value = []
+
+        list_owner_repos(fake, "acme", "Organization")
+
+        fake.request_paginated.assert_called_once_with("/orgs/acme/repos", params={"type": "all", "sort": "pushed"})
