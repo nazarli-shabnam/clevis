@@ -75,6 +75,10 @@ def test_my_view_degrades_to_empty_when_login_unresolvable(http):
         "assigned_issues": [],
         "my_recent_runs": [],
         "identity_unresolved": True,
+        "my_open_prs_total": 0,
+        "review_requests_total": 0,
+        "assigned_issues_total": 0,
+        "incomplete": False,
     }
 
 
@@ -324,3 +328,103 @@ def test_my_view_search_failure_degrades_each_list_to_empty_but_still_returns_re
     assert body["assigned_issues"] == []
     assert len(body["my_recent_runs"]) == 1
     assert body["my_recent_runs"][0]["repository"] == "acme/demo"
+
+
+def _pr_item(n, repo="acme/api"):
+    return {
+        "number": n,
+        "title": f"PR {n}",
+        "repository_url": f"https://api.github.com/repos/{repo}",
+        "html_url": f"https://github.com/{repo}/pull/{n}",
+        "updated_at": "2026-07-20T00:00:00Z",
+        "created_at": "2026-07-01T00:00:00Z",
+    }
+
+
+def _run_view(http, request_side_effect):
+    with (
+        patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
+        patch("src.routers.analytics.get_account_type", return_value="Organization"),
+        patch("src.routers.analytics.GitHubClient") as mock_client,
+    ):
+        mock_client.return_value.request.side_effect = request_side_effect
+        mock_client.return_value.request_paginated.return_value = []
+        return http.get("/me/github/my-view?owner=acme").json()
+
+
+def test_my_view_reports_real_search_totals_not_the_capped_list_length(http):
+    def req(method, path, params=None):
+        if path == "/user":
+            return {"login": "octocat"}
+        if path == "/search/issues":
+            q = params["q"]
+            if "review-requested:octocat" in q:
+                return {"total_count": 37, "items": [_pr_item(n) for n in range(10)]}
+            if "assignee:octocat" in q:
+                return {"total_count": 4, "items": []}
+            return {"total_count": 0, "items": []}
+        return {}
+
+    body = _run_view(http, req)
+
+    assert len(body["review_requests"]) == 10
+    assert body["review_requests_total"] == 37
+    assert body["assigned_issues_total"] == 4
+    assert body["incomplete"] is False
+
+
+def test_my_view_flags_incomplete_when_a_search_fails(http):
+    def req(method, path, params=None):
+        if path == "/user":
+            return {"login": "octocat"}
+        if path == "/search/issues":
+            if "review-requested:octocat" in params["q"]:
+                raise httpx.RequestError("rate limited")
+            return {"total_count": 0, "items": []}
+        return {}
+
+    body = _run_view(http, req)
+
+    assert body["incomplete"] is True and body["review_requests"] == []
+
+
+@pytest.mark.parametrize(
+    "check_runs, expected",
+    [
+        ([{"status": "completed", "conclusion": "success"}], "passing"),
+        ([{"status": "completed", "conclusion": "success"}, {"status": "completed", "conclusion": "failure"}], "failing"),
+        ([{"status": "completed", "conclusion": "success"}, {"status": "in_progress", "conclusion": None}], "pending"),
+        ([], "unknown"),
+    ],
+)
+def test_my_view_attaches_per_pr_ci_status_to_the_users_open_prs(http, check_runs, expected):
+    def req(method, path, params=None):
+        if path == "/user":
+            return {"login": "octocat"}
+        if path == "/search/issues":
+            return {"total_count": 1, "items": [_pr_item(7)] if "author:octocat" in params["q"] else []}
+        if path == "/repos/acme/api/pulls/7":
+            return {"head": {"sha": "abc123"}}
+        if path == "/repos/acme/api/commits/abc123/check-runs":
+            return {"check_runs": check_runs}
+        return {}
+
+    body = _run_view(http, req)
+
+    assert [p["ci_status"] for p in body["my_open_prs"]] == [expected]
+    assert body["review_requests"] == [] and all("ci_status" not in p or p["ci_status"] is None for p in body["review_requests"])
+
+
+def test_my_view_ci_lookup_failure_is_unknown_not_an_error(http):
+    def req(method, path, params=None):
+        if path == "/user":
+            return {"login": "octocat"}
+        if path == "/search/issues":
+            return {"total_count": 1, "items": [_pr_item(7)] if "author:octocat" in params["q"] else []}
+        if path.startswith("/repos/acme/api/"):
+            raise httpx.RequestError("boom")
+        return {}
+
+    body = _run_view(http, req)
+
+    assert [p["ci_status"] for p in body["my_open_prs"]] == ["unknown"]

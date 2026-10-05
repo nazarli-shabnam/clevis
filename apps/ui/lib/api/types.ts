@@ -496,6 +496,8 @@ export interface MyViewPRSummary {
   updated_at: string
   // When the PR was opened (the review-wait proxy); absent only if GitHub omitted it.
   created_at?: string | null
+  // CI state of the head commit, only set on the user's own open PRs ("unknown" = couldn't tell).
+  ci_status?: "passing" | "failing" | "pending" | "unknown" | null
 }
 
 export interface MyViewIssueSummary {
@@ -524,6 +526,12 @@ export interface MyViewResponse {
   // True when GitHub couldn't identify the user (an installation token can't call GET /user and there's
   // no OAuth-linked login) -- distinguishes that from genuinely zero open items.
   identity_unresolved: boolean
+  // GitHub's real totals; the lists above are capped at a handful of rows.
+  my_open_prs_total: number
+  review_requests_total: number
+  assigned_issues_total: number
+  // A search failed, so an empty list/zero count may mean "unknown" rather than "none".
+  incomplete: boolean
 }
 
 export interface MyPrListResponse {

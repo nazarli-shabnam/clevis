@@ -914,6 +914,59 @@ def _search_items(client: GitHubClient, query: str, per_page: int = 10, sort_old
         return []
 
 
+def _search_with_total(
+    client: GitHubClient, query: str, per_page: int = 10, sort_oldest: bool = False
+) -> tuple[list[dict], int, bool]:
+    """(items, GitHub's total_count, ok). ok=False means the search itself failed (rate limit, 5xx),
+    which callers must not present as "zero results"."""
+    params: dict = {"q": query, "per_page": per_page}
+    if sort_oldest:
+        params.update(sort="created", order="asc")
+    try:
+        result = client.request("GET", "/search/issues", params=params)
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        return [], 0, False
+    if not isinstance(result, dict):
+        return [], 0, False
+    items = result.get("items", [])
+    return items, max(int(result.get("total_count", len(items)) or 0), len(items)), True
+
+
+_FAILED_CHECK_CONCLUSIONS = {"failure", "timed_out", "startup_failure", "action_required"}
+# Each PR costs two GitHub calls (head sha, then check runs), so only the first few get a CI badge.
+_MAX_PRS_FOR_CI = 5
+
+
+def _pr_ci_status(client: GitHubClient, repository: str, number: int) -> str:
+    """CI state of a PR's head commit from its check runs: failing > pending > passing.
+    "unknown" on any error or when the commit has no check runs (legacy commit statuses are not read)."""
+    try:
+        pr = client.request("GET", f"/repos/{repository}/pulls/{number}")
+        sha = ((pr or {}).get("head") or {}).get("sha") if isinstance(pr, dict) else None
+        if not sha:
+            return "unknown"
+        data = client.request("GET", f"/repos/{repository}/commits/{sha}/check-runs", params={"per_page": 100})
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        return "unknown"
+    runs = data.get("check_runs", []) if isinstance(data, dict) else []
+    if not runs:
+        return "unknown"
+    if any(r.get("conclusion") in _FAILED_CHECK_CONCLUSIONS for r in runs):
+        return "failing"
+    if any(r.get("status") != "completed" for r in runs):
+        return "pending"
+    return "passing"
+
+
+def _with_ci_status(client: GitHubClient, prs: list[PRSummary]) -> list[PRSummary]:
+    head = prs[:_MAX_PRS_FOR_CI]
+    if not head:
+        return prs
+    with ThreadPoolExecutor(max_workers=_MAX_PRS_FOR_CI) as pool:
+        statuses = list(pool.map(lambda pr: _pr_ci_status(client, pr.repository, pr.number), head))
+    return [pr.model_copy(update={"ci_status": s}) for pr, s in zip(head, statuses)] + prs[_MAX_PRS_FOR_CI:]
+
+
 def _pr_summaries(items: list[dict]) -> list[PRSummary]:
     return [
         PRSummary(
@@ -999,18 +1052,25 @@ async def my_view(
         repos = []
     repo_names = [r["name"] for r in repos]
 
-    (my_open_prs_raw, review_requests_raw, assigned_issues_raw, my_recent_runs) = await asyncio.gather(
-        anyio.to_thread.run_sync(lambda: _search_items(client, f"is:pr is:open author:{login}")),
-        anyio.to_thread.run_sync(lambda: _search_items(client, f"is:pr is:open review-requested:{login}", sort_oldest=True)),
-        anyio.to_thread.run_sync(lambda: _search_items(client, f"is:issue is:open assignee:{login}")),
+    (my_prs_search, reviews_search, issues_search, my_recent_runs) = await asyncio.gather(
+        anyio.to_thread.run_sync(lambda: _search_with_total(client, f"is:pr is:open author:{login}")),
+        anyio.to_thread.run_sync(
+            lambda: _search_with_total(client, f"is:pr is:open review-requested:{login}", sort_oldest=True)
+        ),
+        anyio.to_thread.run_sync(lambda: _search_with_total(client, f"is:issue is:open assignee:{login}")),
         anyio.to_thread.run_sync(lambda: _safe_my_recent_runs(client, owner, login, repo_names)),
     )
+    my_open_prs = await anyio.to_thread.run_sync(lambda: _with_ci_status(client, _pr_summaries(my_prs_search[0])))
 
     return MyViewResponse(
-        my_open_prs=_pr_summaries(my_open_prs_raw),
-        review_requests=_pr_summaries(review_requests_raw),
-        assigned_issues=_issue_summaries(assigned_issues_raw),
+        my_open_prs=my_open_prs,
+        review_requests=_pr_summaries(reviews_search[0]),
+        assigned_issues=_issue_summaries(issues_search[0]),
         my_recent_runs=my_recent_runs,
+        my_open_prs_total=my_prs_search[1],
+        review_requests_total=reviews_search[1],
+        assigned_issues_total=issues_search[1],
+        incomplete=not (my_prs_search[2] and reviews_search[2] and issues_search[2]),
     )
 
 
