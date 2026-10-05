@@ -329,7 +329,11 @@ def logout(
         # sign the browser back in once the DB recovers -- and say so, so the client warns the user that
         # the server-side session may still be live. (An HTTPException would drop the cookie header.)
         logger.exception("logout could not revoke the presented session token(s)")
-        db.rollback()
+        try:
+            db.rollback()
+        except Exception:
+            # A dead connection can fail the rollback too; that must not cost the cookie deletion.
+            logger.exception("rollback failed after a logout revocation error")
         failed = JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={"detail": "Signed out locally, but the session could not be revoked on the server. Try again."},
