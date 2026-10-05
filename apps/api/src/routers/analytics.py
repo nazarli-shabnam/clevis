@@ -104,10 +104,12 @@ def _persist_scan(
     )
 
 
-def _notify_score_drop_best_effort(db: Session, ctx: OrgContext, previous: int, current: int) -> None:
+def _notify_score_drop_best_effort(
+    db: Session, ctx: OrgContext, previous: int, current: int, *, actor: str = "system"
+) -> None:
     # A chat-webhook problem must never fail or slow-fail the scan the user actually asked for.
     try:
-        notifications.notify_score_drop(db, ctx.org.tenant_id, ctx.org.github_login, previous, current)
+        notifications.notify_score_drop(db, ctx.org.tenant_id, ctx.org.github_login, previous, current, actor=actor)
     except Exception:
         db.rollback()
         logger.exception("score-drop notification failed for %s", ctx.org.github_login)
