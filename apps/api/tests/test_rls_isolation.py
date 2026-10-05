@@ -158,9 +158,9 @@ def test_resolve_api_token_still_works_when_the_owner_is_subject_to_rls(db):
     db.execute(text("RESET app.tenant_id"))
     db.execute(text("SET LOCAL ROLE rls_probe_owner"))
     try:
-        # As the owner with no tenant context, a plain read sees nothing (FORCE) ...
-        assert db.execute(text("SELECT count(*) FROM api_tokens")).scalar() == 0
-        # ... yet the definer lookup still resolves the token.
+        # The lookup policy admits the table owner by identity (migration 0056), so a read by the owner
+        # is allowed and the definer function, which runs as the owner, resolves the token. Non-owner
+        # roles stay locked out (see test_api_tokens.py).
         row = db.execute(
             text("SELECT org_login FROM resolve_api_token(:h)"), {"h": api_token_repo.hash_token(token)}
         ).first()
