@@ -73,7 +73,6 @@ def test_my_view_degrades_to_empty_when_login_unresolvable(http):
         "my_open_prs": [],
         "review_requests": [],
         "assigned_issues": [],
-        "my_recent_runs": [],
         "identity_unresolved": True,
         "my_open_prs_total": 0,
         "review_requests_total": 0,
@@ -203,7 +202,6 @@ def test_my_view_success(http):
     assert body["review_requests"] == []
     assert len(body["assigned_issues"]) == 1
     assert body["assigned_issues"][0]["repository"] == "acme/worker"
-    assert body["my_recent_runs"] == []
 
 
 def test_my_view_falls_back_to_client_supplied_token_header(http):
@@ -221,71 +219,7 @@ def test_my_view_falls_back_to_client_supplied_token_header(http):
     assert resp.json()["my_open_prs"] == []
 
 
-def test_my_view_repos_fetch_failure_degrades_to_empty_recent_runs(http):
-    """If the repo-list call itself fails, my-view should still return 200 with an
-    empty my_recent_runs rather than propagating the error (repos are only used for
-    the recent-runs fan-out here, not required for the search-based PR/issue lists)."""
-
-    def _request_side_effect(method, path, params=None):
-        if path == "/user":
-            return {"login": "octocat"}
-        if path == "/search/issues":
-            return {"items": []}
-        return {}
-
-    with (
-        patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
-        patch("src.routers.analytics.get_account_type", return_value="Organization"),
-        patch("src.routers.analytics.GitHubClient") as mock_client,
-    ):
-        mock_client.return_value.request.side_effect = _request_side_effect
-        mock_client.return_value.request_paginated.side_effect = httpx.HTTPStatusError(
-            "boom",
-            request=httpx.Request("GET", "https://api.github.com/orgs/acme/repos"),
-            response=httpx.Response(500, request=httpx.Request("GET", "https://api.github.com/orgs/acme/repos")),
-        )
-        resp = http.get("/me/github/my-view?owner=acme")
-
-    assert resp.status_code == 200
-    assert resp.json()["my_recent_runs"] == []
-
-
-def test_my_view_resolves_account_type_for_repo_listing(http):
-    """A User-account owner must not hit /orgs/{owner}/repos for the recent-runs repo
-    fan-out (that endpoint 404s for User accounts) -- my-view should resolve account_type
-    the same way personal_analytics_cockpit does and route through the User-account path."""
-
-    def _request_side_effect(method, path, params=None):
-        if path == "/user":
-            return {"login": "octocat"}
-        if path == "/orgs/octocat/repos":
-            raise AssertionError("must not call the org repos endpoint for a User account")
-        if path == "/installation/repositories":
-            return {"repositories": [{"name": "demo"}]}
-        if path == "/search/issues":
-            return {"items": []}
-        if path == "/repos/octocat/demo/actions/runs":
-            return {"workflow_runs": []}
-        return {}
-
-    with (
-        patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
-        patch("src.routers.analytics.get_account_type", return_value="User"),
-        patch("src.routers.analytics.GitHubClient") as mock_client,
-    ):
-        mock_client.return_value.request.side_effect = _request_side_effect
-        mock_client.return_value.request_paginated.side_effect = (
-            lambda path, params=None, items_key=None: _request_side_effect("GET", path, params).get(
-                items_key or "items", []
-            )
-        )
-        resp = http.get("/me/github/my-view?owner=octocat")
-
-    assert resp.status_code == 200
-    assert resp.json()["my_recent_runs"] == []
-
-
-def test_my_view_search_failure_degrades_each_list_to_empty_but_still_returns_recent_runs(http):
+def test_my_view_search_failure_degrades_each_list_to_empty_and_flags_incomplete(http):
     def _request_side_effect(method, path, params=None):
         if path == "/user":
             return {"login": "octocat"}
@@ -295,39 +229,13 @@ def test_my_view_search_failure_degrades_each_list_to_empty_but_still_returns_re
                 request=httpx.Request("GET", "https://api.github.com/search/issues"),
                 response=httpx.Response(403, request=httpx.Request("GET", "https://api.github.com/search/issues")),
             )
-        if path == "/repos/acme/demo/actions/runs":
-            return {
-                "workflow_runs": [
-                    {
-                        "id": 1,
-                        "name": "CI",
-                        "status": "completed",
-                        "conclusion": "success",
-                        "html_url": "https://github.com/acme/demo/actions/runs/1",
-                        "created_at": "2026-07-20T00:00:00Z",
-                    }
-                ]
-            }
-        if path == "/repos/acme/bad/actions/runs":
-            raise httpx.RequestError("boom")
         return {}
 
-    with (
-        patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
-        patch("src.routers.analytics.get_account_type", return_value="Organization"),
-        patch("src.routers.analytics.GitHubClient") as mock_client,
-    ):
-        mock_client.return_value.request.side_effect = _request_side_effect
-        mock_client.return_value.request_paginated.return_value = [{"name": "demo"}, {"name": "bad"}]
-        resp = http.get("/me/github/my-view?owner=acme")
+    body = _run_view(http, _request_side_effect)
 
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["my_open_prs"] == []
-    assert body["review_requests"] == []
-    assert body["assigned_issues"] == []
-    assert len(body["my_recent_runs"]) == 1
-    assert body["my_recent_runs"][0]["repository"] == "acme/demo"
+    assert body["my_open_prs"] == [] and body["review_requests"] == [] and body["assigned_issues"] == []
+    assert body["incomplete"] is True
+
 
 
 def _pr_item(n, repo="acme/api"):
@@ -394,6 +302,8 @@ def test_my_view_flags_incomplete_when_a_search_fails(http):
         ([{"status": "completed", "conclusion": "success"}], "passing"),
         ([{"status": "completed", "conclusion": "success"}, {"status": "completed", "conclusion": "failure"}], "failing"),
         ([{"status": "completed", "conclusion": "success"}, {"status": "in_progress", "conclusion": None}], "pending"),
+        ([{"status": "completed", "conclusion": "cancelled"}], "failing"),
+        ([{"status": "completed", "conclusion": "skipped"}, {"status": "completed", "conclusion": "neutral"}], "passing"),
         ([], "unknown"),
     ],
 )
@@ -428,3 +338,35 @@ def test_my_view_ci_lookup_failure_is_unknown_not_an_error(http):
     body = _run_view(http, req)
 
     assert [p["ci_status"] for p in body["my_open_prs"]] == ["unknown"]
+
+
+def _ci_view(http, *, runs, total=None, status=None):
+    def req(method, path, params=None):
+        if path == "/user":
+            return {"login": "octocat"}
+        if path == "/search/issues":
+            return {"total_count": 1, "items": [_pr_item(7)] if "author:octocat" in params["q"] else []}
+        if path == "/repos/acme/api/pulls/7":
+            return {"head": {"sha": "abc123"}}
+        if path == "/repos/acme/api/commits/abc123/check-runs":
+            return {"total_count": len(runs) if total is None else total, "check_runs": runs}
+        if path == "/repos/acme/api/commits/abc123/status":
+            return status or {"state": "pending", "statuses": []}
+        return {}
+
+    return _run_view(http, req)["my_open_prs"][0]["ci_status"]
+
+
+def test_my_view_ci_reads_legacy_commit_statuses_too(http):
+    assert _ci_view(http, runs=[], status={"state": "failure", "statuses": [{"state": "failure"}]}) == "failing"
+    assert _ci_view(http, runs=[], status={"state": "success", "statuses": [{"state": "success"}]}) == "passing"
+    assert _ci_view(http, runs=[], status={"state": "pending", "statuses": [{"state": "pending"}]}) == "pending"
+    ok = [{"status": "completed", "conclusion": "success"}]
+    assert _ci_view(http, runs=ok, status={"state": "failure", "statuses": [{"state": "failure"}]}) == "failing"
+
+
+def test_my_view_ci_is_unknown_not_passing_when_check_runs_were_truncated(http):
+    ok = [{"status": "completed", "conclusion": "success"}]
+    assert _ci_view(http, runs=ok, total=250) == "unknown"
+    failed = [{"status": "completed", "conclusion": "failure"}]
+    assert _ci_view(http, runs=failed, total=250) == "failing"

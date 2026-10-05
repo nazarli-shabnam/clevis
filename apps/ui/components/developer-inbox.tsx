@@ -31,12 +31,15 @@ function InboxSection({
   children,
   count,
   viewAllHref,
+  unavailable,
 }: {
   title: string
   empty: string
   children: React.ReactNode
   count: number
   viewAllHref: string
+  // The search behind this section failed: say so rather than claim there is nothing.
+  unavailable: boolean
 }) {
   return (
     <section className="card">
@@ -45,7 +48,7 @@ function InboxSection({
         <span className="stat-chip">{count}</span>
       </div>
       {count === 0 ? (
-        <p className="px-4 py-4 text-sm text-muted-foreground">{empty}</p>
+        <p className="px-4 py-4 text-sm text-muted-foreground">{unavailable ? "Couldn't load." : empty}</p>
       ) : (
         <>
           <div className="divide-y divide-border">{children}</div>
@@ -109,7 +112,7 @@ export function DeveloperInbox({ org, token }: { org: string; token?: string }) 
         </p>
       )}
       <div className="grid gap-4 md:grid-cols-3">
-        <InboxSection title="Reviews waiting on you" empty="No reviews waiting." count={data.review_requests_total} viewAllHref="/my?tab=reviews">
+        <InboxSection title="Reviews waiting on you" empty="No reviews waiting." count={data.review_requests_total} viewAllHref="/my?tab=reviews" unavailable={data.incomplete}>
           {reviews.map((pr) => (
             <PrRow
               key={`${pr.repository}-${pr.number}`}
@@ -125,7 +128,7 @@ export function DeveloperInbox({ org, token }: { org: string; token?: string }) 
             />
           ))}
         </InboxSection>
-        <InboxSection title="Your open PRs" empty="No open pull requests." count={data.my_open_prs_total} viewAllHref="/my">
+        <InboxSection title="Your open PRs" empty="No open pull requests." count={data.my_open_prs_total} viewAllHref="/my" unavailable={data.incomplete}>
           {myPrs.map((pr) => {
             const ci = pr.ci_status ?? "unknown"
             return (
@@ -137,7 +140,7 @@ export function DeveloperInbox({ org, token }: { org: string; token?: string }) 
             )
           })}
         </InboxSection>
-        <InboxSection title="Assigned to you" empty="No assigned issues." count={data.assigned_issues_total} viewAllHref="/my?tab=issues">
+        <InboxSection title="Assigned to you" empty="No assigned issues." count={data.assigned_issues_total} viewAllHref="/my?tab=issues" unavailable={data.incomplete}>
           {data.assigned_issues.slice(0, MAX_ROWS).map((issue) => (
             <a key={`${issue.repository}-${issue.number}`} href={issue.html_url} target="_blank" rel="noreferrer" className={rowClass}>
               <span className="flex flex-col min-w-0">

@@ -159,21 +159,10 @@ class IssueSummary(BaseModel):
     updated_at: datetime
 
 
-class RunSummaryLite(BaseModel):
-    repository: str
-    id: int
-    name: str | None
-    status: str
-    conclusion: str | None
-    html_url: str
-    created_at: datetime
-
-
 class MyViewResponse(BaseModel):
     my_open_prs: list[PRSummary] = []
     review_requests: list[PRSummary] = []
     assigned_issues: list[IssueSummary] = []
-    my_recent_runs: list[RunSummaryLite] = []
     # True when GitHub's /user (the source of "who am I") couldn't be resolved -- an
     # installation (App) token can't call it, and the signed-in Clevis user has no
     # GitHub-OAuth-linked login to fall back on either. Distinguishes "we don't know who

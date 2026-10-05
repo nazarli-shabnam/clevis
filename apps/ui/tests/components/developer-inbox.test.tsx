@@ -30,7 +30,6 @@ function view(overrides: Partial<MyViewResponse> = {}): MyViewResponse {
     my_open_prs: [],
     review_requests: [],
     assigned_issues: [],
-    my_recent_runs: [],
     identity_unresolved: false,
     my_open_prs_total: 0,
     review_requests_total: 0,
@@ -125,6 +124,9 @@ describe("DeveloperInbox", () => {
     renderInbox()
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/may be incomplete/)
+    // An empty section must not claim there is nothing waiting when its search failed.
+    expect(screen.queryByText("No reviews waiting.")).not.toBeInTheDocument()
+    expect(screen.getAllByText("Couldn't load.")).toHaveLength(3)
   })
 
   it("renders nothing when GitHub identity is unresolved", async () => {

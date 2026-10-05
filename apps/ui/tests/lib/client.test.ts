@@ -300,12 +300,12 @@ describe("api.analytics value normalization", () => {
   });
 
   it("GETs /me/github/my-view?owner=... with an X-GitHub-Token header when supplied", async () => {
-    stubOkJson({ my_open_prs: [], review_requests: [], assigned_issues: [], my_recent_runs: [] });
+    stubOkJson({ my_open_prs: [], review_requests: [], assigned_issues: [] });
     const result = await api.analytics.myView("acme", "ghp_test");
     const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(String(url)).toContain("/me/github/my-view?owner=acme");
     expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
-    expect(result).toEqual({ my_open_prs: [], review_requests: [], assigned_issues: [], my_recent_runs: [] });
+    expect(result).toEqual({ my_open_prs: [], review_requests: [], assigned_issues: [] });
   });
 
   it("GETs /me/github/my-prs?owner=...&page=...&per_page=... with an X-GitHub-Token header when supplied", async () => {

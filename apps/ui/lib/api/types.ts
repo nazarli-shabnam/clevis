@@ -508,21 +508,10 @@ export interface MyViewIssueSummary {
   updated_at: string
 }
 
-export interface MyViewRunSummary {
-  repository: string
-  id: number
-  name: string | null
-  status: string
-  conclusion: string | null
-  html_url: string
-  created_at: string
-}
-
 export interface MyViewResponse {
   my_open_prs: MyViewPRSummary[]
   review_requests: MyViewPRSummary[]
   assigned_issues: MyViewIssueSummary[]
-  my_recent_runs: MyViewRunSummary[]
   // True when GitHub couldn't identify the user (an installation token can't call GET /user and there's
   // no OAuth-linked login) -- distinguishes that from genuinely zero open items.
   identity_unresolved: boolean
