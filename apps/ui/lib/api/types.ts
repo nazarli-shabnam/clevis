@@ -437,6 +437,9 @@ export interface InactiveMembersResponse {
   org: string
   sampled_repos: string[]
   members: InactiveMember[]
+  /** Live fallback only: roster size and how many of them were checked (capped server-side). */
+  members_total?: number | null
+  members_checked?: number | null
 }
 
 export interface PrWeekBucket {
