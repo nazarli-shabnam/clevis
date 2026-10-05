@@ -67,7 +67,7 @@ export function DependabotTriageCard({ org, owner, repo, token }: Props) {
   // org Clevis doesn't know, a network error). The form below would show invented defaults
   // (disabled / approve_only) as if they were the real setting, and Save would write them over it.
   const loadFailed = ready && current.isError && !current.data
-  const loading = ready && current.isLoading
+  const loading = ready && current.isPending
 
   // A real run uses the *saved* setting server-side, so the run button reflects the saved
   // setting and is blocked while the form has unsaved changes.
