@@ -255,6 +255,45 @@ describe("SecurityPage", () => {
     await waitFor(() => expect(screen.getByText(/Score trend \(last 2 scans\)/)).toBeInTheDocument());
   });
 
+  async function runScan() {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 90, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [],
+    });
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+  }
+
+  it("shows an error with Retry when the scan history fails to load, instead of silently dropping it", async () => {
+    analyticsHistoryMock.mockRejectedValue(new Error("history unavailable"));
+    renderPage();
+    await runScan();
+
+    // Once next to the export controls, once in place of the Remediation Trend chart.
+    await waitFor(() =>
+      expect(screen.getAllByText(/Couldn't load scan history: history unavailable/)).toHaveLength(2),
+    );
+    expect(screen.queryByText("Run more scans to see a trend")).not.toBeInTheDocument();
+
+    analyticsHistoryMock.mockResolvedValue([
+      { id: 2, owner: "acme", score: 90, total_checks: 3, failed_checks: 0, created_at: "2026-07-17T00:00:00Z" },
+      { id: 1, owner: "acme", score: 70, total_checks: 3, failed_checks: 1, created_at: "2026-07-10T00:00:00Z" },
+    ]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Retry" })[0]);
+
+    await waitFor(() => expect(screen.queryByText(/Couldn't load scan history/)).not.toBeInTheDocument());
+    expect(await screen.findByRole("button", { name: /export history/i })).toBeInTheDocument();
+  });
+
+  it("still says 'Run more scans' (no error) when history simply has too few points", async () => {
+    renderPage();
+    await runScan();
+
+    expect(await screen.findByText("Run more scans to see a trend")).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn't load scan history/)).not.toBeInTheDocument();
+  });
+
   it("only offers the CSV export once scan history exists", async () => {
     renderPage();
     fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
