@@ -490,7 +490,7 @@ class ApiToken(Base):
 
 
 class RevokedToken(Base):
-    """A session JWT that was logged out before it expired, keyed by its ``jti`` claim.
+    """A session JWT that was logged out before it expired, keyed by its ``jti`` or legacy fingerprint.
 
     Not tenant data (no RLS): require_auth checks it before any tenant context exists. Rows are only
     needed until the token's own ``exp`` and are purged opportunistically on logout.

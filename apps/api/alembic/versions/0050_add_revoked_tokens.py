@@ -6,8 +6,8 @@ until the token's own ``exp``; ``require_auth`` rejects a token whose ``jti`` is
 ``token_version`` stays the "log out everywhere" counter.
 
 - New table only: no existing data is read, rewritten or dropped, so there is no backfill and no
-  data-loss risk. Tokens issued before this change have no ``jti`` and keep working until they
-  expire (or ``/me/revoke-sessions``), exactly as before.
+  data-loss risk. Tokens issued before this change have no ``jti``; the application can store
+  a namespaced fingerprint in the same text key to revoke them individually.
 - Not tenant data, so no RLS: ``require_auth`` has to read it before any tenant context exists.
 - ``expires_at`` is indexed so the opportunistic purge of expired rows stays cheap.
 - Grants ``clevis_api`` DML when that role exists (same pattern as 0048/0049).
@@ -27,6 +27,7 @@ depends_on = None
 
 
 def upgrade() -> None:
+    """Create the session denylist, expiry index, and API role grants."""
     op.create_table(
         "revoked_tokens",
         sa.Column("jti", sa.String(), primary_key=True),
@@ -48,5 +49,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Remove the session denylist and its expiry index."""
     op.drop_index("ix_revoked_tokens_expires_at", table_name="revoked_tokens")
     op.drop_table("revoked_tokens")

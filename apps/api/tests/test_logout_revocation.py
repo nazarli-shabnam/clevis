@@ -21,6 +21,7 @@ PASSWORD = "supersecret1234"
 
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter():
+    """Isolate logout tests from request and account rate-limit state."""
     _buckets.clear()
     _account_buckets.clear()
     yield
@@ -30,6 +31,7 @@ def _reset_rate_limiter():
 
 @pytest.fixture()
 def client(db):
+    """Serve auth routes using the transactional test database."""
     app = FastAPI()
     app.include_router(auth_router, prefix="/auth")
     app.dependency_overrides[get_db] = lambda: db
@@ -38,30 +40,36 @@ def client(db):
 
 @pytest.fixture()
 def owner_token(client):
+    """Create the initial workspace admin and return its session token."""
     resp = client.post("/auth/setup", json={"email": "owner@example.com", "password": PASSWORD})
     assert resp.status_code == 201
     return resp.json()["access_token"]
 
 
 def _login(client) -> str:
+    """Issue another session for the existing workspace admin."""
     resp = client.post("/auth/login", json={"email": "owner@example.com", "password": PASSWORD})
     assert resp.status_code == 200
     return resp.json()["access_token"]
 
 
 def _bearer(token: str) -> dict:
+    """Build the Authorization header for a session token."""
     return {"Authorization": f"Bearer {token}"}
 
 
 def _claims(token: str) -> dict:
+    """Verify and decode a locally issued test token."""
     return jwt.decode(token, settings.auth_secret.get_secret_value(), algorithms=["HS256"])
 
 
 def _encode(**claims) -> str:
+    """Sign custom claims with the configured test secret."""
     return jwt.encode(claims, settings.auth_secret.get_secret_value(), algorithm="HS256")
 
 
 def test_every_issued_token_carries_a_unique_jti():
+    """Separate logins must have distinct revocation identities."""
     first = create_access_token(1, "a@example.com", False)
     second = create_access_token(1, "a@example.com", False)
 
@@ -69,6 +77,7 @@ def test_every_issued_token_carries_a_unique_jti():
 
 
 def test_a_logged_out_bearer_token_stops_working(client, owner_token):
+    """Logout clears the cookie and rejects replay of the presented bearer token."""
     assert client.get("/auth/me", headers=_bearer(owner_token)).status_code == 200
 
     resp = client.post("/auth/logout", headers=_bearer(owner_token))
@@ -80,6 +89,7 @@ def test_a_logged_out_bearer_token_stops_working(client, owner_token):
 
 
 def test_a_logged_out_cookie_session_stops_working(client, owner_token):
+    """Logout rejects subsequent requests using the presented session cookie."""
     cookie = {"Cookie": f"{SESSION_COOKIE_NAME}={owner_token}"}
     assert client.get("/auth/me", headers=cookie).status_code == 200
 
@@ -89,6 +99,7 @@ def test_a_logged_out_cookie_session_stops_working(client, owner_token):
 
 
 def test_logging_out_one_session_leaves_the_users_other_sessions_alone(client, owner_token):
+    """Revoking one token must preserve other sessions for the same user."""
     other = _login(client)
 
     client.post("/auth/logout", headers=_bearer(owner_token))
@@ -98,6 +109,7 @@ def test_logging_out_one_session_leaves_the_users_other_sessions_alone(client, o
 
 
 def test_logout_is_idempotent(client, owner_token, db):
+    """Repeated logout requests must create only one denylist entry."""
     for _ in range(2):
         assert client.post("/auth/logout", headers=_bearer(owner_token)).status_code == 200
 
@@ -105,6 +117,7 @@ def test_logout_is_idempotent(client, owner_token, db):
 
 
 def test_the_denylist_row_lives_until_the_tokens_own_expiry(client, owner_token, db):
+    """Revocation records retain the token owner and original expiration."""
     client.post("/auth/logout", headers=_bearer(owner_token))
 
     row = db.get(RevokedToken, _claims(owner_token)["jti"])
@@ -113,17 +126,44 @@ def test_the_denylist_row_lives_until_the_tokens_own_expiry(client, owner_token,
     assert row.expires_at == datetime.fromtimestamp(_claims(owner_token)["exp"], tz=timezone.utc)
 
 
-def test_a_token_issued_before_jti_existed_keeps_working_and_logout_of_it_is_a_no_op(client, owner_token, db):
-    claims = _claims(owner_token)
-    legacy = _encode(**{k: v for k, v in claims.items() if k != "jti"})
-    assert client.get("/auth/me", headers=_bearer(legacy)).status_code == 200
+@pytest.mark.parametrize("transport", ["bearer", "cookie", "both"])
+def test_logout_revokes_a_legacy_token_without_ending_other_sessions(client, owner_token, db, transport):
+    """Legacy sessions stop authenticating after logout through either supported transport."""
+    claims = {k: v for k, v in _claims(owner_token).items() if k != "jti"}
+    legacy = _encode(**claims)
+    other_legacy = _encode(**{**claims, "exp": claims["exp"] + 60})
+    headers = {}
+    if transport in ("bearer", "both"):
+        headers.update(_bearer(legacy))
+    if transport in ("cookie", "both"):
+        headers["Cookie"] = f"{SESSION_COOKIE_NAME}={legacy}"
+    assert client.get("/auth/me", headers=headers).status_code == 200
 
-    resp = client.post("/auth/logout", headers=_bearer(legacy))
+    for _ in range(2):
+        resp = client.post("/auth/logout", headers=headers)
+        assert resp.status_code == 200 and resp.json() == {"ok": True}
+        assert SESSION_COOKIE_NAME in resp.headers.get("set-cookie", "")
 
-    assert resp.status_code == 200
-    assert db.query(RevokedToken).count() == 0
-    # Nothing to revoke it by: it lives until it expires or /me/revoke-sessions, as before.
-    assert client.get("/auth/me", headers=_bearer(legacy)).status_code == 200
+    row = db.query(RevokedToken).one()
+    assert row.user_id == int(claims["sub"])
+    assert row.expires_at == datetime.fromtimestamp(claims["exp"], tz=timezone.utc)
+    again = client.get("/auth/me", headers=headers)
+    assert again.status_code == 401 and again.json()["detail"] == "Session revoked"
+    assert client.get("/auth/me", headers=_bearer(owner_token)).status_code == 200
+    assert client.get("/auth/me", headers=_bearer(other_legacy)).status_code == 200
+
+
+def test_legacy_signature_encoding_cannot_bypass_logout(client, owner_token):
+    """Equivalent signature encodings must share the same legacy revocation record."""
+    claims = {k: v for k, v in _claims(owner_token).items() if k != "jti"}
+    legacy = _encode(**claims)
+    padded = legacy + "="
+    assert client.get("/auth/me", headers=_bearer(padded)).status_code == 200
+
+    assert client.post("/auth/logout", headers=_bearer(padded)).status_code == 200
+
+    assert client.get("/auth/me", headers=_bearer(legacy)).status_code == 401
+    assert client.get("/auth/me", headers=_bearer(padded)).status_code == 401
 
 
 @pytest.mark.parametrize(
@@ -136,6 +176,7 @@ def test_a_token_issued_before_jti_existed_keeps_working_and_logout_of_it_is_a_n
     ids=["no-token", "garbage-token", "wrong-signature"],
 )
 def test_logout_still_succeeds_and_clears_the_cookie_without_a_valid_token(client, db, headers):
+    """Missing or invalid credentials clear the cookie without storing a revocation."""
     resp = client.post("/auth/logout", headers=headers)
 
     assert resp.status_code == 200 and resp.json() == {"ok": True}
@@ -144,6 +185,7 @@ def test_logout_still_succeeds_and_clears_the_cookie_without_a_valid_token(clien
 
 
 def test_logging_out_an_already_expired_token_is_a_no_op(client, owner_token, db):
+    """Expired tokens need no revocation record and must not fail logout."""
     claims = _claims(owner_token)
     expired = _encode(**{**claims, "exp": int((datetime.now(timezone.utc) - timedelta(hours=1)).timestamp())})
 
@@ -154,6 +196,7 @@ def test_logging_out_an_already_expired_token_is_a_no_op(client, owner_token, db
 
 
 def test_a_token_for_a_user_that_no_longer_exists_is_a_no_op(client, db):
+    """Logout for a deleted user must not insert an invalid foreign key."""
     ghost = create_access_token(987654, "ghost@example.com", False)
 
     assert client.post("/auth/logout", headers=_bearer(ghost)).status_code == 200
@@ -161,6 +204,7 @@ def test_a_token_for_a_user_that_no_longer_exists_is_a_no_op(client, db):
 
 
 def test_expired_denylist_rows_are_purged_on_the_next_logout(client, owner_token, db):
+    """Logout removes expired records while preserving live revocations."""
     user_id = _claims(owner_token)["sub"]
     db.add(RevokedToken(jti="stale", user_id=int(user_id), expires_at=datetime.now(timezone.utc) - timedelta(days=1)))
     db.add(RevokedToken(jti="live", user_id=int(user_id), expires_at=datetime.now(timezone.utc) + timedelta(days=1)))
@@ -172,6 +216,7 @@ def test_expired_denylist_rows_are_purged_on_the_next_logout(client, owner_token
 
 
 def test_revoke_sessions_still_ends_every_session_including_other_unrevoked_ones(client, owner_token):
+    """The account-wide revocation counter still invalidates other sessions."""
     other = _login(client)
 
     client.post("/auth/me/revoke-sessions", headers=_bearer(owner_token))
@@ -180,6 +225,7 @@ def test_revoke_sessions_still_ends_every_session_including_other_unrevoked_ones
 
 
 def test_logout_revokes_both_the_bearer_token_and_a_different_session_cookie(client, owner_token):
+    """Logout must revoke both credentials when a browser presents two sessions."""
     # e.g. a stale localStorage token alongside the cookie a later GitHub OAuth login set.
     cookie_session = _login(client)
     cookie = {"Cookie": f"{SESSION_COOKIE_NAME}={cookie_session}"}
@@ -192,6 +238,7 @@ def test_logout_revokes_both_the_bearer_token_and_a_different_session_cookie(cli
 
 
 def test_logout_with_the_same_token_in_header_and_cookie_stores_one_row(client, owner_token, db):
+    """Duplicate credentials in one request must yield a single denylist row."""
     both = {**_bearer(owner_token), "Cookie": f"{SESSION_COOKIE_NAME}={owner_token}"}
 
     assert client.post("/auth/logout", headers=both).status_code == 200

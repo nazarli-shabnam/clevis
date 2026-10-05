@@ -65,6 +65,7 @@ function parseJwtPayload(token: string): AuthUser | null {
   }
 }
 
+/** Manage browser session state and synchronize authentication with the API. */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [token, setToken] = useState<string | null>(null)
@@ -86,6 +87,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setLogoutWarning(null)
   }, [])
 
+  /** Revoke the presented sessions and clear the current browser identity. */
   const logout = useCallback(() => {
     bumpSessionEpoch()
     // Present the bearer token so the server can revoke this session's JWT (the cookie, if any,

@@ -230,6 +230,7 @@ describe("AuthProvider logoutWarning", () => {
     localStorage.setItem(TOKEN_KEY, jwt);
     stubFetch(() => Promise.resolve(new Response(null, { status: 204 })));
 
+    /** Supply session state to the hook under test. */
     const wrapper = ({ children }: { children: React.ReactNode }) => (
       <AuthProvider>{children}</AuthProvider>
     );

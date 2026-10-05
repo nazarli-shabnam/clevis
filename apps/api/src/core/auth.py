@@ -4,6 +4,7 @@ require_auth checks token_version (log out everywhere) and the per-token ``jti``
 logout) against the DB on every request so revoked sessions end immediately.
 """
 
+import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -66,6 +67,7 @@ class UserOut(BaseModel):
 def create_access_token(
     user_id: int, email: str, is_workspace_admin: bool, name: str | None = None, token_version: int = 0
 ) -> str:
+    """Issue a session JWT with a unique identity for individual logout revocation."""
     payload = {
         "sub": str(user_id),
         "email": email,
@@ -116,10 +118,7 @@ def require_auth(
     db_user = db.query(User).filter(User.id == user_id).first()
     if db_user is None or db_user.token_version != payload.get("token_version", 0):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked")
-    # Tokens issued before `jti` existed carry none and stay valid until they expire (or the user
-    # revokes all sessions); every token minted since is checked against the logout denylist.
-    jti = payload.get("jti")
-    if jti and db.get(RevokedToken, jti) is not None:
+    if db.get(RevokedToken, _revocation_key(token, payload)) is not None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked")
     # Set app.user_id for RLS self-access checks on routes that never resolve a tenant
     # (see migration 0031).
@@ -135,6 +134,15 @@ def require_auth(
     )
 
 
+def _revocation_key(token: str, payload: dict) -> str:
+    """Return a verified JWT's jti, or a namespaced fingerprint for a legacy token.
+
+    Hash only the signed header and payload so equivalent encodings of the signature
+    cannot bypass revocation. Callers must verify the JWT before using this key.
+    """
+    return payload.get("jti") or "legacy:" + hashlib.sha256(token.rsplit(".", 1)[0].encode()).hexdigest()
+
+
 def revoke_presented_tokens(db: Session, *tokens: str | None) -> None:
     """Denylist each session JWT in ``tokens`` until its own expiry (single-session logout).
 
@@ -142,16 +150,15 @@ def revoke_presented_tokens(db: Session, *tokens: str | None) -> None:
     sessions (e.g. a stale localStorage token after a GitHub OAuth login), and ending only the one
     ``require_auth`` happens to prefer would leave the other alive.
 
-    Best-effort and silent per token: a missing, malformed, badly signed or already-expired token,
-    a token from before ``jti`` existed, and a user that no longer exists are all no-ops, because
-    logout must always succeed and there is nothing left to revoke in any of those cases. Expired
-    denylist rows are purged here since they can no longer matter.
+    Tokens issued before ``jti`` existed are keyed by a fingerprint of their signed content.
+    A missing, malformed, badly signed or already-expired token, and a user that no longer
+    exists are all no-ops. Expired denylist rows are purged here since they can no longer matter.
     """
     revoked_any = False
     for token in dict.fromkeys(t for t in tokens if t):
         try:
             payload = jwt.decode(token, settings.auth_secret.get_secret_value(), algorithms=[_ALGORITHM])
-            jti = payload["jti"]
+            jti = _revocation_key(token, payload)
             user_id = int(payload["sub"])
             expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
         except (jwt.InvalidTokenError, KeyError, ValueError, TypeError):
