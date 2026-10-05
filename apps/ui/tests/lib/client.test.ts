@@ -132,6 +132,21 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
     expect(JSON.parse(runInit.body as string)).toEqual({ repos: ["acme/api"], dry_run: true, token: undefined });
   });
 
+  it("GET/PUTs the org's badge setting", async () => {
+    stubOkJson({ enabled: false });
+    await api.orgs.badge("acme");
+    const [getUrl, getInit] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(getUrl).toContain("/orgs/acme/badge");
+    expect(getInit.method).toBeUndefined();
+
+    stubOkJson({ enabled: true });
+    await api.orgs.setBadge("acme", true);
+    const [putUrl, putInit] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(putUrl).toContain("/orgs/acme/badge");
+    expect(putInit.method).toBe("PUT");
+    expect(JSON.parse(putInit.body as string)).toEqual({ enabled: true });
+  });
+
   it("builds the analytics.exportHistory URL with only owner when no window is given", async () => {
     stubOkJson({ truncated: false, row_count: 0, entries: [] });
     await api.analytics.exportHistory("acme corp");
@@ -300,12 +315,12 @@ describe("api.analytics value normalization", () => {
   });
 
   it("GETs /me/github/my-view?owner=... with an X-GitHub-Token header when supplied", async () => {
-    stubOkJson({ my_open_prs: [], review_requests: [], assigned_issues: [], my_recent_runs: [] });
+    stubOkJson({ my_open_prs: [], review_requests: [], assigned_issues: [] });
     const result = await api.analytics.myView("acme", "ghp_test");
     const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(String(url)).toContain("/me/github/my-view?owner=acme");
     expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
-    expect(result).toEqual({ my_open_prs: [], review_requests: [], assigned_issues: [], my_recent_runs: [] });
+    expect(result).toEqual({ my_open_prs: [], review_requests: [], assigned_issues: [] });
   });
 
   it("GETs /me/github/my-prs?owner=...&page=...&per_page=... with an X-GitHub-Token header when supplied", async () => {

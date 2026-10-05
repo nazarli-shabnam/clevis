@@ -437,6 +437,9 @@ export interface InactiveMembersResponse {
   org: string
   sampled_repos: string[]
   members: InactiveMember[]
+  /** Live fallback only: roster size and how many of them were checked (capped server-side). */
+  members_total?: number | null
+  members_checked?: number | null
 }
 
 export interface PrWeekBucket {
@@ -496,6 +499,8 @@ export interface MyViewPRSummary {
   updated_at: string
   // When the PR was opened (the review-wait proxy); absent only if GitHub omitted it.
   created_at?: string | null
+  // CI state of the head commit, only set on the user's own open PRs ("unknown" = couldn't tell).
+  ci_status?: "passing" | "failing" | "pending" | "unknown" | null
 }
 
 export interface MyViewIssueSummary {
@@ -506,24 +511,19 @@ export interface MyViewIssueSummary {
   updated_at: string
 }
 
-export interface MyViewRunSummary {
-  repository: string
-  id: number
-  name: string | null
-  status: string
-  conclusion: string | null
-  html_url: string
-  created_at: string
-}
-
 export interface MyViewResponse {
   my_open_prs: MyViewPRSummary[]
   review_requests: MyViewPRSummary[]
   assigned_issues: MyViewIssueSummary[]
-  my_recent_runs: MyViewRunSummary[]
   // True when GitHub couldn't identify the user (an installation token can't call GET /user and there's
   // no OAuth-linked login) -- distinguishes that from genuinely zero open items.
   identity_unresolved: boolean
+  // GitHub's real totals; the lists above are capped at a handful of rows.
+  my_open_prs_total: number
+  review_requests_total: number
+  assigned_issues_total: number
+  // A search failed, so an empty list/zero count may mean "unknown" rather than "none".
+  incomplete: boolean
 }
 
 export interface MyPrListResponse {
