@@ -9,6 +9,7 @@ const cacheClearMock = vi.fn();
 const reposStatsMock = vi.fn();
 const reposPullsMock = vi.fn();
 const reposSecurityMock = vi.fn();
+const reposFlowMetricsMock = vi.fn();
 const installationsListMock = vi.fn();
 const installationsListForOrgMock = vi.fn();
 
@@ -36,6 +37,7 @@ vi.mock("@/lib/api/client", () => ({
       stats: (...args: unknown[]) => reposStatsMock(...args),
       pulls: (...args: unknown[]) => reposPullsMock(...args),
       security: (...args: unknown[]) => reposSecurityMock(...args),
+      flowMetrics: (...args: unknown[]) => reposFlowMetricsMock(...args),
     },
     installations: {
       list: (...args: unknown[]) => installationsListMock(...args),
@@ -77,6 +79,7 @@ describe("RepoDetailPage", () => {
     reposStatsMock.mockReset();
     reposPullsMock.mockReset();
     reposSecurityMock.mockReset();
+    reposFlowMetricsMock.mockReset();
     installationsListMock.mockReset();
     installationsListMock.mockResolvedValue([]);
     installationsListForOrgMock.mockReset();
@@ -320,6 +323,51 @@ describe("RepoDetailPage", () => {
     await waitFor(() =>
       expect(reposStatsMock).toHaveBeenCalledWith("acme", "acme", "demo", "ghp_resolved_1234567890123456789"),
     );
+  });
+
+  it("does not carry a requested flow-metrics card over to the next repo", async () => {
+    reposFlowMetricsMock.mockResolvedValue({
+      repository: "acme/demo",
+      window_days: 30,
+      prs: { merged_count: 0, median_cycle_hours: null, median_first_review_hours: null, review_sample_size: 0, merged_without_review: 0, review_lookup_failed: 0 },
+      workflows: [],
+      workflows_truncated: false,
+      prs_truncated: false,
+    });
+    const { rerenderSamePage } = renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Load metrics" }));
+    await waitFor(() => expect(reposFlowMetricsMock).toHaveBeenCalledTimes(1));
+
+    currentRepoParam = "acme~other";
+    rerenderSamePage();
+
+    expect(await screen.findByRole("button", { name: "Load metrics" })).toBeInTheDocument();
+    expect(reposFlowMetricsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds the flow-metrics request until the saved token has resolved", async () => {
+    let resolveToken!: (v: { token: string }) => void;
+    tokensResolveMock.mockReset();
+    tokensResolveMock.mockReturnValue(new Promise((r) => (resolveToken = r)));
+    reposFlowMetricsMock.mockResolvedValue({
+      repository: "acme/demo",
+      window_days: 30,
+      prs: { merged_count: 0, median_cycle_hours: null, median_first_review_hours: null, review_sample_size: 0, merged_without_review: 0, review_lookup_failed: 0 },
+      workflows: [],
+      workflows_truncated: false,
+      prs_truncated: false,
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Load metrics" }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(reposFlowMetricsMock).not.toHaveBeenCalled();
+
+    resolveToken({ token: "ghp_resolved_1234567890123456789" });
+    await waitFor(() =>
+      expect(reposFlowMetricsMock).toHaveBeenCalledWith("acme", "acme", "demo", "ghp_resolved_1234567890123456789"),
+    );
+    expect(reposFlowMetricsMock).toHaveBeenCalledTimes(1);
   });
 
   it("shows an inline error when the stats request fails", async () => {

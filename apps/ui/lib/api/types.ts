@@ -173,9 +173,12 @@ export interface RepoFlowMetricsResponse {
     median_first_review_hours: number | null
     review_sample_size: number
     merged_without_review: number
+    // Sampled PRs whose reviews could not be fetched (unknown, not "no review").
+    review_lookup_failed: number
   }
   workflows: FlowWorkflowMetrics[]
   workflows_truncated: boolean
+  prs_truncated: boolean
 }
 
 export interface RepoStatsResponse {

@@ -7,12 +7,14 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api/client"
 import type { FlowWorkflowMetrics } from "@/lib/api/types"
 
-/** "26.5" -> "1d 2h"; sub-day values stay in hours so a 4h review wait isn't rounded to "0d". */
+/** "26.5" -> "1d 3h"; sub-day values stay in hours so a 4h review wait isn't rounded to "0d". */
 export function formatHours(hours: number | null): string {
   if (hours == null) return "—"
   if (hours < 24) return `${Math.round(hours * 10) / 10}h`
   const days = Math.floor(hours / 24)
   const rest = Math.round(hours - days * 24)
+  // 47.6h: the remainder rounds up to 24h, which is another whole day, not "1d 24h".
+  if (rest === 24) return `${days + 1}d`
   return rest ? `${days}d ${rest}h` : `${days}d`
 }
 
@@ -44,13 +46,29 @@ function WorkflowList({ title, rows, render }: { title: string; rows: FlowWorkfl
 /**
  * PR cycle time / review latency and workflow duration + flakiness for one repo. Loaded on
  * demand: it costs a handful of GitHub requests (the API caches the result for 10 minutes).
+ *
+ * Mount it with `key={owner/repo}`: `requested` is local state, so without a key, navigating to another
+ * repo would keep it true and auto-fire the expensive request for that repo. `tokenReady` is false while
+ * the caller is still resolving the saved token; a click before then waits for it instead of sending "".
  */
-export function FlowMetricsCard({ org, owner, repo, token }: { org: string; owner: string; repo: string; token: string }) {
+export function FlowMetricsCard({
+  org,
+  owner,
+  repo,
+  token,
+  tokenReady = true,
+}: {
+  org: string
+  owner: string
+  repo: string
+  token: string
+  tokenReady?: boolean
+}) {
   const [requested, setRequested] = useState(false)
   const query = useQuery({
     queryKey: ["repo-flow-metrics", org, owner, repo, token],
     queryFn: () => api.repos.flowMetrics(org, owner, repo, token),
-    enabled: requested,
+    enabled: requested && tokenReady,
     retry: false,
   })
   const data = query.data
@@ -73,11 +91,16 @@ export function FlowMetricsCard({ org, owner, repo, token }: { org: string; owne
             Load metrics
           </Button>
         )}
+        {query.isError && (
+          <Button size="sm" variant="outline" onClick={() => query.refetch()} disabled={query.isFetching}>
+            Retry
+          </Button>
+        )}
       </div>
       <div className="p-4">
         {!requested ? (
           <p className="text-sm text-muted-foreground">PR cycle time, review latency, and slow or flaky workflows.</p>
-        ) : query.isLoading ? (
+        ) : query.isPending ? (
           <Skeleton className="h-24 w-full" />
         ) : query.isError ? (
           <p className="text-xs text-destructive">{query.error.message}</p>
@@ -89,8 +112,20 @@ export function FlowMetricsCard({ org, owner, repo, token }: { org: string; owne
               <p>Median cycle time: <span className="font-mono">{formatHours(data.prs.median_cycle_hours)}</span></p>
               <p>Median time to first review: <span className="font-mono">{formatHours(data.prs.median_first_review_hours)}</span></p>
               <p className="text-muted-foreground">
-                {data.prs.merged_without_review} of the last {data.prs.review_sample_size} merged had no review.
+                {data.prs.merged_without_review} of the last {data.prs.review_sample_size - data.prs.review_lookup_failed}{" "}
+                merged had no review.
               </p>
+              {data.prs.review_lookup_failed > 0 && (
+                <p className="text-muted-foreground">
+                  Reviews for {data.prs.review_lookup_failed} merged PR{data.prs.review_lookup_failed === 1 ? "" : "s"} could
+                  not be loaded, so they are not counted either way.
+                </p>
+              )}
+              {data.prs_truncated && (
+                <p className="text-muted-foreground">
+                  This repo has many merged PRs; PR figures cover only the most recent ones.
+                </p>
+              )}
             </div>
             <WorkflowList
               title="Slowest workflows"
