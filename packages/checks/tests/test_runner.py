@@ -57,15 +57,16 @@ def test_run_all_checks_passes_repos_to_checks():
 
     with (
         patch("checks.runner._get_all_pages", return_value=sentinel),
-        patch("checks.github_checks._get_all_pages") as mock_check_pages,
+        patch("checks.github_checks._get_all_pages", return_value=[]) as mock_check_pages,
         patch("checks.github_checks._get") as mock_get,
     ):
         mock_get.return_value = FAKE_ORG
 
         run_all_checks(owner="acme", token="tok")
 
-    # _get_all_pages inside github_checks must NOT be called (repos passed in)
-    mock_check_pages.assert_not_called()
+    # The repo list must not be re-fetched inside the checks (repos passed in). The alert checks do
+    # page through each repo's own alerts, so only the org repo-list path is forbidden.
+    assert [c.args[1] for c in mock_check_pages.call_args_list if c.args[1] == "/orgs/acme/repos"] == []
 
 
 def test_run_all_checks_personal_account_uses_installation_repos():
