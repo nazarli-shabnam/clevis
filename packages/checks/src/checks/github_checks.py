@@ -90,8 +90,9 @@ def shared_client():
         if _shared_refs == 0:
             _shared_client = httpx.Client(timeout=20)
         _shared_refs += 1
+        client = _shared_client
     try:
-        yield
+        yield client
     finally:
         with _shared_lock:
             _shared_refs -= 1
@@ -106,12 +107,10 @@ def _get(url: str, token: str) -> dict | list:
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
-    client = _shared_client
-    if client is not None:
+    # Borrowing through shared_client() (rather than reading the global) pins the client open for the
+    # call; outside any outer scope this degrades to one throwaway client per call, as before.
+    with shared_client() as client:
         r = _get_with_retry(client, url, headers)
-    else:
-        with httpx.Client(timeout=20) as own:
-            r = _get_with_retry(own, url, headers)
     r.raise_for_status()
     return r.json()
 
