@@ -135,6 +135,16 @@ describe("FlowMetricsCard", () => {
     expect(screen.getByText(/Reviews for 4 merged PRs could not be loaded/)).toBeInTheDocument()
   })
 
+  it("renders figures from an API that predates the new PR fields", async () => {
+    const { review_lookup_failed: _a, ...prs } = DATA.prs
+    const { prs_truncated: _b, ...legacy } = DATA
+    flowMock.mockResolvedValue({ ...legacy, prs })
+    renderCard()
+    fireEvent.click(screen.getByRole("button", { name: "Load metrics" }))
+
+    expect(await screen.findByText("3 of the last 12 merged had no review.")).toBeInTheDocument()
+  })
+
   it("notes when PR figures are truncated", async () => {
     flowMock.mockResolvedValue({ ...DATA, prs_truncated: true })
     renderCard()

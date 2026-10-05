@@ -72,6 +72,7 @@ export function FlowMetricsCard({
     retry: false,
   })
   const data = query.data
+  const lookupFailed = data?.prs.review_lookup_failed ?? 0
 
   const slowest = [...(data?.workflows ?? [])]
     .filter((w) => w.avg_duration_seconds != null)
@@ -112,12 +113,12 @@ export function FlowMetricsCard({
               <p>Median cycle time: <span className="font-mono">{formatHours(data.prs.median_cycle_hours)}</span></p>
               <p>Median time to first review: <span className="font-mono">{formatHours(data.prs.median_first_review_hours)}</span></p>
               <p className="text-muted-foreground">
-                {data.prs.merged_without_review} of the last {data.prs.review_sample_size - data.prs.review_lookup_failed}{" "}
+                {data.prs.merged_without_review} of the last {data.prs.review_sample_size - lookupFailed}{" "}
                 merged had no review.
               </p>
-              {data.prs.review_lookup_failed > 0 && (
+              {lookupFailed > 0 && (
                 <p className="text-muted-foreground">
-                  Reviews for {data.prs.review_lookup_failed} merged PR{data.prs.review_lookup_failed === 1 ? "" : "s"} could
+                  Reviews for {lookupFailed} merged PR{lookupFailed === 1 ? "" : "s"} could
                   not be loaded, so they are not counted either way.
                 </p>
               )}
