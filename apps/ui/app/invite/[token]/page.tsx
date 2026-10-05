@@ -41,7 +41,8 @@ export default function InviteAcceptPage() {
   }
 
   return (
-    <div className="max-w-md mx-auto mt-16">
+    // Public route: rendered outside the app shell, so the page owns its <main> landmark.
+    <main className="max-w-md mx-auto mt-16 px-4">
       <PageHeader title="Org invitation" description="Accept an invitation to join an organization on Clevis." />
 
       <div className="card">
@@ -110,6 +111,6 @@ export default function InviteAcceptPage() {
           )}
         </div>
       </div>
-    </div>
+    </main>
   )
 }

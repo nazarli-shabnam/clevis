@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { PageHeader } from "@/components/page-header"
 import { api } from "@/lib/api/client"
@@ -35,7 +36,8 @@ export default function VerifyEmailPage() {
   }, [token])
 
   return (
-    <div className="max-w-md mx-auto mt-16">
+    // Public routes render outside the app shell (no sidebar, no shell <main>), so the page owns its landmark.
+    <main className="max-w-md mx-auto mt-16 px-4">
       <PageHeader title="Verify your email" description="Confirming your Clevis account email address." />
 
       <div className="card">
@@ -45,10 +47,15 @@ export default function VerifyEmailPage() {
               <CircleNotch className="size-3.5 animate-spin" /> Verifying…
             </div>
           ) : state === "success" ? (
-            <p className="text-sm text-primary flex items-center gap-1.5">
-              <CheckCircle className="size-3.5" /> Your email is verified. You can now accept organization
-              invitations.
-            </p>
+            <>
+              <p className="text-sm text-primary flex items-center gap-1.5">
+                <CheckCircle className="size-3.5" /> Your email is verified. You can now accept organization
+                invitations.
+              </p>
+              <Link href="/" className="text-sm text-primary hover:underline">
+                Continue
+              </Link>
+            </>
           ) : (
             <p className="text-sm text-destructive flex items-center gap-1.5">
               <Warning className="size-3.5" /> {errorMessage}
@@ -56,6 +63,6 @@ export default function VerifyEmailPage() {
           )}
         </div>
       </div>
-    </div>
+    </main>
   )
 }
