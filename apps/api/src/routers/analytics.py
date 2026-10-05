@@ -94,13 +94,38 @@ def _persist_scan(
     )
 
 
-def _notify_score_drop_best_effort(db: Session, ctx: OrgContext, previous: int, current: int) -> None:
+def _comparable_scans(previous: dict, result: dict) -> bool:
+    """Whether a score drop between two scans reflects a real change worth alerting on.
+
+    An errored check (GitHub hiccup, missing permission) lowers the score without the org getting
+    worse, and a different set of scored checks (e.g. ``score_hygiene_checks`` toggled) means the two
+    scores aren't on the same basis. Rows stored before the ``scored`` stamp count as scored."""
+    def scored_ids(checks: list[dict]) -> set[str]:
+        return {c.get("id") for c in checks if c.get("scored", True)}
+
+    if any(c.get("status") == "error" for c in (*previous["checks"], *result["checks"])):
+        return False
+    return scored_ids(previous["checks"]) == scored_ids(result["checks"])
+
+
+def persist_scan_and_alert(db: Session, org, result: dict, tenant_id: int) -> None:
+    """Store an org scan and alert if it dropped from the org's previous one.
+
+    The baseline matches on tenant and case-insensitive owner, so scans typed in different casing (UI
+    vs CI token) see each other. Used by both the session and API-token scan paths."""
+    previous = scan_results_repo.latest_with_checks(db, org.github_login, tenant_id)
+    _persist_scan(db, result, tenant_id=tenant_id)
+    if previous and _comparable_scans(previous, result):
+        _notify_score_drop_best_effort(db, org, previous["score"], result["score"])
+
+
+def _notify_score_drop_best_effort(db: Session, org, previous: int, current: int) -> None:
     # A chat-webhook problem must never fail or slow-fail the scan the user actually asked for.
     try:
-        notifications.notify_score_drop(db, ctx.org.tenant_id, ctx.org.github_login, previous, current)
+        notifications.notify_score_drop(db, org.tenant_id, org.github_login, previous, current)
     except Exception:
         db.rollback()
-        logger.exception("score-drop notification failed for %s", ctx.org.github_login)
+        logger.exception("score-drop notification failed for %s", org.github_login)
 
 
 class HistoryScope(NamedTuple):
@@ -187,16 +212,7 @@ async def org_analytics_overview(
         raise HTTPException(status_code=400, detail=str(exc))
     result = await _run_overview(payload.owner, token)
 
-    def _previous_then_persist() -> list[dict]:
-        previous = scan_results_repo.list_recent(db, payload.owner, limit=1, tenant_id=ctx.org.tenant_id)
-        _persist_scan(db, result, tenant_id=ctx.org.tenant_id)
-        return previous
-
-    previous = await anyio.to_thread.run_sync(_previous_then_persist)
-    if previous:
-        await anyio.to_thread.run_sync(
-            lambda: _notify_score_drop_best_effort(db, ctx, previous[0]["score"], result["score"])
-        )
+    await anyio.to_thread.run_sync(lambda: persist_scan_and_alert(db, ctx.org, result, ctx.org.tenant_id))
     return result
 
 

@@ -15,7 +15,7 @@ from src.core.db import get_db
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import api_token_repo, audit_repo, org_repo, scan_results_repo
 from src.repositories.api_token_repo import ResolvedToken
-from src.routers.analytics import _notify_score_drop_best_effort, _persist_scan, _run_overview
+from src.routers.analytics import _run_overview, persist_scan_and_alert
 from src.schemas.api_token import (
     ApiTokenCreate,
     ApiTokenCreated,
@@ -119,13 +119,6 @@ def latest_score(org_login: str, token: ResolvedToken = Depends(require_api_toke
     return _score_out(token.org_login, scan)
 
 
-class _Ctx:
-    """Just enough of OrgContext for the shared score-drop notifier."""
-
-    def __init__(self, org):
-        self.org = org
-
-
 @router.post("/api/v1/orgs/{org_login}/scan", response_model=ScoreOut)
 async def run_scan(org_login: str, token: ResolvedToken = Depends(require_api_token), db: Session = Depends(get_db)):
     _own_org(org_login, token)
@@ -140,11 +133,7 @@ async def run_scan(org_login: str, token: ResolvedToken = Depends(require_api_to
     # One thread for the whole DB sequence: a Session is not safe to share between threads at once,
     # and these steps depend on each other anyway.
     def _record_and_notify() -> dict:
-        previous = scan_results_repo.list_recent(db, token.org_login, limit=1, tenant_id=token.tenant_id)
-        _persist_scan(db, result, tenant_id=token.tenant_id)
-        if previous:
-            org = org_repo.get_by_id(db, token.org_id)
-            _notify_score_drop_best_effort(db, _Ctx(org), previous[0]["score"], result["score"])
+        persist_scan_and_alert(db, org_repo.get_by_id(db, token.org_id), result, token.tenant_id)
         return scan_results_repo.latest_with_checks(db, token.org_login, token.tenant_id)
 
     scan = await anyio.to_thread.run_sync(_record_and_notify)
