@@ -73,8 +73,11 @@ def test_run_sweep_resets_the_tenant_session_context_even_when_the_sweep_raises(
 async def test_loop_runs_the_sweep_then_sleeps_each_iteration():
     calls = {"sweep": 0, "sleep": 0}
 
-    async def fake_to_thread(fn, *args):
-        calls["sweep"] += 1
+    async def fake_to_thread(fn, *args, **kwargs):
+        if fn is sweep_loop._run_sweep:
+            calls["sweep"] += 1
+            return None
+        return fn(*args, **kwargs)  # the poll-interval read also goes through to_thread
 
     async def fake_sleep(_seconds):
         calls["sleep"] += 1
@@ -97,9 +100,11 @@ async def test_loop_runs_the_sweep_then_sleeps_each_iteration():
 async def test_loop_survives_an_exception_from_the_sweep_and_still_sleeps():
     calls = {"sweep": 0, "sleep": 0}
 
-    async def fake_to_thread(fn, *args):
-        calls["sweep"] += 1
-        raise RuntimeError("simulated sweep failure")
+    async def fake_to_thread(fn, *args, **kwargs):
+        if fn is sweep_loop._run_sweep:
+            calls["sweep"] += 1
+            raise RuntimeError("simulated sweep failure")
+        return fn(*args, **kwargs)
 
     async def fake_sleep(_seconds):
         calls["sleep"] += 1
@@ -117,3 +122,35 @@ async def test_loop_survives_an_exception_from_the_sweep_and_still_sleeps():
 
     # The loop must still sleep and retry after the sweep raised, not die.
     assert calls == {"sweep": 1, "sleep": 1}
+
+
+@pytest.mark.asyncio
+async def test_the_poll_interval_read_runs_off_the_event_loop():
+    # get_config is a sync DB read on a cache miss; on the loop it would stall every request.
+    import threading
+
+    loop_thread = threading.get_ident()
+    seen: dict[str, int] = {}
+
+    def fake_read(**_kwargs):
+        seen["thread"] = threading.get_ident()
+        return 77
+
+    slept: list[float] = []
+
+    async def fake_sleep(seconds):
+        slept.append(seconds)
+        raise asyncio.CancelledError()
+
+    with (
+        patch("src.services.sweep_loop._read_poll_seconds", side_effect=fake_read),
+        patch("src.services.sweep_loop._run_sweep"),
+        patch("src.services.sweep_loop.asyncio.sleep", side_effect=fake_sleep),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await sweep_loop.run_sweep_loop(
+            label="test", sweep_fn=lambda db: None, config_key="k", default_seconds=900, min_seconds=60, max_seconds=3600
+        )
+
+    assert seen["thread"] != loop_thread
+    assert slept == [77]

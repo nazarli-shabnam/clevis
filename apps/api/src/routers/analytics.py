@@ -171,8 +171,13 @@ async def org_analytics_overview(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     result = await _run_overview(payload.owner, token)
-    previous = scan_results_repo.list_recent(db, payload.owner, limit=1, tenant_id=ctx.org.tenant_id)
-    _persist_scan(db, result, tenant_id=ctx.org.tenant_id)
+
+    def _previous_then_persist() -> list[dict]:
+        previous = scan_results_repo.list_recent(db, payload.owner, limit=1, tenant_id=ctx.org.tenant_id)
+        _persist_scan(db, result, tenant_id=ctx.org.tenant_id)
+        return previous
+
+    previous = await anyio.to_thread.run_sync(_previous_then_persist)
     if previous:
         await anyio.to_thread.run_sync(
             lambda: _notify_score_drop_best_effort(db, ctx, previous[0]["score"], result["score"])
@@ -786,15 +791,18 @@ async def personal_analytics_cockpit(
 
     # Scan history is a local DB read, so it needs its own access gate (same as /me/analytics/history).
     # A caller with no claim still gets the rest of the cockpit, just no trend.
-    history_scope = await anyio.to_thread.run_sync(lambda: _user_history_scope(db, user, owner))
-    scans = (
-        scan_results_repo.list_recent(db, limit=10, **_scope_filters(history_scope, owner, user))
-        if history_scope is not None
-        else []
-    )
+    def _scans_and_cache_job_rate() -> tuple[list[dict], float]:
+        history_scope = _user_history_scope(db, user, owner)
+        scans = (
+            scan_results_repo.list_recent(db, limit=10, **_scope_filters(history_scope, owner, user))
+            if history_scope is not None
+            else []
+        )
+        return scans, _cache_job_success_rate(db)
+
+    scans, cache_job_success_rate = await anyio.to_thread.run_sync(_scans_and_cache_job_rate)
     latest_score = scans[0]["score"] if scans else None
     score_trend = [s["score"] for s in reversed(scans)]
-    cache_job_success_rate = _cache_job_success_rate(db)
 
     account_type = await _get_account_type(owner, token)
     try:
