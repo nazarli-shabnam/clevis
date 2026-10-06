@@ -14,7 +14,7 @@ import { useActiveScope } from "@/lib/active-scope"
 import { membersHref } from "@/lib/members-href"
 import { useAuth } from "@/lib/auth-context"
 import { CHART_COLORS } from "@/lib/charts/theme"
-import { relativeTime } from "@/lib/format"
+import { dueTime, relativeTime } from "@/lib/format"
 import { SectionError } from "@/components/section-error"
 import { EmptyStateNoAccount } from "@/components/empty-state"
 import { FirstRunChecklist } from "@/components/first-run-checklist"
@@ -425,7 +425,7 @@ export default function OverviewPage() {
                   </div>
                   <p className="text-[0.6875rem] text-muted-foreground mt-1">
                     {m.closed_issues}/{m.open_issues + m.closed_issues} closed
-                    {m.due_on && <> · due {relativeTime(m.due_on)}</>}
+                    {m.due_on && <> · due {dueTime(m.due_on)}</>}
                   </p>
                 </div>
               ))}

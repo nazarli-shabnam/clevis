@@ -445,8 +445,7 @@ describe("OverviewPage cockpit", () => {
         {
           repo: "acme/api",
           title: "v2",
-          // Computed relative to now so relativeTime() keeps rendering "just now".
-          due_on: new Date(Date.now() + 60_000).toISOString(),
+          due_on: new Date(Date.now() + 3 * 86400_000 + 60_000).toISOString(),
           open_issues: 2,
           closed_issues: 8,
           progress_pct: 80,
@@ -460,7 +459,7 @@ describe("OverviewPage cockpit", () => {
     await waitFor(() => {
       expect(screen.getByText(/v2/)).toBeInTheDocument();
     });
-    expect(screen.getByText((_, el) => el?.textContent === "8/10 closed · due just now")).toBeInTheDocument();
+    expect(screen.getByText((_, el) => el?.textContent === "8/10 closed · due in 3 days")).toBeInTheDocument();
   });
 
   it("renders overdue and at-risk milestone chips with their own styling", async () => {
