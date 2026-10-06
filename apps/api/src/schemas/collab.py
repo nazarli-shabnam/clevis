@@ -98,3 +98,31 @@ class InactiveMembersResponse(BaseModel):
     # the roster was longer than the cap or some lookups failed, so the list is incomplete.
     members_total: int | None = None
     members_checked: int | None = None
+
+
+class MemberRepoGrant(BaseModel):
+    repo: str
+    permission: str
+    # None = not yet known (a `member` webhook alone cannot tell org members from outside collaborators).
+    is_outside_collaborator: bool | None = None
+    granted_at: datetime
+
+
+class MemberAccess(BaseModel):
+    """What Clevis has ingested about one person's access, for offboarding review.
+
+    Built only from webhook- and poll-ingested tables, so it costs no GitHub calls. The grants are
+    DIRECT repo grants seen since the App was connected: access through teams or the org's base
+    permission is not in the ingested data, so an empty list is not proof of no access."""
+
+    org: str
+    login: str
+    # False until the org's first membership sync, i.e. nothing below is trustworthy yet.
+    synced: bool
+    is_member: bool
+    role: Literal["member", "admin"] | None = None
+    two_factor_enabled: bool | None = None
+    last_event_at: datetime | None = None
+    last_push_at: datetime | None = None
+    last_push_repo: str | None = None
+    direct_grants: list[MemberRepoGrant]

@@ -414,6 +414,27 @@ export interface GithubMembershipStatus {
   role: "member" | "admin"
 }
 
+export interface MemberRepoGrant {
+  repo: string
+  permission: string
+  is_outside_collaborator: boolean | null
+  granted_at: string
+}
+
+export interface MemberAccess {
+  org: string
+  login: string
+  // False until the org's first membership sync: everything else is empty and not trustworthy.
+  synced: boolean
+  is_member: boolean
+  role: "member" | "admin" | null
+  two_factor_enabled: boolean | null
+  last_event_at: string | null
+  last_push_at: string | null
+  last_push_repo: string | null
+  direct_grants: MemberRepoGrant[]
+}
+
 export interface CollaboratorPermission {
   login: string
   avatar_url: string

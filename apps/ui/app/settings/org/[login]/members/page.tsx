@@ -14,11 +14,13 @@ import { relativeTime } from "@/lib/format"
 import { orgRoleFor } from "@/lib/members-href"
 import { SectionError } from "@/components/section-error"
 import { HygieneScoringCard } from "@/components/hygiene-scoring-card"
+import { MemberAccessSheet } from "@/components/member-access-sheet"
 import { BadgeSettingsCard } from "@/components/badge-settings-card"
 import type { GithubOrgMember, InvitationOut, MyOrgMembership } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
 
-const MEMBER_COLUMNS: DataTableColumn<GithubOrgMember>[] = [
+function memberColumns(onReview: ((login: string) => void) | null): DataTableColumn<GithubOrgMember>[] {
+  return [
   {
     key: "login",
     header: "Member",
@@ -60,7 +62,22 @@ const MEMBER_COLUMNS: DataTableColumn<GithubOrgMember>[] = [
       </>
     ),
   },
-]
+  ...(onReview
+    ? [
+        {
+          key: "review",
+          header: "",
+          align: "right" as const,
+          render: (m: GithubOrgMember) => (
+            <Button size="sm" variant="outline" onClick={() => onReview(m.login)} aria-label={`Review access for ${m.login}`}>
+              Review access
+            </Button>
+          ),
+        },
+      ]
+    : []),
+  ]
+}
 
 const ROSTER_TABS = [
   { id: "members", label: "Members" },
@@ -71,7 +88,8 @@ const ROSTER_TABS = [
 
 type RosterTabId = (typeof ROSTER_TABS)[number]["id"]
 
-function GithubRoster({ orgLogin }: { orgLogin: string }) {
+function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: boolean }) {
+  const [reviewLogin, setReviewLogin] = useState<string | null>(null)
   const router = useRouter()
   const searchParams = useSearchParams()
   const rawTab = searchParams.get("roster") ?? "members"
@@ -225,7 +243,7 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
           </div>
         ) : (
           <>
-            <DataTable columns={MEMBER_COLUMNS} data={filteredMembers} getRowKey={(m) => m.login} />
+            <DataTable columns={memberColumns(canReview ? setReviewLogin : null)} data={filteredMembers} getRowKey={(m) => m.login} />
             {membersQuery.data?.two_factor_overlay_available && (
               <div className="px-4 py-2.5 border-t border-border">
                 <span className="text-xs text-muted-foreground">Members without 2FA: {membersWithout2fa}</span>
@@ -411,6 +429,7 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
           )}
         </>
       )}
+      {canReview && <MemberAccessSheet orgLogin={orgLogin} login={reviewLogin} onClose={() => setReviewLogin(null)} />}
     </div>
   )
 }
@@ -584,7 +603,7 @@ export default function OrgMembersPage() {
       {!rolePending && !notAdmin && <BadgeSettingsCard orgLogin={orgLogin} />}
 
       <div className="mt-4">
-        <GithubRoster orgLogin={orgLogin} />
+        <GithubRoster orgLogin={orgLogin} canReview={role === "admin"} />
       </div>
     </>
   )

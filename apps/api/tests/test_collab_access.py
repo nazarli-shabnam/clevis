@@ -455,3 +455,92 @@ def test_inactive_members_ingested_path_leaves_live_coverage_fields_unset(db, ac
     body = TestClient(app).get("/github/orgs/acme/inactive-members?days=30").json()
 
     assert body["members_total"] is None and body["members_checked"] is None
+
+
+# ── GET /github/orgs/{org}/members/{username}/access (offboarding view) ───────────────────────────
+
+
+@pytest.fixture()
+def admin_client(db, acme_org):
+    org_membership_repo.get_or_create(db, org_id=acme_org.id, user_id=_ADMIN.id, role="admin")
+    app = FastAPI()
+    app.include_router(collab_router)
+    app.dependency_overrides[require_auth] = lambda: _ADMIN
+    app.dependency_overrides[get_db] = lambda: db
+    return TestClient(app)
+
+
+def _insert_grant(db, tenant_id, *, repo, login, permission, outside=None):
+    db.execute(text(f"SET app.tenant_id = {int(tenant_id)}"))
+    db.execute(
+        text(
+            "INSERT INTO repo_collaborators (tenant_id, repo, login, permission, is_outside_collaborator, granted_at) "
+            "VALUES (:t, :repo, :login, :permission, :outside, :at)"
+        ),
+        {"t": tenant_id, "repo": repo, "login": login, "permission": permission, "outside": outside, "at": datetime.now(timezone.utc)},
+    )
+    db.commit()
+
+
+def _insert_event(db, tenant_id, *, actor, repo, event_type, when, delivery):
+    db.execute(text(f"SET app.tenant_id = {int(tenant_id)}"))
+    db.execute(
+        text(
+            "INSERT INTO repo_events (tenant_id, delivery_id, event_type, actor, actor_avatar, repo, summary, occurred_at) "
+            "VALUES (:t, :d, :et, :actor, '', :repo, 's', :at)"
+        ),
+        {"t": tenant_id, "d": delivery, "et": event_type, "actor": actor, "repo": repo, "at": when},
+    )
+    db.commit()
+
+
+def test_member_access_requires_org_admin(client, acme_org_with_installation):
+    # `client` is only a member of acme.
+    assert client.get("/github/orgs/acme/members/octo/access").status_code == 403
+
+
+def test_member_access_is_unsynced_until_the_first_membership_sync(admin_client, db, acme_org_with_installation):
+    _insert_grant(db, acme_org_with_installation.tenant_id, repo="acme/api", login="octo", permission="write")
+    body = admin_client.get("/github/orgs/acme/members/octo/access").json()
+    assert body["synced"] is False
+    assert body["direct_grants"] == []
+
+
+def test_member_access_reports_role_2fa_grants_and_last_activity(admin_client, db, acme_org_with_installation):
+    t = acme_org_with_installation.tenant_id
+    _insert_org_member(db, t, login="Octo", role="admin")
+    db.execute(text("UPDATE org_members SET two_factor_enabled = false WHERE login = 'Octo'"))
+    _seed_membership_cursor(db, t)
+    _insert_grant(db, t, repo="acme/web", login="octo", permission="read")
+    _insert_grant(db, t, repo="acme/api", login="OCTO", permission="write", outside=False)
+    _insert_grant(db, t, repo="acme/api", login="someone-else", permission="admin")
+    now = datetime.now(timezone.utc)
+    _insert_event(db, t, actor="octo", repo="acme/api", event_type="push", when=now - timedelta(days=9), delivery="d1")
+    _insert_event(db, t, actor="octo", repo="acme/web", event_type="issues", when=now - timedelta(days=2), delivery="d2")
+    _insert_event(db, t, actor="someone-else", repo="acme/x", event_type="push", when=now, delivery="d3")
+
+    body = admin_client.get("/github/orgs/acme/members/OCTO/access").json()
+
+    assert body["synced"] is True and body["is_member"] is True
+    assert body["login"] == "Octo" and body["role"] == "admin" and body["two_factor_enabled"] is False
+    assert [(g["repo"], g["permission"]) for g in body["direct_grants"]] == [("acme/api", "write"), ("acme/web", "read")]
+    assert body["last_push_repo"] == "acme/api"
+    assert body["last_push_at"] is not None and body["last_event_at"] is not None
+    assert body["last_event_at"] > body["last_push_at"]
+
+
+def test_member_access_for_a_non_member_is_not_found_in_the_roster_but_still_lists_grants(admin_client, db, acme_org_with_installation):
+    t = acme_org_with_installation.tenant_id
+    _seed_membership_cursor(db, t)
+    _insert_grant(db, t, repo="acme/api", login="contractor", permission="triage", outside=True)
+    body = admin_client.get("/github/orgs/acme/members/contractor/access").json()
+    assert body["is_member"] is False and body["role"] is None
+    assert body["direct_grants"][0]["is_outside_collaborator"] is True
+    assert body["last_event_at"] is None
+
+
+def test_member_access_does_not_leak_another_tenants_rows(admin_client, db, acme_org_with_installation):
+    other = org_repo.get_or_create(db, github_login="globex")
+    _insert_grant(db, other.tenant_id, repo="globex/api", login="octo", permission="admin")
+    _seed_membership_cursor(db, acme_org_with_installation.tenant_id)
+    assert admin_client.get("/github/orgs/acme/members/octo/access").json()["direct_grants"] == []
