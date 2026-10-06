@@ -7,8 +7,10 @@ from src.core._sanitize import sanitize_error
 from src.core.db import Job
 
 
-def enqueue(db: Session, job_type: str, payload: dict) -> int:
-    job = Job(job_type=job_type, payload=json.dumps(payload), status="queued")
+def enqueue(db: Session, job_type: str, payload: dict, tenant_id: int | None = None) -> int:
+    """`tenant_id` links the job to the tenant it was enqueued for (an org's admins list their own
+    jobs by it); None leaves it unattributed."""
+    job = Job(job_type=job_type, payload=json.dumps(payload), status="queued", tenant_id=tenant_id)
     db.add(job)
     db.commit()
     db.refresh(job)
@@ -28,6 +30,15 @@ def list_jobs(db: Session, limit: int = 50) -> list[dict]:
         }
         for r in rows
     ]
+
+
+def list_for_tenant(db: Session, tenant_id: int, *, limit: int = 50, before_id: int | None = None) -> list[Job]:
+    """A tenant's newest jobs first. Selects whole rows, but callers expose only the JobOut fields:
+    the payload carries an encrypted GitHub token and must never leave the API."""
+    q = db.query(Job).filter(Job.tenant_id == tenant_id)
+    if before_id is not None:
+        q = q.filter(Job.id < before_id)
+    return q.order_by(Job.id.desc()).limit(limit).all()
 
 
 def get_job(db: Session, job_id: int) -> Job | None:

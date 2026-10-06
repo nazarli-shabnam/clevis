@@ -241,12 +241,20 @@ function OrgMembershipsSection() {
                   <td className="px-4 py-2.5 text-muted-foreground">{m.role}</td>
                   <td className="px-4 py-2.5 text-right">
                     {m.role === "admin" && (
-                      <Link
-                        href={`/settings/org/${encodeURIComponent(m.org_login)}/members`}
-                        className="text-xs text-primary hover:underline"
-                      >
-                        Manage members
-                      </Link>
+                      <span className="inline-flex items-center gap-3">
+                        <Link
+                          href={`/settings/org/${encodeURIComponent(m.org_login)}/members`}
+                          className="text-xs text-primary hover:underline"
+                        >
+                          Manage members
+                        </Link>
+                        <Link
+                          href={`/settings/org/${encodeURIComponent(m.org_login)}/activity`}
+                          className="text-xs text-primary hover:underline"
+                        >
+                          Activity log
+                        </Link>
+                      </span>
                     )}
                   </td>
                 </tr>

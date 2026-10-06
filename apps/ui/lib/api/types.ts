@@ -285,6 +285,17 @@ export interface JobOut {
   updated_at: string
 }
 
+// Filters for GET /orgs/{org}/audit; all optional, combined with AND.
+export interface OrgAuditFilters {
+  action_prefix?: string
+  actor?: string
+  target?: string
+  since?: string
+  until?: string
+  before_id?: number
+  limit?: number
+}
+
 export interface AuditLogOut {
   id: number
   actor: string

@@ -3,6 +3,7 @@ import type {
   AnalyticsHistoryResponse,
   AnalyticsOverviewResponse,
   AuditLogOut,
+  OrgAuditFilters,
   BranchProtectionBulkResponse,
   BranchProtectionPreset,
   SavedBranchProtectionPreset,
@@ -346,6 +347,14 @@ export const api = {
   },
   jobs: {
     list: () => get<JobOut[]>("/jobs"),
+    // One org's own jobs, newest first (no payload). Org-admin only; pages with `before_id`.
+    listForOrg: (org: string, params: { before_id?: number; limit?: number } = {}) => {
+      const qs = new URLSearchParams()
+      if (params.before_id !== undefined) qs.set("before_id", String(params.before_id))
+      if (params.limit !== undefined) qs.set("limit", String(params.limit))
+      const suffix = qs.toString()
+      return get<JobOut[]>(`/orgs/${encodeURIComponent(org)}/jobs${suffix ? `?${suffix}` : ""}`)
+    },
     get: (jobId: number) => get<JobOut>(`/jobs/${jobId}`),
   },
   automation: {
@@ -453,6 +462,16 @@ export const api = {
       const params = new URLSearchParams({ limit: String(limit) })
       if (action) params.set("action", action)
       return get<AuditLogOut[]>(`/audit?${params.toString()}`)
+    },
+    // One org's own audit rows, newest first. Org-admin only. Pages with `before_id` (the id of the
+    // last row already loaded); `since`/`until` are ISO timestamps.
+    listForOrg: (org: string, filters: OrgAuditFilters = {}) => {
+      const params = new URLSearchParams()
+      for (const [key, value] of Object.entries(filters)) {
+        if (value !== undefined && value !== "") params.set(key, String(value))
+      }
+      const qs = params.toString()
+      return get<AuditLogOut[]>(`/orgs/${encodeURIComponent(org)}/audit${qs ? `?${qs}` : ""}`)
     },
   },
   installations: {
