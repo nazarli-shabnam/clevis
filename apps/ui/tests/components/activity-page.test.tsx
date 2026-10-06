@@ -176,10 +176,15 @@ describe("ActivityPage", () => {
     expect(screen.queryByText(/No releases in the last 90 days/)).not.toBeInTheDocument();
     expect(screen.queryByText(/No commit activity in the last year/)).not.toBeInTheDocument();
 
-    githubFailedRunsMock.mockResolvedValueOnce({ org: "acme", runs: [] });
+    // Each section retries its own query: heatmap, CI log, releases (DOM order).
     const retries = screen.getAllByRole("button", { name: "Retry" });
-    fireEvent.click(retries[1]); // heatmap, CI log, releases (DOM order)
+    expect(retries).toHaveLength(3);
+    fireEvent.click(retries[0]);
+    await waitFor(() => expect(analyticsCockpitMock).toHaveBeenCalledTimes(2));
+    fireEvent.click(retries[1]);
     await waitFor(() => expect(githubFailedRunsMock).toHaveBeenCalledTimes(2));
+    fireEvent.click(retries[2]);
+    await waitFor(() => expect(githubReleaseTimelineMock).toHaveBeenCalledTimes(2));
   });
 
   it("renders the CI failure log and release timeline", async () => {
