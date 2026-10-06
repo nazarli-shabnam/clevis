@@ -199,14 +199,25 @@ export default function SecurityPage() {
 
   const [selectedRepo, setSelectedRepo] = useState("")
   const matrixMutation = useMutation({
-    mutationFn: () => api.security.matrix(owner, token),
+    mutationFn: (forOwner: string) => api.security.matrix(forOwner, token),
     onSuccess: (data) => setSelectedRepo(data.repos[0]?.repo ?? ""),
   })
+
+  // Results belong to the owner they were scanned for: drop them (and the repo picked from them)
+  // when the owner changes, or the old org's data stays up under the new name and keeps querying.
+  useEffect(() => {
+    scan.reset()
+    matrixMutation.reset()
+    setSelectedRepo("")
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [owner])
 
   const secretScanning = useQuery({
     queryKey: ["security.secret-scanning", owner, selectedRepo],
     queryFn: () => api.security.secretScanning(owner, selectedRepo, token),
-    enabled: !!selectedRepo && !!matrixMutation.data,
+    // variables === owner: the render right after an owner change still holds the old matrix and repo
+    // until the reset effect runs; without this it would fire one request for new-owner/old-repo.
+    enabled: !!selectedRepo && !!matrixMutation.data && matrixMutation.variables === owner,
   })
 
   // A failed history fetch must not look like "never scanned": the trend sections would otherwise
@@ -246,7 +257,7 @@ export default function SecurityPage() {
 
   function runScan() {
     scan.mutate()
-    matrixMutation.mutate()
+    matrixMutation.mutate(owner)
   }
 
   const filteredChecks = scan.data

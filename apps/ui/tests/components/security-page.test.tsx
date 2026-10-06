@@ -177,6 +177,37 @@ describe("SecurityPage", () => {
     await waitFor(() => expect(analyticsOverviewMock).toHaveBeenCalledWith("acme", ""));
   });
 
+  it("drops the previous owner's scan results and stops querying for them when the owner changes (#549)", async () => {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 50, total_checks: 1, failed_checks: 1, repo_count: 1,
+      checks: [{ id: "c1", title: "Acme-only check", severity: "high", remediation: "", status: "fail", value: { type: "boolean", enabled: false } }],
+    });
+    securityMatrixMock.mockResolvedValue({
+      owner: "acme",
+      repos: [{
+        repo: "acme-repo", branch_protection: true, secret_scanning: true, dependabot_enabled: true,
+        dependabot_critical_count: 0, dependabot_high_count: 0, code_scanning: true, force_push_allowed: false,
+        score: 100, unknown_dimensions: [], alerts_source: "github",
+      }],
+      summary: { fully_compliant_count: 1, critical_risk_count: 0, secret_hits_count: 0, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } },
+    });
+
+    renderPage();
+    const ownerInput = screen.getByPlaceholderText("e.g. octocat");
+    fireEvent.change(ownerInput, { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+    expect(await screen.findByText("Acme-only check")).toBeInTheDocument();
+    await waitFor(() => expect(secretScanningMock).toHaveBeenCalledWith("acme", "acme-repo", ""));
+
+    secretScanningMock.mockClear();
+    fireEvent.change(ownerInput, { target: { value: "beta" } });
+
+    await waitFor(() => expect(screen.queryByText("Acme-only check")).not.toBeInTheDocument());
+    expect(secretScanningMock).not.toHaveBeenCalled();
+  });
+
   it("runs a scan on Enter in the organization field with no token entered", async () => {
     analyticsOverviewMock.mockResolvedValue({
       owner: "acme",
