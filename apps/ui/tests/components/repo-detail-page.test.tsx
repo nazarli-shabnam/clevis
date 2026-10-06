@@ -120,6 +120,20 @@ describe("RepoDetailPage", () => {
     await waitFor(() => expect(screen.getByText(/4 open prs/i)).toBeInTheDocument());
   });
 
+  it("shows 'PRs unavailable' with a retry, not '0 open PRs', when the pulls request fails", async () => {
+    reposPullsMock.mockRejectedValue(new Error("API rate limit exceeded"));
+
+    renderPage();
+
+    expect(await screen.findByText("PRs unavailable")).toHaveAttribute("title", "API rate limit exceeded");
+    expect(screen.queryByText(/0 open prs/i)).not.toBeInTheDocument();
+
+    reposPullsMock.mockResolvedValue({ repository: "acme/demo", total: 2, pulls: [] });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(screen.getByText(/2 open prs/i)).toBeInTheDocument());
+  });
+
   it("shows the no-activity placeholder when commit_activity is empty", async () => {
     renderPage();
     await waitFor(() => expect(reposStatsMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));

@@ -164,7 +164,22 @@ export default function RepoDetailPage() {
         actions={
           <span className="inline-flex items-center gap-1.5 stat-chip">
             <GitPullRequest className="size-3.5" />
-            {pullsQuery.isLoading ? "…" : (pullsQuery.data?.total ?? 0)} open PRs
+            {pullsQuery.isError ? (
+              // A failed request must not read as "0 open PRs" (a healthy-looking repo).
+              <>
+                <span title={pullsQuery.error.message}>PRs unavailable</span>
+                <button
+                  type="button"
+                  className="underline underline-offset-2 hover:text-foreground"
+                  onClick={() => pullsQuery.refetch()}
+                  disabled={pullsQuery.isFetching}
+                >
+                  Retry
+                </button>
+              </>
+            ) : (
+              <>{pullsQuery.isLoading ? "…" : (pullsQuery.data?.total ?? 0)} open PRs</>
+            )}
           </span>
         }
       />
