@@ -39,6 +39,12 @@ describe("rankCommands", () => {
     expect(rankCommands([cmd("a", "repo", "x/one", "billing service"), cmd("b", "repo", "billing")], "billing").map((c) => c.id)).toEqual(["b", "a"]);
   });
 
+  it("does not fuzzy-match free-text hints, only real substring or word matches", () => {
+    const desc = cmd("d", "repo", "x/tool", "A tool to analyze pull requests in Git");
+    expect(rankCommands([desc], "api")).toEqual([]);
+    expect(rankCommands([desc], "analyze")).toHaveLength(1);
+  });
+
   it("caps the result count", () => {
     const many = Array.from({ length: 100 }, (_, i) => cmd(`c${i}`, "repo", `acme/r${i}`));
     expect(rankCommands(many, "acme", 10)).toHaveLength(10);

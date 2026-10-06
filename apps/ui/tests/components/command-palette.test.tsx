@@ -64,6 +64,22 @@ describe("CommandPalette", () => {
     await waitFor(() => expect(screen.queryByRole("combobox")).not.toBeInTheDocument());
   });
 
+  it("ignores Shift/Alt variants and key repeat", async () => {
+    renderPalette();
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true, shiftKey: true });
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true, altKey: true });
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true, repeat: true });
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  });
+
+  it("does not act on Enter while an IME composition is in progress", async () => {
+    renderPalette();
+    openWithKey();
+    const input = await screen.findByRole("combobox");
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(push).not.toHaveBeenCalled();
+  });
+
   it("moves the selection with the arrow keys", async () => {
     renderPalette();
     openWithKey();

@@ -28,11 +28,14 @@ export function matchScore(text: string, query: string): number | null {
 const KIND_ORDER: Record<CommandKind, number> = { page: 0, scope: 1, repo: 2 }
 
 /** Matching commands, best first; ties keep pages before accounts before repos, then input order. */
-export function rankCommands(commands: Command[], query: string, limit = 50): Command[] {
+export function rankCommands(commands: Command[], query: string, limit = Infinity): Command[] {
   return commands
     .map((c, index) => {
       const label = matchScore(c.label, query)
-      const hint = matchScore(c.hint, query)
+      // Free-text hints (repo descriptions) only count for real substring/word matches: the loose
+      // in-order-letters rule would match nearly any sentence.
+      const rawHint = matchScore(c.hint, query)
+      const hint = rawHint !== null && rawHint >= 1 ? rawHint : null
       const score = label === null && hint === null ? null : Math.max(label ?? 0, (hint ?? 0) * 0.5)
       return { c, index, score }
     })

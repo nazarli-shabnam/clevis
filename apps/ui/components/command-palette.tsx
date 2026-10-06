@@ -13,6 +13,7 @@ import { NAV_GROUPS } from "@/lib/nav-items"
 import { rankCommands, type Command } from "@/lib/command-palette"
 import type { InstallationMeta, MyOrgMembership } from "@/lib/api/types"
 
+const MAX_RESULTS = 50
 const KIND_LABEL = { page: "Page", scope: "Account", repo: "Repository" } as const
 
 /** Cmd/Ctrl+K palette: jump to a page, switch account, or open a repository of the active org. */
@@ -27,7 +28,9 @@ export function CommandPalette() {
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      // Plain Cmd/Ctrl+K only: Shift/Alt variants belong to the browser (e.g. Firefox's console), and a
+      // held key must not flicker the dialog open and shut.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && !e.repeat && e.key.toLowerCase() === "k") {
         e.preventDefault()
         setOpen((v) => !v)
       }
@@ -104,7 +107,8 @@ export function CommandPalette() {
     return [...pages, ...scopes, ...repos]
   }, [user?.is_workspace_admin, memberships, installs, scope, reposQuery.data])
 
-  const results = useMemo(() => rankCommands(commands, query), [commands, query])
+  const ranked = useMemo(() => rankCommands(commands, query), [commands, query])
+  const results = useMemo(() => ranked.slice(0, MAX_RESULTS), [ranked])
   const current = Math.min(active, Math.max(results.length - 1, 0))
 
   useEffect(() => {
@@ -124,7 +128,7 @@ export function CommandPalette() {
     } else if (e.key === "ArrowUp") {
       e.preventDefault()
       setActive(Math.max(current - 1, 0))
-    } else if (e.key === "Enter" && results[current]) {
+    } else if (e.key === "Enter" && results[current] && !e.nativeEvent.isComposing) {
       e.preventDefault()
       run(results[current])
     }
@@ -150,7 +154,7 @@ export function CommandPalette() {
             <input
               autoFocus
               role="combobox"
-              aria-expanded
+              aria-expanded={results.length > 0}
               aria-controls="command-palette-list"
               aria-activedescendant={results[current] ? `cmd-${results[current].id}` : undefined}
               aria-label="Search pages, accounts and repositories"
@@ -184,8 +188,17 @@ export function CommandPalette() {
                 <span className="shrink-0 text-[0.6875rem] text-muted-foreground">{KIND_LABEL[c.kind]}</span>
               </li>
             ))}
-            {results.length === 0 && <li className="px-2.5 py-3 text-sm text-muted-foreground">No matches</li>}
           </ul>
+          {results.length === 0 && (
+            <p role="status" className="px-3.5 py-3 text-sm text-muted-foreground">
+              No matches
+            </p>
+          )}
+          {ranked.length > results.length && (
+            <p className="px-3.5 pb-2 text-[0.6875rem] text-muted-foreground">
+              Showing {results.length} of {ranked.length}. Keep typing to narrow the list.
+            </p>
+          )}
           {org !== "" && (
             <p className="border-t border-border px-3 py-1.5 text-[0.6875rem] text-muted-foreground" aria-live="polite">
               {reposQuery.isError
