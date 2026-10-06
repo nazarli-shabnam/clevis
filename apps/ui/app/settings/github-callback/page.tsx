@@ -19,11 +19,20 @@ export default function GithubInstallCallbackPage() {
   const [connectedAccount, setConnectedAccount] = useState<{ login: string; type: string } | null>(null)
   const ranRef = useRef(false)
   const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const mountedRef = useRef(false)
 
-  // Only the pending redirect is torn down on unmount. The lookup/sync work below runs once and is
-  // not cancelled: under React StrictMode (dev) effects run, clean up and run again, and a
-  // cancel flag set by that simulated cleanup would swallow the result of the one real run.
-  useEffect(() => () => clearTimeout(redirectTimerRef.current), [])
+  // Tracks whether the page is *currently* mounted rather than using a cancel flag captured by the
+  // run-once effect below: under React StrictMode (dev) effects run, clean up and run again, and a
+  // flag set by that simulated cleanup would swallow the result of the one real run. Here the
+  // remount sets it back to true, while a real navigation away leaves it false so a slow
+  // lookup/sync can't update state or schedule a redirect on a page the user already left.
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      clearTimeout(redirectTimerRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     if (ranRef.current) return
@@ -52,10 +61,12 @@ export default function GithubInstallCallbackPage() {
           account_type === "User" ? { scope: "me" } : { scope: "org", orgLogin: account_login },
           { account_login, account_type, installation_id: id },
         )
+        if (!mountedRef.current) return
         setConnectedAccount({ login: account_login, type: account_type })
         setStatus("success")
         redirectTimerRef.current = setTimeout(() => router.replace("/settings?installed=1"), 1800)
       } catch (err) {
+        if (!mountedRef.current) return
         setStatus("error")
         setErrorMessage(err instanceof Error ? err.message : "Failed to connect the installation.")
       }

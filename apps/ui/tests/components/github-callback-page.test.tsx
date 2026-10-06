@@ -94,6 +94,29 @@ describe("GithubInstallCallbackPage", () => {
     }
   });
 
+  it("does not schedule a redirect when the page is left while the sync is still in flight", async () => {
+    vi.useFakeTimers();
+    try {
+      searchParams = new URLSearchParams({ installation_id: "42", setup_action: "install" });
+      let resolveSync: (v: unknown) => void = () => {};
+      lookupMock.mockResolvedValue({ account_login: "shabnam", account_type: "User" });
+      syncMock.mockReturnValue(new Promise((resolve) => (resolveSync = resolve)));
+
+      const { unmount } = render(<GithubInstallCallbackPage />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(syncMock).toHaveBeenCalledTimes(1);
+
+      unmount();
+      resolveSync({ synced: true, token_ref: "tok_x" });
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(replace).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("connects an organization installation via the org sync endpoint", async () => {
     searchParams = new URLSearchParams({ installation_id: "7", setup_action: "install" });
     lookupMock.mockResolvedValue({ account_login: "acme", account_type: "Organization" });
