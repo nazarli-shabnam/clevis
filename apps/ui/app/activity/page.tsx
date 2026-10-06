@@ -4,6 +4,7 @@ import { useEffect } from "react"
 import Link from "next/link"
 import { useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
+import { ActivityByRepoCard } from "@/components/activity-by-repo-card"
 import { ActivityList } from "@/components/activity-list"
 import { EventFeed } from "@/components/event-feed"
 import { HeatmapCalendar } from "@/components/charts/heatmap-calendar"
@@ -165,6 +166,9 @@ export default function ActivityPage() {
           </div>
 
           {isOrg && (<>
+          <div className="lg:col-span-2">
+            <ActivityByRepoCard org={org} />
+          </div>
           <div className="card">
             <div className="px-4 py-3 border-b border-border">
               <span className="section-label">CI Failure Log</span>

@@ -14,6 +14,7 @@ import type {
   DependabotTriageResponse,
   DispatchResponse,
   DispatchAllResponse,
+  ActivitySummary,
   FailedRunsResponse,
   GithubMembershipStatus,
   GithubOrgInvitationsResponse,
@@ -63,6 +64,17 @@ function getAuthHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+
+/** Opens the activity-summary SSE stream. Not routed through fetchWithTimeout: the stream is meant to
+ * stay open (the API ends it after ~15 min), so only the caller's signal may abort it. Sends the same
+ * credentials as every other call (Bearer header for password sessions, cookie for GitHub OAuth). */
+export function openActivityStream(org: string, days: number, signal: AbortSignal): Promise<Response> {
+  return fetch(`${BASE}/github/orgs/${encodeURIComponent(org)}/activity-summary/stream?days=${days}`, {
+    credentials: "include",
+    headers: { Accept: "text/event-stream", ...getAuthHeaders() },
+    signal,
+  })
+}
 
 // Hard ceiling so a hanging API surfaces an error instead of leaving callers loading forever.
 const REQUEST_TIMEOUT_MS = 15000
@@ -435,6 +447,9 @@ export const api = {
         token: token || undefined,
         per_page: perPage,
       }),
+    // Rollup of webhook-ingested events: no GitHub call, no token, so it is cheap to poll or stream.
+    activitySummary: (org: string, days = 7) =>
+      get<ActivitySummary>(`/github/orgs/${encodeURIComponent(org)}/activity-summary?days=${days}`),
     failedRuns: (org: string, token: string, limit = 20) =>
       post<FailedRunsResponse>(`/github/orgs/${encodeURIComponent(org)}/failed-runs`, {
         token: token || undefined,
