@@ -89,6 +89,71 @@ def test_stale_branches_ignore_default_protected_and_recent_ones():
     assert out["value"]["stale_branches"] == 1 and out["value"]["missing"] == 1
 
 
+def _branch(name, sha=None):
+    return {"name": name, "protected": False, "commit": {"sha": sha or name}}
+
+
+def test_stale_branches_report_sampled_when_more_branches_than_the_lookup_cap():
+    branches = [_branch(f"b{i}") for i in range(h._MAX_BRANCH_LOOKUPS + 3)]
+
+    def get(url, token):
+        if "/branches" in url:
+            return branches
+        return {"commit": {"committer": {"date": "2026-09-30T00:00:00Z"}}}
+
+    with patch.object(h, "_now", return_value=NOW):
+        out = _run(h.StaleBranches(), [_repo()], get)
+    assert out["status"] == "pass" and out["value"]["sampled"] == 1
+
+
+def test_stale_branches_report_sampled_when_the_first_branch_page_is_full():
+    branches = [_branch("main-copy-%d" % i) for i in range(h._BRANCHES_PAGE_SIZE)]
+    branches = [{**b, "protected": True} for b in branches]  # nothing to look up, but more may exist
+
+    out = _run(h.StaleBranches(), [_repo()], lambda url, token: branches)
+    assert out["value"]["sampled"] == 1
+
+
+def test_partial_stale_branch_scan_does_not_mark_other_checks_sampled():
+    repos = [_repo()]  # the runner hands the same repo dicts to every check
+    branches = [_branch(f"b{i}") for i in range(h._MAX_BRANCH_LOOKUPS + 3)]
+
+    def get(url, token):
+        if "/branches" in url:
+            return branches
+        if "/git/trees" in url:
+            return _tree("CODEOWNERS")
+        return {"commit": {"committer": {"date": "2026-09-30T00:00:00Z"}}}
+
+    with patch.object(h, "_now", return_value=NOW):
+        assert _run(h.StaleBranches(), repos, get)["value"]["sampled"] == 1
+        assert _run(h.CodeownersPresent(), repos, get)["value"]["sampled"] == 0
+
+
+def test_stale_branches_not_sampled_when_every_branch_was_inspected():
+    def get(url, token):
+        if "/branches" in url:
+            return [_branch("a")]
+        return {"commit": {"committer": {"date": "2026-09-30T00:00:00Z"}}}
+
+    with patch.object(h, "_now", return_value=NOW):
+        out = _run(h.StaleBranches(), [_repo()], get)
+    assert out["value"]["sampled"] == 0
+
+
+def test_stale_branches_unparsable_date_skips_that_branch_not_the_check():
+    dates = {"bad": "not-a-date", "old": "2026-01-01T00:00:00Z"}
+
+    def get(url, token):
+        if "/branches" in url:
+            return [_branch("bad"), _branch("old")]
+        return {"commit": {"committer": {"date": dates[url.rsplit("/", 1)[1]]}}}
+
+    with patch.object(h, "_now", return_value=NOW):
+        out = _run(h.StaleBranches(), [_repo()], get)
+    assert out["status"] == "fail" and out["value"]["stale_branches"] == 1
+
+
 def test_unpinned_third_party_uses_detection():
     text = """
     steps:
