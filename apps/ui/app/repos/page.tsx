@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
@@ -15,6 +15,14 @@ import { shouldApplyResolvedToken } from "@/lib/token-resolve"
 import { MiniSparkline } from "@/components/charts/mini-sparkline"
 import { relativeTime } from "@/lib/format"
 import { useInView } from "@/lib/use-in-view"
+import {
+  NO_REPO_FILTERS,
+  STALE_DAYS,
+  filterRepos,
+  hasActiveRepoFilters,
+  repoLanguages,
+  type RepoFilters,
+} from "@/lib/repo-filters"
 import type { InstallationMeta, RepoSummary } from "@/lib/api/types"
 
 type SortKey = "pushed" | "stars" | "name"
@@ -137,6 +145,7 @@ function RepoRow({ org, repo, token }: { org: string; repo: RepoSummary; token: 
           >
             {repo.name}
           </Link>
+          {repo.archived && <span className="stat-chip shrink-0">archived</span>}
           <a
             href={repo.html_url}
             target="_blank"
@@ -188,6 +197,7 @@ export default function ReposPage() {
   const [tokenSaved, setTokenSaved] = useState(false)
   const [search, setSearch] = useState("")
   const [sort, setSort] = useState<SortKey>("pushed")
+  const [filters, setFilters] = useState<RepoFilters>(NO_REPO_FILTERS)
 
   const { scope } = useActiveScope()
   const scopeOrgLogin = scope?.kind === "org" ? scope.login : ""
@@ -264,10 +274,34 @@ export default function ReposPage() {
     })
   }
 
+  // Load the active org's repositories without a click once something can authorise the request
+  // (a connected GitHub App installation or a saved token). Only for the active scope's org, never
+  // for a name being typed, and at most once per org so edits can't re-trigger it; the button
+  // remains for refreshing or loading another org.
+  const autoLoadedFor = useRef("")
+  useEffect(() => {
+    const org = owner.trim()
+    if (!org || org !== scopeOrgLogin || autoLoadedFor.current === org) return
+    if (!(hasInstallationForOwner || tokenSaved) || listMutation.isPending) return
+    autoLoadedFor.current = org
+    loadRepos()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [owner, scopeOrgLogin, hasInstallationForOwner, tokenSaved])
+
+  const allRepos = useMemo(() => listMutation.data?.repos ?? [], [listMutation.data])
+  const languages = useMemo(() => repoLanguages(allRepos), [allRepos])
+  // A language picked for one org may not exist in the next org's list; fall back to "any".
+  const effectiveFilters: RepoFilters = languages.includes(filters.language)
+    ? filters
+    : { ...filters, language: "" }
   const repos = sortRepos(
-    (listMutation.data?.repos ?? []).filter((r) => r.name.toLowerCase().includes(search.toLowerCase())),
+    filterRepos(
+      allRepos.filter((r) => r.name.toLowerCase().includes(search.toLowerCase())),
+      effectiveFilters,
+    ),
     sort,
   )
+  const filtersActive = hasActiveRepoFilters(effectiveFilters)
 
   return (
     <>
@@ -378,6 +412,59 @@ export default function ReposPage() {
               </div>
             </div>
 
+            {listMutation.data && (
+              <div className="px-4 py-2 border-b border-border flex flex-wrap items-center gap-2 text-xs">
+                <select
+                  aria-label="Filter by language"
+                  value={effectiveFilters.language}
+                  onChange={(e) => setFilters((f) => ({ ...f, language: e.target.value }))}
+                  className="card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option value="">Any language</option>
+                  {languages.map((l) => (
+                    <option key={l} value={l}>{l}</option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Filter by visibility"
+                  value={filters.visibility}
+                  onChange={(e) => setFilters((f) => ({ ...f, visibility: e.target.value as RepoFilters["visibility"] }))}
+                  className="card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option value="all">Public and private</option>
+                  <option value="public">Public only</option>
+                  <option value="private">Private only</option>
+                </select>
+                <select
+                  aria-label="Filter by status"
+                  value={filters.status}
+                  onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value as RepoFilters["status"] }))}
+                  className="card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option value="all">Active and archived</option>
+                  <option value="active">Active only</option>
+                  <option value="archived">Archived only</option>
+                </select>
+                <label className="inline-flex items-center gap-1.5 text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={filters.stale}
+                    onChange={(e) => setFilters((f) => ({ ...f, stale: e.target.checked }))}
+                  />
+                  No push in {STALE_DAYS}+ days
+                </label>
+                {filtersActive && (
+                  <button
+                    type="button"
+                    className="text-muted-foreground underline hover:text-foreground"
+                    onClick={() => setFilters(NO_REPO_FILTERS)}
+                  >
+                    Clear filters
+                  </button>
+                )}
+              </div>
+            )}
+
             {listMutation.isPending ? (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
@@ -400,7 +487,7 @@ export default function ReposPage() {
             ) : repos.length === 0 ? (
               <div className="px-4 py-8">
                 <p className="text-sm text-muted-foreground">
-                  No repositories match{search ? " your filter" : ""}
+                  No repositories match{search || filtersActive ? " your filters" : ""}
                 </p>
               </div>
             ) : (

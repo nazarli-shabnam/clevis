@@ -101,6 +101,36 @@ def test_list_repos_returns_the_full_org_list_spanning_multiple_github_pages(rep
     assert {r["name"] for r in body["repos"]} == {f"repo-{i}" for i in range(150)}
 
 
+def test_list_repos_exposes_archived_and_defaults_it_to_false(repos_client):
+    base = {
+        "full_name": "acme/x",
+        "private": False,
+        "description": None,
+        "language": None,
+        "stargazers_count": 0,
+        "forks_count": 0,
+        "watchers_count": 0,
+        "open_issues_count": 0,
+        "pushed_at": None,
+        "default_branch": "main",
+        "html_url": "https://github.com/acme/x",
+    }
+    repos = [
+        {**base, "name": "old", "archived": True},
+        {**base, "name": "live", "archived": False},
+        {**base, "name": "legacy-payload"},  # no `archived` key at all
+    ]
+    with patch("src.routers.repos.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.return_value = repos
+        resp = repos_client.post("/orgs/acme/repos", json={"token": "ghp_testtoken123456789012345678901234"})
+    assert resp.status_code == 200
+    assert {r["name"]: r["archived"] for r in resp.json()["repos"]} == {
+        "old": True,
+        "live": False,
+        "legacy-payload": False,
+    }
+
+
 def test_list_repos_no_installation_and_no_token_returns_400(repos_client):
     resp = repos_client.post("/orgs/acme/repos", json={})
     assert resp.status_code == 400
