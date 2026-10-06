@@ -203,10 +203,13 @@ export default function SecurityPage() {
     onSuccess: (data) => setSelectedRepo(data.repos[0]?.repo ?? ""),
   })
 
+  // The selected repo belongs to the owner that was scanned, not whatever is in the input now: after
+  // editing the box, the live owner paired with the old repo would query a repo that doesn't exist.
+  const scannedOwner = matrixMutation.data?.owner ?? ""
   const secretScanning = useQuery({
-    queryKey: ["security.secret-scanning", owner, selectedRepo],
-    queryFn: () => api.security.secretScanning(owner, selectedRepo, token),
-    enabled: !!selectedRepo && !!matrixMutation.data,
+    queryKey: ["security.secret-scanning", scannedOwner, selectedRepo],
+    queryFn: () => api.security.secretScanning(scannedOwner, selectedRepo, token),
+    enabled: !!selectedRepo && !!scannedOwner,
   })
 
   // A failed history fetch must not look like "never scanned": the trend sections would otherwise
@@ -265,6 +268,8 @@ export default function SecurityPage() {
     { name: "Passed", value: allChecks.filter((c) => c.status === "pass").length, color: "#34d399" },
     { name: "Failed · high", value: allChecks.filter((c) => c.status === "fail" && c.severity === "high").length, color: "#f87171" },
     { name: "Failed · med/low", value: allChecks.filter((c) => c.status === "fail" && c.severity !== "high").length, color: "#fbbf24" },
+    // Errored checks count against the score and the "Failed" filter, so the donut total must include them.
+    { name: "Errored", value: allChecks.filter((c) => c.status === "error").length, color: "#a78bfa" },
   ].filter((d) => d.value > 0)
 
   return (

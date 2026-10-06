@@ -177,6 +177,54 @@ describe("SecurityPage", () => {
     await waitFor(() => expect(analyticsOverviewMock).toHaveBeenCalledWith("acme", ""));
   });
 
+  it("counts errored checks in the donut so its total matches the gauge's check count (#666)", async () => {
+    const check = (id: string, status: string, severity = "high") => ({
+      id, title: id, severity, remediation: "", status, value: { type: "boolean", enabled: false },
+    });
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 33, total_checks: 3, failed_checks: 2, repo_count: 1,
+      checks: [check("a", "pass"), check("b", "fail"), check("c", "error")],
+    });
+
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+
+    // The donut's centre is the sum of its slices: pass + fail + error = all 3 checks.
+    await waitFor(() => expect(screen.getByText("checks").previousElementSibling).toHaveTextContent("3"));
+  });
+
+  it("keeps querying secret scanning for the scanned owner after the owner input is edited (#666)", async () => {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 1, checks: [],
+    });
+    securityMatrixMock.mockResolvedValue({
+      owner: "acme",
+      repos: [{
+        repo: "acme-repo", branch_protection: true, secret_scanning: true, dependabot_enabled: true,
+        dependabot_critical_count: 0, dependabot_high_count: 0, code_scanning: true, force_push_allowed: false,
+        score: 100, unknown_dimensions: [], alerts_source: "github",
+      }],
+      summary: { fully_compliant_count: 1, critical_risk_count: 0, secret_hits_count: 0, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } },
+    });
+
+    renderPage();
+    const ownerInput = screen.getByPlaceholderText("e.g. octocat");
+    fireEvent.change(ownerInput, { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+    await waitFor(() => expect(secretScanningMock).toHaveBeenCalledWith("acme", "acme-repo", ""));
+
+    secretScanningMock.mockClear();
+    fireEvent.change(ownerInput, { target: { value: "beta" } });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(secretScanningMock).not.toHaveBeenCalled(); // no "beta"/"acme-repo" request
+  });
+
   it("runs a scan on Enter in the organization field with no token entered", async () => {
     analyticsOverviewMock.mockResolvedValue({
       owner: "acme",
