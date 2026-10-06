@@ -1,5 +1,10 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const downloadTextFileMock = vi.fn();
+vi.mock("@/lib/download", () => ({
+  downloadTextFile: (...args: unknown[]) => downloadTextFileMock(...args),
+}));
 
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 
@@ -130,5 +135,61 @@ describe("DataTable", () => {
     const columns: DataTableColumn<Row>[] = [{ key: "name", header: "Name", render: (r) => r.name }];
     render(<DataTable columns={columns} data={ROWS} getRowKey={(r) => r.id} />);
     expect(screen.queryByRole("button", { name: "Name" })).toBeNull();
+  });
+});
+
+describe("DataTable CSV export", () => {
+  const EXPORT_COLUMNS: DataTableColumn<Row>[] = [
+    { key: "name", header: "Name", sortValue: (r) => r.name, csvValue: (r) => r.name, render: (r) => <b>{r.name}</b> },
+    { key: "score", header: "Score", sortValue: (r) => r.score, csvValue: (r) => r.score, render: (r) => String(r.score) },
+    // no csvValue: presentational only, must not appear in the export
+    { key: "actions", header: "Actions", render: () => <button type="button">Open</button> },
+  ];
+
+  beforeEach(() => downloadTextFileMock.mockReset());
+
+  it("has no export button unless exportCsv is set", () => {
+    render(<DataTable columns={EXPORT_COLUMNS} data={ROWS} getRowKey={(r) => r.id} />);
+    expect(screen.queryByRole("button", { name: /export csv/i })).toBeNull();
+  });
+
+  it("downloads the rows in the current sort order, using only columns with a csvValue", () => {
+    render(<DataTable columns={EXPORT_COLUMNS} data={ROWS} getRowKey={(r) => r.id} exportCsv={{ name: "people" }} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Name" })); // sort ascending by name
+    fireEvent.click(screen.getByRole("button", { name: /export csv/i }));
+
+    expect(downloadTextFileMock).toHaveBeenCalledTimes(1);
+    const [filename, csv, mime] = downloadTextFileMock.mock.calls[0];
+    expect(filename).toMatch(/^clevis-people-\d{4}-\d{2}-\d{2}\.csv$/);
+    expect(mime).toBe("text/csv");
+    expect(csv).toBe(["Name,Score", "Alice,10", "Bob,20", "Charlie,30"].join("\r\n"));
+  });
+
+  it("exports every row, not just the current page", () => {
+    const many = Array.from({ length: 5 }, (_, i) => ({ id: i, name: `n${i}`, score: i }));
+    render(<DataTable columns={EXPORT_COLUMNS} data={many} getRowKey={(r) => r.id} pageSize={2} exportCsv={{ name: "all" }} />);
+    expect(screen.getAllByRole("row")).toHaveLength(3); // header + 2 rows on page 1
+
+    fireEvent.click(screen.getByRole("button", { name: /export csv/i }));
+
+    const csv = downloadTextFileMock.mock.calls[0][1] as string;
+    expect(csv.split("\r\n")).toHaveLength(6); // header + all 5
+    expect(csv).toContain("n4,4");
+  });
+
+  it("keeps the spreadsheet formula-injection protection of toCsv", () => {
+    const rows = [{ id: 1, name: "=HYPERLINK(\"http://evil\")", score: 1 }];
+    render(<DataTable columns={EXPORT_COLUMNS} data={rows} getRowKey={(r) => r.id} exportCsv={{ name: "x" }} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /export csv/i }));
+
+    // leading quote defuses the formula; the embedded quotes are then doubled per RFC 4180
+    expect(downloadTextFileMock.mock.calls[0][1]).toContain(`"'=HYPERLINK(""http://evil"")"`);
+  });
+
+  it("disables the button when there is nothing to export", () => {
+    render(<DataTable columns={EXPORT_COLUMNS} data={[]} getRowKey={(r) => r.id} exportCsv={{ name: "none" }} />);
+    expect(screen.getByRole("button", { name: /export csv/i })).toBeDisabled();
   });
 });

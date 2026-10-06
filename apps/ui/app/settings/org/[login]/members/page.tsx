@@ -23,6 +23,7 @@ const MEMBER_COLUMNS: DataTableColumn<GithubOrgMember>[] = [
     key: "login",
     header: "Member",
     sortValue: (m) => m.login.toLowerCase(),
+    csvValue: (m) => m.login,
     render: (m) => (
       <div className="flex items-center gap-2">
         {/* Decorative: the login is the adjacent link text, so empty alt avoids a duplicate announcement. */}
@@ -43,6 +44,7 @@ const MEMBER_COLUMNS: DataTableColumn<GithubOrgMember>[] = [
     key: "role",
     header: "Role",
     sortValue: (m) => m.role,
+    csvValue: (m) => m.role,
     cellClassName: "text-muted-foreground capitalize",
     render: (m) => m.role,
   },
@@ -51,6 +53,8 @@ const MEMBER_COLUMNS: DataTableColumn<GithubOrgMember>[] = [
     header: "2FA",
     // Groups unknown (null) between the two known states -- there's no natural order for "we don't know".
     sortValue: (m) => (m.two_factor_enabled === true ? 1 : m.two_factor_enabled === false ? -1 : 0),
+    // Unknown stays distinguishable from "no": an empty cell would read as a failed check.
+    csvValue: (m) => (m.two_factor_enabled === true ? "yes" : m.two_factor_enabled === false ? "no" : "unknown"),
     render: (m) => (
       <>
         {m.two_factor_enabled === true && <span className="stat-chip">✓ 2FA</span>}
@@ -225,7 +229,12 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
           </div>
         ) : (
           <>
-            <DataTable columns={MEMBER_COLUMNS} data={filteredMembers} getRowKey={(m) => m.login} />
+            <DataTable
+              columns={MEMBER_COLUMNS}
+              data={filteredMembers}
+              getRowKey={(m) => m.login}
+              exportCsv={{ name: `members-${orgLogin}` }}
+            />
             {membersQuery.data?.two_factor_overlay_available && (
               <div className="px-4 py-2.5 border-t border-border">
                 <span className="text-xs text-muted-foreground">Members without 2FA: {membersWithout2fa}</span>

@@ -4,6 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const auditListMock = vi.fn();
 const jobsListMock = vi.fn();
+const downloadTextFileMock = vi.fn();
+
+vi.mock("@/lib/download", () => ({
+  downloadTextFile: (...args: unknown[]) => downloadTextFileMock(...args),
+}));
 
 let mockSearchParams = new URLSearchParams();
 
@@ -39,6 +44,7 @@ describe("AuditPage", () => {
     auditListMock.mockReset();
     jobsListMock.mockReset();
     jobsListMock.mockResolvedValue([]);
+    downloadTextFileMock.mockReset();
     mockSearchParams = new URLSearchParams();
   });
 
@@ -55,7 +61,28 @@ describe("AuditPage", () => {
     await waitFor(() => expect(screen.getByText("installation.connected")).toBeInTheDocument());
   });
 
+  it("exports the shown events as CSV with ISO timestamps and the job status", async () => {
+    auditListMock.mockResolvedValue([
+      { id: 1, actor: "u@e.com", action: "cache.clear.queued", target: "acme/api", payload: JSON.stringify({ job_id: 7 }), created_at: "2026-01-01T00:00:00Z" },
+      { id: 2, actor: "v@e.com", action: "token.save", target: "acme", payload: "{}", created_at: "2026-01-02T00:00:00Z" },
+    ]);
+    jobsListMock.mockResolvedValue([{ id: 7, job_type: "github.clear_actions_cache", status: "done", result: null, created_at: "", updated_at: "" }]);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: /export csv/i }));
+
+    const [filename, csv, mime] = downloadTextFileMock.mock.calls[0];
+    expect(filename).toMatch(/^clevis-audit-\d{4}-\d{2}-\d{2}\.csv$/);
+    expect(mime).toBe("text/csv");
+    expect(csv.split("\r\n")).toEqual([
+      "Actor,Action,Target,Job status,Time",
+      "u@e.com,cache.clear.queued,acme/api,done,2026-01-01T00:00:00Z",
+      "v@e.com,token.save,acme,,2026-01-02T00:00:00Z",
+    ]);
+  });
+
   it("shows a retry option instead of a fake empty state when the query fails", async () => {
+
     // A real 403/500 must not render identically to "genuinely zero rows".
     auditListMock.mockRejectedValue(new Error("Workspace admin access required"));
     renderPage();
