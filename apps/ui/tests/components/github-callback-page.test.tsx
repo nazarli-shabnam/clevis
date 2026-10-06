@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const replace = vi.fn();
@@ -51,6 +52,46 @@ describe("GithubInstallCallbackPage", () => {
     );
 
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/settings?installed=1"), { timeout: 2000 });
+  });
+
+  it("still connects and redirects when effects run twice (React StrictMode in dev)", async () => {
+    searchParams = new URLSearchParams({ installation_id: "42", setup_action: "install" });
+    lookupMock.mockResolvedValue({ account_login: "shabnam", account_type: "User" });
+    syncMock.mockResolvedValue({ synced: true, token_ref: "tok_x" });
+
+    render(
+      <StrictMode>
+        <GithubInstallCallbackPage />
+      </StrictMode>,
+    );
+
+    await waitFor(() => expect(screen.getByText(/Connected/)).toBeInTheDocument());
+    // StrictMode's simulated remount must not start a second lookup/sync.
+    expect(lookupMock).toHaveBeenCalledTimes(1);
+    expect(syncMock).toHaveBeenCalledTimes(1);
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/settings?installed=1"), { timeout: 2000 });
+  });
+
+  it("does not redirect after the page unmounts", async () => {
+    vi.useFakeTimers();
+    try {
+      searchParams = new URLSearchParams({ installation_id: "42", setup_action: "install" });
+      lookupMock.mockResolvedValue({ account_login: "shabnam", account_type: "User" });
+      syncMock.mockResolvedValue({ synced: true, token_ref: "tok_x" });
+
+      const { unmount } = render(<GithubInstallCallbackPage />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByText(/Connected/)).toBeInTheDocument();
+
+      unmount();
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(replace).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("connects an organization installation via the org sync endpoint", async () => {
