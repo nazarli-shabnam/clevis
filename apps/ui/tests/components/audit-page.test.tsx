@@ -69,6 +69,8 @@ describe("AuditPage", () => {
     jobsListMock.mockResolvedValue([{ id: 7, job_type: "github.clear_actions_cache", status: "done", result: null, created_at: "", updated_at: "" }]);
     renderPage();
 
+    // the job list loads separately from the log, so wait for it before exporting
+    await waitFor(() => expect(screen.getAllByText("done").length).toBeGreaterThan(0));
     fireEvent.click(await screen.findByRole("button", { name: /export csv/i }));
 
     const [filename, csv, mime] = downloadTextFileMock.mock.calls[0];
@@ -81,8 +83,20 @@ describe("AuditPage", () => {
     ]);
   });
 
-  it("shows a retry option instead of a fake empty state when the query fails", async () => {
+  it("exports 'unknown' (not a blank) for a job status that can't be looked up, and says how many events it holds", async () => {
+    auditListMock.mockResolvedValue([
+      { id: 1, actor: "u@e.com", action: "cache.clear.queued", target: "acme/api", payload: JSON.stringify({ job_id: 99 }), created_at: "2026-01-01T00:00:00Z" },
+    ]);
+    jobsListMock.mockResolvedValue([]); // job 99 isn't in the (capped) job list
+    renderPage();
 
+    expect(await screen.findByText(/Exports the 1 loaded events\./)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /export csv/i }));
+
+    expect(downloadTextFileMock.mock.calls[0][1].split("\r\n")[1]).toBe("u@e.com,cache.clear.queued,acme/api,unknown,2026-01-01T00:00:00Z");
+  });
+
+  it("shows a retry option instead of a fake empty state when the query fails", async () => {
     // A real 403/500 must not render identically to "genuinely zero rows".
     auditListMock.mockRejectedValue(new Error("Workspace admin access required"));
     renderPage();

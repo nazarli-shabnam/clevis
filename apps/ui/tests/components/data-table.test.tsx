@@ -188,6 +188,20 @@ describe("DataTable CSV export", () => {
     expect(downloadTextFileMock.mock.calls[0][1]).toContain(`"'=HYPERLINK(""http://evil"")"`);
   });
 
+  it("keeps the file name to safe characters and shows the optional note", () => {
+    render(<DataTable columns={EXPORT_COLUMNS} data={ROWS} getRowKey={(r) => r.id} exportCsv={{ name: "my org/../x y", note: "Exports 3 rows." }} />);
+    expect(screen.getByText("Exports 3 rows.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /export csv/i }));
+
+    expect(downloadTextFileMock.mock.calls[0][0]).toMatch(/^clevis-my-org-..-x-y-\d{4}-\d{2}-\d{2}\.csv$/);
+  });
+
+  it("disables the button when no column can be exported", () => {
+    render(<DataTable columns={COLUMNS} data={ROWS} getRowKey={(r) => r.id} exportCsv={{ name: "x" }} />);
+    expect(screen.getByRole("button", { name: /export csv/i })).toBeDisabled();
+  });
+
   it("disables the button when there is nothing to export", () => {
     render(<DataTable columns={EXPORT_COLUMNS} data={[]} getRowKey={(r) => r.id} exportCsv={{ name: "none" }} />);
     expect(screen.getByRole("button", { name: /export csv/i })).toBeDisabled();

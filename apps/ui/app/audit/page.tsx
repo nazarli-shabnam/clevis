@@ -106,7 +106,9 @@ export default function AuditPage() {
       header: "Job status",
       csvValue: (log) => {
         const jobId = parseJobId(log.payload)
-        return (jobId !== null ? jobsById.get(jobId)?.status : undefined) ?? ""
+        if (jobId === null) return ""
+        // The job list loads separately and is capped, so "not found" is unknown, not "no job".
+        return jobsById.get(jobId)?.status ?? "unknown"
       },
       cellClassName: "font-mono",
       render: (log) => {
@@ -174,7 +176,14 @@ export default function AuditPage() {
               columns={columns}
               data={logs}
               getRowKey={(log) => log.id}
-              exportCsv={{ name: actionFilter ? `audit-${actionFilter}` : "audit" }}
+              exportCsv={{
+                name: actionFilter ? `audit-${actionFilter}` : "audit",
+                // The table only holds the events loaded so far (see "Load more"), not the whole log.
+                note:
+                  logs.length >= limit && limit < MAX_LIMIT
+                    ? `Exports the ${logs.length} loaded events. Load more to include older ones.`
+                    : `Exports the ${logs.length} loaded events.`,
+              }}
               // High enough that table pagination never triggers (backend caps at MAX_LIMIT); "Load more"
               // keeps a highlighted row reachable instead of hiding it behind a page click.
               pageSize={MAX_LIMIT}

@@ -35,8 +35,9 @@ interface DataTableProps<T> {
   getRowRef?: (row: T) => React.Ref<HTMLTableRowElement> | undefined
   /** Shows an "Export CSV" button. Exports every row passed in `data` (all pages, in the current
    * sort order) using the columns that define `csvValue`. The file is named
-   * `clevis-<name>-<yyyy-mm-dd>.csv`. */
-  exportCsv?: { name: string }
+   * `clevis-<name>-<yyyy-mm-dd>.csv` (`name` is slugified). `note` is shown beside the button, for
+   * tables whose `data` is only a window onto a larger set. */
+  exportCsv?: { name: string; note?: string }
 }
 
 /** A shared sortable, paginated table -- built on the same raw `<table>` markup/classes
@@ -79,11 +80,14 @@ export function DataTable<T>({
   const lastPage = Math.max(1, Math.ceil(sorted.length / pageSize))
   const pageRows = sorted.slice((page - 1) * pageSize, page * pageSize)
 
+  const csvColumns = columns.flatMap((c) => (c.csvValue ? [{ header: c.header, value: c.csvValue }] : []))
+
   function exportRows() {
     if (!exportCsv) return
-    const csvColumns = columns.flatMap((c) => (c.csvValue ? [{ header: c.header, value: c.csvValue }] : []))
     const stamp = new Date().toISOString().slice(0, 10)
-    downloadTextFile(`clevis-${exportCsv.name}-${stamp}.csv`, toCsv(sorted, csvColumns), "text/csv")
+    // Callers pass values from the URL or a filter; keep the file name to safe characters.
+    const name = exportCsv.name.replace(/[^A-Za-z0-9._-]+/g, "-")
+    downloadTextFile(`clevis-${name}-${stamp}.csv`, toCsv(sorted, csvColumns), "text/csv")
   }
 
   function toggleSort(key: string) {
@@ -98,8 +102,9 @@ export function DataTable<T>({
   return (
     <>
       {exportCsv && (
-        <div className="px-4 py-2 border-b border-border flex justify-end">
-          <Button size="sm" variant="outline" disabled={sorted.length === 0} onClick={exportRows}>
+        <div className="px-4 py-2 border-b border-border flex items-center justify-end gap-3">
+          {exportCsv.note && <span className="mr-auto text-xs text-muted-foreground">{exportCsv.note}</span>}
+          <Button size="sm" variant="outline" disabled={sorted.length === 0 || csvColumns.length === 0} onClick={exportRows}>
             <DownloadSimple className="size-3.5" /> Export CSV
           </Button>
         </div>
