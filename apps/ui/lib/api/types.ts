@@ -704,6 +704,8 @@ export interface BulkRemediateResponse {
   check_id: string
   dry_run: boolean
   items: BulkRemediateItem[]
+  // Set when every repo came back 403 (almost always a missing GitHub permission).
+  hint?: string | null
 }
 
 export interface RepoSecurityRow {

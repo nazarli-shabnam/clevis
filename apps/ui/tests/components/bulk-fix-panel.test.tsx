@@ -8,7 +8,7 @@ vi.mock("@/lib/api/client", () => ({
   api: { security: { remediateBulk: (...args: unknown[]) => bulkMock(...args) } },
 }));
 
-import { BulkFixPanel } from "@/components/bulk-fix-panel";
+import { BulkFixPanel, MAX_BATCH } from "@/components/bulk-fix-panel";
 import type { RepoSecurityRow } from "@/lib/api/types";
 
 const SS = "repository_secret_scanning_enabled";
@@ -186,6 +186,41 @@ describe("BulkFixPanel", () => {
     const failed = (await screen.findByText("GitHub API error: 404")).closest("li")!;
     expect(within(failed).getByText("failed")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Apply to 1 repo" })).toBeInTheDocument();
+  });
+
+  it("selects at most the batch cap, and says so when more repos fail", () => {
+    const many = Array.from({ length: MAX_BATCH + 20 }, (_, i) => row(`repo-${String(i).padStart(3, "0")}`, { secret_scanning: false }));
+    renderPanel({ repos: many });
+
+    expect(screen.getByText(`${MAX_BATCH + 20} repos fail it`)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`limited to ${MAX_BATCH} repositories`))).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText(`Select all (${MAX_BATCH})`));
+    expect(screen.getByRole("button", { name: `Preview changes (${MAX_BATCH})` })).toBeEnabled();
+    // everything past the cap is locked until something is unticked
+    expect(checkbox(`repo-${String(MAX_BATCH).padStart(3, "0")}`)).toBeDisabled();
+    expect(checkbox("repo-000")).toBeEnabled();
+
+    fireEvent.click(checkbox("repo-000"));
+    expect(checkbox(`repo-${String(MAX_BATCH).padStart(3, "0")}`)).toBeEnabled();
+  });
+
+  it("shows the permission hint once when every repo was refused, next to the per-repo results", async () => {
+    bulkMock.mockResolvedValueOnce({
+      check_id: SS,
+      dry_run: true,
+      items: [
+        { repo: "api", status: "failed", detail: "GitHub API error: 403" },
+        { repo: "web", status: "failed", detail: "GitHub API error: 403" },
+      ],
+      hint: "GitHub returned 403 for every repo. Administration needed.",
+    });
+    renderPanel();
+    fireEvent.click(screen.getByLabelText("Select all (2)"));
+    fireEvent.click(screen.getByRole("button", { name: "Preview changes (2)" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Administration needed.");
+    expect(screen.getAllByText("GitHub API error: 403")).toHaveLength(2);
   });
 
   it("surfaces an API error (e.g. the missing-permission hint) instead of a result", async () => {

@@ -4,6 +4,9 @@ Org-admin only, like the other org-wide write automations (bulk branch protectio
 (the default) returns what each repo would get without writing anything; ``dry_run=false`` applies
 it, capturing per-repo failures so one inaccessible repo doesn't abort the rest. Needs the same
 GitHub write permissions as the single-repo "Fix this" (``Administration``).
+
+A batch is capped at ``MAX_REPOS`` because it runs synchronously inside one request: a few GitHub
+calls per repo, with their own retry back-off, must stay well inside a proxy's timeout.
 """
 
 from typing import Literal
@@ -22,6 +25,8 @@ from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_to
 
 router = APIRouter()
 
+MAX_REPOS = 100
+
 _PERMISSION_HINT = (
     "GitHub returned 403 for every repo. The most likely cause is a missing scope — this fix "
     "needs the repository 'Administration' permission at Read and write on Clevis's GitHub App "
@@ -32,7 +37,7 @@ _PERMISSION_HINT = (
 
 class BulkRemediateRequest(BaseModel):
     check_id: str
-    repos: list[str] = Field(min_length=1, max_length=500)
+    repos: list[str] = Field(min_length=1, max_length=MAX_REPOS)
     dry_run: bool = True
     token: str | None = None
 
@@ -47,11 +52,16 @@ class BulkRemediateResponse(BaseModel):
     check_id: str
     dry_run: bool
     items: list[BulkRemediateItem]
+    # Set when every repo came back 403, which almost always means a missing GitHub permission. The
+    # per-repo results are still returned: a 403 can also be one inaccessible or archived repo.
+    hint: str | None = None
 
 
 def _all_forbidden(items: list[check_remediation_bulk.BulkItem]) -> bool:
+    # A single repo is not evidence of a missing App permission: it may just be archived or not
+    # granted to the installation.
     failed = [i for i in items if i.status == "failed"]
-    return bool(failed) and len(failed) == len(items) and all("403" in i.detail for i in failed)
+    return len(items) > 1 and len(failed) == len(items) and all("403" in i.detail for i in failed)
 
 
 @router.post("/orgs/{org_login}/security/remediate/bulk", response_model=BulkRemediateResponse)
@@ -91,11 +101,27 @@ def bulk_remediate(
     client = GitHubClient(token)
     run = check_remediation_bulk.plan_bulk if body.dry_run else check_remediation_bulk.apply_bulk
     items = run(client, body.check_id, owner, body.repos)
-    if _all_forbidden(items):
-        raise HTTPException(status_code=400, detail=_PERMISSION_HINT)
+
+    if not body.dry_run:
+        # The row above only says what was asked for; this one says what happened, so an audit
+        # can tell which repos were actually changed.
+        audit_repo.write(
+            db,
+            user.email,
+            "security.remediate.bulk_result",
+            owner,
+            {
+                "check_id": body.check_id,
+                "applied": [i.repo for i in items if i.status == "applied"],
+                "unchanged": [i.repo for i in items if i.status == "unchanged"],
+                "failed": {i.repo: i.detail for i in items if i.status == "failed"},
+            },
+            tenant_id=ctx.org.tenant_id,
+        )
 
     return BulkRemediateResponse(
         check_id=body.check_id,
         dry_run=body.dry_run,
         items=[BulkRemediateItem(repo=i.repo, status=i.status, detail=i.detail) for i in items],
+        hint=_PERMISSION_HINT if _all_forbidden(items) else None,
     )

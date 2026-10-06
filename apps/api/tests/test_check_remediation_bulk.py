@@ -217,11 +217,23 @@ def test_one_repo_failing_does_not_abort_the_rest(db, acme):
 
 
 @pytest.mark.parametrize("dry_run", [True, False])
-def test_every_repo_403_becomes_a_400_with_the_permission_hint(db, acme, dry_run):
+def test_every_repo_403_adds_the_permission_hint_but_keeps_the_per_repo_results(db, acme, dry_run):
     gh = FakeGitHub({"a": {"error": _status_error(403)}, "b": {"error": _status_error(403)}})
     resp = _run(db, acme, gh, {"check_id": SS, "repos": ["a", "b"], "dry_run": dry_run})
 
-    assert resp.status_code == 400 and "Administration" in resp.json()["detail"]
+    assert resp.status_code == 200
+    assert "Administration" in resp.json()["hint"]
+    assert {i["repo"]: i["status"] for i in resp.json()["items"]} == {"a": "failed", "b": "failed"}
+
+
+def test_a_lone_repo_403_is_not_blamed_on_the_apps_permissions(db, acme):
+    # one archived or ungranted repo is not evidence that the App lacks Administration
+    gh = FakeGitHub({"only": {"error": _status_error(403)}})
+    resp = _run(db, acme, gh, {"check_id": SS, "repos": ["only"]})
+
+    assert resp.status_code == 200
+    assert resp.json()["hint"] is None
+    assert _by_repo(resp)["only"] == {"repo": "only", "status": "failed", "detail": "GitHub API error: 403"}
 
 
 def test_a_single_403_among_successes_is_just_that_repo_failing(db, acme):
@@ -229,6 +241,7 @@ def test_a_single_403_among_successes_is_just_that_repo_failing(db, acme):
     resp = _run(db, acme, gh, {"check_id": SS, "repos": ["a", "b"]})
 
     assert resp.status_code == 200
+    assert resp.json()["hint"] is None
     assert _by_repo(resp)["a"]["status"] == "failed" and _by_repo(resp)["b"]["status"] == "would_change"
 
 
@@ -267,7 +280,11 @@ def test_no_token_available_returns_400(db, acme):
 def test_the_repo_list_is_bounded(db, acme):
     client = _client(db, acme["admin"].id)
     assert _post(client, {"check_id": SS, "repos": []}).status_code == 422
-    assert _post(client, {"check_id": SS, "repos": [f"r{i}" for i in range(501)]}).status_code == 422
+    assert _post(client, {"check_id": SS, "repos": [f"r{i}" for i in range(101)]}).status_code == 422
+
+    names = [f"r{i}" for i in range(100)]
+    gh = FakeGitHub({n: {"security_and_analysis": _ENABLED} for n in names})
+    assert _run(db, acme, gh, {"check_id": SS, "repos": names}).status_code == 200  # the cap itself is allowed
 
 
 @pytest.mark.parametrize(
@@ -290,6 +307,33 @@ def test_the_audit_row_is_written_even_when_every_repo_fails(db, acme):
     _run(db, acme, gh, {"check_id": SS, "repos": ["a"], "dry_run": False})
 
     assert db.query(AuditLog).filter(AuditLog.action == "security.remediate.bulk_apply").count() == 1
+
+
+def test_an_apply_also_records_what_actually_happened_per_repo(db, acme):
+    gh = FakeGitHub({
+        "fixed": {"security_and_analysis": _DISABLED},
+        "fine": {"security_and_analysis": _ENABLED},
+        "gone": {"error": _status_error(404)},
+    })
+    _run(db, acme, gh, {"check_id": SS, "repos": ["fixed", "fine", "gone"], "dry_run": False})
+
+    row = db.query(AuditLog).filter(AuditLog.action == "security.remediate.bulk_result").one()
+    assert row.tenant_id == acme["org"].tenant_id and row.target == "acme"
+    import json
+
+    assert json.loads(row.payload) == {
+        "check_id": SS,
+        "applied": ["fixed"],
+        "unchanged": ["fine"],
+        "failed": {"gone": "GitHub API error: 404"},
+    }
+
+
+def test_a_preview_writes_no_result_row(db, acme):
+    gh = FakeGitHub({"api": {"security_and_analysis": _DISABLED}})
+    _run(db, acme, gh, {"check_id": SS, "repos": ["api"], "dry_run": True})
+
+    assert db.query(AuditLog).filter(AuditLog.action == "security.remediate.bulk_result").count() == 0
 
 
 # --- service-level edge cases the route can't reach -----------------------

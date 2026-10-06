@@ -17,6 +17,9 @@ interface FixableCheck {
 
 const unknown = (row: RepoSecurityRow, dimension: string) => row.unknown_dimensions.includes(dimension)
 
+// Matches the API's cap: a batch runs synchronously in one request, a few GitHub calls per repo.
+export const MAX_BATCH = 100
+
 // The checks with an automated fix on the server (check_remediation.supported_check_ids).
 const FIXABLE_CHECKS: FixableCheck[] = [
   {
@@ -118,7 +121,10 @@ export function BulkFixPanel({
     })
   }
 
-  const allSelected = candidates.length > 0 && chosen.length === candidates.length
+  const atLimit = chosen.length >= MAX_BATCH
+  // "Select all" can't exceed the cap: it takes the first MAX_BATCH candidates.
+  const selectAllTarget = candidates.slice(0, MAX_BATCH)
+  const allSelected = selectAllTarget.length > 0 && selectAllTarget.every((name) => selected.has(name))
 
   return (
     <div className="card mt-4">
@@ -154,14 +160,25 @@ export function BulkFixPanel({
               <input
                 type="checkbox"
                 checked={allSelected}
-                onChange={() => setSelected(allSelected ? new Set() : new Set(candidates))}
+                onChange={() => setSelected(allSelected ? new Set() : new Set(selectAllTarget))}
               />
-              Select all ({candidates.length})
+              Select all ({selectAllTarget.length})
             </label>
+            {candidates.length > MAX_BATCH && (
+              <p className="text-[0.6875rem] text-muted-foreground mb-1.5">
+                A batch is limited to {MAX_BATCH} repositories. Fix these, re-run the scan, then repeat for the rest.
+              </p>
+            )}
             <div className="max-h-40 overflow-y-auto grid gap-1 sm:grid-cols-2">
               {candidates.map((name) => (
                 <label key={name} className="flex items-center gap-2 text-xs font-mono text-foreground/90">
-                  <input type="checkbox" checked={selected.has(name)} onChange={() => toggle(name)} />
+                  <input
+                    type="checkbox"
+                    checked={selected.has(name)}
+                    // at the cap, only already-ticked repos can be changed (to untick them)
+                    disabled={atLimit && !selected.has(name)}
+                    onChange={() => toggle(name)}
+                  />
                   <span className="truncate" title={name}>{name}</span>
                 </label>
               ))}
@@ -204,6 +221,9 @@ export function BulkFixPanel({
           <p role="alert" className="text-xs text-destructive">
             {preview.error instanceof Error ? preview.error.message : "The preview failed."}
           </p>
+        )}
+        {(apply.data?.hint ?? preview.data?.hint) && (
+          <p role="alert" className="text-xs text-destructive">{apply.data?.hint ?? preview.data?.hint}</p>
         )}
         {preview.data && !apply.data && (
           <>
