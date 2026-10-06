@@ -578,6 +578,48 @@ describe("SecurityPage", () => {
     expect(secretScanningMock).toHaveBeenCalledWith("acme", "api", "");
   });
 
+  it("gives the scan inputs accessible names", () => {
+    renderPage();
+    expect(screen.getByLabelText("Organization")).toBe(screen.getByPlaceholderText("e.g. octocat"));
+    expect(screen.getByLabelText("GitHub Token")).toHaveAttribute("type", "password");
+  });
+
+  it("lets keyboard users pick a matrix row through a real button", async () => {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [],
+    });
+    const row = (repo: string) => ({
+      repo,
+      branch_protection: true,
+      secret_scanning: true,
+      dependabot_enabled: true,
+      dependabot_critical_count: 0,
+      dependabot_high_count: 0,
+      code_scanning: true,
+      force_push_allowed: false,
+      score: 100,
+      unknown_dimensions: [],
+    });
+    securityMatrixMock.mockResolvedValue({
+      owner: "acme",
+      repos: [row("api"), row("web")],
+      summary: { fully_compliant_count: 2, critical_risk_count: 0, secret_hits_count: 0, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } },
+    });
+
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /run scan/i }));
+
+    const api = await screen.findByRole("button", { name: "api" });
+    const web = screen.getByRole("button", { name: "web" });
+    expect(api).toHaveAttribute("aria-pressed", "true");
+    expect(web).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(web);
+    await waitFor(() => expect(web).toHaveAttribute("aria-pressed", "true"));
+    expect(api).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("shows a '?' for dimensions the token couldn't evaluate, not a false pass", async () => {
     analyticsOverviewMock.mockResolvedValue({
       owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [],

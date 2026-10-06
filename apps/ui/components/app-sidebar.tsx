@@ -128,6 +128,7 @@ function ProfileDropdown({
               <button
                 key={`${opt.scope.kind}:${opt.scope.login}`}
                 onClick={() => { onSelectScope(opt.scope); onClose() }}
+                aria-current={isActive ? "true" : undefined}
                 className="flex w-full items-center gap-2 px-2 py-1.5 text-left rounded-md hover:bg-sidebar-accent/60 transition-colors"
               >
                 <div className="min-w-0 flex-1">
@@ -194,6 +195,7 @@ export function AppSidebar() {
   const { user, logout } = useAuth()
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
+  const toggleRef = useRef<HTMLButtonElement>(null)
 
   const { scope, setScope } = useActiveScope()
   const scopeLogin = scope?.login ?? ""
@@ -287,8 +289,18 @@ export function AppSidebar() {
         setOpen(false)
       }
     }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setOpen(false)
+        toggleRef.current?.focus()
+      }
+    }
     document.addEventListener("mousedown", handleClickOutside)
-    return () => document.removeEventListener("mousedown", handleClickOutside)
+    document.addEventListener("keydown", handleKeyDown)
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside)
+      document.removeEventListener("keydown", handleKeyDown)
+    }
   }, [open])
 
   const initials = profile.name.charAt(0).toUpperCase()
@@ -302,7 +314,10 @@ export function AppSidebar() {
     <Sidebar>
       <SidebarHeader className="border-b border-sidebar-border p-0 relative" ref={containerRef}>
         <button
+          ref={toggleRef}
           onClick={() => setOpen((v) => !v)}
+          aria-haspopup="true"
+          aria-expanded={open}
           className="flex w-full items-center gap-2.5 px-3.5 py-3 hover:bg-sidebar-accent/60 transition-colors group text-left"
         >
           <div className="size-7 rounded-md bg-primary/15 border border-primary/25 flex items-center justify-center shrink-0">
@@ -352,6 +367,7 @@ export function AppSidebar() {
                       <SidebarMenuItem key={item.title}>
                         <SidebarMenuButton
                           isActive={active}
+                          aria-current={active ? "page" : undefined}
                           className={[
                             "flex items-center rounded-md px-3 py-1.5 text-[0.8125rem]",
                             active

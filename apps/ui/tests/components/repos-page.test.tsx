@@ -78,6 +78,12 @@ describe("ReposPage", () => {
     vi.restoreAllMocks();
   });
 
+  it("gives the organization and token inputs accessible names", () => {
+    renderPage();
+    expect(screen.getByLabelText("Organization")).toBe(screen.getByPlaceholderText("e.g. octocat"));
+    expect(screen.getByLabelText("GitHub Token")).toHaveAttribute("type", "password");
+  });
+
   it("keeps Load repositories disabled until an org is entered", () => {
     renderPage();
     expect(screen.getByRole("button", { name: /load repositories/i })).toBeDisabled();

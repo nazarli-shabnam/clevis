@@ -290,8 +290,9 @@ export default function SecurityPage() {
           </div>
           <div className="p-4 flex flex-col gap-3">
             <div>
-              <label className="text-xs font-medium text-foreground block mb-1.5">Organization</label>
+              <label htmlFor="security-owner" className="text-xs font-medium text-foreground block mb-1.5">Organization</label>
               <Input
+                id="security-owner"
                 placeholder="e.g. octocat"
                 value={owner}
                 onChange={(e) => setOwner(e.target.value)}
@@ -303,8 +304,8 @@ export default function SecurityPage() {
             </div>
             {!hasInstallationForOwner && (
               <div>
-                <label className="text-xs font-medium text-foreground mb-1.5 flex items-center gap-1.5">
-                  GitHub Token
+                <div className="mb-1.5 flex items-center gap-1.5">
+                  <label htmlFor="security-token" className="text-xs font-medium text-foreground">GitHub Token</label>
                   <span className="text-[0.6875rem] text-muted-foreground font-normal">
                     optional if the GitHub App is connected for this org
                   </span>
@@ -313,8 +314,9 @@ export default function SecurityPage() {
                       <Key className="size-3" />saved
                     </span>
                   )}
-                </label>
+                </div>
                 <Input
+                  id="security-token"
                   placeholder="ghp_... (leave blank to use the connected GitHub App)"
                   type="password"
                   value={token}
@@ -555,7 +557,16 @@ export default function SecurityPage() {
                         className={`hover:bg-elevated transition-colors cursor-pointer ${selectedRepo === r.repo ? "bg-elevated" : ""}`}
                         onClick={() => setSelectedRepo(r.repo)}
                       >
-                        <td className="px-4 py-2 font-mono text-foreground/90 truncate max-w-[10rem]">{r.repo}</td>
+                        <td className="px-4 py-2 font-mono text-foreground/90 truncate max-w-[10rem]">
+                          {/* A real button so keyboard and screen-reader users can select a row; the row's own onClick keeps the whole row clickable for the mouse. */}
+                          <button
+                            type="button"
+                            aria-pressed={selectedRepo === r.repo}
+                            className="max-w-full truncate text-left font-mono rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                          >
+                            {r.repo}
+                          </button>
+                        </td>
                         <td className="text-center px-2 py-2" title={r.unknown_dimensions.includes("branch_protection") ? "unknown — token can't see this" : undefined}>
                           {r.unknown_dimensions.includes("branch_protection") ? "?" : r.branch_protection ? "✓" : "—"}
                         </td>
