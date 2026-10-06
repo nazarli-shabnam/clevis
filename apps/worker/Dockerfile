@@ -8,4 +8,11 @@ COPY apps/worker/src ./src
 COPY apps/worker/entrypoint.sh .
 ENV PYTHONPATH=/app/src
 RUN chmod +x entrypoint.sh
+# Run as an unprivileged user: the only files the worker writes are its heartbeat files in
+# /tmp (checked by the compose healthcheck). Source and site-packages stay root-owned, and
+# bytecode isn't written at runtime since /app isn't writable.
+ENV PYTHONDONTWRITEBYTECODE=1
+RUN groupadd --system --gid 10001 app \
+    && useradd --system --uid 10001 --gid app --create-home --shell /usr/sbin/nologin app
+USER app
 ENTRYPOINT ["./entrypoint.sh"]
