@@ -84,6 +84,20 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Re
   }
 }
 
+// FastAPI sends `detail` as a string for HTTPException but as a [{loc, msg, type}] array for request
+// validation (422); `new Error(array)` would read "[object Object]".
+export function errorDetail(json: unknown, fallback: string): string {
+  const detail = (json as { detail?: unknown } | null)?.detail
+  if (typeof detail === "string" && detail) return detail
+  if (Array.isArray(detail)) {
+    const msgs = detail
+      .map((d) => (typeof d === "string" ? d : (d as { msg?: unknown } | null)?.msg))
+      .filter((m): m is string => typeof m === "string" && m !== "")
+    if (msgs.length) return msgs.join("; ")
+  }
+  return fallback
+}
+
 // An Error that also carries the HTTP status, so a caller can treat one specific status as data.
 class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -98,7 +112,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
     if (typeof window !== "undefined") localStorage.removeItem(_TOKEN_KEY)
     window.dispatchEvent(new Event("clevis:unauthorized"))
   }
-  if (!res.ok) throw new ApiError((json as { detail?: string } | null)?.detail ?? `Request failed: ${res.status}`, res.status)
+  if (!res.ok) throw new ApiError(errorDetail(json, `Request failed: ${res.status}`), res.status)
   return json as T
 }
 
@@ -153,7 +167,7 @@ async function del(path: string): Promise<void> {
   }
   if (!res.ok) {
     const json = await res.json().catch(() => ({}))
-    throw new Error((json as { detail?: string }).detail ?? `Request failed: ${res.status}`)
+    throw new Error(errorDetail(json, `Request failed: ${res.status}`))
   }
 }
 
