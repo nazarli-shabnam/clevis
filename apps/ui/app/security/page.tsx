@@ -16,6 +16,7 @@ import { api } from "@/lib/api/client"
 import { toCsv } from "@/lib/csv"
 import { downloadTextFile } from "@/lib/download"
 import { useActiveScope } from "@/lib/active-scope"
+import { useAuth } from "@/lib/auth-context"
 import { shouldApplyResolvedToken } from "@/lib/token-resolve"
 import { DonutChart } from "@/components/charts/donut-chart"
 import { AreaTimeChart } from "@/components/charts/area-time-chart"
@@ -83,6 +84,8 @@ export default function SecurityPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const queryClient = useQueryClient()
+  // Saved tokens are workspace-admin only on the API; for anyone else the button could only 403.
+  const canSaveToken = !!useAuth().user?.is_workspace_admin
 
   const [owner, setOwner] = useState("")
   const [token, setToken] = useState("")
@@ -334,7 +337,7 @@ export default function SecurityPage() {
             >
               {scan.isPending ? "Scanning…" : "Run scan"}
             </Button>
-            {!tokenSaved && token && owner && (
+            {canSaveToken && !tokenSaved && token && owner && (
               <Button
                 variant="outline"
                 onClick={() => saveTokenMutation.mutate()}

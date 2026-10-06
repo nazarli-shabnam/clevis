@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/page-header"
 import { Warning, Key, CircleNotch, Play, CheckCircle, XCircle, CircleDashed } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
+import { useAuth } from "@/lib/auth-context"
 import { shouldApplyResolvedToken } from "@/lib/token-resolve"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
 import { BranchProtectionCard } from "@/components/automation/branch-protection-card"
@@ -40,6 +41,8 @@ function StatusIcon({ status, conclusion }: { status: string; conclusion: string
 }
 
 export default function AutomationPage() {
+  // Saved tokens are workspace-admin only on the API; for anyone else the button could only 403.
+  const canSaveToken = !!useAuth().user?.is_workspace_admin
   const queryClient = useQueryClient()
   const [owner, setOwner] = useState("")
   const [repo, setRepo] = useState("")
@@ -336,7 +339,7 @@ export default function AutomationPage() {
                 />
               </div>
             )}
-            {!tokenSaved && token && owner && (
+            {canSaveToken && !tokenSaved && token && owner && (
               <Button variant="outline" onClick={() => saveTokenMutation.mutate()} disabled={saveTokenMutation.isPending}>
                 <Key className="size-3.5" />
                 {saveTokenMutation.isPending ? "Saving…" : "Save token for this org"}

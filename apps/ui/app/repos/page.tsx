@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Warning, Key, CircleNotch, Lock, Star, GitPullRequest, ArrowSquareOut } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
+import { useAuth } from "@/lib/auth-context"
 import { shouldApplyResolvedToken } from "@/lib/token-resolve"
 import { MiniSparkline } from "@/components/charts/mini-sparkline"
 import { relativeTime } from "@/lib/format"
@@ -192,6 +193,8 @@ function RepoRow({ org, repo, token }: { org: string; repo: RepoSummary; token: 
 }
 
 export default function ReposPage() {
+  // Saved tokens are workspace-admin only on the API; for anyone else the button could only 403.
+  const canSaveToken = !!useAuth().user?.is_workspace_admin
   const [owner, setOwner] = useState("")
   const [token, setToken] = useState("")
   const [tokenSaved, setTokenSaved] = useState(false)
@@ -377,7 +380,7 @@ export default function ReposPage() {
                 "Load repositories"
               )}
             </Button>
-            {!tokenSaved && token && owner && (
+            {canSaveToken && !tokenSaved && token && owner && (
               <Button
                 variant="outline"
                 onClick={() => saveTokenMutation.mutate()}

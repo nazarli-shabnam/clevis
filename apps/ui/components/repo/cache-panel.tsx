@@ -211,7 +211,7 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
               />
             </div>
           )}
-          {!tokenSaved && token && (
+          {user?.is_workspace_admin && !tokenSaved && token && (
             <Button
               variant="outline"
               onClick={() => saveTokenMutation.mutate()}

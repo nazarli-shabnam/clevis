@@ -387,6 +387,22 @@ describe("CachePage", () => {
     expect(await screen.findByText(/saved/i)).toBeInTheDocument();
   });
 
+  it("hides 'Save token for this org' from a non-admin (#660)", async () => {
+    mockIsWorkspaceAdmin = false;
+    try {
+      renderPage();
+      await waitFor(() => expect(tokensResolveMock).toHaveBeenCalled());
+      fireEvent.change(screen.getByPlaceholderText(/leave blank/i), {
+        target: { value: "ghp_manual_1234567890123456789012" },
+      });
+
+      await screen.findByDisplayValue("ghp_manual_1234567890123456789012");
+      expect(screen.queryByRole("button", { name: /save token for this org/i })).not.toBeInTheDocument();
+    } finally {
+      mockIsWorkspaceAdmin = true;
+    }
+  });
+
   it("shows an error message if saving the token fails", async () => {
     tokensUpsertMock.mockRejectedValue(new Error("Could not save token"));
 

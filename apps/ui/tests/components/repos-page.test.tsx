@@ -14,6 +14,12 @@ vi.mock("next/navigation", () => ({
   useParams: () => ({}),
 }));
 
+// Workspace admin by default (saved tokens are admin-only); member tests flip it.
+let mockIsWorkspaceAdmin = true
+vi.mock("@/lib/auth-context", () => ({
+  useAuth: () => ({ user: { is_workspace_admin: mockIsWorkspaceAdmin } }),
+}))
+
 vi.mock("@/lib/api/client", () => ({
   api: {
     tokens: {
@@ -47,6 +53,7 @@ function renderPage() {
 
 describe("ReposPage", () => {
   beforeEach(() => {
+    mockIsWorkspaceAdmin = true;
     localStorage.clear();
     tokensResolveMock.mockReset();
     tokensUpsertMock.mockReset();
@@ -76,6 +83,24 @@ describe("ReposPage", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+  });
+
+  it("offers 'Save token for this org' to a workspace admin who typed a token (#660)", async () => {
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.change(await screen.findByPlaceholderText(/ghp_/), { target: { value: "ghp_typed" } });
+
+    expect(await screen.findByText("Save token for this org")).toBeInTheDocument();
+  });
+
+  it("hides 'Save token for this org' from a non-admin, since saved tokens are admin-only (#660)", async () => {
+    mockIsWorkspaceAdmin = false;
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.change(await screen.findByPlaceholderText(/ghp_/), { target: { value: "ghp_typed" } });
+
+    await screen.findByDisplayValue("ghp_typed");
+    expect(screen.queryByText("Save token for this org")).not.toBeInTheDocument();
   });
 
   it("keeps Load repositories disabled until an org is entered", () => {
