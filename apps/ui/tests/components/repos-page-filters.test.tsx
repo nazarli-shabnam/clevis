@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -143,6 +143,27 @@ describe("ReposPage filters", () => {
     await screen.findByText("solo");
     expect(screen.getByLabelText("Filter by language")).toHaveValue("");
   });
+
+  it("forgets a language filter that the next org doesn't have, so it can't come back later", async () => {
+    renderPage();
+    await loadReposByHand();
+    fireEvent.change(screen.getByLabelText("Filter by language"), { target: { value: "TypeScript" } });
+    await waitFor(() => expect(visibleNames()).toEqual(["web"]));
+
+    reposListMock.mockResolvedValue({ org: "other", total: 1, repos: [repo("solo", { language: "Go" })] });
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "other" } });
+    fireEvent.click(screen.getByRole("button", { name: /load repositories/i }));
+    await screen.findByText("solo");
+
+    // back to an org that does have TypeScript: the old choice must not silently narrow the list
+    reposListMock.mockResolvedValue({ org: "acme", total: 3, repos: REPOS });
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /load repositories/i }));
+    await screen.findByText("api");
+
+    expect(screen.getByLabelText("Filter by language")).toHaveValue("");
+    expect(visibleNames().sort()).toEqual(["api", "legacy", "web"]);
+  });
 });
 
 describe("ReposPage auto-load", () => {
@@ -208,6 +229,56 @@ describe("ReposPage auto-load", () => {
     await waitFor(() => expect(installationsListForOrgMock).toHaveBeenCalledWith("acme"));
     await waitFor(() => expect(screen.queryByText("GitHub Token")).not.toBeInTheDocument());
     expect(reposListMock).not.toHaveBeenCalled();
+  });
+
+  it("prefers the installation over a saved token that resolved first", async () => {
+    setScope("acme");
+    tokensResolveMock.mockResolvedValue({ token: "ghp_legacy" });
+    let resolveInstalls: (v: unknown) => void = () => {};
+    installationsListForOrgMock.mockReturnValue(new Promise((resolve) => (resolveInstalls = resolve)));
+
+    renderPage();
+    await waitFor(() => expect(tokensResolveMock).toHaveBeenCalled());
+    // the saved token is in hand, but the installation lookup hasn't answered: don't decide yet
+    expect(reposListMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveInstalls([{ id: 2, account_login: "acme", account_type: "Organization", installation_id: 99, created_at: "2026-07-20T00:00:00Z" }]);
+    });
+
+    await screen.findByText("api");
+    expect(reposListMock).toHaveBeenCalledTimes(1);
+    expect(reposListMock).toHaveBeenCalledWith("acme", "");
+  });
+
+  it("loads the next org as soon as the one still in flight finishes", async () => {
+    setScope("acme");
+    installationsListForOrgMock.mockImplementation((login: string) =>
+      Promise.resolve([{ id: 2, account_login: login, account_type: "Organization", installation_id: 99, created_at: "2026-07-20T00:00:00Z" }]),
+    );
+    let finishAcme: (v: unknown) => void = () => {};
+    reposListMock.mockImplementation((org: string) =>
+      org === "acme"
+        ? new Promise((resolve) => (finishAcme = resolve))
+        : Promise.resolve({ org, total: 1, repos: [repo("globex-svc")] }),
+    );
+
+    renderPage();
+    await waitFor(() => expect(reposListMock).toHaveBeenCalledWith("acme", ""));
+
+    // switch accounts while acme's request is still pending
+    act(() => {
+      localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "globex" }));
+      window.dispatchEvent(new Event("clevis:active-scope-changed"));
+    });
+    expect(reposListMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      finishAcme({ org: "acme", total: 1, repos: [repo("acme-svc")] });
+    });
+
+    await waitFor(() => expect(reposListMock).toHaveBeenCalledWith("globex", ""));
+    expect(await screen.findByText("globex-svc")).toBeInTheDocument();
   });
 
   it("loads once per org: editing the box or clicking Load again doesn't re-trigger it", async () => {

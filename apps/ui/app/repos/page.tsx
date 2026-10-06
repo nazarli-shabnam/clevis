@@ -213,7 +213,7 @@ export default function ReposPage() {
     setScopeChecked(true)
   }, [])
 
-  const { data: installs = [] } = useQuery<InstallationMeta[]>({
+  const { data: installs = [], isFetched: installsFetched } = useQuery<InstallationMeta[]>({
     queryKey: ["installations"],
     queryFn: () => api.installations.list(),
   })
@@ -260,13 +260,14 @@ export default function ReposPage() {
   const [loadedToken, setLoadedToken] = useState("")
 
   const listMutation = useMutation({
-    mutationFn: () => api.repos.list(owner.trim(), token),
+    mutationFn: (requestedToken: string) => api.repos.list(owner.trim(), requestedToken),
   })
 
-  function loadRepos() {
+  // `tokenOverride` lets a caller pin the token instead of reading the (possibly not yet settled) state.
+  function loadRepos(tokenOverride?: string) {
     const requestedOrg = owner.trim()
-    const requestedToken = token
-    listMutation.mutate(undefined, {
+    const requestedToken = tokenOverride ?? token
+    listMutation.mutate(requestedToken, {
       onSuccess: () => {
         setLoadedOrg(requestedOrg)
         setLoadedToken(requestedToken)
@@ -279,14 +280,21 @@ export default function ReposPage() {
   // for a name being typed, and at most once per org so edits can't re-trigger it; the button
   // remains for refreshing or loading another org.
   const autoLoadedFor = useRef("")
+  // Don't decide before both installation lookups have answered: a saved token that resolved first
+  // must not win over an installation that is still being looked up.
+  const installsSettled = installsFetched && (orgInstallsQuery.isFetched || orgInstallsQuery.isError)
   useEffect(() => {
     const org = owner.trim()
     if (!org || org !== scopeOrgLogin || autoLoadedFor.current === org) return
-    if (!(hasInstallationForOwner || tokenSaved) || listMutation.isPending) return
+    if (!installsSettled || !(hasInstallationForOwner || tokenSaved)) return
+    // isPending is a dependency so an org switched to mid-request is loaded as soon as that finishes.
+    if (listMutation.isPending) return
     autoLoadedFor.current = org
-    loadRepos()
+    // An installation covers the org: send no token so the API uses the installation token,
+    // never a legacy saved one that happened to resolve first.
+    loadRepos(hasInstallationForOwner ? "" : token)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [owner, scopeOrgLogin, hasInstallationForOwner, tokenSaved])
+  }, [owner, scopeOrgLogin, installsSettled, hasInstallationForOwner, tokenSaved, listMutation.isPending])
 
   const allRepos = useMemo(() => listMutation.data?.repos ?? [], [listMutation.data])
   const languages = useMemo(() => repoLanguages(allRepos), [allRepos])
@@ -294,6 +302,12 @@ export default function ReposPage() {
   const effectiveFilters: RepoFilters = languages.includes(filters.language)
     ? filters
     : { ...filters, language: "" }
+  // ...and forget it for good, so it can't silently re-apply when a later org has that language.
+  useEffect(() => {
+    if (filters.language && listMutation.data && !languages.includes(filters.language)) {
+      setFilters((f) => ({ ...f, language: "" }))
+    }
+  }, [languages, filters.language, listMutation.data])
   const repos = sortRepos(
     filterRepos(
       allRepos.filter((r) => r.name.toLowerCase().includes(search.toLowerCase())),
@@ -353,7 +367,7 @@ export default function ReposPage() {
             </div>
             )}
             <Button
-              onClick={loadRepos}
+              onClick={() => loadRepos()}
               disabled={listMutation.isPending || !owner.trim()}
               className="mt-1"
             >
@@ -427,7 +441,7 @@ export default function ReposPage() {
                 </select>
                 <select
                   aria-label="Filter by visibility"
-                  value={filters.visibility}
+                  value={effectiveFilters.visibility}
                   onChange={(e) => setFilters((f) => ({ ...f, visibility: e.target.value as RepoFilters["visibility"] }))}
                   className="card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
                 >
@@ -437,7 +451,7 @@ export default function ReposPage() {
                 </select>
                 <select
                   aria-label="Filter by status"
-                  value={filters.status}
+                  value={effectiveFilters.status}
                   onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value as RepoFilters["status"] }))}
                   className="card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
                 >
@@ -448,7 +462,7 @@ export default function ReposPage() {
                 <label className="inline-flex items-center gap-1.5 text-muted-foreground">
                   <input
                     type="checkbox"
-                    checked={filters.stale}
+                    checked={effectiveFilters.stale}
                     onChange={(e) => setFilters((f) => ({ ...f, stale: e.target.checked }))}
                   />
                   No push in {STALE_DAYS}+ days
