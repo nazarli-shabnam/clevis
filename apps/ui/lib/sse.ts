@@ -32,7 +32,8 @@ export async function readSse(res: Response, onMessage: (m: SseMessage) => void)
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
-      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n")
+      // Normalize over the whole buffer, not per chunk, so a "\r\n" split across chunks still pairs up.
+      buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, "\n")
       let sep = buffer.indexOf("\n\n")
       while (sep !== -1) {
         const message = parseSseBlock(buffer.slice(0, sep))
@@ -41,6 +42,9 @@ export async function readSse(res: Response, onMessage: (m: SseMessage) => void)
         sep = buffer.indexOf("\n\n")
       }
     }
+    // A final block with no closing blank line is still a complete event.
+    const last = parseSseBlock(buffer.replace(/\r\n/g, "\n"))
+    if (last) onMessage(last)
   } finally {
     reader.releaseLock()
   }

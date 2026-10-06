@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { SectionError } from "@/components/section-error"
 import { api } from "@/lib/api/client"
@@ -46,10 +47,20 @@ export function ActivityByRepoCard({ org }: { org: string }) {
     queryFn: () => api.github.activitySummary(org, DAYS),
     enabled: org.trim().length > 0,
     retry: false,
+    // Streamed frames are newer than any refetch, which could briefly overwrite them with older counts.
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
   })
   // Only stream once the snapshot says webhook data exists: an unconnected org has nothing to push.
-  const status = useActivityStream(org, DAYS, query.data?.connected === true)
-  const rows = query.data ? topRepos(query.data) : []
+  // Once streaming, stay on it: a pushed `connected: false` (App uninstalled) must not tear it down,
+  // or a later reinstall would never be noticed.
+  const connected = query.data?.connected === true
+  const [streamingOrg, setStreamingOrg] = useState<string | null>(null)
+  useEffect(() => {
+    if (connected) setStreamingOrg(org)
+  }, [connected, org])
+  const status = useActivityStream(org, DAYS, connected || streamingOrg === org)
+  const rows = useMemo(() => (query.data ? topRepos(query.data) : []), [query.data])
 
   return (
     <div className="card">

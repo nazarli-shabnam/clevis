@@ -125,3 +125,25 @@ describe("ActivityByRepoCard", () => {
     await waitFor(() => expect(screen.getByText("boom")).toBeInTheDocument());
   });
 });
+
+describe("ActivityByRepoCard stream gate", () => {
+  beforeEach(() => {
+    summaryMock.mockReset();
+    openStreamMock.mockReset();
+  });
+  afterEach(cleanup);
+
+  it("keeps the stream open when a pushed frame says the org is no longer connected", async () => {
+    summaryMock.mockResolvedValue(summary());
+    const gone = summary({ connected: false, totals: [] });
+    let signal: AbortSignal | undefined;
+    openStreamMock.mockImplementation((_o: string, _d: number, s: AbortSignal) => {
+      signal = s;
+      return Promise.resolve(sse(`event: activity_summary\ndata: ${JSON.stringify(gone)}\n\n`));
+    });
+    renderCard();
+    await waitFor(() => expect(screen.getByText(/needs the GitHub App installed on acme/)).toBeInTheDocument());
+    expect(signal!.aborted).toBe(false);
+    expect(openStreamMock).toHaveBeenCalledTimes(1);
+  });
+});

@@ -38,3 +38,14 @@ describe("readSse", () => {
     ]);
   });
 });
+
+describe("readSse edge cases", () => {
+  it("pairs a CRLF split across chunks and flushes a final unterminated block", async () => {
+    const got: SseMessage[] = [];
+    await readSse(streamOf(["event: a\r", "\ndata: 1\r\n\r", "\n", "data: tail"]), (m) => got.push(m));
+    expect(got).toEqual([
+      { event: "a", data: "1" },
+      { event: "message", data: "tail" },
+    ]);
+  });
+});

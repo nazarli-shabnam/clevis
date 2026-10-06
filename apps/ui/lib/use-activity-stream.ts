@@ -33,11 +33,11 @@ export function useActivityStream(org: string, days: number, enabled: boolean): 
         const res = await openActivityStream(org, days, controller.signal)
         if (!res.ok) throw new Error(`stream responded ${res.status}`)
         setStatus("live")
+        failures = 0
         await readSse(res, (m) => {
           if (m.event !== "activity_summary") return
           try {
             queryClient.setQueryData<ActivitySummary>(activitySummaryKey(org, days), JSON.parse(m.data))
-            failures = 0
           } catch {
             // A malformed frame is skipped; the next change event replaces it.
           }
@@ -55,6 +55,7 @@ export function useActivityStream(org: string, days: number, enabled: boolean): 
     void run()
 
     return () => {
+      setStatus("connecting") // don't carry one org's "live"/"offline" over to the next
       controller.abort()
       if (timer) clearTimeout(timer)
     }
