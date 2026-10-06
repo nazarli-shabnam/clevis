@@ -631,6 +631,21 @@ describe("OverviewPage cockpit", () => {
       expect(await screen.findByRole("link", { name: /Connect an organization/ })).toHaveAttribute("href", "/settings");
     });
 
+    it("does not offer to connect an org when the membership lookup itself failed", async () => {
+      localStorage.setItem("active_scope", JSON.stringify({ kind: "personal", login: "me" }));
+      tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+      orgsMineMock.mockRejectedValue(new Error("memberships down"));
+      cockpitMock.mockResolvedValue({ ...EMPTY_COCKPIT, latest_score: 87 });
+      installationsListMock.mockResolvedValue([
+        { id: 1, account_login: "me", account_type: "User", installation_id: 7, created_at: "2026-01-01T00:00:00Z", permissions_synced_at: "2026-09-01T00:00:00Z", blocked_features: [] },
+      ]);
+      renderPage();
+
+      await waitFor(() => expect(installationsListMock).toHaveBeenCalled());
+      await waitFor(() => expect(orgsMineMock).toHaveBeenCalled());
+      expect(screen.queryByRole("link", { name: /Connect an organization/ })).toBeNull();
+    });
+
     it("tells the user why the checklist is missing when the cockpit failed", async () => {
       localStorage.setItem("default_org", "acme");
       tokensResolveMock.mockResolvedValue({ token: "ghp_test" });

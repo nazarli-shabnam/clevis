@@ -127,6 +127,21 @@ describe("FirstRunChecklist", () => {
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull()
   })
 
+  it("renders nothing until the user id is known, since a dismissal could not be remembered", async () => {
+    listForOrgMock.mockResolvedValue([install()])
+    const { container } = renderChecklist({ userId: null, hasOrg: false })
+
+    await new Promise((r) => setTimeout(r, 30))
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it("points at the error above when the cockpit failed", async () => {
+    listForOrgMock.mockResolvedValue([install()])
+    renderChecklist({ hasScan: null, scanFailed: true })
+
+    expect(await screen.findByText(/Retry it from the error above\./)).toBeInTheDocument()
+  })
+
   it("offers to connect an org only for a user who is in none, and waits while that is unknown", async () => {
     listForOrgMock.mockResolvedValue([install()])
     const { unmount } = renderChecklist({ hasOrg: false })

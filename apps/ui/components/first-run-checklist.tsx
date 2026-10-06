@@ -66,7 +66,9 @@ export function FirstRunChecklist({
     retry: false,
   })
 
-  if (dismissed || !scope) return null
+  // No key means no way to remember a dismissal (no scope, or the user id isn't known yet), so
+  // don't show a card whose Dismiss button would do nothing.
+  if (dismissed || !scope || key === null) return null
   if (installsQuery.isError) {
     return (
       <section className="card mb-6 px-4 py-3 flex items-center justify-between gap-4" aria-label="Getting started">
@@ -81,7 +83,7 @@ export function FirstRunChecklist({
     return (
       <section className="card mb-6 px-4 py-3" aria-label="Getting started">
         <span className="text-sm text-muted-foreground">
-          Your setup checklist will appear once the Overview data loads. Retry it from the error below.
+          Your setup checklist will appear once the Overview data loads. Retry it from the error above.
         </span>
       </section>
     )
