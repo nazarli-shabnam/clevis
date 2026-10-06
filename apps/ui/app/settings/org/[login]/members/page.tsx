@@ -10,7 +10,9 @@ import { DataTable, type DataTableColumn } from "@/components/ui/data-table"
 import { CircleNotch, EnvelopeSimple, Warning, X } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { addRevokingId, isRevoking, removeRevokingId } from "@/lib/revoke-pending"
-import { relativeTime } from "@/lib/format"
+import { exactTime, relativeTime } from "@/lib/format"
+import { invitationExpiry, type ExpiryTone } from "@/lib/invitation-expiry"
+import { CopyButton } from "@/components/copy-button"
 import { orgRoleFor } from "@/lib/members-href"
 import { SectionError } from "@/components/section-error"
 import { HygieneScoringCard } from "@/components/hygiene-scoring-card"
@@ -415,6 +417,22 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
   )
 }
 
+const EXPIRY_TONE_CLASS: Record<ExpiryTone, string> = {
+  none: "text-muted-foreground",
+  normal: "text-muted-foreground",
+  soon: "text-yellow-400",
+  expired: "text-destructive",
+}
+
+function ExpiryCell({ inv }: { inv: InvitationOut }) {
+  const { label, tone } = invitationExpiry(inv)
+  return (
+    <td className={`px-4 py-2.5 whitespace-nowrap ${EXPIRY_TONE_CLASS[tone]}`} title={tone === "none" ? undefined : exactTime(inv.expires_at)}>
+      {label}
+    </td>
+  )
+}
+
 export default function OrgMembersPage() {
   const params = useParams<{ login: string }>()
   const orgLogin = params.login
@@ -511,7 +529,10 @@ export default function OrgMembersPage() {
               {invite.isError && <p className="text-xs text-destructive">{invite.error.message}</p>}
               {lastLink && (
                 <div className="text-xs text-muted-foreground break-all bg-muted/30 border border-border/50 rounded-md p-2">
-                  Share this link — no email is sent automatically:
+                  <div className="flex items-center justify-between gap-2">
+                    <span>Share this link — no email is sent automatically. It is shown only now, so copy it before you leave this page.</span>
+                    <CopyButton value={lastLink} ariaLabel="Copy invitation link" />
+                  </div>
                   <div className="font-mono text-foreground/80 mt-1">{lastLink}</div>
                 </div>
               )}
@@ -544,6 +565,7 @@ export default function OrgMembersPage() {
                     <tr className="border-b border-border">
                       <th className="text-left text-muted-foreground font-medium px-4 py-2">Email</th>
                       <th className="text-left text-muted-foreground font-medium px-4 py-2">Status</th>
+                      <th className="text-left text-muted-foreground font-medium px-4 py-2">Expires</th>
                       <th className="text-right text-muted-foreground font-medium px-4 py-2" />
                     </tr>
                   </thead>
@@ -557,6 +579,7 @@ export default function OrgMembersPage() {
                           )}
                         </td>
                         <td className="px-4 py-2.5 text-muted-foreground">{inv.status}</td>
+                        <ExpiryCell inv={inv} />
                         <td className="px-4 py-2.5 text-right">
                           {inv.status === "pending" && (
                             <Button
