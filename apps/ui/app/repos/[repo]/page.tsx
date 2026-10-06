@@ -306,7 +306,14 @@ export default function RepoDetailPage() {
           </div>
         </div>
 
-        <FlowMetricsCard org={owner} owner={owner} repo={repo} token={token} />
+        <FlowMetricsCard
+          key={`${owner}/${repo}`}
+          org={owner}
+          owner={owner}
+          repo={repo}
+          token={token}
+          tokenReady={resolveMutation.isSuccess || resolveMutation.isError}
+        />
 
         {statsQuery.isError && (
           <p className="text-xs text-destructive lg:col-span-2">{statsQuery.error.message}</p>
