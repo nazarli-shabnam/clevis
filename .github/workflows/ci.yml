@@ -12,10 +12,12 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same PR supersedes the older run; main runs are never cancelled, so every
-# commit on main keeps a completed result for the release gate.
+# A newer push to the same PR supersedes the older run. Pushes to main get a group per commit
+# (not per ref): with a shared group, GitHub still replaces a *pending* run when a newer one
+# queues, even with cancel-in-progress off, which would leave a commit on main with no
+# completed run for release.yml's gate.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -56,7 +58,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.2 # keep in sync with the other setup-bun step and apps/ui/Dockerfile
 
       - name: Install UI deps
         working-directory: apps/ui
@@ -244,7 +246,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.2 # keep in sync with the other setup-bun step and apps/ui/Dockerfile
 
       - name: Install UI deps
         working-directory: apps/ui
