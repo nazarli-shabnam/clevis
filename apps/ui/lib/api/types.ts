@@ -692,6 +692,20 @@ export interface DependabotTriageResponse {
   decisions: DependabotTriageDecision[]
 }
 
+export type BulkRemediateStatus = "would_change" | "unchanged" | "applied" | "failed"
+
+export interface BulkRemediateItem {
+  repo: string
+  status: BulkRemediateStatus
+  detail: string
+}
+
+export interface BulkRemediateResponse {
+  check_id: string
+  dry_run: boolean
+  items: BulkRemediateItem[]
+}
+
 export interface RepoSecurityRow {
   repo: string
   branch_protection: boolean
