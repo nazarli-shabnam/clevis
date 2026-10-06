@@ -19,11 +19,13 @@ jobs:
 
 ## Getting a token
 
-An org admin creates one with `POST /orgs/{org}/api-tokens` (the plaintext is returned once). Tokens are
-read-only, bound to a single org, revocable (`DELETE /orgs/{org}/api-tokens/{id}`), and every create/revoke is
+An org admin creates one with `POST /orgs/{org}/api-tokens` (the plaintext is returned once). Tokens
+cannot change configuration, are bound to a single org, revocable (`DELETE /orgs/{org}/api-tokens/{id}`), and every create/revoke is
 audit-logged. Pass `expires_in_days` (1-3650) to create a token that expires on its own; omit it for one that
 lasts until revoked. Scans a token triggers are audit-logged under `api_token:<id>`. A token can read the latest score (`GET /api/v1/orgs/{org}/score`) and trigger a fresh scan
-(`POST /api/v1/orgs/{org}/scan`), nothing that changes configuration.
+(`POST /api/v1/orgs/{org}/scan`). A scan stores a score snapshot (it feeds the badge and trend history) and can send
+score-drop alerts. Scans run one at a time per org, and if one finished within the last minute that result is returned
+instead of scanning again, so `refresh: "true"` in a tight loop doesn't burn the org's GitHub rate limit.
 
 ## Exit codes
 
