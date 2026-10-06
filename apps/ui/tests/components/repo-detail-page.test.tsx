@@ -134,6 +134,15 @@ describe("RepoDetailPage", () => {
     await waitFor(() => expect(screen.getByText(/2 open prs/i)).toBeInTheDocument());
   });
 
+  it("falls back to 0 open PRs when a successful response carries no count", async () => {
+    reposPullsMock.mockResolvedValue({ repository: "acme/demo", pulls: [] });
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText(/0 open prs/i)).toBeInTheDocument());
+    expect(screen.queryByText("PRs unavailable")).not.toBeInTheDocument();
+  });
+
   it("shows the no-activity placeholder when commit_activity is empty", async () => {
     renderPage();
     await waitFor(() => expect(reposStatsMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
