@@ -454,6 +454,8 @@ export const api = {
       if (action) params.set("action", action)
       return get<AuditLogOut[]>(`/audit?${params.toString()}`)
     },
+    // Distinct action names actually present in the log, for the filter dropdown.
+    actions: () => get<string[]>("/audit/actions"),
   },
   installations: {
     list: () => get<InstallationMeta[]>("/me/installations"),

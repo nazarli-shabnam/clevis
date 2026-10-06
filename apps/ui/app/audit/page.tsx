@@ -9,16 +9,8 @@ import { SectionError } from "@/components/section-error"
 import { Button } from "@/components/ui/button"
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table"
 import { api } from "@/lib/api/client"
+import { useAuth } from "@/lib/auth-context"
 import type { AuditLogOut, JobOut } from "@/lib/api/types"
-
-const ACTION_TYPES = [
-  "",
-  "cache.clear",
-  "cache.clear.dry_run",
-  "cache.clear.queued",
-  "installation.connected",
-  "installation.connected.personal",
-]
 
 const JOB_STATUS_COLOR: Record<JobOut["status"], string> = {
   queued:     "text-muted-foreground",
@@ -45,6 +37,10 @@ function parseJobId(payload: string): number | null {
 }
 
 export default function AuditPage() {
+  // /audit, /audit/actions and /jobs are all workspace-admin only; for anyone else every request
+  // would just 403, so none is made and the page says why.
+  const { user } = useAuth()
+  const isAdmin = !!user?.is_workspace_admin
   const [actionFilter, setActionFilter] = useState("")
   const [limit, setLimit] = useState(INITIAL_LIMIT)
   const searchParams = useSearchParams()
@@ -59,13 +55,24 @@ export default function AuditPage() {
     queryKey: ["audit", actionFilter, limit],
     queryFn: () => api.audit.list(actionFilter || undefined, limit),
     refetchInterval: 30_000,
+    enabled: isAdmin,
   })
+
+  // The filter options come from the log itself. If this fails the dropdown still works for "all"
+  // and for whatever is currently selected.
+  const { data: knownActions = [] } = useQuery({
+    queryKey: ["audit.actions"],
+    queryFn: api.audit.actions,
+    enabled: isAdmin,
+  })
+  const actionOptions = [...new Set([...knownActions, ...(actionFilter ? [actionFilter] : [])])]
 
   // One shared jobs list matched by id, not one query per row.
   const { data: jobs = [], isError: isJobsError } = useQuery({
     queryKey: ["jobs"],
     queryFn: api.jobs.list,
     refetchInterval: 15_000,
+    enabled: isAdmin,
   })
   const jobsById = new Map(jobs.map((j) => [j.id, j]))
 
@@ -124,6 +131,17 @@ export default function AuditPage() {
     },
   ]
 
+  if (!isAdmin) {
+    return (
+      <>
+        <PageHeader title="Audit Log" description="Immutable record of all significant actions." />
+        <div className="card px-4 py-6 text-sm text-muted-foreground">
+          The audit log is only available to workspace admins.
+        </div>
+      </>
+    )
+  }
+
   return (
     <>
       <PageHeader title="Audit Log" description="Immutable record of all significant actions." />
@@ -139,7 +157,7 @@ export default function AuditPage() {
               className="bg-elevated border border-border rounded-md text-xs text-muted-foreground font-mono px-2 py-1 focus:outline-none focus:border-primary"
             >
               <option value="">all actions</option>
-              {ACTION_TYPES.filter(Boolean).map((a) => (
+              {actionOptions.map((a) => (
                 <option key={a} value={a}>{a}</option>
               ))}
             </select>

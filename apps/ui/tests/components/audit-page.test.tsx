@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const auditListMock = vi.fn();
+const auditActionsMock = vi.fn();
 const jobsListMock = vi.fn();
 
 let mockSearchParams = new URLSearchParams();
@@ -14,9 +15,18 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => mockSearchParams,
 }));
 
+// Workspace admin by default; the non-admin test flips it.
+let mockIsWorkspaceAdmin = true;
+vi.mock("@/lib/auth-context", () => ({
+  useAuth: () => ({ user: { is_workspace_admin: mockIsWorkspaceAdmin } }),
+}));
+
 vi.mock("@/lib/api/client", () => ({
   api: {
-    audit: { list: (...args: unknown[]) => auditListMock(...args) },
+    audit: {
+      list: (...args: unknown[]) => auditListMock(...args),
+      actions: (...args: unknown[]) => auditActionsMock(...args),
+    },
     jobs: { list: (...args: unknown[]) => jobsListMock(...args) },
   },
 }));
@@ -37,6 +47,9 @@ function renderPage() {
 describe("AuditPage", () => {
   beforeEach(() => {
     auditListMock.mockReset();
+    auditActionsMock.mockReset();
+    auditActionsMock.mockResolvedValue([]);
+    mockIsWorkspaceAdmin = true;
     jobsListMock.mockReset();
     jobsListMock.mockResolvedValue([]);
     mockSearchParams = new URLSearchParams();
@@ -45,6 +58,44 @@ describe("AuditPage", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+  });
+
+  it("builds the action filter from the actions the API reports, not a hard-coded list (#664)", async () => {
+    auditListMock.mockResolvedValue([]);
+    auditActionsMock.mockResolvedValue(["config.update", "token.save"]);
+    renderPage();
+
+    await waitFor(() => expect(screen.getByRole("option", { name: "token.save" })).toBeInTheDocument());
+    expect(screen.getByRole("option", { name: "config.update" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "all actions" })).toBeInTheDocument();
+    // The old hard-coded entry that no code path ever writes is gone.
+    expect(screen.queryByRole("option", { name: "cache.clear" })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Filter by action"), { target: { value: "token.save" } });
+    await waitFor(() => expect(auditListMock).toHaveBeenLastCalledWith("token.save", 100));
+  });
+
+  it("still offers only the all-actions option when the actions request fails (#664)", async () => {
+    auditListMock.mockResolvedValue([]);
+    auditActionsMock.mockRejectedValue(new Error("boom"));
+    mockSearchParams = new URLSearchParams();
+    renderPage();
+
+    // Only "all actions" is offered, and the page still works.
+    await waitFor(() => expect(auditActionsMock).toHaveBeenCalled());
+    expect(screen.getByRole("option", { name: "all actions" })).toBeInTheDocument();
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+  });
+
+  it("tells a non-admin the log is admins-only and makes no requests (#664)", async () => {
+    mockIsWorkspaceAdmin = false;
+    renderPage();
+
+    expect(screen.getByText(/only available to workspace admins/i)).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(auditListMock).not.toHaveBeenCalled();
+    expect(auditActionsMock).not.toHaveBeenCalled();
+    expect(jobsListMock).not.toHaveBeenCalled();
   });
 
   it("renders audit log entries", async () => {
