@@ -96,10 +96,13 @@ def test_audit_non_owner_forbidden(db):
 
 
 def test_audit_actions_lists_each_distinct_action_once_sorted(db):
-    from src.repositories import audit_repo
+    from src.repositories import audit_repo, org_repo
 
+    # audit_logs RLS is strict on app.tenant_id, so rows need a tenant to be written (and read back).
+    tenant_id = org_repo.get_or_create(db, github_login="acme").tenant_id
     for action in ("token.save", "config.update", "token.save", "cache.clear.queued"):
-        audit_repo.write(db, "owner@example.com", action, "acme", {})
+        audit_repo.write(db, "owner@example.com", action, "acme", {}, tenant_id=tenant_id)
+    db.execute(text(f"SET app.tenant_id = {int(tenant_id)}"))
 
     resp = _client(audit_router, db, _OWNER, prefix="/audit").get("/audit/actions")
 
