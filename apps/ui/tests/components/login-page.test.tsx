@@ -75,6 +75,13 @@ describe("LoginPage GitHub OAuth button", () => {
     );
   });
 
+  it("passes the next param on to the Sign up link so an invitee keeps their destination (#661)", async () => {
+    searchParams = new URLSearchParams({ next: "/invite/abc123" });
+    renderPage();
+
+    expect(await screen.findByRole("link", { name: "Sign up" })).toHaveAttribute("href", "/register?next=%2Finvite%2Fabc123");
+  });
+
   it("omits the next param when there is none (default '/')", async () => {
     renderPage();
 

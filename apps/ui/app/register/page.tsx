@@ -1,9 +1,10 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
+import { safeNextPath, withNext } from "@/lib/safe-next"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Field, FieldLabel } from "@/components/ui/field"
@@ -12,6 +13,8 @@ import { CircleNotch } from "@phosphor-icons/react"
 export default function RegisterPage() {
   const { user, setSession, isLoading } = useAuth()
   const router = useRouter()
+  // Carried from the login page so an invitee who signs up lands back on their invite.
+  const next = safeNextPath(useSearchParams().get("next"))
 
   const [name, setName] = useState("")
   const [email, setEmail] = useState("")
@@ -22,8 +25,8 @@ export default function RegisterPage() {
 
   useEffect(() => {
     if (isLoading) return
-    if (user) router.replace("/")
-  }, [isLoading, user, router])
+    if (user) router.replace(next)
+  }, [isLoading, user, router, next])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -46,7 +49,7 @@ export default function RegisterPage() {
         name || undefined,
       )
       setSession(access_token, newUser, pending_invitations)
-      router.replace("/")
+      router.replace(next)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed")
     } finally {
@@ -123,7 +126,7 @@ export default function RegisterPage() {
 
         <p className="text-xs text-muted-foreground mt-4 text-center">
           Already have an account?{" "}
-          <a href="/login" className="text-foreground underline underline-offset-2">
+          <a href={withNext("/login", next)} className="text-foreground underline underline-offset-2">
             Sign in
           </a>
         </p>
