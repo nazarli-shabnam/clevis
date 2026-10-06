@@ -84,6 +84,8 @@ class FlowPrMetrics(BaseModel):
     # Reviews are looked up for only the most recent merged PRs (bounded GitHub calls).
     review_sample_size: int
     merged_without_review: int
+    # Sampled PRs whose reviews could not be fetched: unknown, so not part of merged_without_review.
+    review_lookup_failed: int = 0
 
 
 class FlowWorkflowMetrics(BaseModel):
@@ -102,6 +104,8 @@ class RepoFlowMetricsResponse(BaseModel):
     workflows: list[FlowWorkflowMetrics]
     # True when the workflow-run page cap was hit, so figures cover only the newest runs.
     workflows_truncated: bool = False
+    # True when the PR page cap was hit, so merged_count and the medians cover only the newest PRs.
+    prs_truncated: bool = False
 
 
 class RepoSecurityInput(BaseModel):

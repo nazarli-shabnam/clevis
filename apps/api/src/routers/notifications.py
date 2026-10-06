@@ -7,6 +7,7 @@ from src.core._crypto import encrypt_job_token
 from src.core.auth import UserOut, require_auth
 from src.core.config import settings
 from src.core.db import NotificationDestination, get_db
+from src.core.rate_limit import check_account_rate_limit
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import audit_repo, notification_repo
 from src.schemas.notification import DestinationCreate, DestinationOut, TestSendResult
@@ -15,6 +16,7 @@ from src.services import notifications
 router = APIRouter()
 
 _MAX_DESTINATIONS_PER_ORG = 10
+_TEST_SENDS_PER_MINUTE = 5
 
 
 def _out(dest: NotificationDestination) -> DestinationOut:
@@ -110,6 +112,8 @@ def test_destination(
     db: Session = Depends(get_db),
 ):
     dest = _get_or_404(db, ctx, destination_id)
+    # Each send makes the server call an admin-chosen URL; cap it so test-send can't be used as a scanner.
+    check_account_rate_limit(f"notification-test:{ctx.org.tenant_id}", max_requests=_TEST_SENDS_PER_MINUTE)
     ok, detail = notifications.send(
         dest, "test", f"Clevis test message for {ctx.org.github_login}: this destination is working.", {"org": ctx.org.github_login}
     )
@@ -121,4 +125,6 @@ def test_destination(
         payload={"destination_id": destination_id, "kind": dest.kind, "ok": ok, "detail": detail},
         tenant_id=ctx.org.tenant_id,
     )
-    return TestSendResult(ok=ok, detail=detail)
+    # The target's status code or failure reason goes to the audit log only: echoing it would let an admin
+    # probe internal-looking names by response.
+    return TestSendResult(ok=ok, detail="Delivered" if ok else "Delivery failed; see the audit log")

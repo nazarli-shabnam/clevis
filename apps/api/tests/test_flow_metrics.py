@@ -84,33 +84,61 @@ def test_pr_cycle_time_and_first_review_ignore_author_and_unmerged():
             2: [],  # merged with no review
         },
     )
-    out = flow_metrics.pr_metrics(client, "acme", "api", NOW - timedelta(days=30))
+    out, truncated = flow_metrics.pr_metrics(client, "acme", "api", NOW - timedelta(days=30))
 
+    assert truncated is False
     assert out["merged_count"] == 2
     assert out["median_cycle_hours"] == 22.0
     assert out["median_first_review_hours"] == 4.0
     assert out["review_sample_size"] == 2
     assert out["merged_without_review"] == 1
+    assert out["review_lookup_failed"] == 0
 
 
 def test_pr_metrics_excludes_prs_merged_before_the_window():
     client = FakeClient(pulls=[_pr(1, created_hours_ago=24 * 60, merged_hours_ago=24 * 45)])
-    out = flow_metrics.pr_metrics(client, "acme", "api", NOW - timedelta(days=30))
+    out, _ = flow_metrics.pr_metrics(client, "acme", "api", NOW - timedelta(days=30))
     assert out["merged_count"] == 0
     assert out["median_cycle_hours"] is None
     assert out["median_first_review_hours"] is None
 
 
-def test_review_lookup_failure_counts_as_no_review_not_an_error():
+def test_review_lookup_failure_is_unknown_not_merged_without_review():
     class Boom(FakeClient):
         def request(self, method, path, params=None):
-            if path.endswith("/reviews"):
+            if path.endswith("/reviews") and path.split("/")[-2] == "1":
                 raise httpx.RequestError("down")
             return super().request(method, path, params)
 
-    out = flow_metrics.pr_metrics(Boom(pulls=[_pr(1, 10, 5)]), "acme", "api", NOW - timedelta(days=30))
-    assert out["merged_count"] == 1
+    client = Boom(pulls=[_pr(1, 10, 5), _pr(2, 10, 5)])  # PR 1: lookup fails; PR 2: genuinely no reviews
+    out, _ = flow_metrics.pr_metrics(client, "acme", "api", NOW - timedelta(days=30))
+    assert out["merged_count"] == 2
     assert out["median_first_review_hours"] is None
+    assert out["review_lookup_failed"] == 1
+    assert out["merged_without_review"] == 1  # only the PR whose reviews were fetched and empty
+
+
+def test_pr_pages_flag_truncation_when_the_cap_cuts_off_in_window_prs():
+    full_page = [_pr(i, 10, 5) for i in range(100)]
+
+    class Always(FakeClient):
+        def request(self, method, path, params=None):
+            return full_page if path.endswith("/pulls") else []
+
+    out, truncated = flow_metrics.pr_metrics(Always(), "acme", "api", NOW - timedelta(days=30))
+    assert truncated is True
+    assert out["merged_count"] == 300  # 3 pages
+
+
+def test_pr_pages_are_not_truncated_when_the_window_ends_before_the_cap():
+    old = [_pr(i, 24 * 50, 24 * 45) for i in range(100)]  # a full page, but all older than the window
+
+    class Old(FakeClient):
+        def request(self, method, path, params=None):
+            return old if path.endswith("/pulls") else []
+
+    _, truncated = flow_metrics.pr_metrics(Old(), "acme", "api", NOW - timedelta(days=30))
+    assert truncated is False
 
 
 def test_workflow_duration_failure_rate_and_flaky_commits():
@@ -132,6 +160,13 @@ def test_workflow_duration_failure_rate_and_flaky_commits():
     assert by_name["Lint"]["failure_rate"] is None
     assert by_name["Lint"]["flaky_commits"] == 0
     assert truncated is False
+
+
+def test_rerun_that_passed_counts_as_flaky_even_though_the_failed_attempt_is_hidden():
+    rerun = {**_run(1, "CI", "aaa", "success", 5, 60), "run_attempt": 2}  # API shows only the latest attempt
+    first_try = _run(2, "CI", "bbb", "success", 4, 60)  # attempt 1 passing is not flaky
+    workflows, _ = flow_metrics.workflow_metrics(FakeClient(runs=[rerun, first_try]), "acme", "api", NOW - timedelta(days=30))
+    assert workflows[0]["flaky_commits"] == 1
 
 
 def test_workflow_runs_flag_truncation_when_page_cap_is_hit():
@@ -181,6 +216,7 @@ _PAYLOAD = {
     },
     "workflows": [],
     "workflows_truncated": False,
+    "prs_truncated": False,
 }
 
 
@@ -193,6 +229,14 @@ def test_endpoint_returns_metrics_and_caches_per_token(flow_client):
     assert first.json()["window_days"] == 30
     assert second.json() == first.json()
     assert compute.call_count == 1  # second hit served from cache
+
+
+def test_endpoint_sweeps_expired_cache_entries(flow_client):
+    stale_key = (999, "old", "repo", "tokenhash")
+    _flow_cache[stale_key] = (-10_000.0, _PAYLOAD)  # monotonic timestamp far in the past
+    with patch("src.routers.repos.flow_metrics.compute", return_value=_PAYLOAD):
+        assert flow_client.post("/orgs/acme/repos/acme/api/flow-metrics", json=_BODY).status_code == 200
+    assert stale_key not in _flow_cache
 
 
 def test_endpoint_maps_github_errors(flow_client):
