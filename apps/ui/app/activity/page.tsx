@@ -17,7 +17,10 @@ import { useActiveScope } from "@/lib/active-scope"
 import { useAuth } from "@/lib/auth-context"
 
 const EVENTS_REFRESH_SECONDS = 30
+const JOBS_SHOWN = 20
 const HEATMAP_COLOR_SCALE = [CHART_COLORS.grid, "#1d4ed8", "#3b82f6", "#60a5fa", "#93c5fd"]
+
+const queryErrorMessage = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback)
 
 export default function ActivityPage() {
   // Marks cockpit events as read so the sidebar's unread badge clears.
@@ -112,7 +115,7 @@ export default function ActivityPage() {
             <p className="p-4 text-sm text-muted-foreground">The activity feed is available for organizations.</p>
           ) : eventsQuery.isError ? (
             <SectionError
-              message={eventsQuery.error instanceof Error ? eventsQuery.error.message : "Failed to load events."}
+              message={queryErrorMessage(eventsQuery.error, "Failed to load events.")}
               onRetry={() => eventsQuery.refetch()}
               retrying={eventsQuery.isFetching}
             />
@@ -127,7 +130,7 @@ export default function ActivityPage() {
               <span className="section-label">Jobs</span>
               <span className="stat-chip">auto-refreshes every 15s</span>
             </div>
-            <ActivityList jobs={jobs} isLoading={jobsLoading} />
+            <ActivityList jobs={jobs} isLoading={jobsLoading} limit={JOBS_SHOWN} />
           </div>
         )}
       </div>
@@ -147,7 +150,13 @@ export default function ActivityPage() {
               )}
             </div>
             <div className="p-4">
-              {(cockpitQuery.data?.commit_heatmap_52w ?? []).some((n) => n > 0) ? (
+              {cockpitQuery.isError ? (
+                <SectionError
+                  message={queryErrorMessage(cockpitQuery.error, "Failed to load commit activity.")}
+                  onRetry={() => cockpitQuery.refetch()}
+                  retrying={cockpitQuery.isFetching}
+                />
+              ) : (cockpitQuery.data?.commit_heatmap_52w ?? []).some((n) => n > 0) ? (
                 <HeatmapCalendar data={cockpitQuery.data!.commit_heatmap_52w} colorScale={HEATMAP_COLOR_SCALE} />
               ) : (
                 <p className="text-sm text-muted-foreground">No commit activity in the last year</p>
@@ -160,7 +169,13 @@ export default function ActivityPage() {
             <div className="px-4 py-3 border-b border-border">
               <span className="section-label">CI Failure Log</span>
             </div>
-            {(failedRunsQuery.data?.runs.length ?? 0) === 0 ? (
+            {failedRunsQuery.isError ? (
+              <SectionError
+                message={queryErrorMessage(failedRunsQuery.error, "Failed to load CI failures.")}
+                onRetry={() => failedRunsQuery.refetch()}
+                retrying={failedRunsQuery.isFetching}
+              />
+            ) : (failedRunsQuery.data?.runs.length ?? 0) === 0 ? (
               <p className="p-4 text-sm text-muted-foreground">No repeated CI failures</p>
             ) : (
               <div className="divide-y divide-border">
@@ -189,7 +204,13 @@ export default function ActivityPage() {
             <div className="px-4 py-3 border-b border-border">
               <span className="section-label">Release Timeline</span>
             </div>
-            {(releaseTimelineQuery.data?.releases.length ?? 0) === 0 ? (
+            {releaseTimelineQuery.isError ? (
+              <SectionError
+                message={queryErrorMessage(releaseTimelineQuery.error, "Failed to load releases.")}
+                onRetry={() => releaseTimelineQuery.refetch()}
+                retrying={releaseTimelineQuery.isFetching}
+              />
+            ) : (releaseTimelineQuery.data?.releases.length ?? 0) === 0 ? (
               <p className="p-4 text-sm text-muted-foreground">No releases in the last 90 days</p>
             ) : (
               <div className="divide-y divide-border">
