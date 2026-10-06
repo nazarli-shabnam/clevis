@@ -25,6 +25,14 @@ export interface TextCheckValue {
 
 export type CheckValue = MFACheckValue | RatioCheckValue | SeverityCountsValue | TextCheckValue | null
 
+export interface HygieneScoringSettings {
+  /** The org's own setting; null = follows the instance-wide one. */
+  enabled: boolean | null
+  /** What the next scan will actually do. */
+  effective: boolean
+  instance_default: boolean
+}
+
 export interface CheckResult {
   id: string
   title: string
@@ -34,6 +42,8 @@ export interface CheckResult {
   remediation: string
   // Hygiene checks: shown, but excluded from the score unless the instance opts in.
   informational?: boolean
+  // Whether this scan counted the check toward the score; absent on scans stored before it was recorded.
+  scored?: boolean | null
   status: "pass" | "fail" | "error" | "not_applicable"
   value: CheckValue
 }

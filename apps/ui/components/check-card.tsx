@@ -288,7 +288,8 @@ export function CheckCard({ check, owner, token, onRemediated }: CheckCardProps)
               {check.severity}
             </span>
           )}
-          {check.informational && !notApplicable && <span className="stat-chip">Informational</span>}
+          {/* Only while the check is excluded from the score: once hygiene scoring is on it counts like any other. */}
+          {check.informational && !check.scored && !notApplicable && <span className="stat-chip">Informational</span>}
         </div>
         <p className="text-xs text-muted-foreground leading-relaxed">{check.remediation}</p>
         <CheckValueDisplay value={check.value} />

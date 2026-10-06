@@ -29,6 +29,7 @@ from src.schemas.api_token import (
     ScoreCheck,
     ScoreOut,
 )
+from src.services.analytics_service import org_scores_hygiene
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token
 
 router = APIRouter()
@@ -158,7 +159,8 @@ async def run_scan(org_login: str, token: ResolvedToken = Depends(require_scope(
         )
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    result = await _run_overview(token.org_login, github_token)
+    org = await anyio.to_thread.run_sync(lambda: org_repo.get_by_id(db, token.org_id))
+    result = await _run_overview(token.org_login, github_token, score_hygiene=org_scores_hygiene(org))
 
     # Attributes the scan, and any alert it triggers, to this token rather than to "system".
     actor = f"api_token:{token.token_id}"
@@ -187,7 +189,6 @@ async def run_scan(org_login: str, token: ResolvedToken = Depends(require_scope(
             db.rollback()
             logger.exception("could not audit the api-token scan for %s", token.org_login)
         if previous:
-            org = org_repo.get_by_id(db, token.org_id)
             _notify_score_drop_best_effort(db, _Ctx(org), previous[0]["score"], result["score"], actor=actor)
         return scan_results_repo.latest_with_checks(db, token.org_login, token.tenant_id)
 

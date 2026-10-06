@@ -300,7 +300,7 @@ describe("SettingsPage", () => {
     renderPage();
 
     const registration = (await screen.findByLabelText("Self-Registration")) as HTMLSelectElement;
-    const hygiene = screen.getByLabelText("Score Hygiene Checks") as HTMLSelectElement;
+    const hygiene = screen.getByLabelText("Score Hygiene Checks (default)") as HTMLSelectElement;
     expect(registration.value).toBe("true");
     expect(hygiene.value).toBe("false");
 

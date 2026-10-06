@@ -26,6 +26,7 @@ import type {
   InvitationOut,
   InvitationPreview,
   JobOut,
+  HygieneScoringSettings,
   MyOrgMembership,
   MyIssueListResponse,
   MyPrListResponse,
@@ -479,6 +480,11 @@ export const api = {
   },
   orgs: {
     mine: () => get<MyOrgMembership[]>("/me/orgs"),
+    hygieneScoring: (orgLogin: string) =>
+      get<HygieneScoringSettings>(`/orgs/${encodeURIComponent(orgLogin)}/hygiene-scoring`),
+    // enabled: null clears the org's override so it follows the instance setting again.
+    setHygieneScoring: (orgLogin: string, enabled: boolean | null) =>
+      put<HygieneScoringSettings>(`/orgs/${encodeURIComponent(orgLogin)}/hygiene-scoring`, { enabled }),
     badge: (orgLogin: string) => get<{ enabled: boolean }>(`/orgs/${encodeURIComponent(orgLogin)}/badge`),
     setBadge: (orgLogin: string, enabled: boolean) =>
       put<{ enabled: boolean }>(`/orgs/${encodeURIComponent(orgLogin)}/badge`, { enabled }),
