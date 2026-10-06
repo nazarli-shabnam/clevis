@@ -196,7 +196,11 @@ export default function OverviewPage() {
       {org && (
         <FirstRunChecklist
           scope={scope}
+          userId={user?.id ?? null}
           hasScan={cockpitQuery.isSuccess ? cockpit?.latest_score != null : null}
+          scanFailed={cockpitQuery.isError}
+          hasOrg={membershipsLoading ? null : memberships.length > 0}
+          hasAutomationRun={cockpit?.has_automation_run ?? null}
           canInvite={scope?.kind === "org" && memberships.some((m) => m.org_login === scope.login && m.role === "admin")}
           membersUrl={membersUrl}
         />

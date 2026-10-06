@@ -13,8 +13,14 @@ from sqlalchemy.orm import Session
 from src.core.app_config import get_config
 from src.core.auth import UserOut, require_auth
 from src.core.db import RepoEventDailyCount, get_db
-from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role, set_tenant_session_context
-from src.repositories import installation_repo, job_repo, org_repo, scan_results_repo, tenant_repo
+from src.core.rbac import (
+    OrgContext,
+    assert_owner_matches_org,
+    audit_tenant,
+    require_org_role,
+    set_tenant_session_context,
+)
+from src.repositories import audit_repo, installation_repo, job_repo, org_repo, scan_results_repo, tenant_repo
 from src.routers.github import _cached_events, _fetch_events_from_repo_events
 from src.schemas.analytics import (
     ActionsUsageResponse,
@@ -784,6 +790,17 @@ def _safe_release_cadence_4w(owner: str, token: str, repo_names: list[str]) -> l
     return totals
 
 
+def _has_automation_run(db: Session, user: UserOut, owner: str) -> bool | None:
+    """Whether an automation has really run for the tenant this owner's audit rows are written under
+    (the org's, for a member; otherwise the caller's personal one). None if it couldn't be read."""
+    try:
+        return audit_repo.has_any_action(db, audit_tenant(db, user.id, owner), audit_repo.AUTOMATION_RUN_ACTIONS)
+    except Exception:
+        db.rollback()
+        logger.exception("could not read automation history for %s", owner)
+        return None
+
+
 def _cache_job_success_rate(db: Session) -> float:
     jobs = job_repo.list_recent_by_type(db, job_type=_CACHE_JOB_TYPE, limit=20)
     done = sum(1 for j in jobs if j["status"] == "done")
@@ -861,6 +878,9 @@ async def personal_analytics_cockpit(
         or recent_events_degraded
     )
 
+    # Last: audit_tenant re-points the RLS tenant context, which every read above has already finished with.
+    has_automation_run = await anyio.to_thread.run_sync(lambda: _has_automation_run(db, user, owner))
+
     return CockpitResponse(
         repo_count=len(repos),
         member_count=member_count,
@@ -881,6 +901,7 @@ async def personal_analytics_cockpit(
         recent_events_source="aggregate" if connected_tenant_id is not None else "github",
         recent_events_stale=recent_events_stale,
         degraded=degraded,
+        has_automation_run=has_automation_run,
     )
 
 

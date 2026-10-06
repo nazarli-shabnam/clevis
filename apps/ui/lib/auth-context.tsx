@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react"
 import type { PendingInvitationSummary } from "@/lib/api/types"
 import { clearActiveScope } from "@/lib/active-scope"
+import { clearDismissals } from "@/lib/first-run-dismissal"
 
 export interface AuthUser {
   id: number
@@ -39,6 +40,7 @@ const _LOGOUT_WARNING =
 // logout AND login/setSession, since /register calls setSession() without going through logout().
 function clearPerUserBrowserState(): void {
   clearActiveScope()
+  clearDismissals()
   try {
     localStorage.removeItem("activity_last_seen_at")
   } catch {

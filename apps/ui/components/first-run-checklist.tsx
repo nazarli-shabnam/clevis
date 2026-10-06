@@ -6,17 +6,8 @@ import { useQuery } from "@tanstack/react-query"
 import { ArrowRight, X } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import type { ActiveScope } from "@/lib/active-scope"
+import { dismissalKey, readDismissed, writeDismissed } from "@/lib/first-run-dismissal"
 import type { InstallationMeta, InvitationOut } from "@/lib/api/types"
-
-const DISMISS_KEY = "clevis:first-run-checklist-dismissed"
-
-function readDismissed(): boolean {
-  try {
-    return localStorage.getItem(DISMISS_KEY) === "1"
-  } catch {
-    return false
-  }
-}
 
 interface Step {
   id: string
@@ -27,22 +18,39 @@ interface Step {
 
 /**
  * Dismissible "what's left to set up" card for the Overview. Only incomplete steps are listed,
- * and the card disappears once none remain. Renders nothing until the installation lookup has
- * resolved (or if it failed), so a slow or erroring request never flashes a false to-do list.
+ * and the card disappears once none remain. Nothing is listed until the data behind it has loaded, so a
+ * slow request never flashes a false to-do list; if a request fails, a short notice with a retry shows
+ * instead of the card silently never appearing. Dismissal is remembered per user and account.
  */
 export function FirstRunChecklist({
   scope,
+  userId,
   hasScan,
+  scanFailed = false,
+  hasOrg = null,
+  hasAutomationRun = null,
   canInvite,
   membersUrl,
 }: {
   scope: ActiveScope | null
+  userId: number | null
   // `null` while the scan data (cockpit) is still loading.
   hasScan: boolean | null
+  // The scan data (cockpit) failed to load. The Overview already shows that error with its own retry,
+  // so the card only explains why the checklist is missing.
+  scanFailed?: boolean
+  // Whether the user belongs to any Clevis org; `null` while unknown. Only `false` shows the connect step.
+  hasOrg?: boolean | null
+  // Whether an automation has really run; `null` when unknown (the step is then hidden, not shown).
+  hasAutomationRun?: boolean | null
   canInvite: boolean
   membersUrl: string
 }) {
-  const [dismissed, setDismissed] = useState(readDismissed)
+  const key = scope && userId != null ? dismissalKey(userId, scope.kind, scope.login) : null
+  // The key this tab dismissed, so the click takes effect at once; otherwise storage decides, so
+  // switching user/account re-reads that account's own dismissal.
+  const [dismissedKey, setDismissedKey] = useState<string | null>(null)
+  const dismissed = key !== null && (dismissedKey === key || readDismissed(key))
 
   // Same key/fetcher as the Permissions page, so the two share one cached request.
   const installsQuery = useQuery<InstallationMeta[]>({
@@ -58,7 +66,27 @@ export function FirstRunChecklist({
     retry: false,
   })
 
-  if (dismissed || !scope || !installsQuery.isSuccess || hasScan === null) return null
+  if (dismissed || !scope) return null
+  if (installsQuery.isError) {
+    return (
+      <section className="card mb-6 px-4 py-3 flex items-center justify-between gap-4" aria-label="Getting started">
+        <span className="text-sm text-muted-foreground">Couldn&apos;t load your setup progress.</span>
+        <button type="button" className="text-xs text-foreground underline" onClick={() => installsQuery.refetch()}>
+          Retry
+        </button>
+      </section>
+    )
+  }
+  if (scanFailed) {
+    return (
+      <section className="card mb-6 px-4 py-3" aria-label="Getting started">
+        <span className="text-sm text-muted-foreground">
+          Your setup checklist will appear once the Overview data loads. Retry it from the error below.
+        </span>
+      </section>
+    )
+  }
+  if (!installsQuery.isSuccess || hasScan === null) return null
 
   const installs = installsQuery.data.filter((i) => i.installation_id != null)
   const installed = installs.length > 0
@@ -67,6 +95,14 @@ export function FirstRunChecklist({
   )
 
   const steps: Step[] = []
+  if (hasOrg === false) {
+    steps.push({
+      id: "connect-org",
+      label: "Connect an organization",
+      hint: "Install the GitHub App on an org to share the dashboard with a team.",
+      href: "/settings",
+    })
+  }
   if (!installed) {
     steps.push({
       id: "install",
@@ -90,6 +126,14 @@ export function FirstRunChecklist({
       href: "/security",
     })
   }
+  if (hasAutomationRun === false) {
+    steps.push({
+      id: "automation",
+      label: "Run your first automation",
+      hint: "Try a bulk branch-protection apply, Dependabot triage, or a workflow dispatch.",
+      href: "/automation",
+    })
+  }
   if (canInvite && invitesQuery.isSuccess && invitesQuery.data.length === 0) {
     steps.push({
       id: "invite",
@@ -110,12 +154,9 @@ export function FirstRunChecklist({
           aria-label="Dismiss getting started"
           className="text-muted-foreground hover:text-foreground"
           onClick={() => {
-            try {
-              localStorage.setItem(DISMISS_KEY, "1")
-            } catch {
-              // Storage blocked: the card just comes back next visit.
-            }
-            setDismissed(true)
+            if (key === null) return
+            writeDismissed(key)
+            setDismissedKey(key)
           }}
         >
           <X className="size-3.5" />
