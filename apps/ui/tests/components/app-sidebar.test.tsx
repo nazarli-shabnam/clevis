@@ -542,17 +542,31 @@ describe("AppSidebar scope switcher", () => {
     renderSidebar();
 
     const toggle = screen.getByRole("button", { name: /user/i });
-    expect(toggle).toHaveAttribute("aria-haspopup", "true");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).not.toHaveAttribute("aria-controls");
 
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(await screen.findByText("Sign out")).toBeInTheDocument();
+    // aria-controls points at the open panel
+    const panel = document.getElementById(toggle.getAttribute("aria-controls")!);
+    expect(panel).toContainElement(screen.getByText("Sign out"));
 
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() => expect(toggle).toHaveAttribute("aria-expanded", "false"));
     expect(screen.queryByText("Sign out")).not.toBeInTheDocument();
     expect(toggle).toHaveFocus();
+  });
+
+  it("leaves the menu open when another handler already consumed Escape", async () => {
+    renderSidebar();
+    const toggle = screen.getByRole("button", { name: /user/i });
+    fireEvent.click(toggle);
+
+    const event = new KeyboardEvent("keydown", { key: "Escape", cancelable: true });
+    event.preventDefault();
+    document.dispatchEvent(event);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
   });
 
   it("ignores other keys while the profile menu is open", async () => {

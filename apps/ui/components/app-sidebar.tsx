@@ -1,7 +1,7 @@
 "use client"
 
 import { usePathname, useRouter } from "next/navigation"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useId, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import { useQuery } from "@tanstack/react-query"
 import { GearSix, Check, SignOut, UserPlus, ArrowSquareOut, Plus } from "@phosphor-icons/react"
@@ -75,7 +75,9 @@ function ProfileDropdown({
   inviteHref,
   onClose,
   onSignOut,
+  id,
 }: {
+  id: string
   profile: Profile
   scopeOptions: ScopeOption[]
   activeScope: ActiveScope | null
@@ -89,6 +91,7 @@ function ProfileDropdown({
 
   return (
     <div
+      id={id}
       className="absolute top-full left-0 right-0 z-50 border-b border-sidebar-border bg-sidebar shadow-2xl"
       onClick={(e) => e.stopPropagation()}
     >
@@ -196,6 +199,7 @@ export function AppSidebar() {
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const toggleRef = useRef<HTMLButtonElement>(null)
+  const menuId = useId()
 
   const { scope, setScope } = useActiveScope()
   const scopeLogin = scope?.login ?? ""
@@ -290,7 +294,8 @@ export function AppSidebar() {
       }
     }
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
+      // defaultPrevented: another Escape-dismissible element (a dialog, a select) already took it.
+      if (e.key === "Escape" && !e.defaultPrevented) {
         setOpen(false)
         toggleRef.current?.focus()
       }
@@ -316,8 +321,8 @@ export function AppSidebar() {
         <button
           ref={toggleRef}
           onClick={() => setOpen((v) => !v)}
-          aria-haspopup="true"
           aria-expanded={open}
+          aria-controls={open ? menuId : undefined}
           className="flex w-full items-center gap-2.5 px-3.5 py-3 hover:bg-sidebar-accent/60 transition-colors group text-left"
         >
           <div className="size-7 rounded-md bg-primary/15 border border-primary/25 flex items-center justify-center shrink-0">
@@ -336,6 +341,7 @@ export function AppSidebar() {
 
         {open && (
           <ProfileDropdown
+            id={menuId}
             profile={profile}
             scopeOptions={scopeOptions}
             activeScope={scope}

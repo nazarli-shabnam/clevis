@@ -316,7 +316,7 @@ export default function AutomationPage() {
               <div>
                 <div className="mb-1.5 flex items-center gap-1.5">
                   <label htmlFor="automation-token" className="text-xs font-medium text-foreground">GitHub Token</label>
-                  <span className="text-[0.6875rem] text-muted-foreground font-normal">
+                  <span id="automation-token-hint" className="text-[0.6875rem] text-muted-foreground font-normal">
                     optional if the GitHub App is connected for this org
                   </span>
                   {tokenSaved && (
@@ -327,6 +327,7 @@ export default function AutomationPage() {
                 </div>
                 <Input
                   id="automation-token"
+                  aria-describedby="automation-token-hint"
                   placeholder="ghp_... (leave blank to use the connected GitHub App)"
                   type="password"
                   value={token}

@@ -306,7 +306,7 @@ export default function SecurityPage() {
               <div>
                 <div className="mb-1.5 flex items-center gap-1.5">
                   <label htmlFor="security-token" className="text-xs font-medium text-foreground">GitHub Token</label>
-                  <span className="text-[0.6875rem] text-muted-foreground font-normal">
+                  <span id="security-token-hint" className="text-[0.6875rem] text-muted-foreground font-normal">
                     optional if the GitHub App is connected for this org
                   </span>
                   {tokenSaved && (
@@ -317,6 +317,7 @@ export default function SecurityPage() {
                 </div>
                 <Input
                   id="security-token"
+                  aria-describedby="security-token-hint"
                   placeholder="ghp_... (leave blank to use the connected GitHub App)"
                   type="password"
                   value={token}
@@ -561,8 +562,8 @@ export default function SecurityPage() {
                           {/* A real button so keyboard and screen-reader users can select a row; the row's own onClick keeps the whole row clickable for the mouse. */}
                           <button
                             type="button"
-                            aria-pressed={selectedRepo === r.repo}
-                            className="max-w-full truncate text-left font-mono rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                            aria-current={selectedRepo === r.repo ? "true" : undefined}
+                            className="block max-w-[10rem] truncate text-left font-mono rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                           >
                             {r.repo}
                           </button>

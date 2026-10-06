@@ -581,7 +581,10 @@ describe("SecurityPage", () => {
   it("gives the scan inputs accessible names", () => {
     renderPage();
     expect(screen.getByLabelText("Organization")).toBe(screen.getByPlaceholderText("e.g. octocat"));
-    expect(screen.getByLabelText("GitHub Token")).toHaveAttribute("type", "password");
+    const token = screen.getByLabelText("GitHub Token");
+    expect(token).toHaveAttribute("type", "password");
+    // the optional-token guidance stays announced with the field
+    expect(token).toHaveAccessibleDescription(/optional if the GitHub App is connected/);
   });
 
   it("lets keyboard users pick a matrix row through a real button", async () => {
@@ -612,12 +615,12 @@ describe("SecurityPage", () => {
 
     const api = await screen.findByRole("button", { name: "api" });
     const web = screen.getByRole("button", { name: "web" });
-    expect(api).toHaveAttribute("aria-pressed", "true");
-    expect(web).toHaveAttribute("aria-pressed", "false");
+    expect(api).toHaveAttribute("aria-current", "true");
+    expect(web).not.toHaveAttribute("aria-current");
 
     fireEvent.click(web);
-    await waitFor(() => expect(web).toHaveAttribute("aria-pressed", "true"));
-    expect(api).toHaveAttribute("aria-pressed", "false");
+    await waitFor(() => expect(web).toHaveAttribute("aria-current", "true"));
+    expect(api).not.toHaveAttribute("aria-current");
   });
 
   it("shows a '?' for dimensions the token couldn't evaluate, not a false pass", async () => {
