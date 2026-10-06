@@ -503,6 +503,7 @@ def test_member_access_is_unsynced_until_the_first_membership_sync(admin_client,
     _insert_grant(db, acme_org_with_installation.tenant_id, repo="acme/api", login="octo", permission="write")
     body = admin_client.get("/github/orgs/acme/members/octo/access").json()
     assert body["synced"] is False
+    assert body["is_member"] is None  # unknown, not "not a member"
     assert body["direct_grants"] == []
 
 
@@ -511,6 +512,7 @@ def test_member_access_reports_role_2fa_grants_and_last_activity(admin_client, d
     _insert_org_member(db, t, login="Octo", role="admin")
     db.execute(text("UPDATE org_members SET two_factor_enabled = false WHERE login = 'Octo'"))
     _seed_membership_cursor(db, t)
+    _seed_activity_cursor(db, t)
     _insert_grant(db, t, repo="acme/web", login="octo", permission="read")
     _insert_grant(db, t, repo="acme/api", login="OCTO", permission="write", outside=False)
     _insert_grant(db, t, repo="acme/api", login="someone-else", permission="admin")
@@ -521,7 +523,7 @@ def test_member_access_reports_role_2fa_grants_and_last_activity(admin_client, d
 
     body = admin_client.get("/github/orgs/acme/members/OCTO/access").json()
 
-    assert body["synced"] is True and body["is_member"] is True
+    assert body["synced"] is True and body["is_member"] is True and body["activity_synced"] is True
     assert body["login"] == "Octo" and body["role"] == "admin" and body["two_factor_enabled"] is False
     assert [(g["repo"], g["permission"]) for g in body["direct_grants"]] == [("acme/api", "write"), ("acme/web", "read")]
     assert body["last_push_repo"] == "acme/api"
@@ -544,3 +546,23 @@ def test_member_access_does_not_leak_another_tenants_rows(admin_client, db, acme
     _insert_grant(db, other.tenant_id, repo="globex/api", login="octo", permission="admin")
     _seed_membership_cursor(db, acme_org_with_installation.tenant_id)
     assert admin_client.get("/github/orgs/acme/members/octo/access").json()["direct_grants"] == []
+
+
+def test_member_access_hides_activity_until_the_activity_backfill_has_run(admin_client, db, acme_org_with_installation):
+    t = acme_org_with_installation.tenant_id
+    _insert_org_member(db, t, login="octo")
+    _seed_membership_cursor(db, t)  # no activity cursor
+    _insert_event(db, t, actor="octo", repo="acme/api", event_type="push", when=datetime.now(timezone.utc), delivery="d1")
+    body = admin_client.get("/github/orgs/acme/members/octo/access").json()
+    assert body["synced"] is True and body["activity_synced"] is False
+    assert body["last_push_at"] is None and body["last_event_at"] is None
+
+
+def test_member_access_survives_two_roster_rows_that_differ_only_by_case(admin_client, db, acme_org_with_installation):
+    t = acme_org_with_installation.tenant_id
+    _insert_org_member(db, t, login="Octo", role="member")
+    _insert_org_member(db, t, login="octo", role="admin")
+    _seed_membership_cursor(db, t)
+    resp = admin_client.get("/github/orgs/acme/members/octo/access")
+    assert resp.status_code == 200
+    assert resp.json()["role"] == "admin"  # the exact-case row wins

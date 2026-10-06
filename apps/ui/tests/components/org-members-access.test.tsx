@@ -41,6 +41,7 @@ const access = (over: Record<string, unknown> = {}) => ({
   org: "acme",
   login: "octocat",
   synced: true,
+  activity_synced: true,
   is_member: true,
   role: "member",
   two_factor_enabled: false,
@@ -86,6 +87,14 @@ describe("member access review", () => {
     await waitFor(() => expect(screen.getByText(/first membership sync/)).toBeInTheDocument());
   });
 
+  it("says activity is unavailable, not none, until the activity backfill has run", async () => {
+    accessMock.mockResolvedValue(access({ activity_synced: false, last_push_at: null, last_event_at: null, last_push_repo: null }));
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Review access for octocat" }));
+    await waitFor(() => expect(screen.getByText(/not evidence the account is dormant/)).toBeInTheDocument());
+    expect(screen.queryByText("None recorded")).not.toBeInTheDocument();
+  });
+
   it("exports the review as CSV", async () => {
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "Review access for octocat" }));
@@ -114,5 +123,7 @@ describe("accessCsv", () => {
     const none = accessCsv(access({ direct_grants: [], two_factor_enabled: null }) as never).split("\r\n");
     expect(none).toHaveLength(2);
     expect(none[1]).toContain("unknown");
+    expect(none[0]).toContain("Last activity");
+    expect(none[1]).toContain("Direct grants only");
   });
 });

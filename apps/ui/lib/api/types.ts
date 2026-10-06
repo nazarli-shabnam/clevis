@@ -426,7 +426,10 @@ export interface MemberAccess {
   login: string
   // False until the org's first membership sync: everything else is empty and not trustworthy.
   synced: boolean
-  is_member: boolean
+  // null when not synced: unknown, not "not a member".
+  is_member: boolean | null
+  // False until the first activity backfill; the last_* fields are then null because nothing is ingested yet.
+  activity_synced: boolean
   role: "member" | "admin" | null
   two_factor_enabled: boolean | null
   last_event_at: string | null

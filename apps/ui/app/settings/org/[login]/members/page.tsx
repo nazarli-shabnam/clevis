@@ -1,7 +1,7 @@
 "use client"
 
 import { useParams, useRouter, useSearchParams } from "next/navigation"
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
@@ -90,6 +90,7 @@ type RosterTabId = (typeof ROSTER_TABS)[number]["id"]
 
 function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: boolean }) {
   const [reviewLogin, setReviewLogin] = useState<string | null>(null)
+  const columns = useMemo(() => memberColumns(canReview ? setReviewLogin : null), [canReview])
   const router = useRouter()
   const searchParams = useSearchParams()
   const rawTab = searchParams.get("roster") ?? "members"
@@ -243,7 +244,7 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
           </div>
         ) : (
           <>
-            <DataTable columns={memberColumns(canReview ? setReviewLogin : null)} data={filteredMembers} getRowKey={(m) => m.login} />
+            <DataTable columns={columns} data={filteredMembers} getRowKey={(m) => m.login} />
             {membersQuery.data?.two_factor_overlay_available && (
               <div className="px-4 py-2.5 border-t border-border">
                 <span className="text-xs text-muted-foreground">Members without 2FA: {membersWithout2fa}</span>

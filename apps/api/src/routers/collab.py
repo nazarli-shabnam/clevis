@@ -285,37 +285,45 @@ def get_member_access(
 
     `synced` is False (and the rest empty) until the org's first membership sync has completed."""
     if not _org_members_synced(db, ctx):
-        return MemberAccess(org=org_login, login=username, synced=False, is_member=False, direct_grants=[])
+        return MemberAccess(org=org_login, login=username, synced=False, direct_grants=[])
 
     tenant_id = ctx.org.tenant_id
     lowered = username.lower()
     member = (
         db.query(OrgMemberRow)
         .filter(OrgMemberRow.tenant_id == tenant_id, func.lower(OrgMemberRow.login) == lowered)
-        .one_or_none()
+        .order_by((OrgMemberRow.login == username).desc(), OrgMemberRow.id)  # an exact-case match wins a case-only clash
+        .first()
     )
+    activity_synced = _activity_synced(db, ctx)
     grants = (
         db.query(RepoCollaborator)
         .filter(RepoCollaborator.tenant_id == tenant_id, func.lower(RepoCollaborator.login) == lowered)
         .order_by(RepoCollaborator.repo)
         .all()
     )
-    last_event_at = (
-        db.query(func.max(RepoEvent.occurred_at))
-        .filter(RepoEvent.tenant_id == tenant_id, func.lower(RepoEvent.actor) == lowered)
-        .scalar()
-    )
-    last_push = (
-        db.query(RepoEvent.repo, RepoEvent.occurred_at)
-        .filter(RepoEvent.tenant_id == tenant_id, RepoEvent.event_type == "push", func.lower(RepoEvent.actor) == lowered)
-        .order_by(RepoEvent.occurred_at.desc())
-        .first()
-    )
+    last_event_at = None
+    last_push = None
+    if activity_synced:
+        last_event_at = (
+            db.query(func.max(RepoEvent.occurred_at))
+            .filter(RepoEvent.tenant_id == tenant_id, func.lower(RepoEvent.actor) == lowered)
+            .scalar()
+        )
+        last_push = (
+            db.query(RepoEvent.repo, RepoEvent.occurred_at)
+            .filter(
+                RepoEvent.tenant_id == tenant_id, RepoEvent.event_type == "push", func.lower(RepoEvent.actor) == lowered
+            )
+            .order_by(RepoEvent.occurred_at.desc())
+            .first()
+        )
     return MemberAccess(
         org=org_login,
         login=member.login if member else username,
         synced=True,
         is_member=member is not None,
+        activity_synced=activity_synced,
         role=member.role if member else None,
         two_factor_enabled=member.two_factor_enabled if member else None,
         last_event_at=last_event_at,

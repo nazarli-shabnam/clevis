@@ -119,7 +119,11 @@ class MemberAccess(BaseModel):
     login: str
     # False until the org's first membership sync, i.e. nothing below is trustworthy yet.
     synced: bool
-    is_member: bool
+    # None when not synced: "unknown" must not read as "not a member".
+    is_member: bool | None = None
+    # False until the org's first activity backfill: the last_* fields are then null because repo_events
+    # is empty or partial, not because the person is dormant.
+    activity_synced: bool = False
     role: Literal["member", "admin"] | None = None
     two_factor_enabled: bool | None = None
     last_event_at: datetime | None = None
