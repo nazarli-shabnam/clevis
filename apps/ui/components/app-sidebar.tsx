@@ -19,7 +19,7 @@ import {
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
 import { useActiveScope, type ActiveScope } from "@/lib/active-scope"
-import { membersHref } from "@/lib/members-href"
+import { inviteMembersHref, membersHref } from "@/lib/members-href"
 import type { InstallationMeta, MyOrgMembership } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
 
@@ -256,6 +256,7 @@ export function AppSidebar() {
   // Target for the Collaborators item and "Invite members": the resolved org members page.
   // While memberships load, point at /settings rather than flicker between fallbacks.
   const membersNavHref = membershipsLoading ? "/settings" : membersHref(memberships, scope)
+  const inviteNavHref = membershipsLoading ? "/settings" : inviteMembersHref(memberships, scope)
 
   // Falls back to a saved PAT for orgs without a GitHub App installation.
   const tokenQuery = useQuery({
@@ -326,7 +327,7 @@ export function AppSidebar() {
             activeScope={scope}
             onSelectScope={setScope}
             addInstallUrl={addInstallUrl}
-            inviteHref={membersNavHref}
+            inviteHref={inviteNavHref}
             onClose={() => setOpen(false)}
             onSignOut={() => { logout(); setOpen(false); router.replace("/login") }}
           />
