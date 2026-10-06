@@ -116,7 +116,7 @@ def test_org_overview_reads_and_persists_the_scan_off_the_event_loop(db):
     org = org_repo.get_or_create(db, github_login="acme")
     user = _user(db, "member@example.com")
     org_membership_repo.get_or_create(db, org_id=org.id, user_id=user.id, role="member")
-    list_recent = _Recorder(scan_results_repo.list_recent)
+    baseline = _Recorder(scan_results_repo.latest_with_checks)
     persist = _Recorder(lambda *a, **k: None)
     app = FastAPI()
     app.dependency_overrides[require_auth] = lambda: user
@@ -126,13 +126,13 @@ def test_org_overview_reads_and_persists_the_scan_off_the_event_loop(db):
     with (
         patch("src.routers.analytics.resolve_org_token", return_value="ghp"),
         patch("src.routers.analytics.get_overview", return_value=OVERVIEW),
-        patch("src.routers.analytics.scan_results_repo.list_recent", list_recent),
+        patch("src.routers.analytics.scan_results_repo.latest_with_checks", baseline),
         patch("src.routers.analytics._persist_scan", persist),
     ):
         resp = TestClient(app).post("/orgs/acme/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
 
     assert resp.status_code == 200
-    list_recent.assert_called_off_the_loop()
+    baseline.assert_called_off_the_loop()
     persist.assert_called_off_the_loop()
 
 
@@ -187,7 +187,6 @@ def test_api_token_scan_persists_off_the_event_loop(db):
     created = TestClient(mgmt).post("/orgs/acme/api-tokens", json={"name": "ci"})
     assert created.status_code == 201
     token = created.json()["token"]
-    list_recent = _Recorder(scan_results_repo.list_recent)
     latest = _Recorder(scan_results_repo.latest_with_checks)
     app = FastAPI()
     app.include_router(tokens_router)
@@ -196,11 +195,9 @@ def test_api_token_scan_persists_off_the_event_loop(db):
     with (
         patch("src.routers.api_tokens.resolve_org_token", return_value="ghs_x"),
         patch("src.routers.analytics.get_overview", return_value=OVERVIEW),
-        patch("src.routers.api_tokens.scan_results_repo.list_recent", list_recent),
         patch("src.routers.api_tokens.scan_results_repo.latest_with_checks", latest),
     ):
         resp = TestClient(app).post("/api/v1/orgs/acme/scan", headers={"Authorization": f"Bearer {token}"})
 
     assert resp.status_code == 200, resp.text
-    list_recent.assert_called_off_the_loop()
     latest.assert_called_off_the_loop()

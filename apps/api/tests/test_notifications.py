@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import socket
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -16,7 +17,8 @@ from src.core.auth import UserOut, require_auth
 from src.core.config import settings
 from src.core.db import AuditLog, NotificationDestination, User, get_db
 from src.repositories import notification_repo, org_membership_repo, org_repo
-from src.routers.analytics import _notify_score_drop_best_effort
+from src.repositories import scan_results_repo
+from src.routers.analytics import _notify_score_drop_best_effort, persist_scan_and_alert
 from src.routers.notifications import router as notif_router
 from src.services import notifications
 
@@ -311,12 +313,103 @@ def test_no_notification_when_score_did_not_drop(db, acme):
     send.assert_not_called()
 
 
+def test_score_drop_respects_cooldown_and_releases_failed_claims(db, acme):
+    org = acme["org"]
+    dest = _dest(db, org)
+    with patch("src.services.notifications.send", return_value=(True, "HTTP 200")) as send:
+        notifications.notify_score_drop(db, org.tenant_id, "acme", previous=90, current=70)
+        notifications.notify_score_drop(db, org.tenant_id, "acme", previous=90, current=60)  # inside cooldown
+    assert send.call_count == 1
+
+    dest.last_notified_at = datetime.now(timezone.utc) - notifications.ALERT_COOLDOWN - timedelta(minutes=1)
+    db.commit()
+    with patch("src.services.notifications.send", return_value=(False, "request failed")) as send:
+        notifications.notify_score_drop(db, org.tenant_id, "acme", previous=90, current=70)
+    assert send.call_count == 1
+    db.refresh(dest)
+    assert dest.last_notified_at is None  # failed delivery doesn't burn the cooldown
+
+
 def test_best_effort_wrapper_swallows_errors(db, acme):
-    ctx = MagicMock()
-    ctx.org = acme["org"]
     with patch("src.routers.analytics.notifications.notify_score_drop", side_effect=RuntimeError("boom")):
-        _notify_score_drop_best_effort(db, ctx, 90, 50)  # must not raise
+        _notify_score_drop_best_effort(db, acme["org"], 90, 50)  # must not raise
 
 
 def test_settings_key_is_available_for_encryption():
     assert settings.job_secret_key.get_secret_value()
+
+
+# --- persist_scan_and_alert (shared by the session and API-token scan paths) ---
+
+def _chk(check_id, status="pass", **extra):
+    return {"id": check_id, "title": check_id, "status": status, "value": {}, **extra}
+
+
+def _result(score, checks, owner="acme"):
+    return {"owner": owner, "score": score, "total_checks": len(checks), "failed_checks": 0, "checks": checks}
+
+
+def _seed(db, org, score, checks, owner="acme"):
+    scan_results_repo.insert(
+        db, owner=owner, score=score, total_checks=len(checks), failed_checks=0, checks=checks, tenant_id=org.tenant_id
+    )
+
+
+def _run_persist(db, org, result):
+    with patch("src.services.notifications.send", return_value=(True, "HTTP 200")) as send:
+        persist_scan_and_alert(db, org, result, org.tenant_id)
+    return send
+
+
+def test_baseline_matches_owner_case_insensitively(db, acme):
+    org = acme["org"]
+    _dest(db, org)
+    checks = [_chk("a"), _chk("b")]
+    _seed(db, org, 90, checks, owner="ACME")  # stored by a scan typed in another casing
+    assert _run_persist(db, org, _result(70, checks)).call_count == 1
+
+
+def test_no_alert_when_either_scan_has_errored_checks(db, acme):
+    org = acme["org"]
+    _dest(db, org)
+    _seed(db, org, 90, [_chk("a"), _chk("b")])
+    assert _run_persist(db, org, _result(50, [_chk("a"), _chk("b", "error")])).call_count == 0
+    # an errored *previous* scan is not a trustworthy baseline either
+    assert _run_persist(db, org, _result(10, [_chk("a", "fail"), _chk("b", "fail")])).call_count == 0
+
+
+def test_no_alert_when_the_scored_check_set_changed(db, acme):
+    org = acme["org"]
+    _dest(db, org)
+    _seed(db, org, 90, [_chk("a"), _chk("b")])
+    now = [_chk("a"), _chk("b"), _chk("hygiene", "fail")]  # score_hygiene_checks toggled on
+    assert _run_persist(db, org, _result(60, now)).call_count == 0
+    # an unscored (informational) extra check doesn't change the basis
+    _seed(db, org, 90, [_chk("a"), _chk("b")])
+    now = [_chk("a"), _chk("b"), _chk("hygiene", "fail", scored=False)]
+    assert _run_persist(db, org, _result(60, now)).call_count == 1
+
+
+def test_unstamped_informational_checks_fall_back_to_unscored(db, acme):
+    org = acme["org"]
+    _dest(db, org)
+    # legacy rows carry no ``scored`` stamp: informational ones are unscored, the rest scored
+    _seed(db, org, 90, [_chk("a"), _chk("b")])
+    now = [_chk("a"), _chk("b"), _chk("hygiene", "fail", informational=True)]
+    assert _run_persist(db, org, _result(60, now)).call_count == 1
+    # an unstamped non-informational extra check is scored, so the basis changed
+    _seed(db, org, 90, [_chk("a"), _chk("b")])
+    now = [_chk("a"), _chk("b"), _chk("extra", "fail")]
+    assert _run_persist(db, org, _result(60, now)).call_count == 0
+
+
+def test_explicit_scored_stamp_wins_over_informational(db, acme):
+    org = acme["org"]
+    _dest(db, org)
+    # hygiene scoring on: an informational check stamped scored=True is part of the basis
+    _seed(db, org, 90, [_chk("a"), _chk("h", informational=True, scored=True)])
+    now = [_chk("a"), _chk("h", "fail", informational=True, scored=True)]
+    assert _run_persist(db, org, _result(60, now)).call_count == 1
+    _seed(db, org, 90, [_chk("a"), _chk("h", informational=True, scored=True)])
+    now = [_chk("a"), _chk("h", "fail", informational=True, scored=False)]
+    assert _run_persist(db, org, _result(60, now)).call_count == 0

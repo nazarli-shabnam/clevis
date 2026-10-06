@@ -474,6 +474,8 @@ class NotificationDestination(Base):
     # `score_drop` fires when a scan's score falls by at least this many points.
     min_score_drop: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("10"))
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    # Last time an alert claimed this destination; drives the cooldown (see notifications.notify_score_drop).
+    last_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

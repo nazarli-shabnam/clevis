@@ -16,7 +16,7 @@ import logging
 import socket
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -36,6 +36,8 @@ _TIMEOUT_SECONDS = 5
 # Destinations are messaged in parallel so one slow endpoint can't stall a scan request for
 # (destinations x timeout).
 _MAX_PARALLEL_SENDS = 5
+# A destination is alerted at most once per window, so concurrent scans or a flapping score can't spam it.
+ALERT_COOLDOWN = timedelta(hours=1)
 
 
 class UnsafeDestinationURL(ValueError):
@@ -160,11 +162,19 @@ def notify_score_drop(
         for d in notification_repo.list_for_tenant(db, tenant_id)
         if d.enabled and EVENT_SCORE_DROP in d.events and drop >= d.min_score_drop
     ]
+    # Claim each destination atomically before sending: this is what makes concurrent scans alert once.
+    targets = [d for d in targets if notification_repo.claim_for_alert(db, d.id, ALERT_COOLDOWN)]
     if not targets:
         return
+    # The claim commits, which expires the rows; reload here so the sender threads don't lazy-load
+    # through the shared Session.
+    for d in targets:
+        db.refresh(d)
     with ThreadPoolExecutor(max_workers=_MAX_PARALLEL_SENDS) as pool:
         results = list(pool.map(lambda d: send(d, EVENT_SCORE_DROP, text, data), targets))
     for dest, (ok, detail) in zip(targets, results):
+        if not ok:
+            notification_repo.release_alert_claim(db, dest.id)
         audit_repo.write(
             db,
             actor=actor,

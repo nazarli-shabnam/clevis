@@ -21,7 +21,7 @@ from src.core.rate_limit import check_account_rate_limit
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import api_token_repo, audit_repo, org_repo, scan_results_repo
 from src.repositories.api_token_repo import ResolvedToken
-from src.routers.analytics import _notify_score_drop_best_effort, _persist_scan, _run_overview
+from src.routers.analytics import _run_overview, persist_scan_and_alert
 from src.schemas.api_token import (
     ApiTokenCreate,
     ApiTokenCreated,
@@ -144,13 +144,6 @@ def latest_score(org_login: str, token: ResolvedToken = Depends(require_scope("r
     return _score_out(token.org_login, scan)
 
 
-class _Ctx:
-    """Just enough of OrgContext for the shared score-drop notifier."""
-
-    def __init__(self, org):
-        self.org = org
-
-
 @router.post("/api/v1/orgs/{org_login}/scan", response_model=ScoreOut)
 async def run_scan(org_login: str, token: ResolvedToken = Depends(require_scope("read")), db: Session = Depends(get_db)):
     _own_org(org_login, token)
@@ -169,10 +162,11 @@ async def run_scan(org_login: str, token: ResolvedToken = Depends(require_scope(
     # One thread for the whole DB sequence: a Session is not safe to share between threads at once,
     # and these steps depend on each other anyway.
     def _record_and_notify() -> dict:
-        previous = scan_results_repo.list_recent(db, token.org_login, limit=1, tenant_id=token.tenant_id)
-        _persist_scan(db, result, tenant_id=token.tenant_id)
-        # The scan is already stored; a failing audit write must not 500 it (a CI retry would just
-        # scan twice) or skip the alert below.
+        previous = persist_scan_and_alert(
+            db, org_repo.get_by_id(db, token.org_id), result, token.tenant_id, actor=actor
+        )
+        # The scan is already stored (and any alert sent); a failing audit write must not 500 it, or a CI
+        # retry would just scan twice.
         try:
             audit_repo.write(
                 db,
@@ -182,15 +176,13 @@ async def run_scan(org_login: str, token: ResolvedToken = Depends(require_scope(
                 payload={
                     "token_id": token.token_id,
                     "score": result["score"],
-                    "previous_score": previous[0]["score"] if previous else None,
+                    "previous_score": previous["score"] if previous else None,
                 },
                 tenant_id=token.tenant_id,
             )
         except Exception:
             db.rollback()
             logger.exception("could not audit the api-token scan for %s", token.org_login)
-        if previous:
-            _notify_score_drop_best_effort(db, _Ctx(org), previous[0]["score"], result["score"], actor=actor)
         return scan_results_repo.latest_with_checks(db, token.org_login, token.tenant_id)
 
     scan = await anyio.to_thread.run_sync(_record_and_notify)
