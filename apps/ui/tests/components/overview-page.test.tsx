@@ -146,6 +146,29 @@ describe("OverviewPage cockpit", () => {
     expect(cockpitMock).toHaveBeenCalledTimes(1);
   });
 
+  it("shows real values, not Configure, for an org with no saved PAT when the cockpit still loads (GitHub App / member)", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockRejectedValue(new Error("No saved token for this org"));
+    cockpitMock.mockResolvedValue({ ...EMPTY_COCKPIT, repo_count: 12, open_pr_count: 5, latest_score: 87, member_count: 9 });
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText("12")).toBeInTheDocument());
+    expect(screen.getByText("87")).toBeInTheDocument();
+    expect(screen.queryAllByText("Configure →")).toHaveLength(0);
+    expect(cockpitMock).toHaveBeenCalledWith("acme", undefined);
+  });
+
+  it("still asks to configure when there is no PAT and the cockpit fails too", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockRejectedValue(new Error("No saved token for this org"));
+    cockpitMock.mockRejectedValue(new Error("No GitHub token available for this organization"));
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getAllByText("Configure →")).toHaveLength(4));
+  });
+
   it("labels commit activity as estimated when the cockpit source is an aggregate", async () => {
     localStorage.setItem("default_org", "acme");
     tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
