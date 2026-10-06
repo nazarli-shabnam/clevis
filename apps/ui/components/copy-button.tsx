@@ -25,8 +25,14 @@ export function CopyButton({ value, ariaLabel }: { value: string; ariaLabel: str
   }
 
   return (
-    <Button size="sm" variant="outline" onClick={copy} aria-label={ariaLabel}>
-      {state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : "Copy"}
-    </Button>
+    <>
+      <Button size="sm" variant="outline" onClick={copy} aria-label={ariaLabel}>
+        {state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : "Copy"}
+      </Button>
+      {/* The button's own text changing isn't announced; this is. */}
+      <span role="status" className="sr-only">
+        {state === "copied" ? "Copied to clipboard" : state === "failed" ? "Could not copy to the clipboard" : ""}
+      </span>
+    </>
   )
 }

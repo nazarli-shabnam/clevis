@@ -21,6 +21,8 @@ describe("CopyButton", () => {
 
     expect(writeText).toHaveBeenCalledWith("https://x/invite/abc");
     expect(screen.getByText("Copied")).toBeInTheDocument();
+    // announced to assistive tech, not just a visual text swap
+    expect(screen.getByRole("status")).toHaveTextContent("Copied to clipboard");
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2100);
@@ -36,6 +38,7 @@ describe("CopyButton", () => {
       fireEvent.click(screen.getByRole("button", { name: "Copy link" }));
     });
 
-    expect(screen.getByText("Copy failed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy link" })).toHaveTextContent("Copy failed");
+    expect(screen.getByRole("status")).toHaveTextContent("Could not copy to the clipboard");
   });
 });

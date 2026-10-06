@@ -59,22 +59,34 @@ describe("OrgMembersPage invitations", () => {
 
   it("shows when each invitation expires, with a warning for soon and for already expired", async () => {
     listMock.mockResolvedValue([
-      invitation(1, "week@example.com", "pending", inFuture(6 * DAY + HOUR)),
-      invitation(2, "soon@example.com", "pending", inFuture(5 * HOUR + 600_000)),
+      // fixtures sit in the middle of their bucket so a slow run can't tip them over a boundary
+      invitation(1, "week@example.com", "pending", inFuture(6 * DAY + 12 * HOUR)),
+      invitation(2, "soon@example.com", "pending", inFuture(5 * HOUR + 30 * 60_000)),
       invitation(3, "late@example.com", "expired", inFuture(-3 * DAY)),
       invitation(4, "done@example.com", "accepted", inFuture(-DAY)),
+      invitation(5, "stale@example.com", "pending", inFuture(-2 * HOUR)),
     ]);
     renderPage();
 
     const rowOf = async (email: string) => (await screen.findByText(email)).closest("tr")!;
     expect(await screen.findByRole("columnheader", { name: "Expires" })).toBeInTheDocument();
 
-    expect(within(await rowOf("week@example.com")).getByText("in 6 days")).toBeInTheDocument();
-    const soon = within(await rowOf("soon@example.com")).getByText("in 5 hours");
-    expect(soon).toHaveClass("text-yellow-400");
+    expect(within(await rowOf("week@example.com")).getByText("in 7 days")).toBeInTheDocument();
+    const soonRow = await rowOf("soon@example.com");
+    const soon = within(soonRow).getByText(/in 6 hours/);
+    expect(soon.closest("td")).toHaveClass("text-yellow-400");
+    expect(within(soonRow).getByText("(expiring soon)")).toBeInTheDocument(); // not colour alone
     const late = within(await rowOf("late@example.com")).getByText(/^expired 3 days ago$/);
     expect(late).toHaveClass("text-destructive");
     expect(within(await rowOf("done@example.com")).getByText("—")).toBeInTheDocument();
+
+    // A pending invitation whose time has passed must not read "pending" next to "expired",
+    // nor offer to revoke it.
+    const stale = await rowOf("stale@example.com");
+    expect(within(stale).getByText("expired")).toBeInTheDocument();
+    expect(within(stale).getByText(/^expired 2 hours ago$/)).toBeInTheDocument();
+    expect(within(stale).queryByRole("button", { name: /revoke/i })).toBeNull();
+    expect(within(await rowOf("week@example.com")).getByRole("button", { name: /revoke/i })).toBeInTheDocument();
   });
 
   it("lets the admin copy the one-time invite link after creating an invitation", async () => {
@@ -97,5 +109,16 @@ describe("OrgMembersPage invitations", () => {
 
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://clevis.example/invite/tok_abc"));
     expect(await screen.findByText("Copied")).toBeInTheDocument();
+
+    // a second invitation brings a new link and a fresh button: it must not still say "Copied"
+    createMock.mockResolvedValue({
+      invitation: invitation(10, "next@example.com", "pending", inFuture(7 * DAY)),
+      invite_link: "https://clevis.example/invite/tok_def",
+    });
+    fireEvent.change(screen.getByPlaceholderText("teammate@example.com"), { target: { value: "next@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: /send invite/i }));
+
+    expect(await screen.findByText("https://clevis.example/invite/tok_def")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy invitation link" })).toHaveTextContent(/^Copy$/);
   });
 });
