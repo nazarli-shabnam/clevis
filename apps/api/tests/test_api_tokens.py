@@ -77,6 +77,11 @@ def _scan(db, org, score=80, checks=CHECKS):
     )
 
 
+def _age_scans(db, minutes):
+    db.execute(text("UPDATE scan_results SET created_at = now() - make_interval(mins => :m)"), {"m": minutes})
+    db.expire_all()
+
+
 def _bearer(token):
     return {"Authorization": f"Bearer {token}"}
 
@@ -176,6 +181,65 @@ def test_scan_runs_overview_persists_and_returns_it(db, acme):
 
     assert resp.status_code == 200 and resp.json()["score"] == 70
     assert scan_results_repo.latest_with_checks(db, "acme", acme["org"].tenant_id)["score"] == 70
+
+
+def test_a_scan_that_just_finished_is_returned_instead_of_scanning_again(db, acme):
+    token = _new_token(db, acme)
+    _scan(db, acme["org"], score=88)
+    with (
+        patch("src.routers.api_tokens.resolve_org_token", return_value="ghs_x") as resolve,
+        patch("src.routers.analytics.get_overview") as overview,
+    ):
+        resp = _client(db).post("/api/v1/orgs/acme/scan", headers=_bearer(token))
+
+    assert resp.status_code == 200 and resp.json()["score"] == 88
+    overview.assert_not_called()
+    resolve.assert_not_called()  # no GitHub token was even minted
+
+
+def test_a_scan_older_than_the_reuse_window_is_rerun(db, acme):
+    token = _new_token(db, acme)
+    _scan(db, acme["org"], score=88)
+    _age_scans(db, minutes=2)
+    overview = {"owner": "acme", "score": 70, "total_checks": 2, "failed_checks": 1, "repo_count": 3, "checks": CHECKS}
+    with (
+        patch("src.routers.api_tokens.resolve_org_token", return_value="ghs_x"),
+        patch("src.routers.analytics.get_overview", return_value=overview) as get_overview,
+    ):
+        resp = _client(db).post("/api/v1/orgs/acme/scan", headers=_bearer(token))
+
+    assert resp.status_code == 200 and resp.json()["score"] == 70
+    get_overview.assert_called_once()
+
+
+def test_concurrent_scans_for_one_org_run_once(db, acme):
+    import asyncio
+    import time
+
+    from src.routers import api_tokens
+
+    token = _new_token(db, acme)
+    resolved = api_token_repo.resolve(db, token)
+    overview = {"owner": "acme", "score": 70, "total_checks": 2, "failed_checks": 1, "repo_count": 3, "checks": CHECKS}
+
+    def slow_overview(*_args, **_kwargs):
+        time.sleep(0.2)  # long enough that the second caller arrives while the first is scanning
+        return overview
+
+    async def both():
+        return await asyncio.gather(
+            api_tokens.run_scan("acme", resolved, db), api_tokens.run_scan("acme", resolved, db)
+        )
+
+    api_tokens._scan_locks.clear()
+    with (
+        patch("src.routers.api_tokens.resolve_org_token", return_value="ghs_x"),
+        patch("src.routers.analytics.get_overview", side_effect=slow_overview) as get_overview,
+    ):
+        first, second = asyncio.run(both())
+
+    get_overview.assert_called_once()
+    assert first.score == second.score == 70
 
 
 def test_scan_without_github_credentials_is_a_400(db, acme):
@@ -433,6 +497,7 @@ def test_scan_is_audited_under_the_token_and_so_are_its_alerts(db, acme):
     token = _new_token(db, acme)
     token_id = db.query(ApiToken).one().id
     _scan(db, acme["org"], score=90)
+    _age_scans(db, minutes=5)  # old enough that the scan endpoint runs a new one instead of reusing it
     overview = {"owner": "acme", "score": 60, "total_checks": 2, "failed_checks": 1, "repo_count": 3, "checks": CHECKS}
     with (
         patch("src.routers.api_tokens.resolve_org_token", return_value="ghs_x"),
