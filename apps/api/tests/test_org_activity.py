@@ -147,6 +147,19 @@ def test_since_and_until_bound_the_time_range(db, world):
     assert ids(since=(now - timedelta(days=6)).isoformat(), until=(now - timedelta(days=2)).isoformat()) == {mid}
 
 
+def test_a_naive_timestamp_is_read_as_utc_and_an_inverted_range_is_rejected(db, world):
+    t = world["acme"].tenant_id
+    when = datetime(2026, 1, 10, 12, 0, tzinfo=timezone.utc)
+    row = _audit(db, t, "x.at", when=when)
+    client = _client(db, world["users"]["acme_admin"])
+
+    ids = lambda **p: {r["id"] for r in client.get("/orgs/acme/audit", params=p).json()}  # noqa: E731
+    assert ids(since="2026-01-10T12:00:00") == {row}
+    assert ids(until="2026-01-10T12:00:00") == set()
+    bad = client.get("/orgs/acme/audit", params={"since": "2026-02-01T00:00:00Z", "until": "2026-01-01T00:00:00Z"})
+    assert bad.status_code == 422
+
+
 @pytest.mark.parametrize("params", [{"limit": 0}, {"limit": 501}, {"before_id": 0}])
 def test_audit_parameters_are_bounded(db, world, params):
     assert _client(db, world["users"]["acme_admin"]).get("/orgs/acme/audit", params=params).status_code == 422

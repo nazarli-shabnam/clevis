@@ -1,7 +1,7 @@
 import json
 
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from src.core._sanitize import sanitize_error
 from src.core.db import Job
@@ -33,9 +33,9 @@ def list_jobs(db: Session, limit: int = 50) -> list[dict]:
 
 
 def list_for_tenant(db: Session, tenant_id: int, *, limit: int = 50, before_id: int | None = None) -> list[Job]:
-    """A tenant's newest jobs first. Selects whole rows, but callers expose only the JobOut fields:
-    the payload carries an encrypted GitHub token and must never leave the API."""
-    q = db.query(Job).filter(Job.tenant_id == tenant_id)
+    """A tenant's newest jobs first. The payload column (an encrypted GitHub token) is deferred so
+    it is never read for a listing; callers expose only the JobOut fields."""
+    q = db.query(Job).options(defer(Job.payload)).filter(Job.tenant_id == tenant_id)
     if before_id is not None:
         q = q.filter(Job.id < before_id)
     return q.order_by(Job.id.desc()).limit(limit).all()

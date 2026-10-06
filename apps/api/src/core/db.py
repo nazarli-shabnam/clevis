@@ -75,6 +75,10 @@ class GitHubInstallation(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
+    __table_args__ = (
+        # The org activity log reads "this tenant's newest rows" with a before_id cursor.
+        Index("ix_audit_logs_tenant_id_id", "tenant_id", "id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     actor: Mapped[str] = mapped_column(String, nullable=False)

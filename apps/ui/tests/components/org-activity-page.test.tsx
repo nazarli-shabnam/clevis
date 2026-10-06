@@ -23,7 +23,8 @@ vi.mock("@/lib/api/client", () => ({
   },
 }));
 
-import OrgActivityPage, { toAuditFilters } from "@/app/settings/org/[login]/activity/page";
+import OrgActivityPage from "@/app/settings/org/[login]/activity/page";
+import { toAuditFilters } from "@/lib/audit-filters";
 
 function row(id: number, action = "token.saved") {
   return { id, actor: "a@e.com", action, target: "acme", payload: "{}", created_at: "2026-01-01T00:00:00Z" };

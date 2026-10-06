@@ -13,7 +13,8 @@ import { api } from "@/lib/api/client"
 import { toCsv } from "@/lib/csv"
 import { downloadTextFile } from "@/lib/download"
 import { orgRoleFor } from "@/lib/members-href"
-import type { AuditLogOut, JobOut, MyOrgMembership, OrgAuditFilters } from "@/lib/api/types"
+import { EMPTY_FORM, toAuditFilters, type FilterForm } from "@/lib/audit-filters"
+import type { AuditLogOut, JobOut, MyOrgMembership } from "@/lib/api/types"
 
 const PAGE_SIZE = 100
 const JOBS_PAGE_SIZE = 50
@@ -23,32 +24,6 @@ const JOB_STATUS_COLOR: Record<JobOut["status"], string> = {
   processing: "text-yellow-400",
   done: "text-accent",
   failed: "text-destructive",
-}
-
-interface FilterForm {
-  actionPrefix: string
-  actor: string
-  target: string
-  from: string // yyyy-mm-dd, UTC
-  to: string // yyyy-mm-dd, UTC, inclusive
-}
-
-const EMPTY_FORM: FilterForm = { actionPrefix: "", actor: "", target: "", from: "", to: "" }
-
-/** The form's values as API filters. Dates are whole UTC days: `to` is inclusive, so the API's
- * exclusive `until` is the start of the following day. */
-export function toAuditFilters(form: FilterForm): OrgAuditFilters {
-  const filters: OrgAuditFilters = {}
-  if (form.actionPrefix.trim()) filters.action_prefix = form.actionPrefix.trim()
-  if (form.actor.trim()) filters.actor = form.actor.trim()
-  if (form.target.trim()) filters.target = form.target.trim()
-  if (form.from) filters.since = `${form.from}T00:00:00Z`
-  if (form.to) {
-    const next = new Date(`${form.to}T00:00:00Z`)
-    next.setUTCDate(next.getUTCDate() + 1)
-    filters.until = next.toISOString()
-  }
-  return filters
 }
 
 function AuditCard({ orgLogin }: { orgLogin: string }) {
@@ -185,14 +160,16 @@ function JobsCard({ orgLogin }: { orgLogin: string }) {
     queryFn: ({ pageParam }) => api.jobs.listForOrg(orgLogin, { before_id: pageParam, limit: JOBS_PAGE_SIZE }),
     initialPageParam: undefined as number | undefined,
     getNextPageParam: (last) => (last.length === JOBS_PAGE_SIZE ? last[last.length - 1].id : undefined),
-    refetchInterval: 15_000,
   })
   const jobs: JobOut[] = query.data?.pages.flat() ?? []
 
   return (
     <div className="card mt-4">
-      <div className="px-4 py-3 border-b border-border">
+      <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
         <span className="section-title">Background jobs</span>
+        <Button size="sm" variant="outline" onClick={() => query.refetch()} disabled={query.isFetching}>
+          Refresh
+        </Button>
       </div>
       {query.isLoading ? (
         <div className="px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">

@@ -11,9 +11,9 @@ read the same data, scoped to the org's tenant, behind ``require_org_role("admin
   never the payload, which holds an encrypted GitHub token.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from src.core.db import get_db
@@ -25,6 +25,13 @@ from src.schemas.job import JobOut
 router = APIRouter()
 
 MAX_LIMIT = 500
+
+
+def _utc(value: datetime | None) -> datetime | None:
+    """A timestamp without an offset is read as UTC, not in the DB session's timezone."""
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 @router.get("/orgs/{org_login}/audit", response_model=list[AuditLogOut])
@@ -40,6 +47,9 @@ def org_audit_log(
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     db: Session = Depends(get_db),
 ):
+    since, until = _utc(since), _utc(until)
+    if since is not None and until is not None and since >= until:
+        raise HTTPException(status_code=422, detail="'since' must be earlier than 'until'")
     return audit_repo.list_for_tenant(
         db,
         ctx.org.tenant_id,

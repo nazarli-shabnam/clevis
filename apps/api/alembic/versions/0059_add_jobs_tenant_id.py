@@ -83,10 +83,13 @@ def upgrade() -> None:
     op.add_column("jobs", sa.Column("tenant_id", sa.Integer(), nullable=True))
     op.create_foreign_key("fk_jobs_tenant_id_tenants", "jobs", "tenants", ["tenant_id"], ["id"])
     op.create_index("ix_jobs_tenant_id_id", "jobs", ["tenant_id", "id"], unique=False)
+    # The org activity log pages audit_logs by (tenant_id, id); it had no tenant index.
+    op.create_index("ix_audit_logs_tenant_id_id", "audit_logs", ["tenant_id", "id"], unique=False)
     _backfill()
 
 
 def downgrade() -> None:
+    op.drop_index("ix_audit_logs_tenant_id_id", table_name="audit_logs")
     op.drop_index("ix_jobs_tenant_id_id", table_name="jobs")
     op.drop_constraint("fk_jobs_tenant_id_tenants", "jobs", type_="foreignkey")
     op.drop_column("jobs", "tenant_id")
