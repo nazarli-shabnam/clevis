@@ -153,7 +153,7 @@ def test_personal_overview_runs_checks_for_user_account(http):
         )
     assert resp.status_code == 200
     mock_account_type.assert_called_once()
-    mock_overview.assert_called_once_with(owner="octocat", token="ghp_test", account_type="User")
+    mock_overview.assert_called_once_with(owner="octocat", token="ghp_test", account_type="User", score_hygiene=None)
 
 
 def test_personal_overview_account_type_http_error_returns_400(http):
@@ -332,3 +332,69 @@ def test_score_drop_ignores_another_tenants_scan_of_the_same_owner(http, db, moc
         http.post("/orgs/acme/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
 
     notify.assert_not_called()
+
+
+# ── per-org hygiene scoring (#561) ────────────────────────────────────────────
+
+def _org_with_role(db, user, role):
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=user.id, role=role)
+    return org
+
+
+def test_hygiene_scoring_defaults_to_following_the_instance(http, db, mock_user):
+    _org_with_role(db, mock_user, "admin")
+    with patch("src.services.analytics_service.get_config", return_value="false"):
+        body = http.get("/orgs/acme/hygiene-scoring").json()
+    assert body == {"enabled": None, "effective": False, "instance_default": False}
+
+
+def test_admin_sets_and_clears_the_org_override_and_it_is_audited(http, db, mock_user):
+    from src.core.db import AuditLog
+
+    org = _org_with_role(db, mock_user, "admin")
+    with patch("src.services.analytics_service.get_config", return_value="false"):
+        on = http.put("/orgs/acme/hygiene-scoring", json={"enabled": True}).json()
+        assert on == {"enabled": True, "effective": True, "instance_default": False}
+        db.refresh(org)
+        assert org.score_hygiene_checks is True
+        cleared = http.put("/orgs/acme/hygiene-scoring", json={"enabled": None}).json()
+        assert cleared == {"enabled": None, "effective": False, "instance_default": False}
+    assert db.query(AuditLog).filter(AuditLog.action == "hygiene_scoring.updated").count() == 2
+
+    # Re-saving the same value is a no-op: no new audit row.
+    with patch("src.services.analytics_service.get_config", return_value="false"):
+        http.put("/orgs/acme/hygiene-scoring", json={"enabled": None})
+    assert db.query(AuditLog).filter(AuditLog.action == "hygiene_scoring.updated").count() == 2
+
+
+def test_member_cannot_read_or_change_hygiene_scoring(http, db, mock_user):
+    _org_with_role(db, mock_user, "member")
+    assert http.get("/orgs/acme/hygiene-scoring").status_code == 403
+    assert http.put("/orgs/acme/hygiene-scoring", json={"enabled": True}).status_code == 403
+
+
+def test_org_scan_uses_the_orgs_hygiene_setting_not_the_instances(http, db, mock_user):
+    org = _org_with_role(db, mock_user, "admin")
+    org.score_hygiene_checks = True
+    db.flush()
+    with (
+        patch("src.services.analytics_service.get_config", return_value="false"),
+        patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW) as overview,
+    ):
+        http.post("/orgs/acme/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
+    assert overview.call_args.kwargs["score_hygiene"] is True
+
+
+def test_personal_scan_of_a_members_org_uses_the_orgs_setting_and_other_owners_use_the_instance(http, db, mock_user):
+    org = _org_with_role(db, mock_user, "admin")
+    org.score_hygiene_checks = True
+    db.flush()
+    with (
+        patch("src.routers.analytics.get_account_type", return_value="Organization"),
+        patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW) as overview,
+    ):
+        http.post("/me/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
+        assert overview.call_args.kwargs["score_hygiene"] is True
+        http.post("/me/analytics/overview", json={"owner": "octocat", "token": "ghp_test"})
+        assert overview.call_args.kwargs["score_hygiene"] is None

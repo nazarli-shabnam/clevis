@@ -7,7 +7,7 @@ concurrent scans (or a flapping score) alert once per cooldown window. ``clevis_
 table-level UPDATE on ``notification_destinations`` (0048), so no new grant is needed.
 
 Revision ID: 0058
-Revises: 0056
+Revises: 0057
 Create Date: 2026-10-05
 """
 
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0058"
-down_revision = "0056"
+down_revision = "0057"
 branch_labels = None
 depends_on = None
 

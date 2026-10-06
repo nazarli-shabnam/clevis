@@ -14,9 +14,10 @@ import ipaddress
 import json
 import logging
 import socket
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from sqlalchemy.orm import Session
@@ -43,25 +44,55 @@ class UnsafeDestinationURL(ValueError):
     pass
 
 
-def validate_destination_url(url: str) -> None:
-    """Raise UnsafeDestinationURL unless `url` is an https URL resolving only to public IPs.
+def _resolve_public_ip(url: str) -> str:
+    """Return a public IP the https `url` resolves to, or raise UnsafeDestinationURL.
 
-    ponytail: validate-then-connect leaves a DNS-rebinding window; pin the resolved IP (custom
-    transport) if destinations ever need to be accepted from fully untrusted users.
-    """
-    parts = urlsplit(url)
+    Every resolved address must be public. Malformed input (bad port, over-long IDN label, broken
+    IPv6 literal) is an UnsafeDestinationURL too, so callers can answer 422 instead of 500."""
+    try:
+        parts = urlsplit(url)
+        port = parts.port or 443
+    except ValueError as exc:
+        raise UnsafeDestinationURL("destination URL is not valid") from exc
     if parts.scheme != "https" or not parts.hostname:
         raise UnsafeDestinationURL("destination URL must be an https URL")
     if parts.username or parts.password:
         raise UnsafeDestinationURL("destination URL must not contain credentials")
     try:
-        infos = socket.getaddrinfo(parts.hostname, parts.port or 443, proto=socket.IPPROTO_TCP)
-    except socket.gaierror as exc:
+        infos = socket.getaddrinfo(parts.hostname, port, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, UnicodeError) as exc:
         raise UnsafeDestinationURL("destination host could not be resolved") from exc
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
         if not ip.is_global or ip.is_multicast:
             raise UnsafeDestinationURL("destination host must resolve to a public address")
+    # Pin to one address, so prefer IPv4: a host without IPv6 routing can't fall back to another record.
+    return next((i[4][0] for i in infos if i[0] == socket.AF_INET), infos[0][4][0])
+
+
+def validate_destination_url(url: str) -> None:
+    """Raise UnsafeDestinationURL unless `url` is an https URL resolving only to public IPs."""
+    _resolve_public_ip(url)
+
+
+def _post(url: str, ip: str, body: bytes, headers: dict) -> tuple[int, bool]:
+    """POST to the validated `ip` instead of re-resolving the hostname, closing the DNS-rebinding
+    window between validation and connect. TLS still verifies the certificate against the hostname
+    (SNI), and the Host header carries it. Returns (status code, is_success)."""
+    parts = urlsplit(url)
+    host = f"[{ip}]" if ":" in ip else ip
+    netloc = f"{host}:{parts.port}" if parts.port else host
+    pinned = urlunsplit(("https", netloc, parts.path, parts.query, ""))
+    # stream(): only the status is needed, so a hostile endpoint can't make us buffer a huge body.
+    with httpx.Client(timeout=_TIMEOUT_SECONDS, follow_redirects=False) as client:
+        with client.stream(
+            "POST",
+            pinned,
+            content=body,
+            headers={**headers, "Host": parts.netloc},
+            extensions={"sni_hostname": parts.hostname},
+        ) as resp:
+            return resp.status_code, resp.is_success
 
 
 def build_payload(kind: str, event: str, text: str, data: dict) -> dict:
@@ -85,8 +116,10 @@ def build_payload(kind: str, event: str, text: str, data: dict) -> dict:
     return {"event": event, "text": text, "data": data, "sent_at": datetime.now(timezone.utc).isoformat()}
 
 
-def sign(secret: str, body: bytes) -> str:
-    return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+def sign(secret: str, body: bytes, timestamp: str) -> str:
+    """HMAC-SHA256 over ``"<timestamp>.<body>"``; the timestamp travels in ``X-Clevis-Timestamp`` so a
+    receiver can reject stale deliveries (replay) as well as forged ones."""
+    return "sha256=" + hmac.new(secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()
 
 
 def send(dest: NotificationDestination, event: str, text: str, data: dict | None = None) -> tuple[bool, str]:
@@ -94,16 +127,14 @@ def send(dest: NotificationDestination, event: str, text: str, data: dict | None
     key = settings.job_secret_key.get_secret_value()
     try:
         url = decrypt_job_token(dest.encrypted_url, key)
-        validate_destination_url(url)
+        ip = _resolve_public_ip(url)
         body = json.dumps(build_payload(dest.kind, event, text, data or {})).encode()
         headers = {"Content-Type": "application/json", "X-Clevis-Event": event}
         if dest.kind == "generic" and dest.encrypted_secret:
-            headers["X-Clevis-Signature"] = sign(decrypt_job_token(dest.encrypted_secret, key), body)
-        # stream(): only the status is needed, so a hostile endpoint can't make us buffer a huge body.
-        with httpx.stream(
-            "POST", url, content=body, headers=headers, timeout=_TIMEOUT_SECONDS, follow_redirects=False
-        ) as resp:
-            status_code, success = resp.status_code, resp.is_success
+            timestamp = str(int(time.time()))
+            headers["X-Clevis-Timestamp"] = timestamp
+            headers["X-Clevis-Signature"] = sign(decrypt_job_token(dest.encrypted_secret, key), body, timestamp)
+        status_code, success = _post(url, ip, body, headers)
     except UnsafeDestinationURL as exc:
         return False, str(exc)
     except httpx.HTTPError:

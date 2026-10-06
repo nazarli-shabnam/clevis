@@ -29,10 +29,12 @@ def _public_dns():
     return patch("src.services.notifications.socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))])
 
 
-def _stream_cm(status_code: int):
-    """Stand-in for httpx.stream(...): a context manager yielding a response with that status."""
+def _client_cm(status_code: int):
+    """Stand-in for httpx.Client(...): .stream(...) yields a response with that status."""
+    client = MagicMock()
+    client.stream.return_value.__enter__.return_value = httpx.Response(status_code)
     cm = MagicMock()
-    cm.__enter__.return_value = httpx.Response(status_code)
+    cm.__enter__.return_value = client
     return cm
 
 
@@ -105,6 +107,55 @@ def test_validate_accepts_public_https_url():
         notifications.validate_destination_url(HOOK)
 
 
+@pytest.mark.parametrize("url", ["https://hooks.example.com:notaport/x", "https://hooks.example.com:99999/x", "https://[::1/x"])
+def test_validate_maps_malformed_urls_to_unsafe(url):
+    with pytest.raises(notifications.UnsafeDestinationURL):
+        notifications.validate_destination_url(url)
+
+
+def test_validate_maps_overlong_idn_label_to_unsafe():
+    with pytest.raises(notifications.UnsafeDestinationURL):
+        notifications.validate_destination_url("https://" + "a" * 70 + ".example.com/hook")  # real getaddrinfo: UnicodeError
+
+
+def test_create_returns_422_not_500_for_a_bad_port(db, acme):
+    resp = _create(_client(db, acme["admin"]), url="https://hooks.example.com:99999/x")
+    assert resp.status_code == 422
+
+
+def test_post_connects_to_the_pinned_ip_but_verifies_and_names_the_hostname():
+    client_cm = _client_cm(204)
+    with patch("src.services.notifications.httpx.Client", return_value=client_cm) as ctor:
+        status, ok = notifications._post("https://hooks.slack.com:8443/a?b=1", "8.8.8.8", b"{}", {"X-A": "1"})
+    assert (status, ok) == (204, True)
+    assert ctor.call_args.kwargs["follow_redirects"] is False
+    args, kwargs = client_cm.__enter__.return_value.stream.call_args
+    assert args == ("POST", "https://8.8.8.8:8443/a?b=1")
+    assert kwargs["headers"]["Host"] == "hooks.slack.com:8443"
+    assert kwargs["extensions"] == {"sni_hostname": "hooks.slack.com"}
+
+
+def test_pin_prefers_ipv4_over_an_earlier_ipv6_record():
+    infos = [(socket.AF_INET6, 1, 6, "", ("2001:4860::1", 443, 0, 0)), (socket.AF_INET, 1, 6, "", ("8.8.8.8", 443))]
+    with patch("src.services.notifications.socket.getaddrinfo", return_value=infos):
+        assert notifications._resolve_public_ip(HOOK) == "8.8.8.8"
+
+
+def test_post_brackets_ipv6_pins():
+    client_cm = _client_cm(200)
+    with patch("src.services.notifications.httpx.Client", return_value=client_cm):
+        notifications._post("https://hooks.example.com/x", "2001:4860::1", b"{}", {})
+    assert client_cm.__enter__.return_value.stream.call_args.args[1] == "https://[2001:4860::1]/x"
+
+
+def test_test_send_is_rate_limited_per_org(db, acme):
+    client = _client(db, acme["admin"])
+    dest_id = _create(client).json()["id"]
+    with _public_dns(), patch("src.services.notifications._post", return_value=(200, True)):
+        codes = [client.post(f"/orgs/acme/notification-destinations/{dest_id}/test").status_code for _ in range(6)]
+    assert codes == [200] * 5 + [429]
+
+
 # --- payloads / signing ---
 
 def test_payload_shapes_per_kind():
@@ -117,7 +168,9 @@ def test_payload_shapes_per_kind():
 
 def test_signature_is_hmac_sha256_hex_of_the_body():
     body = b'{"x":1}'
-    assert notifications.sign("s3cret", body) == "sha256=" + hmac.new(b"s3cret", body, hashlib.sha256).hexdigest()
+    expected = hmac.new(b"s3cret", b"1700000000." + body, hashlib.sha256).hexdigest()
+    assert notifications.sign("s3cret", body, "1700000000") == "sha256=" + expected
+    assert notifications.sign("s3cret", body, "1700000001") != "sha256=" + expected  # timestamp is covered
 
 
 # --- CRUD ---
@@ -175,14 +228,13 @@ def test_test_send_posts_signed_body_and_audits_without_the_url(db, acme):
     client = _client(db, acme["admin"])
     dest_id = _create(client, kind="generic", secret="topsecret").json()["id"]
 
-    with _public_dns(), patch("src.services.notifications.httpx.stream", return_value=_stream_cm(200)) as post:
+    with _public_dns(), patch("src.services.notifications._post", return_value=(200, True)) as post:
         resp = client.post(f"/orgs/acme/notification-destinations/{dest_id}/test")
 
-    assert resp.json() == {"ok": True, "detail": "HTTP 200"}
-    kwargs = post.call_args.kwargs
-    assert post.call_args.args[:2] == ("POST", HOOK)
-    assert kwargs["follow_redirects"] is False
-    assert kwargs["headers"]["X-Clevis-Signature"] == notifications.sign("topsecret", kwargs["content"])
+    assert resp.json() == {"ok": True, "detail": "Delivered"}
+    url, ip, body, headers = post.call_args.args
+    assert (url, ip) == (HOOK, "8.8.8.8")
+    assert headers["X-Clevis-Signature"] == notifications.sign("topsecret", body, headers["X-Clevis-Timestamp"])
     log = db.query(AuditLog).filter(AuditLog.action == "notification.test_sent").one()
     assert HOOK not in log.payload
 
@@ -192,18 +244,22 @@ def test_test_send_failure_reports_a_reason_without_leaking_the_url(db, acme):
     dest_id = _create(client).json()["id"]
 
     with _public_dns(), patch(
-        "src.services.notifications.httpx.stream", side_effect=httpx.ConnectError(f"cannot reach {HOOK}")
+        "src.services.notifications._post", side_effect=httpx.ConnectError(f"cannot reach {HOOK}")
     ):
         resp = client.post(f"/orgs/acme/notification-destinations/{dest_id}/test")
 
-    assert resp.json() == {"ok": False, "detail": "request failed"}
+    assert resp.json() == {"ok": False, "detail": "Delivery failed; see the audit log"}
+    assert "request failed" in db.query(AuditLog).filter(AuditLog.action == "notification.test_sent").one().payload
 
 
 def test_test_send_non_2xx_is_a_failure(db, acme):
     client = _client(db, acme["admin"])
     dest_id = _create(client).json()["id"]
-    with _public_dns(), patch("src.services.notifications.httpx.stream", return_value=_stream_cm(404)):
-        assert client.post(f"/orgs/acme/notification-destinations/{dest_id}/test").json() == {"ok": False, "detail": "HTTP 404"}
+    with _public_dns(), patch("src.services.notifications._post", return_value=(404, False)):
+        resp = client.post(f"/orgs/acme/notification-destinations/{dest_id}/test").json()
+    # The target's status code is not echoed back (status-code oracle); it is only audit-logged.
+    assert resp == {"ok": False, "detail": "Delivery failed; see the audit log"}
+    assert "HTTP 404" in db.query(AuditLog).filter(AuditLog.action == "notification.test_sent").one().payload
 
 
 def test_send_revalidates_the_url_at_delivery_time(db, acme):
@@ -211,7 +267,7 @@ def test_send_revalidates_the_url_at_delivery_time(db, acme):
     dest = db.get(NotificationDestination, dest_id)
     # DNS now points at an internal address: the stored destination must be refused, not called.
     with patch("src.services.notifications.socket.getaddrinfo", return_value=[(2, 1, 6, "", ("10.0.0.9", 443))]), patch(
-        "src.services.notifications.httpx.stream"
+        "src.services.notifications._post"
     ) as post:
         ok, detail = notifications.send(dest, "test", "hi")
     assert ok is False and "public address" in detail
@@ -332,3 +388,28 @@ def test_no_alert_when_the_scored_check_set_changed(db, acme):
     _seed(db, org, 90, [_chk("a"), _chk("b")])
     now = [_chk("a"), _chk("b"), _chk("hygiene", "fail", scored=False)]
     assert _run_persist(db, org, _result(60, now)).call_count == 1
+
+
+def test_unstamped_informational_checks_fall_back_to_unscored(db, acme):
+    org = acme["org"]
+    _dest(db, org)
+    # legacy rows carry no ``scored`` stamp: informational ones are unscored, the rest scored
+    _seed(db, org, 90, [_chk("a"), _chk("b")])
+    now = [_chk("a"), _chk("b"), _chk("hygiene", "fail", informational=True)]
+    assert _run_persist(db, org, _result(60, now)).call_count == 1
+    # an unstamped non-informational extra check is scored, so the basis changed
+    _seed(db, org, 90, [_chk("a"), _chk("b")])
+    now = [_chk("a"), _chk("b"), _chk("extra", "fail")]
+    assert _run_persist(db, org, _result(60, now)).call_count == 0
+
+
+def test_explicit_scored_stamp_wins_over_informational(db, acme):
+    org = acme["org"]
+    _dest(db, org)
+    # hygiene scoring on: an informational check stamped scored=True is part of the basis
+    _seed(db, org, 90, [_chk("a"), _chk("h", informational=True, scored=True)])
+    now = [_chk("a"), _chk("h", "fail", informational=True, scored=True)]
+    assert _run_persist(db, org, _result(60, now)).call_count == 1
+    _seed(db, org, 90, [_chk("a"), _chk("h", informational=True, scored=True)])
+    now = [_chk("a"), _chk("h", "fail", informational=True, scored=False)]
+    assert _run_persist(db, org, _result(60, now)).call_count == 0

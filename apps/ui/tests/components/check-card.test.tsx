@@ -54,6 +54,18 @@ describe("CheckCard", () => {
     expect(screen.getByText("Informational")).toBeInTheDocument();
   });
 
+  it("drops the Informational chip once the scan counted the check toward the score", () => {
+    render(<CheckCard check={{ ...baseCheck, informational: true, scored: true }} />);
+
+    expect(screen.queryByText("Informational")).not.toBeInTheDocument();
+  });
+
+  it("keeps the chip on informational checks the scan left out of the score", () => {
+    render(<CheckCard check={{ ...baseCheck, informational: true, scored: false }} />);
+
+    expect(screen.getByText("Informational")).toBeInTheDocument();
+  });
+
   it("renders a failing check with a ratio value", () => {
     render(
       <CheckCard
