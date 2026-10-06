@@ -159,6 +159,29 @@ describe("ActivityPage", () => {
     expect(await screen.findByText(/no events yet/)).toBeInTheDocument();
   });
 
+  it("shows retryable errors, not empty states, when the CI, release and heatmap queries fail", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+    githubEventsMock.mockResolvedValue({ org: "acme", events: [] });
+    githubFailedRunsMock.mockRejectedValue(new Error("runs boom"));
+    githubReleaseTimelineMock.mockRejectedValue(new Error("releases boom"));
+    analyticsCockpitMock.mockRejectedValue(new Error("cockpit boom"));
+
+    renderPage();
+
+    expect(await screen.findByText("runs boom")).toBeInTheDocument();
+    expect(await screen.findByText("releases boom")).toBeInTheDocument();
+    expect(await screen.findByText("cockpit boom")).toBeInTheDocument();
+    expect(screen.queryByText("No repeated CI failures")).not.toBeInTheDocument();
+    expect(screen.queryByText(/No releases in the last 90 days/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No commit activity in the last year/)).not.toBeInTheDocument();
+
+    githubFailedRunsMock.mockResolvedValueOnce({ org: "acme", runs: [] });
+    const retries = screen.getAllByRole("button", { name: "Retry" });
+    fireEvent.click(retries[1]); // heatmap, CI log, releases (DOM order)
+    await waitFor(() => expect(githubFailedRunsMock).toHaveBeenCalledTimes(2));
+  });
+
   it("renders the CI failure log and release timeline", async () => {
     localStorage.setItem("default_org", "acme");
     tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
