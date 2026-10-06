@@ -145,6 +145,8 @@ export interface RepoSummary {
   pushed_at: string | null
   default_branch: string
   html_url: string
+  // Absent from responses of an API that predates it: treat as not archived.
+  archived?: boolean
 }
 
 export interface RepoListResponse {
