@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { CircleNotch } from "@phosphor-icons/react"
 
-export default function RegisterPage() {
+function RegisterForm() {
   const { user, setSession, isLoading } = useAuth()
   const router = useRouter()
   // Carried from the login page so an invitee who signs up lands back on their invite.
@@ -132,5 +132,14 @@ export default function RegisterPage() {
         </p>
       </div>
     </main>
+  )
+}
+
+// useSearchParams (for ?next=) must sit under a Suspense boundary or static prerendering bails out.
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={null}>
+      <RegisterForm />
+    </Suspense>
   )
 }
