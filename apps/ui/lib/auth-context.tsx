@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react"
 import type { PendingInvitationSummary } from "@/lib/api/types"
 import { clearActiveScope } from "@/lib/active-scope"
-import { errorDetail } from "@/lib/api/client"
+import { errorDetail, fetchWithTimeout } from "@/lib/api/client"
 
 export interface AuthUser {
   id: number
@@ -213,13 +213,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [authUnconfirmed, logout])
 
   const login = useCallback(async (email: string, password: string) => {
-    const res = await fetch(`${BASE}/auth/login`, {
+    // Bounded like every other API call, and tolerant of a non-JSON body (a proxy's 502 HTML page):
+    // either would otherwise leave the button on "Signing in…" or surface a SyntaxError.
+    const res = await fetchWithTimeout(`${BASE}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
     })
-    const data = await res.json()
+    const data = await res.json().catch(() => null)
     if (!res.ok) throw new Error(errorDetail(data, "Login failed"))
+    if (!data?.access_token) throw new Error("Login failed")
     const { access_token, user: u, pending_invitations } = data as {
       access_token: string
       user: AuthUser

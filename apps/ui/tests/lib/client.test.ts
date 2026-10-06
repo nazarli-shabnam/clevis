@@ -44,6 +44,23 @@ describe("del() 401 handling", () => {
   });
 });
 
+describe("del() errors", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("throws an error carrying the HTTP status so callers can branch on it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify({ detail: "Token not found" }), { status: 404 }))),
+    );
+    await expect(api.tokens.delete("acme")).rejects.toMatchObject({ message: "Token not found", status: 404 });
+  });
+
+  it("falls back to a generic message with the status for a non-JSON error body", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("<html>Bad Gateway</html>", { status: 502 }))));
+    await expect(api.tokens.delete("acme")).rejects.toMatchObject({ message: "Request failed: 502", status: 502 });
+  });
+});
+
 describe("optional token coercion (GitHub App installation fallback)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
