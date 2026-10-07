@@ -22,6 +22,7 @@ import { useActiveScope, type ActiveScope } from "@/lib/active-scope"
 import { membersHref } from "@/lib/members-href"
 import type { InstallationMeta, MyOrgMembership } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
+import { NAV_GROUPS } from "@/lib/nav-items"
 
 const ACTIVITY_LAST_SEEN_KEY = "activity_last_seen_at"
 
@@ -31,28 +32,6 @@ function healthDotColor(score: number | null | undefined): string | null {
   if (score >= 50) return "bg-yellow-400"
   return "bg-red-400"
 }
-
-const groups = [
-  [
-    { title: "Overview",         href: "/" },
-    { title: "Activity",         href: "/activity", showUnreadBadge: true },
-    { title: "Pull Requests",    href: "/pulls" },
-    { title: "Releases",         href: "/releases" },
-  ],
-  [
-    { title: "Repositories",     href: "/repos" },
-    { title: "Health & Security",href: "/security", showHealthDot: true },
-  ],
-  [
-    // "/collaborators" is a sentinel, not a real route: the render loop swaps in membersNavHref.
-    { title: "Collaborators",    href: "/collaborators" },
-    { title: "Automation",       href: "/automation" },
-    { title: "Audit Log",        href: "/audit" },
-  ],
-  [
-    { title: "My Work",    href: "/my" },
-  ],
-]
 
 interface Profile {
   name: string
@@ -334,7 +313,7 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        {groups.map((items, groupIndex) => (
+        {NAV_GROUPS.map((items, groupIndex) => (
           <div key={groupIndex}>
             {groupIndex > 0 && <SidebarSeparator className="my-1 bg-sidebar-border/60" />}
             <SidebarGroup className="py-1">
