@@ -167,9 +167,9 @@ export default function SecurityPage() {
   })
 
   const scan = useMutation({
-    mutationFn: () => api.analytics.overview(owner, token),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["analytics.history", owner] })
+    mutationFn: (forOwner: string) => api.analytics.overview(forOwner, token),
+    onSuccess: (_data, forOwner) => {
+      queryClient.invalidateQueries({ queryKey: ["analytics.history", forOwner] })
     },
   })
 
@@ -199,14 +199,30 @@ export default function SecurityPage() {
 
   const [selectedRepo, setSelectedRepo] = useState("")
   const matrixMutation = useMutation({
-    mutationFn: () => api.security.matrix(owner, token),
+    mutationFn: (forOwner: string) => api.security.matrix(forOwner, token),
     onSuccess: (data) => setSelectedRepo(data.repos[0]?.repo ?? ""),
   })
+
+  // The render right after an owner change still holds the previous owner's results until the reset
+  // effect below runs; these keep them off the screen for that render instead of relying on the effect.
+  const scanIsForOwner = scan.variables === owner
+  const matrixIsForOwner = matrixMutation.variables === owner
+
+  // Results belong to the owner they were scanned for: drop them (and the repo picked from them)
+  // when the owner changes, or the old org's data stays up under the new name and keeps querying.
+  useEffect(() => {
+    scan.reset()
+    matrixMutation.reset()
+    setSelectedRepo("")
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [owner])
 
   const secretScanning = useQuery({
     queryKey: ["security.secret-scanning", owner, selectedRepo],
     queryFn: () => api.security.secretScanning(owner, selectedRepo, token),
-    enabled: !!selectedRepo && !!matrixMutation.data,
+    // variables === owner: the render right after an owner change still holds the old matrix and repo
+    // until the reset effect runs; without this it would fire one request for new-owner/old-repo.
+    enabled: !!selectedRepo && !!matrixMutation.data && matrixMutation.variables === owner,
   })
 
   // A failed history fetch must not look like "never scanned": the trend sections would otherwise
@@ -245,8 +261,8 @@ export default function SecurityPage() {
   }))
 
   function runScan() {
-    scan.mutate()
-    matrixMutation.mutate()
+    scan.mutate(owner)
+    matrixMutation.mutate(owner)
   }
 
   const filteredChecks = scan.data
@@ -350,7 +366,7 @@ export default function SecurityPage() {
                 {saveTokenMutation.error.message}
               </div>
             )}
-            {scan.isError && (
+            {scan.isError && scanIsForOwner && (
               <div data-testid="scan-error" className="flex items-start gap-2 text-xs text-destructive">
                 <Warning className="size-3.5 mt-0.5 shrink-0" />
                 {scan.error.message}
@@ -404,7 +420,7 @@ export default function SecurityPage() {
           </div>
         </div>
 
-        {(scan.data || scan.isPending) && (
+        {scanIsForOwner && (scan.data || scan.isPending) && (
           <div className="card lg:col-span-2">
             {scan.data && (
               <div className="px-4 py-3 border-b border-border">
@@ -511,7 +527,7 @@ export default function SecurityPage() {
         )}
       </div>
 
-      {(matrixMutation.data || matrixMutation.isPending || matrixMutation.error) && (
+      {matrixIsForOwner && (matrixMutation.data || matrixMutation.isPending || matrixMutation.error) && (
         <div className="grid gap-4 lg:grid-cols-2 mt-6">
           <div className="card">
             <div className="px-4 py-3 border-b border-border flex items-center justify-between">
