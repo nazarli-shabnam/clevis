@@ -44,6 +44,18 @@ describe("del() 401 handling", () => {
   });
 });
 
+describe("audit.actions", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("fetches the distinct audit actions from /audit/actions", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify(["config.update", "token.save"]), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.audit.actions()).resolves.toEqual(["config.update", "token.save"]);
+    expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toMatch(/\/audit\/actions$/);
+  });
+});
+
 describe("optional token coercion (GitHub App installation fallback)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
