@@ -2,6 +2,8 @@
 
 GitHub caps the Events API at ~90 days / ~300 events. Synthetic delivery_id
 ("backfill:<event id>") keeps retries idempotent via ON CONFLICT (delivery_id).
+The webhook path uses GitHub's delivery GUID, so the same event can arrive both ways; the worker
+skips a backfilled event that has a webhook twin (repo_events_store.consume_webhook_twin).
 """
 
 import time

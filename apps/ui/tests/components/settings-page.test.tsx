@@ -171,6 +171,22 @@ describe("SettingsPage", () => {
     expect(screen.queryByText("Instance configuration")).not.toBeInTheDocument();
   });
 
+  it("lets a plain member open the roster from their org row ('View members'), admins get 'Manage members' (#663)", async () => {
+    orgsMineMock.mockResolvedValue([
+      { org_login: "acme", role: "admin" },
+      { org_login: "widgets", role: "member" },
+    ]);
+    installationsListMock.mockResolvedValue([]);
+    installationsListForOrgMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([]);
+    configGetAllMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true" });
+
+    renderPage();
+
+    expect(await screen.findByRole("link", { name: "Manage members" })).toHaveAttribute("href", "/settings/org/acme/members");
+    expect(screen.getByRole("link", { name: "View members" })).toHaveAttribute("href", "/settings/org/widgets/members");
+  });
+
   it("shows a saving spinner then a saved confirmation when the profile is updated", async () => {
     orgsMineMock.mockResolvedValue([]);
     installationsListMock.mockResolvedValue([]);

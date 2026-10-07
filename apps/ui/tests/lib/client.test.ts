@@ -44,6 +44,18 @@ describe("del() 401 handling", () => {
   });
 });
 
+describe("audit.actions", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("fetches the distinct audit actions from /audit/actions", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify(["config.update", "token.save"]), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.audit.actions()).resolves.toEqual(["config.update", "token.save"]);
+    expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toMatch(/\/audit\/actions$/);
+  });
+});
+
 describe("optional token coercion (GitHub App installation fallback)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -94,6 +106,18 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
     const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(url).toContain("/orgs/acme/branch-protection/bulk");
     expect(JSON.parse(init.body as string)).toEqual({ repos: ["api"], dry_run: true, token: undefined });
+  });
+
+  it("POSTs security/remediate/bulk with the org in the path and drops an empty token", async () => {
+    stubOkJson({ check_id: "repository_secret_scanning_enabled", dry_run: true, items: [] });
+    await api.security.remediateBulk("acme", { check_id: "repository_secret_scanning_enabled", repos: ["api"], dry_run: true, token: "" });
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/orgs/acme/security/remediate/bulk");
+    expect(JSON.parse(init.body as string)).toEqual({
+      check_id: "repository_secret_scanning_enabled",
+      repos: ["api"],
+      dry_run: true,
+    });
   });
 
   it("GETs the saved branch-protection preset for the org", async () => {

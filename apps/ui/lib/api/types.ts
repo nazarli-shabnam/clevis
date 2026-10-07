@@ -486,6 +486,8 @@ export interface PrCycleTimeWeek {
 }
 
 export interface CockpitResponse {
+  // Whether any automation has really run for the account; null/absent when unknown (hides that checklist step).
+  has_automation_run?: boolean | null
   repo_count: number
   member_count: number | null
   latest_score: number | null
@@ -692,6 +694,22 @@ export interface DependabotTriageDecision {
 
 export interface DependabotTriageResponse {
   decisions: DependabotTriageDecision[]
+}
+
+export type BulkRemediateStatus = "would_change" | "unchanged" | "applied" | "failed"
+
+export interface BulkRemediateItem {
+  repo: string
+  status: BulkRemediateStatus
+  detail: string
+}
+
+export interface BulkRemediateResponse {
+  check_id: string
+  dry_run: boolean
+  items: BulkRemediateItem[]
+  // Set when every repo came back 403 (almost always a missing GitHub permission).
+  hint?: string | null
 }
 
 export interface RepoSecurityRow {

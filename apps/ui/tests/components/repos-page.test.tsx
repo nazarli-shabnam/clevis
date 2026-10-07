@@ -103,6 +103,15 @@ describe("ReposPage", () => {
     expect(screen.queryByText("Save token for this org")).not.toBeInTheDocument();
   });
 
+  it("gives the organization and token inputs accessible names", () => {
+    renderPage();
+    expect(screen.getByLabelText("Organization")).toBe(screen.getByPlaceholderText("e.g. octocat"));
+    const token = screen.getByLabelText("GitHub Token");
+    expect(token).toHaveAttribute("type", "password");
+    // the optional-token guidance stays announced with the field
+    expect(token).toHaveAccessibleDescription(/optional if the GitHub App is connected/);
+  });
+
   it("keeps Load repositories disabled until an org is entered", () => {
     renderPage();
     expect(screen.getByRole("button", { name: /load repositories/i })).toBeDisabled();

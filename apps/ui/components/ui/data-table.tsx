@@ -1,10 +1,12 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { CaretUp, CaretDown, CaretUpDown } from "@phosphor-icons/react"
+import { CaretUp, CaretDown, CaretUpDown, DownloadSimple } from "@phosphor-icons/react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { toCsv } from "@/lib/csv"
+import { downloadTextFile } from "@/lib/download"
 
 export interface DataTableColumn<T> {
   key: string
@@ -16,6 +18,9 @@ export interface DataTableColumn<T> {
   sortValue?: (row: T) => string | number
   headerClassName?: string
   cellClassName?: string
+  /** Plain-value form of this column for CSV export (`render` returns JSX, which has no text
+   * form). Columns without it are left out of the export. */
+  csvValue?: (row: T) => unknown
 }
 
 interface DataTableProps<T> {
@@ -28,6 +33,11 @@ interface DataTableProps<T> {
   /** Attaches a ref to a specific row's <tr> -- e.g. to scroll a highlighted row into
    * view. Most callers don't need this. */
   getRowRef?: (row: T) => React.Ref<HTMLTableRowElement> | undefined
+  /** Shows an "Export CSV" button. Exports every row passed in `data` (all pages, in the current
+   * sort order) using the columns that define `csvValue`. The file is named
+   * `clevis-<name>-<yyyy-mm-dd>.csv` (`name` is slugified). `note` is shown beside the button, for
+   * tables whose `data` is only a window onto a larger set. */
+  exportCsv?: { name: string; note?: string }
 }
 
 /** A shared sortable, paginated table -- built on the same raw `<table>` markup/classes
@@ -42,6 +52,7 @@ export function DataTable<T>({
   pageSize = 20,
   rowClassName,
   getRowRef,
+  exportCsv,
 }: DataTableProps<T>) {
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc")
@@ -69,6 +80,16 @@ export function DataTable<T>({
   const lastPage = Math.max(1, Math.ceil(sorted.length / pageSize))
   const pageRows = sorted.slice((page - 1) * pageSize, page * pageSize)
 
+  const csvColumns = columns.flatMap((c) => (c.csvValue ? [{ header: c.header, value: c.csvValue }] : []))
+
+  function exportRows() {
+    if (!exportCsv) return
+    const stamp = new Date().toISOString().slice(0, 10)
+    // Callers pass values from the URL or a filter; keep the file name to safe characters.
+    const name = exportCsv.name.replace(/[^A-Za-z0-9._-]+/g, "-")
+    downloadTextFile(`clevis-${name}-${stamp}.csv`, toCsv(sorted, csvColumns), "text/csv")
+  }
+
   function toggleSort(key: string) {
     if (sortKey === key) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"))
@@ -80,6 +101,14 @@ export function DataTable<T>({
 
   return (
     <>
+      {exportCsv && (
+        <div className="px-4 py-2 border-b border-border flex items-center justify-end gap-3">
+          {exportCsv.note && <span className="mr-auto text-xs text-muted-foreground">{exportCsv.note}</span>}
+          <Button size="sm" variant="outline" disabled={sorted.length === 0 || csvColumns.length === 0} onClick={exportRows}>
+            <DownloadSimple className="size-3.5" /> Export CSV
+          </Button>
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>

@@ -21,6 +21,16 @@ class AuditLogOut(BaseModel):
     created_at: datetime
 
 
+@router.get("/actions", response_model=list[str])
+def list_audit_actions(
+    db: Session = Depends(get_db),
+    _user: UserOut = Depends(require_workspace_admin),
+):
+    """Every distinct action ever written, so the UI's filter can't drift from what the API records."""
+    # ponytail: a DISTINCT scan of audit_logs.action; cache or index it if the table grows very large.
+    return [row[0] for row in db.query(AuditLog.action).distinct().order_by(AuditLog.action).all()]
+
+
 @router.get("", response_model=list[AuditLogOut])
 def list_audit_logs(
     action: str | None = Query(default=None, description="Filter by action type"),
