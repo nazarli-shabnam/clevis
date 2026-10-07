@@ -80,7 +80,7 @@ export function openActivityStream(org: string, days: number, signal: AbortSigna
 // Hard ceiling so a hanging API surfaces an error instead of leaving callers loading forever.
 const REQUEST_TIMEOUT_MS = 15000
 
-async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
+export async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
@@ -174,14 +174,8 @@ async function del(path: string): Promise<void> {
     method: "DELETE",
     headers: { ...getAuthHeaders() },
   })
-  if (res.status === 401) {
-    if (typeof window !== "undefined") localStorage.removeItem(_TOKEN_KEY)
-    window.dispatchEvent(new Event("clevis:unauthorized"))
-  }
-  if (!res.ok) {
-    const json = await res.json().catch(() => ({}))
-    throw new Error(errorDetail(json, `Request failed: ${res.status}`))
-  }
+  // Same path as every other verb, so a failed delete throws an ApiError that carries `status`.
+  await handleResponse<unknown>(res)
 }
 
 
