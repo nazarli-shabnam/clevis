@@ -28,11 +28,11 @@ from src.routers import (
     notifications,
     org_activity,
     org_notifications,
-    scheduled_scans,
     orgs,
     pr_nudges,
     remediation,
     repos,
+    scheduled_scans,
     security,
     tokens,
     webhooks,
@@ -40,8 +40,8 @@ from src.routers import (
 )
 from src.services.digest_loop import digest_loop
 from src.services.gap_heal_loop import gap_heal_loop
-from src.services.scheduled_scan_loop import scheduled_scan_loop
 from src.services.membership_reconcile_loop import membership_reconcile_loop
+from src.services.scheduled_scan_loop import scheduled_scan_loop
 from src.services.webhook_requeue_loop import webhook_requeue_loop
 
 # CORS allowed origins are a deploy-time security boundary, set via the CORS_ORIGINS env var.

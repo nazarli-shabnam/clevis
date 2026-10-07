@@ -18,7 +18,8 @@ from src.core.config import settings
 from src.core.db import AuditLog, NotificationDestination, User, get_db
 from src.repositories import notification_repo, org_membership_repo, org_repo
 from src.repositories import scan_results_repo
-from src.routers.analytics import _notify_score_drop_best_effort, persist_scan_and_alert
+from src.services.scan_service import notify_score_drop_best_effort as _notify_score_drop_best_effort
+from src.services.scan_service import persist_scan_and_alert
 from src.routers.notifications import router as notif_router
 from src.services import notifications
 

@@ -7,7 +7,9 @@ import pytest
 from sqlalchemy import text
 
 from src.core.db import Org, ScanResult
-from src.repositories import audit_repo, org_repo, scan_results_repo
+import itertools
+
+from src.repositories import audit_repo, installation_repo, org_repo, scan_results_repo
 from src.services import scheduled_scan_sweep
 from src.services.scan_schedule import effective_cadence
 from src.services.scheduled_scan_sweep import MAX_SCANS_PER_TICK, run_scheduled_scan_sweep
@@ -23,10 +25,18 @@ def _result(owner, score=80):
     }
 
 
-def _org(db, login, override=None):
+_installation_ids = itertools.count(9000)
+
+
+def _org(db, login, override=None, installed=True):
     org = org_repo.get_or_create(db, github_login=login)
     org.scheduled_scans = override
     db.commit()
+    if installed:
+        installation_repo.create(
+            db, account_login=login, account_type="Organization", auth_mode="app",
+            installation_id=next(_installation_ids), org_id=org.id,
+        )
     return org
 
 
@@ -138,7 +148,7 @@ def test_a_failed_scan_is_recorded_and_not_retried_immediately(db):
 
     get_overview, _ = _run(db, overview=boom)
     assert get_overview.call_count == 1
-    assert _actions(db, org) == ["scan.scheduled_failed"]
+    assert _actions(db, org) == ["scan.scheduled_started", "scan.scheduled_failed"]
     again, _ = _run(db)
     again.assert_not_called()  # inside FAILURE_RETRY
 
@@ -173,3 +183,42 @@ def test_a_score_drop_from_a_scheduled_scan_alerts_like_a_manual_one(db):
         _run(db, overview=lambda owner, **k: {**_result(owner, score=40), "failed_checks": 1})
     notify.assert_called_once()
     assert notify.call_args.kwargs["actor"] == "system:scheduled_scan"
+
+
+def test_orgs_without_an_installation_are_not_candidates_and_cannot_crowd_out_others(db):
+    for i in range(12):
+        _org(db, f"ss-noapp-{i}", installed=False)  # never scanned, so they would sort first
+    good = _org(db, "ss-zz-installed")
+    get_overview, resolve = _run(db)
+    assert [c.kwargs["owner"] for c in get_overview.call_args_list] == [good.github_login]
+    assert resolve.call_count == 1
+
+
+def test_a_failure_after_the_scan_started_is_recorded_and_backs_off(db):
+    org = _org(db, "ss-persist-fail")
+    with patch("src.services.scheduled_scan_sweep.scan_service.persist_scan_and_alert", side_effect=RuntimeError("db")):
+        get_overview, _ = _run(db)
+    assert get_overview.call_count == 1
+    assert _actions(db, org) == ["scan.scheduled_started", "scan.scheduled_failed"]
+    again, _ = _run(db)
+    again.assert_not_called()
+
+
+def test_a_token_error_other_than_no_token_is_recorded_as_a_failure(db):
+    org = _org(db, "ss-token-boom")
+    with (
+        patch("src.services.scan_schedule.get_config", return_value="daily"),
+        patch.object(scheduled_scan_sweep, "get_overview") as get_overview,
+        patch.object(scheduled_scan_sweep, "resolve_org_token", side_effect=RuntimeError("mint failed")),
+    ):
+        run_scheduled_scan_sweep(db)
+    get_overview.assert_not_called()
+    assert _actions(db, org) == ["scan.scheduled_failed"]
+
+
+def test_an_org_whose_scan_is_marked_in_progress_is_left_alone(db):
+    org = _org(db, "ss-in-progress")
+    audit_repo.write(db, actor="system:scheduled_scan", action="scan.scheduled_started", target="ss-in-progress",
+                     payload={}, tenant_id=org.tenant_id)
+    get_overview, _ = _run(db)
+    get_overview.assert_not_called()

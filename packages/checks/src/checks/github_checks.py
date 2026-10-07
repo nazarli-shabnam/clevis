@@ -224,7 +224,6 @@ def _with_repos(value: dict, names: list[str]) -> dict:
     return value
 
 
-
 class BranchProtectionEnabled(Check):
     metadata = CheckMetadata(
         check_id="repository_default_branch_protection_enabled",

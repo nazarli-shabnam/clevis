@@ -70,7 +70,8 @@ def _classify(old: dict | None, new: dict) -> str | None:
         return "newly_failing"
     if is_failing and was_failing:
         return "still_failing"
-    if was_failing and new.get("status") == "pass":
+    # Only a real failure that now passes counts as fixed: an earlier transient error is not a remediation.
+    if old is not None and old.get("status") == "fail" and new.get("status") == "pass":
         return "newly_passing"
     return None
 

@@ -122,3 +122,11 @@ def test_changes_are_tenant_scoped_and_need_membership(db, world):
     _scan(db, world["globex"], [_check("a", "fail")], 10, 1)
     assert _client(db, world["users"]["member"]).get("/orgs/acme/analytics/changes").json()["has_previous"] is False
     assert _client(db, world["users"]["member"]).get("/orgs/globex/analytics/changes").status_code == 403
+
+
+def test_an_earlier_transient_error_that_now_passes_is_not_reported_as_fixed(db, world):
+    acme = world["acme"]
+    _scan(db, acme, [_check("a", "error"), _check("b", "fail")], 50, 2)
+    _scan(db, acme, [_check("a", "pass"), _check("b", "pass")], 100, 1)
+    body = _client(db, world["users"]["member"]).get("/orgs/acme/analytics/changes").json()
+    assert {c["id"]: c["change"] for c in body["changes"]} == {"b": "newly_passing"}

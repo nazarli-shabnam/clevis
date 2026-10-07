@@ -98,10 +98,7 @@ def _persist_scan(
 
 
 # Scan persistence and score-drop alerting live in services.scan_service so the periodic scheduled-scan
-# sweep shares them; these names stay importable from here for the routes and tests that use them.
-_comparable_scans = scan_service.comparable_scans
-_notify_score_drop_best_effort = scan_service.notify_score_drop_best_effort
-persist_scan_and_alert = scan_service.persist_scan_and_alert
+# sweep shares them with these routes.
 
 
 class HistoryScope(NamedTuple):
@@ -235,7 +232,7 @@ async def org_analytics_overview(
         raise HTTPException(status_code=400, detail=str(exc))
     result = await _run_overview(payload.owner, token, score_hygiene=org_scores_hygiene(ctx.org))
 
-    await anyio.to_thread.run_sync(lambda: persist_scan_and_alert(db, ctx.org, result, ctx.org.tenant_id))
+    await anyio.to_thread.run_sync(lambda: scan_service.persist_scan_and_alert(db, ctx.org, result, ctx.org.tenant_id))
     return result
 
 

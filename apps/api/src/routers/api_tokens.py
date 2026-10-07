@@ -24,7 +24,8 @@ from src.core.rate_limit import check_account_rate_limit
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import api_token_repo, audit_repo, org_repo, scan_results_repo
 from src.repositories.api_token_repo import ResolvedToken
-from src.routers.analytics import _run_overview, persist_scan_and_alert
+from src.routers.analytics import _run_overview
+from src.services.scan_service import persist_scan_and_alert
 from src.schemas.api_token import (
     ApiTokenCreate,
     ApiTokenCreated,
