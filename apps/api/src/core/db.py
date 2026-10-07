@@ -71,6 +71,8 @@ class GitHubInstallation(Base):
     # (see src.services.app_permissions).
     granted_permissions: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     permissions_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Last time granted_permissions actually differed (permissions_synced_at moves on every sync).
+    permissions_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AuditLog(Base):
@@ -207,6 +209,8 @@ class SecurityAlert(Base):
     details: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # When Clevis first stored the row (GitHub's created_at can predate it); never changed by the upsert.
+    ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class OrgMember(Base):

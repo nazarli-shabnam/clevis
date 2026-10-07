@@ -42,7 +42,7 @@ def _critical_alert_filters(tenant_id: int, since: datetime) -> list:
         SecurityAlert.kind == "dependabot",
         SecurityAlert.severity == "critical",
         SecurityAlert.state == "open",
-        SecurityAlert.created_at >= since,
+        SecurityAlert.ingested_at >= since,
     ]
 
 
@@ -54,7 +54,7 @@ def _critical_alert_items(db: Session, tenant_id: int, since: datetime) -> list[
     rows = (
         db.query(SecurityAlert)
         .filter(*_critical_alert_filters(tenant_id, since))
-        .order_by(SecurityAlert.created_at.desc())
+        .order_by(SecurityAlert.ingested_at.desc())
         .limit(_PER_SOURCE)
         .all()
     )
@@ -62,7 +62,7 @@ def _critical_alert_items(db: Session, tenant_id: int, since: datetime) -> list[
         {
             "id": f"critical_alert:{r.id}",
             "kind": "critical_alert",
-            "at": r.created_at,
+            "at": r.ingested_at,
             "title": f"New critical Dependabot alert in {r.repo}",
             "detail": str((r.details or {}).get("summary") or ""),
             "href": "/security",
@@ -128,7 +128,8 @@ def _failed_job_items(db: Session, org_login: str, tenant_id: int, since: dateti
 
 def _permission_drift_items(db: Session, ctx: OrgContext, org_login: str, since: datetime) -> list[dict]:
     install = installation_repo.get_for_org(db, org_id=ctx.org.id, account_login=org_login)
-    if install is None or install.permissions_synced_at is None or _aware(install.permissions_synced_at) < since:
+    changed_at = install.permissions_changed_at if install is not None else None
+    if install is None or changed_at is None or _aware(changed_at) < since:
         return []
     blocked = app_permissions.blocked_features(install.granted_permissions)
     if not blocked:
@@ -138,7 +139,7 @@ def _permission_drift_items(db: Session, ctx: OrgContext, org_login: str, since:
         {
             "id": f"permission_drift:{install.id}",
             "kind": "permission_drift",
-            "at": install.permissions_synced_at,
+            "at": changed_at,
             "title": f"{len(blocked)} automation{'s' if len(blocked) != 1 else ''} need extra GitHub access",
             "detail": labels,
             "href": "/settings",
@@ -178,7 +179,7 @@ def get_notifications(
     # Counted before the list is cut to MAX_ITEMS, and (for the sources that are cut to _PER_SOURCE
     # rows) including the unread rows that cut left out, so a long list never under-reports.
     unread_count = sum(1 for i in items if not i.read)
-    unread_count += _unread_beyond_limit(db, _critical_alert_filters(tenant_id, since), SecurityAlert.created_at, last_read, items, "critical_alert")
+    unread_count += _unread_beyond_limit(db, _critical_alert_filters(tenant_id, since), SecurityAlert.ingested_at, last_read, items, "critical_alert")
     if ctx.membership.role == "admin":
         unread_count += _unread_beyond_limit(db, _failed_job_filters(tenant_id, since), Job.updated_at, last_read, items, "job_failed")
     return NotificationFeed(
