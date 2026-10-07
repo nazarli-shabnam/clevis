@@ -241,14 +241,12 @@ function OrgMembershipsSection() {
                   <td className="px-4 py-2.5 font-mono text-foreground/80">{m.org_login}</td>
                   <td className="px-4 py-2.5 text-muted-foreground">{m.role}</td>
                   <td className="px-4 py-2.5 text-right">
-                    {m.role === "admin" && (
-                      <Link
-                        href={`/settings/org/${encodeURIComponent(m.org_login)}/members`}
-                        className="text-xs text-primary hover:underline"
-                      >
-                        Manage members
-                      </Link>
-                    )}
+                    <Link
+                      href={`/settings/org/${encodeURIComponent(m.org_login)}/members`}
+                      className="text-xs text-primary hover:underline"
+                    >
+                      {m.role === "admin" ? "Manage members" : "View members"}
+                    </Link>
                   </td>
                 </tr>
               ))}
