@@ -1,7 +1,7 @@
 "use client"
 
 import { useParams, useRouter, useSearchParams } from "next/navigation"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
@@ -10,7 +10,9 @@ import { DataTable, type DataTableColumn } from "@/components/ui/data-table"
 import { CircleNotch, EnvelopeSimple, Warning, X } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { addRevokingId, isRevoking, removeRevokingId } from "@/lib/revoke-pending"
-import { relativeTime } from "@/lib/format"
+import { exactTime, relativeTime } from "@/lib/format"
+import { effectiveInvitationStatus, invitationExpiry, type ExpiryTone } from "@/lib/invitation-expiry"
+import { CopyButton } from "@/components/copy-button"
 import { orgRoleFor } from "@/lib/members-href"
 import { SectionError } from "@/components/section-error"
 import { HygieneScoringCard } from "@/components/hygiene-scoring-card"
@@ -424,12 +426,37 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
   )
 }
 
+const EXPIRY_TONE_CLASS: Record<ExpiryTone, string> = {
+  none: "text-muted-foreground",
+  normal: "text-muted-foreground",
+  soon: "text-yellow-400",
+  expired: "text-destructive",
+}
+
+function ExpiryCell({ inv, now }: { inv: InvitationOut; now: number }) {
+  const { label, tone } = invitationExpiry(inv, now)
+  return (
+    <td className={`px-4 py-2.5 whitespace-nowrap ${EXPIRY_TONE_CLASS[tone]}`} title={tone === "none" ? undefined : exactTime(inv.expires_at)}>
+      {/* Colour alone isn't a signal: add an icon, and say it in text for screen readers. */}
+      {tone === "soon" && <Warning className="inline size-3 mr-1 align-[-1px]" aria-hidden="true" />}
+      {label}
+      {tone === "soon" && <span className="sr-only"> (expiring soon)</span>}
+    </td>
+  )
+}
+
 export default function OrgMembersPage() {
   const params = useParams<{ login: string }>()
   const orgLogin = params.login
   const queryClient = useQueryClient()
   const [email, setEmail] = useState("")
   const [lastLink, setLastLink] = useState<string | null>(null)
+  // Re-evaluate expiry labels as time passes, so a page left open doesn't keep showing "in 5 minutes".
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 60_000)
+    return () => clearInterval(t)
+  }, [])
 
   // Inviting and revoking are admin-only on the API. Look up the caller's role so a plain member
   // gets an explanation instead of a form that can only 403. If the lookup itself fails, don't
@@ -520,7 +547,13 @@ export default function OrgMembersPage() {
               {invite.isError && <p className="text-xs text-destructive">{invite.error.message}</p>}
               {lastLink && (
                 <div className="text-xs text-muted-foreground break-all bg-muted/30 border border-border/50 rounded-md p-2">
-                  Share this link — no email is sent automatically:
+                  <div className="flex items-center justify-between gap-2">
+                    <span>Share this link — no email is sent automatically. It is shown only now, so copy it before you leave this page.</span>
+                    {/* keyed by the link so a new invitation never inherits "Copied" from the previous one */}
+                    <span className="shrink-0">
+                      <CopyButton key={lastLink} value={lastLink} ariaLabel="Copy invitation link" />
+                    </span>
+                  </div>
                   <div className="font-mono text-foreground/80 mt-1">{lastLink}</div>
                 </div>
               )}
@@ -553,6 +586,7 @@ export default function OrgMembersPage() {
                     <tr className="border-b border-border">
                       <th className="text-left text-muted-foreground font-medium px-4 py-2">Email</th>
                       <th className="text-left text-muted-foreground font-medium px-4 py-2">Status</th>
+                      <th className="text-left text-muted-foreground font-medium px-4 py-2">Expires</th>
                       <th className="text-right text-muted-foreground font-medium px-4 py-2" />
                     </tr>
                   </thead>
@@ -565,9 +599,10 @@ export default function OrgMembersPage() {
                             <p role="alert" className="mt-1 text-xs text-destructive">{revokeErrors[inv.id]}</p>
                           )}
                         </td>
-                        <td className="px-4 py-2.5 text-muted-foreground">{inv.status}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{effectiveInvitationStatus(inv, now)}</td>
+                        <ExpiryCell inv={inv} now={now} />
                         <td className="px-4 py-2.5 text-right">
-                          {inv.status === "pending" && (
+                          {effectiveInvitationStatus(inv, now) === "pending" && (
                             <Button
                               size="sm"
                               variant="outline"
