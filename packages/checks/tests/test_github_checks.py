@@ -346,7 +346,7 @@ def test_dependabot_counts_alerts_past_the_first_page():
     with patch("httpx.Client.get", side_effect=_two_page_alerts(page1, page2)):
         result = DependabotAlertsCheck().run(owner="acme", token="tok", repos=[{"name": "api"}])
     assert result["status"] == "fail"
-    assert result["value"] == {"critical": 1, "high": 0, "medium": 0, "low": 100}
+    assert result["value"] == {"critical": 1, "high": 0, "medium": 0, "low": 100, "repos": ["api"]}
 
 
 def test_code_scanning_counts_alerts_past_the_first_page():
@@ -355,7 +355,7 @@ def test_code_scanning_counts_alerts_past_the_first_page():
     with patch("httpx.Client.get", side_effect=_two_page_alerts(page1, page2)):
         result = CodeScanningCheck().run(owner="acme", token="tok", repos=[{"name": "api"}])
     assert result["status"] == "fail"
-    assert result["value"] == {"open": 102, "repos_with_alerts": 1, "total_repos": 1}
+    assert result["value"] == {"open": 102, "repos_with_alerts": 1, "total_repos": 1, "repos": ["api"]}
 
 
 def test_alert_checks_treat_a_first_page_404_from_the_real_pager_as_no_alerts():
@@ -396,7 +396,7 @@ def test_dependabot_aggregates_severity_counts_across_repos():
         mp.setattr("checks.github_checks._get_all_pages", _paged(fake_get))
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "fail"
-    assert result["value"] == {"critical": 1, "high": 1, "medium": 0, "low": 1}
+    assert result["value"] == {"critical": 1, "high": 1, "medium": 0, "low": 1, "repos": ["api", "ui"]}
 
 
 def test_dependabot_passes_when_no_critical_or_high():
@@ -513,7 +513,7 @@ def test_code_scanning_counts_open_alerts_and_affected_repos():
         mp.setattr("checks.github_checks._get_all_pages", _paged(fake_get))
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "fail"
-    assert result["value"] == {"open": 2, "repos_with_alerts": 1, "total_repos": 2}
+    assert result["value"] == {"open": 2, "repos_with_alerts": 1, "total_repos": 2, "repos": ["api"]}
 
 
 def test_code_scanning_disabled_repo_404_counts_as_zero_alerts():
@@ -617,7 +617,7 @@ def test_force_push_fails_when_allowed():
         mp.setattr("checks.github_checks._get_all_pages", lambda base, path, token: [])  # no rulesets
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "fail"
-    assert result["value"] == {"repos_checked": 1, "force_push_allowed": 1}
+    assert result["value"] == {"repos_checked": 1, "force_push_allowed": 1, "repos": ["api"]}
 
 
 def test_force_push_unprotected_branch_404_means_force_push_is_allowed():
@@ -636,7 +636,7 @@ def test_force_push_unprotected_branch_404_means_force_push_is_allowed():
         mp.setattr("checks.github_checks._get_all_pages", lambda base, path, token: [])  # no rulesets
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "fail"
-    assert result["value"] == {"repos_checked": 1, "force_push_allowed": 1}
+    assert result["value"] == {"repos_checked": 1, "force_push_allowed": 1, "repos": ["api"]}
 
 
 def test_force_push_rate_limited_branch_excluded_from_denominator():
@@ -798,3 +798,58 @@ def test_get_all_pages_reuses_the_scan_client_and_still_works_outside_a_scan():
 
         assert gh._get_all_pages("https://x", "/y", "t") == [1, 2]  # outside a scan: its own client
         assert len(created) == 2
+
+
+# --- affected repos on failing results -----------------------------------------------------------
+
+
+def test_branch_protection_names_the_unprotected_repos_and_caps_the_list():
+    from checks.github_checks import MAX_AFFECTED_REPOS
+
+    repos = [{"name": f"r{i:03d}", "default_branch": "main"} for i in range(MAX_AFFECTED_REPOS + 10)]
+    repos.append({"name": "safe", "default_branch": "main"})
+
+    def fake_get(url, token):
+        return {"protected": url.endswith("/safe/branches/main")}
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        result = BranchProtectionEnabled().run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "fail"
+    assert len(result["value"]["repos"]) == MAX_AFFECTED_REPOS
+    assert result["value"]["repos"] == sorted(result["value"]["repos"])
+    assert "safe" not in result["value"]["repos"]
+
+
+def test_passing_results_keep_their_exact_shape_without_a_repos_key():
+    repos = [{"name": "api", "default_branch": "main"}]
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", lambda url, token: {"protected": True})
+        result = BranchProtectionEnabled().run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "pass"
+    assert result["value"] == {"checked": 1, "protected": 1, "unknown": 0}
+
+
+def test_secret_scanning_names_repos_without_it():
+    repos = [
+        {"name": "on", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
+        {"name": "off", "security_and_analysis": {"secret_scanning": {"status": "disabled"}}},
+        {"name": "unknown"},
+    ]
+    result = SecretScanningEnabled().run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "fail"
+    assert result["value"] == {"enabled": 1, "total": 3, "repos": ["off", "unknown"]}
+
+
+def test_dependabot_only_names_repos_with_critical_or_high_alerts():
+    repos = [{"name": "bad"}, {"name": "lowonly"}]
+
+    def fake_pages(base, path, token):
+        sev = "critical" if "/bad/" in path else "low"
+        return [{"security_advisory": {"severity": sev}}]
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get_all_pages", fake_pages)
+        result = DependabotAlertsCheck().run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "fail"
+    assert result["value"]["repos"] == ["bad"]

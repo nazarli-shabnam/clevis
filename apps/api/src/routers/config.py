@@ -30,12 +30,14 @@ _INT_KEYS = {
     "webhook_requeue_poll_seconds",
     "dependabot_sla_critical_days",
     "dependabot_sla_high_days",
+    "scheduled_scan_poll_seconds",
 }
 _BOOL_KEYS = {"registration_enabled", "score_hygiene_checks"}
 # key -> allowed values, for small closed-vocabulary settings.
 _ENUM_KEYS = {
     "digest_cadence": {"off", "weekly", "monthly"},
     "pr_nudge_mode": {"off", "comment", "label"},
+    "scheduled_scan_cadence": {"off", "daily", "weekly"},
 }
 
 

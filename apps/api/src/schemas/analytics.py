@@ -56,6 +56,44 @@ class HygieneScoringSettings(BaseModel):
     instance_default: bool
 
 
+class ScheduledScanUpdate(BaseModel):
+    # None clears the org's override so it follows the instance-wide cadence again.
+    enabled: bool | None
+
+
+class ScheduledScanSettings(BaseModel):
+    enabled: bool | None  # the org's override; None = follows the instance
+    effective: bool  # whether this org is scanned on a schedule
+    cadence: Literal["daily", "weekly"] | None  # the cadence it runs at, None when not scheduled
+    instance_cadence: Literal["off", "daily", "weekly"]
+
+
+class CheckChange(BaseModel):
+    id: str
+    title: str
+    severity: str
+    # "newly_failing" (passed or was n/a, now fails or errors), "newly_passing", or "still_failing".
+    change: Literal["newly_failing", "newly_passing", "still_failing"]
+    previous_status: str | None
+    status: str
+    # Repos named by the check's latest result (capped); empty when the check does not report them.
+    repos: list[str] = []
+
+
+class ScanChangesResponse(BaseModel):
+    org: str
+    # False when there is no earlier scan to compare with.
+    has_previous: bool
+    previous_scanned_at: datetime | None = None
+    scanned_at: datetime | None = None
+    previous_score: int | None = None
+    score: int | None = None
+    # False when the two scans are not on the same basis (an errored check, or a different set of scored
+    # checks), so the score delta is not shown as a real change.
+    comparable: bool = True
+    changes: list[CheckChange] = []
+
+
 class ScanHistoryEntry(BaseModel):
     id: int
     owner: str

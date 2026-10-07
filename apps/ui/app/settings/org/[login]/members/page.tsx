@@ -16,6 +16,7 @@ import { CopyButton } from "@/components/copy-button"
 import { orgRoleFor } from "@/lib/members-href"
 import { SectionError } from "@/components/section-error"
 import { HygieneScoringCard } from "@/components/hygiene-scoring-card"
+import { ScheduledScansCard } from "@/components/scheduled-scans-card"
 import { MemberAccessSheet } from "@/components/member-access-sheet"
 import { BadgeSettingsCard } from "@/components/badge-settings-card"
 import type { GithubOrgMember, InvitationOut, MyOrgMembership } from "@/lib/api/types"
@@ -543,6 +544,7 @@ export default function OrgMembersPage() {
       ) : (
         <>
         <HygieneScoringCard orgLogin={orgLogin} />
+        <ScheduledScansCard orgLogin={orgLogin} />
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="card">
             <div className="px-4 py-3 border-b border-border">

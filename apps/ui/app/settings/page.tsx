@@ -645,6 +645,18 @@ const CONFIG_FIELDS: {
       { value: "monthly", label: "Monthly" },
     ],
   },
+  {
+    key: "scheduled_scan_cadence",
+    label: "Scheduled Security Scans",
+    description: "Re-scan every connected organization automatically so scores, alerts and \"changed since last scan\" stay current without anyone clicking Scan. Uses each org's GitHub App installation, never a pasted token. Org admins can switch it on or off per organization. Off by default.",
+    type: "select",
+    options: [
+      { value: "off", label: "Off" },
+      { value: "daily", label: "Daily" },
+      { value: "weekly", label: "Weekly" },
+    ],
+  },
+  { key: "scheduled_scan_poll_seconds", label: "Scheduled Scan Check Interval", description: "Seconds between checks for an org whose scan is due (default 3600).", type: "number" },
   { key: "digest_poll_seconds", label: "Digest Check Interval", description: "Seconds between checks for a due leadership digest.", type: "number" },
   {
     key: "pr_nudge_mode",

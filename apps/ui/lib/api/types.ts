@@ -842,3 +842,32 @@ export interface NotificationFeed {
   unread_count: number
   last_read_at: string | null
 }
+
+export interface ScheduledScanSettings {
+  enabled: boolean | null
+  effective: boolean
+  cadence: "daily" | "weekly" | null
+  instance_cadence: "off" | "daily" | "weekly"
+}
+
+export interface CheckChange {
+  id: string
+  title: string
+  severity: string
+  change: "newly_failing" | "newly_passing" | "still_failing"
+  previous_status: string | null
+  status: string
+  repos: string[]
+}
+
+export interface ScanChanges {
+  org: string
+  has_previous: boolean
+  previous_scanned_at: string | null
+  scanned_at: string | null
+  previous_score: number | null
+  score: number | null
+  // False when an errored check or a different scored set means the two scores are not on the same basis.
+  comparable: boolean
+  changes: CheckChange[]
+}

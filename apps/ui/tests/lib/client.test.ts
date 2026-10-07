@@ -295,6 +295,25 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
     expect(JSON.parse((fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body as string)).toEqual({ up_to: "2026-01-01T00:00:00Z" });
   });
 
+  it("GET/PUTs the org's scheduled-scans setting and GETs the scan changes", async () => {
+    stubOkJson({ enabled: null, effective: false, cadence: null, instance_cadence: "off" });
+    await api.orgs.scheduledScans("acme");
+    const [getUrl, getInit] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(getUrl).toContain("/orgs/acme/scheduled-scans");
+    expect(getInit.method).toBeUndefined();
+
+    stubOkJson({ enabled: true, effective: true, cadence: "weekly", instance_cadence: "off" });
+    await api.orgs.setScheduledScans("acme", true);
+    const [putUrl, putInit] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(putUrl).toContain("/orgs/acme/scheduled-scans");
+    expect(putInit.method).toBe("PUT");
+    expect(JSON.parse(putInit.body as string)).toEqual({ enabled: true });
+
+    stubOkJson({ org: "acme", has_previous: false, comparable: true, changes: [] });
+    await api.analytics.changes("acme");
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain("/orgs/acme/analytics/changes");
+  });
+
   it("GET/PUTs the org's badge setting", async () => {
     stubOkJson({ enabled: false });
     await api.orgs.badge("acme");

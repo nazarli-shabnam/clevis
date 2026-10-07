@@ -5,6 +5,7 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
+import { ScanChangesCard, scanChangesKey } from "@/components/scan-changes-card"
 import { EmptyStateNoAccount } from "@/components/empty-state"
 import { CheckCard } from "@/components/check-card"
 import { BulkFixPanel } from "@/components/bulk-fix-panel"
@@ -178,6 +179,7 @@ export default function SecurityPage() {
     mutationFn: (forOwner: string) => api.analytics.overview(forOwner, token),
     onSuccess: (_data, forOwner) => {
       queryClient.invalidateQueries({ queryKey: ["analytics.history", forOwner] })
+      queryClient.invalidateQueries({ queryKey: scanChangesKey(forOwner) })
     },
   })
 
@@ -432,6 +434,8 @@ export default function SecurityPage() {
             )}
           </div>
         </div>
+
+        {scopeOrgLogin !== "" && owner === scopeOrgLogin && <ScanChangesCard org={scopeOrgLogin} />}
 
         {scanIsForOwner && (scan.data || scan.isPending) && (
           <div className="card lg:col-span-2">

@@ -1,4 +1,6 @@
 import type {
+  ScanChanges,
+  ScheduledScanSettings,
   MemberAccess,
   NotificationFeed,
   ActionsUsageResponse,
@@ -232,6 +234,8 @@ export const api = {
       post<null>(`/orgs/${encodeURIComponent(org)}/notifications/read`, upTo ? { up_to: upTo } : {}),
   },
   analytics: {
+    // The org's latest scan compared with the one before it, check by check.
+    changes: (orgLogin: string) => get<ScanChanges>(`/orgs/${encodeURIComponent(orgLogin)}/analytics/changes`),
     // token is optional — the API falls back to a connected GitHub App installation.
     overview: async (owner: string, token: string): Promise<AnalyticsOverviewResponse> => {
       const data = await post<AnalyticsOverviewResponse>("/me/analytics/overview", { owner, token: token || undefined })
@@ -549,6 +553,11 @@ export const api = {
     // enabled: null clears the org's override so it follows the instance setting again.
     setHygieneScoring: (orgLogin: string, enabled: boolean | null) =>
       put<HygieneScoringSettings>(`/orgs/${encodeURIComponent(orgLogin)}/hygiene-scoring`, { enabled }),
+    scheduledScans: (orgLogin: string) =>
+      get<ScheduledScanSettings>(`/orgs/${encodeURIComponent(orgLogin)}/scheduled-scans`),
+    // enabled: null clears the org's override so it follows the instance cadence again.
+    setScheduledScans: (orgLogin: string, enabled: boolean | null) =>
+      put<ScheduledScanSettings>(`/orgs/${encodeURIComponent(orgLogin)}/scheduled-scans`, { enabled }),
     badge: (orgLogin: string) => get<{ enabled: boolean }>(`/orgs/${encodeURIComponent(orgLogin)}/badge`),
     setBadge: (orgLogin: string, enabled: boolean) =>
       put<{ enabled: boolean }>(`/orgs/${encodeURIComponent(orgLogin)}/badge`, { enabled }),

@@ -127,7 +127,7 @@ def test_org_overview_reads_and_persists_the_scan_off_the_event_loop(db):
         patch("src.routers.analytics.resolve_org_token", return_value="ghp"),
         patch("src.routers.analytics.get_overview", return_value=OVERVIEW),
         patch("src.routers.analytics.scan_results_repo.latest_with_checks", baseline),
-        patch("src.routers.analytics._persist_scan", persist),
+        patch("src.services.scan_service.persist_scan", persist),
     ):
         resp = TestClient(app).post("/orgs/acme/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
 

@@ -19,9 +19,9 @@ from src.core.auth import UserOut, require_auth
 from src.core.db import Job, ScanResult, SecurityAlert, get_db
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import installation_repo, notification_read_repo, scan_results_repo
-from src.routers.analytics import _comparable_scans
 from src.schemas.notification_feed import NotificationFeed, NotificationItem
 from src.services import app_permissions
+from src.services.scan_service import comparable_scans
 
 router = APIRouter()
 
@@ -89,7 +89,7 @@ def _score_drop_items(db: Session, org_login: str, tenant_id: int, since: dateti
         previous = {"checks": scan_results_repo._parse_checks(older.checks_json)}
         current = {"checks": scan_results_repo._parse_checks(newer.checks_json)}
         # Same rule as the score-drop alert: an errored check or a different scored set is not a real drop.
-        if not _comparable_scans(previous, current):
+        if not comparable_scans(previous, current):
             continue
         items.append(
             {

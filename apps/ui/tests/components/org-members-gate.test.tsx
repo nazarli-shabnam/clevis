@@ -18,6 +18,7 @@ vi.mock("@/lib/api/client", () => ({
     orgs: {
       mine: (...args: unknown[]) => mineMock(...args),
       hygieneScoring: vi.fn().mockResolvedValue({ enabled: null, effective: false, instance_default: false }),
+      scheduledScans: vi.fn().mockResolvedValue({ enabled: null, effective: false, cadence: null, instance_cadence: "off" }),
       badge: vi.fn().mockResolvedValue({ enabled: false }),
     },
     invitations: {

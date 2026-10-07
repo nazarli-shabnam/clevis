@@ -25,6 +25,8 @@ _ACCEPTED_KEYS = {
     "dependabot_sla_critical_days",
     "dependabot_sla_high_days",
     "score_hygiene_checks",
+    "scheduled_scan_cadence",
+    "scheduled_scan_poll_seconds",
 }
 _TTL = 60.0
 _cache: dict[str, tuple[str, float]] = {}

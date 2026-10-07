@@ -257,7 +257,7 @@ describe("SettingsPage", () => {
 
     renderPage();
 
-    const cadence = await screen.findByDisplayValue("Off");
+    const cadence = (await screen.findAllByDisplayValue("Off"))[0]; // Leadership Digest is listed before Scheduled Scans
     fireEvent.change(cadence, { target: { value: "weekly" } });
 
     const row = cadence.closest("div")!.parentElement!;
@@ -276,7 +276,7 @@ describe("SettingsPage", () => {
 
     renderPage();
 
-    const cadence = await screen.findByDisplayValue("Off");
+    const cadence = (await screen.findAllByDisplayValue("Off"))[0]; // Leadership Digest is listed before Scheduled Scans
     const row = cadence.closest("div")!.parentElement!;
     fireEvent.click(within(row).getByRole("button", { name: "Save" }));
 
