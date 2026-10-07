@@ -26,6 +26,8 @@ from src.routers import (
     issues,
     jobs,
     notifications,
+    org_activity,
+    org_notifications,
     orgs,
     pr_nudges,
     remediation,
@@ -113,6 +115,8 @@ app.include_router(workflow_lint.router, tags=["automation"])
 app.include_router(dependabot_triage.router, tags=["automation"])
 app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 app.include_router(audit.router, prefix="/audit", tags=["audit"])
+app.include_router(org_activity.router, tags=["audit", "jobs"])
+app.include_router(org_notifications.router, tags=["notifications"])
 app.include_router(tokens.router, prefix="/tokens", tags=["tokens"])
 app.include_router(config.router, prefix="/config", tags=["config"])
 app.include_router(webhooks.router, tags=["webhooks"])

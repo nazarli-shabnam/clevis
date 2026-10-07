@@ -24,4 +24,5 @@ def enqueue(db: Session, *, tenant_id: int, account_login: str, account_type: st
             "account_type": account_type,
             "token": encrypted_token,
         },
+        tenant_id=tenant_id,
     )

@@ -300,6 +300,17 @@ export interface JobOut {
   updated_at: string
 }
 
+// Filters for GET /orgs/{org}/audit; all optional, combined with AND.
+export interface OrgAuditFilters {
+  action_prefix?: string
+  actor?: string
+  target?: string
+  since?: string
+  until?: string
+  before_id?: number
+  limit?: number
+}
+
 export interface AuditLogOut {
   id: number
   actor: string
@@ -789,4 +800,21 @@ export interface SecretScanningResponse {
 export interface CreateIssueResponse {
   number: number
   html_url: string
+}
+
+export interface NotificationItem {
+  id: string
+  kind: "critical_alert" | "score_drop" | "job_failed" | "permission_drift"
+  at: string
+  title: string
+  detail: string
+  href: string
+  read: boolean
+}
+
+export interface NotificationFeed {
+  org: string
+  items: NotificationItem[]
+  unread_count: number
+  last_read_at: string | null
 }

@@ -11,6 +11,8 @@ vi.mock("next/navigation", () => ({
 // only observes whether ShellRouter decided to render the shell.
 vi.mock("@/components/app-sidebar", () => ({ AppSidebar: () => <nav data-testid="sidebar" /> }))
 vi.mock("@/components/breadcrumb", () => ({ Breadcrumb: () => <span data-testid="breadcrumb" /> }))
+// The bell needs the query client and scope; its own test covers it.
+vi.mock("@/components/notification-bell", () => ({ NotificationBell: () => <button data-testid="bell" /> }))
 // The palette needs the router, auth and query client; its own test covers it.
 vi.mock("@/components/command-palette", () => ({ CommandPalette: () => <button data-testid="palette" /> }))
 
@@ -53,6 +55,7 @@ describe("ShellRouter", () => {
 
       expect(screen.getByText("page content")).toBeInTheDocument()
       expect(screen.queryByTestId("sidebar")).not.toBeInTheDocument()
+      expect(screen.queryByTestId("bell")).not.toBeInTheDocument()
       // Signed-out pages must not get the palette (it queries authenticated endpoints).
       expect(screen.queryByTestId("palette")).not.toBeInTheDocument()
       // The shell's <main> is skipped too: public pages must bring their own landmark.
@@ -67,6 +70,7 @@ describe("ShellRouter", () => {
       renderAt(path)
 
       expect(screen.getByTestId("sidebar")).toBeInTheDocument()
+      expect(screen.getByTestId("bell")).toBeInTheDocument()
       expect(screen.getByTestId("palette")).toBeInTheDocument()
       expect(screen.getAllByRole("main")).toHaveLength(1)
       expect(screen.getByRole("main")).toHaveTextContent("page content")

@@ -23,7 +23,7 @@ def clear(db: Session, owner: str, repo: str, payload: CacheClearInput, actor: s
         "key": payload.key,
         "ref": payload.ref,
         "actor": actor,
-    })
+    }, tenant_id=tenant_id)
     audit_repo.write(
         db, actor, "cache.clear.queued", target, {"job_id": job_id, **payload.model_dump(exclude={"token"})}, tenant_id=tenant_id
     )

@@ -124,7 +124,9 @@ _EXPECTED_FORCE_RLS_TABLES = {
     "org_membership_sync_cursors",
     "automation_repo_settings",
     "notification_destinations",
+    "notification_reads",
     "api_tokens",
+    "notification_reads",
 }
 
 
