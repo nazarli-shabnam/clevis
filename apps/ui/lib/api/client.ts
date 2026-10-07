@@ -7,6 +7,7 @@ import type {
   OrgAuditFilters,
   BranchProtectionBulkResponse,
   BranchProtectionPreset,
+  BulkRemediateResponse,
   SavedBranchProtectionPreset,
   CacheClearResponse,
   CacheListResponse,
@@ -289,6 +290,16 @@ export const api = {
         `/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/secret-scanning`,
         githubTokenHeader(token),
       ),
+    // Org-admin only; needs `Administration: write`. dry_run (the default server-side) previews what
+    // each repo would get and writes nothing; a 400 with a docs pointer means the App lacks the permission.
+    remediateBulk: (
+      org: string,
+      body: { check_id: string; repos: string[]; dry_run: boolean; token?: string },
+    ) =>
+      post<BulkRemediateResponse>(
+        `/orgs/${encodeURIComponent(org)}/security/remediate/bulk`,
+        { ...body, token: body.token || undefined },
+      ),
     // Needs a write-scoped token; a GitHub 403 comes back as a 400 with a permission hint.
     // Admin-gated when `owner` is a connected Clevis org.
     remediate: (owner: string, repo: string, checkId: string, token?: string) =>
@@ -481,6 +492,8 @@ export const api = {
       const qs = params.toString()
       return get<AuditLogOut[]>(`/orgs/${encodeURIComponent(org)}/audit${qs ? `?${qs}` : ""}`)
     },
+    // Distinct action names actually present in the log, for the filter dropdown.
+    actions: () => get<string[]>("/audit/actions"),
   },
   installations: {
     list: () => get<InstallationMeta[]>("/me/installations"),

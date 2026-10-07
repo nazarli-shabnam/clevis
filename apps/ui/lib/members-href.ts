@@ -1,13 +1,29 @@
 import type { ActiveScope } from "@/lib/active-scope"
 import type { MyOrgMembership } from "@/lib/api/types"
 
-// Resolves the members page for the current user. It's admin-only on the backend, so prefer the
-// active-scope org if admin, else the first admin org, else /settings.
-export function membersHref(memberships: MyOrgMembership[], scope: ActiveScope | null): string {
+const membersPath = (m: MyOrgMembership) => `/settings/org/${encodeURIComponent(m.org_login)}/members`
+
+function adminOrgFor(memberships: MyOrgMembership[], scope: ActiveScope | null): MyOrgMembership | undefined {
   const adminOrgs = memberships.filter((m) => m.role === "admin")
+  return adminOrgs.find((m) => scope?.kind === "org" && m.org_login === scope.login) ?? adminOrgs[0]
+}
+
+// Where to send someone to invite people. Inviting is admin-only on the backend, so this is the
+// active-scope org if admin, else the first admin org, else /settings.
+export function inviteMembersHref(memberships: MyOrgMembership[], scope: ActiveScope | null): string {
+  const target = adminOrgFor(memberships, scope)
+  return target ? membersPath(target) : "/settings"
+}
+
+// Where to send someone to see the member roster. Any org member may read it (only inviting is
+// admin-only), so prefer an org they admin, then the active-scope org, then any membership, and only
+// then /settings.
+export function membersHref(memberships: MyOrgMembership[], scope: ActiveScope | null): string {
   const target =
-    adminOrgs.find((m) => scope?.kind === "org" && m.org_login === scope.login) ?? adminOrgs[0]
-  return target ? `/settings/org/${encodeURIComponent(target.org_login)}/members` : "/settings"
+    adminOrgFor(memberships, scope) ??
+    memberships.find((m) => scope?.kind === "org" && m.org_login === scope.login) ??
+    memberships[0]
+  return target ? membersPath(target) : "/settings"
 }
 
 // The caller's role in `owner`'s org, or null when they have no Clevis membership there (a personal

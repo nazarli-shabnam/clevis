@@ -3,7 +3,7 @@
 import { useState } from "react"
 import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
-import { useMutation, useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Warning, CheckCircle, CircleNotch } from "@phosphor-icons/react"
@@ -13,6 +13,7 @@ import { useAuth } from "@/lib/auth-context"
 export default function InviteAcceptPage() {
   const params = useParams<{ token: string }>()
   const router = useRouter()
+  const queryClient = useQueryClient()
   const { user, isLoading: authLoading } = useAuth()
   const token = params.token
 
@@ -23,7 +24,11 @@ export default function InviteAcceptPage() {
 
   const accept = useMutation({
     mutationFn: () => api.invitations.accept(token),
-    onSuccess: () => router.push("/"),
+    onSuccess: () => {
+      // The new membership must show up in the sidebar/Overview immediately, not after the 30 s staleTime.
+      queryClient.invalidateQueries({ queryKey: ["my-orgs"] })
+      router.push("/")
+    },
   })
 
   // The backend 403s with this specific message for an unverified email -- distinct from an

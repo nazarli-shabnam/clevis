@@ -5,6 +5,7 @@ import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/s
 import { AppSidebar } from "@/components/app-sidebar"
 import { Breadcrumb } from "@/components/breadcrumb"
 import { NotificationBell } from "@/components/notification-bell"
+import { CommandPalette } from "@/components/command-palette"
 import { isPublicRoute } from "@/lib/public-routes"
 
 export function ShellRouter({ children }: { children: React.ReactNode }) {
@@ -23,7 +24,10 @@ export function ShellRouter({ children }: { children: React.ReactNode }) {
             <SidebarTrigger className="size-6 text-muted-foreground hover:text-foreground" />
             <Breadcrumb />
           </div>
-          <NotificationBell />
+          <div className="flex items-center gap-1">
+            <NotificationBell />
+            <CommandPalette />
+          </div>
         </header>
         {/* SidebarInset already renders the page's <main>; a second one would nest landmarks. */}
         <div className="flex-1 p-5">

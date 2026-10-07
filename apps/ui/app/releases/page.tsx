@@ -8,6 +8,7 @@ import { SectionError } from "@/components/section-error"
 import { relativeTime } from "@/lib/format"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
+import { hasOrgLogin } from "@/lib/token-resolve"
 
 const DAY_OPTIONS = [30, 90, 180] as const
 
@@ -24,12 +25,12 @@ export default function ReleasesPage() {
   const resolveQuery = useQuery({
     queryKey: ["tokens.resolve", org],
     queryFn: () => api.tokens.resolve(org),
-    enabled: org.trim().length > 2,
+    enabled: hasOrgLogin(org),
     retry: false,
   })
 
   const token = resolveQuery.data?.token ?? ""
-  const queriesEnabled = org.trim().length > 2 && !resolveQuery.isLoading
+  const queriesEnabled = hasOrgLogin(org) && !resolveQuery.isLoading
 
   const releaseTimelineQuery = useQuery({
     queryKey: ["github.release-timeline", org, days],

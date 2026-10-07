@@ -1,4 +1,4 @@
-"""The 0059 backfill attributes old jobs to a tenant only where that is unambiguous."""
+"""The 0061 backfill attributes old jobs to a tenant only where that is unambiguous."""
 
 import importlib.util
 import json
@@ -9,12 +9,12 @@ import pytest
 from src.core.db import Job
 from src.repositories import org_repo
 
-_PATH = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "0059_add_jobs_tenant_id.py"
+_PATH = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "0061_add_jobs_tenant_id.py"
 
 
 @pytest.fixture()
 def migration(db, monkeypatch):
-    spec = importlib.util.spec_from_file_location("migration_0059", _PATH)
+    spec = importlib.util.spec_from_file_location("migration_0061", _PATH)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     # run the backfill on the test's own connection/transaction instead of an alembic context

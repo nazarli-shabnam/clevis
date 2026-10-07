@@ -1,7 +1,8 @@
 """Tests for the install-time activity backfill."""
 
 import json
-from datetime import date
+import uuid
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -490,6 +491,63 @@ def test_handler_inserts_events_and_daily_counts(pg_conn, tenant_id):
     assert _repo_events_count(pg_conn, tenant_id, repo) == 2
     assert _daily_count(pg_conn, tenant_id, repo, "push", date(2026, 8, 21)) == 1
     assert _daily_count(pg_conn, tenant_id, repo, "issues", date(2026, 8, 21)) == 1
+
+
+def _insert_webhook_event(conn, tenant_id, repo, event_type, actor, occurred_at):
+    """A row as event_consumer stores it: GitHub's delivery GUID, stamped with our receive time."""
+    from repo_events_store import insert_event_and_upsert_daily_count
+
+    with conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        insert_event_and_upsert_daily_count(
+            cur, tenant_id=tenant_id, delivery_id=str(uuid.uuid4()), event_type=event_type, actor=actor,
+            actor_avatar="", repo=repo, summary="from webhook", occurred_at=occurred_at,
+        )
+    conn.commit()
+
+
+def test_handler_skips_an_event_the_webhook_path_already_stored(pg_conn, tenant_id):
+    # The same push arrives by webhook (stamped when we received it) and in the Events API; it must count once (#542).
+    repo = f"acme/backfill-twin-{uuid.uuid4().hex[:8]}"  # unique per run: rows persist
+    github_created = datetime(2026, 8, 21, 0, 30, tzinfo=timezone.utc)
+    _insert_webhook_event(pg_conn, tenant_id, repo, "push", "octocat", github_created + timedelta(seconds=20))
+    events = [_raw_event(id=f"b-twin-1-{repo[-8:]}", event_type="PushEvent", repo={"name": repo})]
+
+    with patch("worker.httpx.Client", return_value=_mock_github_client(events)):
+        worker._handle_backfill_repo_events(pg_conn, 120, _payload_for(tenant_id), 0)
+
+    assert _repo_events_count(pg_conn, tenant_id, repo) == 1
+    assert _daily_count(pg_conn, tenant_id, repo, "push", date(2026, 8, 21)) == 1
+
+
+def test_handler_still_recovers_an_event_the_webhook_path_missed(pg_conn, tenant_id):
+    # Gap-heal's purpose: a webhook outage leaves holes that the Events API fills. Different actor and
+    # a far-away timestamp are not twins.
+    repo = f"acme/backfill-gap-{uuid.uuid4().hex[:8]}"  # unique per run: rows persist
+    _insert_webhook_event(pg_conn, tenant_id, repo, "push", "someone-else", datetime(2026, 8, 21, 0, 30, tzinfo=timezone.utc))
+    _insert_webhook_event(pg_conn, tenant_id, repo, "push", "octocat", datetime(2026, 8, 21, 6, 0, tzinfo=timezone.utc))
+    events = [_raw_event(id=f"b-gap-1-{repo[-8:]}", event_type="PushEvent", repo={"name": repo})]  # octocat at 00:30
+
+    with patch("worker.httpx.Client", return_value=_mock_github_client(events)):
+        worker._handle_backfill_repo_events(pg_conn, 121, _payload_for(tenant_id), 0)
+
+    assert _repo_events_count(pg_conn, tenant_id, repo) == 3
+    assert _daily_count(pg_conn, tenant_id, repo, "push", date(2026, 8, 21)) == 3
+
+
+def test_one_webhook_row_hides_only_one_of_two_close_backfilled_events(pg_conn, tenant_id):
+    repo = f"acme/backfill-pair-{uuid.uuid4().hex[:8]}"  # unique per run: rows persist
+    _insert_webhook_event(pg_conn, tenant_id, repo, "push", "octocat", datetime(2026, 8, 21, 0, 30, 10, tzinfo=timezone.utc))
+    events = [
+        _raw_event(id=f"b-pair-1-{repo[-8:]}", event_type="PushEvent", repo={"name": repo}),
+        _raw_event(id=f"b-pair-2-{repo[-8:]}", event_type="PushEvent", repo={"name": repo}, created_at="2026-08-21T00:30:40Z"),
+    ]
+
+    with patch("worker.httpx.Client", return_value=_mock_github_client(events)):
+        worker._handle_backfill_repo_events(pg_conn, 122, _payload_for(tenant_id), 0)
+
+    assert _repo_events_count(pg_conn, tenant_id, repo) == 2  # the webhook row + one backfilled
+    assert _daily_count(pg_conn, tenant_id, repo, "push", date(2026, 8, 21)) == 2
 
 
 def test_handler_skips_untracked_event_types(pg_conn, tenant_id):
