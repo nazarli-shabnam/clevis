@@ -41,6 +41,8 @@ def _client(db, user):
         id=user.id, email=user.email, name=None, is_workspace_admin=False
     )
     app.dependency_overrides[get_db] = lambda: db
+    # Overriding require_auth skips its SET app.user_id side effect, which RLS (membership lookups) depends on.
+    db.execute(text(f"SET app.user_id = {user.id}"))
     return TestClient(app)
 
 
@@ -126,6 +128,7 @@ def test_failed_jobs_are_tenant_scoped_recent_and_hide_nothing_sensitive(db, wor
 
 
 def test_permission_drift_shows_for_admins_when_automations_are_blocked(db, world):
+    db.execute(text(f"SET app.tenant_id = {world['acme'].tenant_id}"))  # RLS: the row's tenant must be the session's
     inst = installation_repo.create(
         db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=7, org_id=world["acme"].id
     )
@@ -185,6 +188,7 @@ def test_the_read_marker_only_moves_forward(db, world):
     from src.repositories import notification_read_repo as repo
 
     t, uid = world["acme"].tenant_id, world["users"]["admin"].id
+    db.execute(text(f"SET app.tenant_id = {t}"))
     repo.mark_read(db, uid, t, NOW)
     repo.mark_read(db, uid, t, NOW - timedelta(hours=1))
     assert repo.get_last_read(db, uid, t) == NOW

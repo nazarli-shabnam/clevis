@@ -125,9 +125,55 @@ describe("OrgActivityPage", () => {
     expect(csv).toContain("job.enqueued");
   });
 
-  it("shows a retry state when the audit query fails", async () => {
+  it("shows a retry state when the audit query fails, and Retry refetches", async () => {
     auditMock.mockRejectedValue(new Error("nope"));
     renderPage();
     await waitFor(() => expect(screen.getByText(/Couldn't load the audit log: nope/)).toBeInTheDocument());
+    auditMock.mockResolvedValue([row(1)]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Retry" })[0]);
+    await waitFor(() => expect(screen.getByText("token.saved")).toBeInTheDocument());
+  });
+
+  it("clears applied filters and says when none match", async () => {
+    renderPage();
+    await waitFor(() => expect(auditMock).toHaveBeenCalledTimes(1));
+    auditMock.mockResolvedValue([]);
+    fireEvent.change(screen.getByLabelText("Actor"), { target: { value: "nobody@e.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+    await waitFor(() => expect(screen.getByText(/matching these filters/)).toBeInTheDocument());
+
+    auditMock.mockResolvedValue([row(5)]);
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    await waitFor(() => expect(auditMock).toHaveBeenLastCalledWith("acme", expect.not.objectContaining({ actor: expect.anything() })));
+    expect(screen.getByLabelText("Actor")).toHaveValue("");
+  });
+
+  it("refreshes jobs on demand and pages older ones", async () => {
+    const full = Array.from({ length: 50 }, (_, i) => ({ id: 200 - i, job_type: "x", status: "done", result: null, updated_at: "2026-01-01T00:00:00Z" }));
+    jobsMock.mockResolvedValueOnce(full).mockResolvedValue([]);
+    renderPage();
+    await screen.findByText("#200");
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(jobsMock.mock.calls.length).toBeGreaterThanOrEqual(2));
+  });
+
+  it("pages older jobs with before_id", async () => {
+    const full = Array.from({ length: 50 }, (_, i) => ({ id: 200 - i, job_type: "x", status: "done", result: null, updated_at: "2026-01-01T00:00:00Z" }));
+    jobsMock.mockResolvedValue(full);
+    renderPage();
+    await screen.findByText("#200");
+    const buttons = screen.getAllByRole("button", { name: "Load more" });
+    fireEvent.click(buttons[buttons.length - 1]);
+    await waitFor(() => expect(jobsMock).toHaveBeenCalledWith("acme", expect.objectContaining({ before_id: 151 })));
+  });
+
+  it("shows the jobs error with a working Retry, and an empty state", async () => {
+    jobsMock.mockRejectedValue(new Error("jobs down"));
+    renderPage();
+    await waitFor(() => expect(screen.getByText(/Couldn't load jobs: jobs down/)).toBeInTheDocument());
+    jobsMock.mockResolvedValue([]);
+    const retries = screen.getAllByRole("button", { name: "Retry" });
+    fireEvent.click(retries[retries.length - 1]);
+    await waitFor(() => expect(screen.getByText(/No background jobs/)).toBeInTheDocument());
   });
 });
