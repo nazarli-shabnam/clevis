@@ -10,6 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import anyio
 import httpx
@@ -345,7 +346,13 @@ async def org_activity_summary_stream(
     *returns* the StreamingResponse, before the body has streamed -- so the stream opens
     its own per-poll sessions instead (see _stream_poll_session)."""
     days = max(1, min(days, _ACTIVITY_SUMMARY_MAX_DAYS))
-    return StreamingResponse(_activity_summary_stream(org_login, ctx, days), media_type="text/event-stream")
+    # ctx's ORM instances belong to the request's session, which is closed (and its instances
+    # expired and detached) before the body streams. Hand the generator plain ints instead.
+    detached = SimpleNamespace(
+        org=SimpleNamespace(id=ctx.org.id, tenant_id=ctx.org.tenant_id),
+        membership=SimpleNamespace(user_id=ctx.membership.user_id),
+    )
+    return StreamingResponse(_activity_summary_stream(org_login, detached, days), media_type="text/event-stream")
 
 
 def _run_duration_seconds(run: dict) -> int | None:
