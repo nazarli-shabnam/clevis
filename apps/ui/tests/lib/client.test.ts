@@ -56,6 +56,63 @@ describe("audit.actions", () => {
   });
 });
 
+describe("org-scoped endpoints", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function stub(body: unknown, status = 200) {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(status === 204 ? new Response(null, { status }) : new Response(JSON.stringify(body), { status })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return () => [String((fetchMock.mock.calls[0] as unknown[])[0]), (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit] as const;
+  }
+
+  it("audit.listForOrg sends only the non-blank filters", async () => {
+    const call = stub([]);
+    await api.audit.listForOrg("a/b", { action_prefix: "token.", actor: "", before_id: 7, limit: 50 });
+    const [url] = call();
+    expect(url).toMatch(/\/orgs\/a%2Fb\/audit\?/);
+    expect(url).toContain("action_prefix=token.");
+    expect(url).toContain("before_id=7");
+    expect(url).toContain("limit=50");
+    expect(url).not.toContain("actor=");
+  });
+
+  it("audit.listForOrg omits the query string with no filters", async () => {
+    const call = stub([]);
+    await api.audit.listForOrg("acme");
+    expect(call()[0]).toMatch(/\/orgs\/acme\/audit$/);
+  });
+
+  it("jobs.listForOrg pages with before_id and limit", async () => {
+    const call = stub([]);
+    await api.jobs.listForOrg("acme", { before_id: 9, limit: 25 });
+    expect(call()[0]).toMatch(/\/orgs\/acme\/jobs\?before_id=9&limit=25$/);
+  });
+
+  it("jobs.listForOrg omits the query string with no params", async () => {
+    const call = stub([]);
+    await api.jobs.listForOrg("acme");
+    expect(call()[0]).toMatch(/\/orgs\/acme\/jobs$/);
+  });
+
+  it("notifications.feed fetches the org's feed", async () => {
+    const call = stub({ org: "acme", items: [], unread_count: 0, last_read_at: null });
+    await api.notifications.feed("acme");
+    expect(call()[0]).toMatch(/\/orgs\/acme\/notifications$/);
+  });
+
+  it("notifications.markRead posts up_to only when given", async () => {
+    const withUpTo = stub(null, 204);
+    await api.notifications.markRead("acme", "2026-01-01T00:00:00Z");
+    expect(JSON.parse(String(withUpTo()[1].body))).toEqual({ up_to: "2026-01-01T00:00:00Z" });
+
+    const without = stub(null, 204);
+    await api.notifications.markRead("acme");
+    expect(JSON.parse(String(without()[1].body))).toEqual({});
+  });
+});
+
 describe("optional token coercion (GitHub App installation fallback)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
