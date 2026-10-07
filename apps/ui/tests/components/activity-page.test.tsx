@@ -10,6 +10,7 @@ const githubReleaseTimelineMock = vi.fn();
 const analyticsCockpitMock = vi.fn();
 const reposListMock = vi.fn();
 const reposPullsMock = vi.fn();
+const activitySummaryMock = vi.fn();
 
 // Workspace admin by default; individual tests flip it to cover the member view.
 let mockIsWorkspaceAdmin = true
@@ -26,6 +27,7 @@ vi.mock("@/lib/api/client", () => ({
       resolve: (...args: unknown[]) => tokensResolveMock(...args),
     },
     github: {
+      activitySummary: (...args: unknown[]) => activitySummaryMock(...args),
       events: (...args: unknown[]) => githubEventsMock(...args),
       failedRuns: (...args: unknown[]) => githubFailedRunsMock(...args),
       releaseTimeline: (...args: unknown[]) => githubReleaseTimelineMock(...args),
@@ -38,6 +40,11 @@ vi.mock("@/lib/api/client", () => ({
       pulls: (...args: unknown[]) => reposPullsMock(...args),
     },
   },
+}));
+
+vi.mock("@/lib/use-activity-stream", async (orig) => ({
+  ...(await orig<typeof import("@/lib/use-activity-stream")>()),
+  useActivityStream: () => "live",
 }));
 
 import ActivityPage from "@/app/activity/page";
@@ -64,6 +71,8 @@ describe("ActivityPage", () => {
     analyticsCockpitMock.mockReset();
     reposListMock.mockReset();
     reposPullsMock.mockReset();
+    activitySummaryMock.mockReset();
+    activitySummaryMock.mockResolvedValue({ org: "acme", days: 7, connected: false, generated_at: "2026-01-01T00:00:00Z", totals: [] });
     jobsListMock.mockResolvedValue([]);
     tokensResolveMock.mockRejectedValue(new Error("no saved token"));
     githubFailedRunsMock.mockResolvedValue({ org: "acme", runs: [] });

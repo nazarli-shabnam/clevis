@@ -244,6 +244,21 @@ export interface OrgEventsResponse {
   events: OrgEvent[]
 }
 
+export interface ActivitySummaryEntry {
+  repo: string
+  event_type: string
+  count: number
+}
+
+export interface ActivitySummary {
+  org: string
+  days: number
+  // False for an org with no connected GitHub App installation: totals is [] because nothing is ingested.
+  connected: boolean
+  generated_at: string
+  totals: ActivitySummaryEntry[]
+}
+
 export interface FailedRunSummary {
   repo: string
   workflow_name: string
