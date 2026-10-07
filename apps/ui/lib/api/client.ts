@@ -1,4 +1,5 @@
 import type {
+  NotificationFeed,
   ActionsUsageResponse,
   AnalyticsHistoryResponse,
   AnalyticsOverviewResponse,
@@ -215,6 +216,13 @@ function normalizeCheckValue(id: string, raw: unknown): CheckValue {
 
 
 export const api = {
+  notifications: {
+    feed: (org: string) => get<NotificationFeed>(`/orgs/${encodeURIComponent(org)}/notifications`),
+    // 204: marks everything currently in the feed as read for the caller.
+    // `upTo` = the newest item shown, so an item that arrived after the feed loaded stays unread.
+    markRead: (org: string, upTo?: string) =>
+      post<null>(`/orgs/${encodeURIComponent(org)}/notifications/read`, upTo ? { up_to: upTo } : {}),
+  },
   analytics: {
     // token is optional — the API falls back to a connected GitHub App installation.
     overview: async (owner: string, token: string): Promise<AnalyticsOverviewResponse> => {
