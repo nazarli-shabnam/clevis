@@ -97,14 +97,14 @@ export default function OverviewPage() {
     setOrgChecked(true)
   }, [])
 
-  // Fires in parallel with the cockpit query; only drives the "not configured yet" CTA branch.
+  // Fires in parallel with the cockpit query. A saved PAT is optional (GitHub App installs and plain
+  // members have none: /tokens/resolve is admin-only and 404s), so it only feeds the cockpit call.
   const resolveQuery = useQuery({
     queryKey: ["tokens.resolve", org],
     queryFn: () => api.tokens.resolve(org),
     enabled: org.trim().length > 0,
     retry: false,
   })
-  const configured = !!resolveQuery.data?.token
 
   // Cockpit waits for resolveQuery to settle so a saved PAT isn't missed on the first request
   // (queryKey excludes token, so a later-arriving token wouldn't trigger a refetch).
@@ -116,6 +116,9 @@ export default function OverviewPage() {
     refetchInterval: 30_000,
   })
   const cockpit = cockpitQuery.data
+  // "Configure →" means there is no data source. The cockpit loading or succeeding proves there is one,
+  // PAT or not; only a failed (or never-started) cockpit with no PAT leaves the cards unconfigured.
+  const configured = !!resolveQuery.data?.token || resolveQuery.isLoading || cockpitQuery.isLoading || cockpitQuery.isSuccess
 
   // Best-effort: needs an App permission not requested by default, so retry: false and the card
   // renders only on success. Keyed by user because the QueryClient outlives logout/login, so keying
