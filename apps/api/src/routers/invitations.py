@@ -142,8 +142,8 @@ def accept_invitation(
     if invitation.email.lower() != user.email.lower():
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invitation email does not match account")
     # Email match alone isn't proof of ownership for a self-registered account.
-    # GitHub-linked accounts and the setup admin are verified immediately; self-registered
-    # accounts must click the emailed verification link first.
+    # Accounts created by GitHub sign-in and the setup admin are verified immediately;
+    # self-registered accounts must click the emailed verification link first.
     db_user = db.query(User).filter(User.id == user.id).first()
     if db_user is None or not db_user.email_verified:
         raise HTTPException(
