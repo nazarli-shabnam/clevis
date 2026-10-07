@@ -232,6 +232,43 @@ describe("BulkFixPanel", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Administration needed.");
   });
 
+  it("shows a checking state while the preview runs, and a non-Error rejection falls back to a generic message", async () => {
+    let rejectPreview!: (reason: unknown) => void;
+    bulkMock.mockReturnValueOnce(new Promise((_res, rej) => { rejectPreview = rej; }));
+    renderPanel();
+    fireEvent.click(checkbox("api"));
+    fireEvent.click(screen.getByRole("button", { name: "Preview changes (1)" }));
+
+    expect(await screen.findByRole("button", { name: /checking/i })).toBeDisabled();
+
+    rejectPreview("nope"); // not an Error instance
+    expect(await screen.findByRole("alert")).toHaveTextContent("The preview failed.");
+  });
+
+  it("labels the confirm step for several repos in the plural, and shows Applying… while it runs", async () => {
+    let rejectApply!: (reason: unknown) => void;
+    bulkMock
+      .mockResolvedValueOnce({
+        check_id: SS,
+        dry_run: true,
+        items: [
+          { repo: "api", status: "would_change", detail: "d" },
+          { repo: "web", status: "would_change", detail: "d" },
+        ],
+      })
+      .mockReturnValueOnce(new Promise((_res, rej) => { rejectApply = rej; }));
+    renderPanel();
+    fireEvent.click(screen.getByLabelText("Select all (2)"));
+    fireEvent.click(screen.getByRole("button", { name: "Preview changes (2)" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Apply to 2 repos" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm — change 2 repos" }));
+    expect(await screen.findByRole("button", { name: "Applying…" })).toBeDisabled();
+
+    rejectApply("nope"); // not an Error instance
+    expect(await screen.findByText("The fix could not be applied.")).toBeInTheDocument();
+  });
+
   it("surfaces a failed apply", async () => {
     bulkMock
       .mockResolvedValueOnce({ check_id: SS, dry_run: true, items: [{ repo: "api", status: "would_change", detail: "d" }] })
