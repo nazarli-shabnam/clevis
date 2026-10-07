@@ -50,6 +50,16 @@ describe("NotificationBell", () => {
     expect(screen.getByText(/Critical alert ·/)).toBeInTheDocument();
   });
 
+  it("closes the popover when an item is followed", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "critical_alert")]));
+    wrap(<NotificationBell />);
+    fireEvent.click(await screen.findByRole("button", { name: /Notifications, 1 unread/ }));
+    const link = await screen.findByRole("link", { name: /title a/ });
+    link.addEventListener("click", (e) => e.preventDefault());
+    fireEvent.click(link);
+    await waitFor(() => expect(screen.queryByRole("link", { name: /title a/ })).not.toBeInTheDocument());
+  });
+
   it("marks everything read and refetches", async () => {
     feedMock.mockResolvedValueOnce(feed([item("a", "job_failed")])).mockResolvedValue(feed([item("a", "job_failed", true)]));
     wrap(<NotificationBell />);

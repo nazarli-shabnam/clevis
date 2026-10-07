@@ -126,6 +126,7 @@ _EXPECTED_FORCE_RLS_TABLES = {
     "notification_destinations",
     "notification_reads",
     "api_tokens",
+    "notification_reads",
 }
 
 
