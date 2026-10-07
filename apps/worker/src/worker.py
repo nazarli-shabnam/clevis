@@ -121,7 +121,7 @@ def _mark_done(conn: psycopg.Connection, job_id: int, result: dict, expected_ret
     return _fenced_update(
         conn,
         job_id,
-        "UPDATE jobs SET status='done', result=%s, updated_at=NOW() "
+        "UPDATE jobs SET status='done', result=%s, payload=jobs_scrub_token(payload), updated_at=NOW() "
         "WHERE id=%s AND status='processing' AND retry_count=%s",
         (json.dumps(result), job_id, expected_retry_count),
     )
@@ -131,7 +131,7 @@ def _mark_failed(conn: psycopg.Connection, job_id: int, error_text: str, expecte
     return _fenced_update(
         conn,
         job_id,
-        "UPDATE jobs SET status='failed', result=%s, updated_at=NOW() "
+        "UPDATE jobs SET status='failed', result=%s, payload=jobs_scrub_token(payload), updated_at=NOW() "
         "WHERE id=%s AND status='processing' AND retry_count=%s",
         (error_text, job_id, expected_retry_count),
     )
@@ -144,7 +144,7 @@ def _requeue_for_retry(conn: psycopg.Connection, job_id: int, retry_count: int, 
         return _fenced_update(
             conn,
             job_id,
-            "UPDATE jobs SET status='failed', retry_count=%s, result=%s, updated_at=NOW() "
+            "UPDATE jobs SET status='failed', retry_count=%s, result=%s, payload=jobs_scrub_token(payload), updated_at=NOW() "
             "WHERE id=%s AND status='processing' AND retry_count=%s",
             (new_count, f"exceeded max retry attempts ({MAX_RETRIES}): {error_text}", job_id, retry_count),
         )
@@ -308,13 +308,33 @@ def _handle_backfill_repo_events(conn: psycopg.Connection, job_id: int, payload_
         return
 
     inserted_count = 0
+    skipped_duplicates = 0
     try:
         with conn.cursor() as cur:
             # Session context for RLS, same as event_consumer.py's _process_entry.
             cur.execute(f"SET app.tenant_id = {int(payload.tenant_id)}")
-            for raw_event in raw_events:
-                normalized = backfill.normalize(raw_event)
-                if normalized is None:
+            normalized_events = [n for n in map(backfill.normalize, raw_events) if n is not None]
+            # An event the webhook path already stored must not be stored again under a backfill id,
+            # or repo_events and the daily rollup count it twice (issue #542).
+            webhook_twins = (
+                repo_events_store.webhook_events_between(
+                    cur,
+                    tenant_id=payload.tenant_id,
+                    start=min(n["occurred_at"] for n in normalized_events),
+                    end=max(n["occurred_at"] for n in normalized_events),
+                )
+                if normalized_events
+                else {}
+            )
+            for normalized in normalized_events:
+                if repo_events_store.consume_webhook_twin(
+                    webhook_twins,
+                    repo=normalized["repo"],
+                    event_type=normalized["event_type"],
+                    actor=normalized["actor"],
+                    occurred_at=normalized["occurred_at"],
+                ):
+                    skipped_duplicates += 1
                     continue
                 if repo_events_store.insert_event_and_upsert_daily_count(cur, tenant_id=payload.tenant_id, **normalized):
                     inserted_count += 1
@@ -342,7 +362,15 @@ def _handle_backfill_repo_events(conn: psycopg.Connection, job_id: int, payload_
         return
 
     if _mark_done(
-        conn, job_id, {"ok": True, "events_seen": len(raw_events), "events_inserted": inserted_count}, retry_count
+        conn,
+        job_id,
+        {
+            "ok": True,
+            "events_seen": len(raw_events),
+            "events_inserted": inserted_count,
+            "events_skipped_duplicate": skipped_duplicates,
+        },
+        retry_count,
     ):
         log.info(
             "job %d done: backfilled %d/%d events for %s", job_id, inserted_count, len(raw_events), payload.account_login
@@ -466,6 +494,7 @@ def _reclaim_stale_jobs(conn: psycopg.Connection) -> None:
             SET status = CASE WHEN retry_count + 1 > %(max_retries)s THEN 'failed' ELSE 'queued' END,
                 retry_count = retry_count + 1,
                 result = CASE WHEN retry_count + 1 > %(max_retries)s THEN %(exceeded_message)s ELSE result END,
+                payload = CASE WHEN retry_count + 1 > %(max_retries)s THEN jobs_scrub_token(payload) ELSE payload END,
                 updated_at = NOW()
             WHERE status = 'processing'
               AND updated_at < NOW() - make_interval(mins => %(timeout_minutes)s)

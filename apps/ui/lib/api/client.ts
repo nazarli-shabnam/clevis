@@ -481,6 +481,8 @@ export const api = {
       const qs = params.toString()
       return get<AuditLogOut[]>(`/orgs/${encodeURIComponent(org)}/audit${qs ? `?${qs}` : ""}`)
     },
+    // Distinct action names actually present in the log, for the filter dropdown.
+    actions: () => get<string[]>("/audit/actions"),
   },
   installations: {
     list: () => get<InstallationMeta[]>("/me/installations"),

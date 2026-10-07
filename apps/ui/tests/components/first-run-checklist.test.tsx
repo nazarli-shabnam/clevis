@@ -13,6 +13,7 @@ vi.mock("@/lib/api/client", () => ({
 }))
 
 import { FirstRunChecklist } from "@/components/first-run-checklist"
+import { clearDismissals, dismissalKey } from "@/lib/first-run-dismissal"
 import type { InstallationMeta } from "@/lib/api/types"
 
 const SCOPE = { kind: "org", login: "acme" } as const
@@ -32,11 +33,13 @@ function install(overrides: Partial<InstallationMeta> = {}): InstallationMeta {
 
 function renderChecklist(props: Partial<React.ComponentProps<typeof FirstRunChecklist>> = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
+  const tree = (extra: typeof props) => (
     <QueryClientProvider client={queryClient}>
-      <FirstRunChecklist scope={SCOPE} hasScan={true} canInvite={false} membersUrl="/settings/org/acme/members" {...props} />
-    </QueryClientProvider>,
+      <FirstRunChecklist scope={SCOPE} userId={1} hasScan={true} canInvite={false} membersUrl="/settings/org/acme/members" {...props} {...extra} />
+    </QueryClientProvider>
   )
+  const utils = render(tree({}))
+  return { ...utils, update: (extra: typeof props) => utils.rerender(tree(extra)) }
 }
 
 beforeEach(() => {
@@ -106,12 +109,65 @@ describe("FirstRunChecklist", () => {
     expect(container).toBeEmptyDOMElement()
   })
 
-  it("renders nothing when the installation lookup fails", async () => {
-    listForOrgMock.mockRejectedValue(new Error("403"))
-    const { container } = renderChecklist()
+  it("says so, with a retry, when the installation lookup fails", async () => {
+    listForOrgMock.mockRejectedValueOnce(new Error("403")).mockResolvedValueOnce([])
+    renderChecklist()
 
-    await waitFor(() => expect(listForOrgMock).toHaveBeenCalled())
+    expect(await screen.findByText("Couldn't load your setup progress.")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }))
+
+    expect(await screen.findByText("Install the GitHub App")).toBeInTheDocument()
+  })
+
+  it("explains why it is missing when the cockpit failed to load, without a second Retry", async () => {
+    listForOrgMock.mockResolvedValue([install()])
+    renderChecklist({ hasScan: null, scanFailed: true })
+
+    expect(await screen.findByText(/checklist will appear once the Overview data loads/)).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull()
+  })
+
+  it("renders nothing until the user id is known, since a dismissal could not be remembered", async () => {
+    listForOrgMock.mockResolvedValue([install()])
+    const { container } = renderChecklist({ userId: null, hasOrg: false })
+
+    await new Promise((r) => setTimeout(r, 30))
     expect(container).toBeEmptyDOMElement()
+  })
+
+  it("points at the error above when the cockpit failed", async () => {
+    listForOrgMock.mockResolvedValue([install()])
+    renderChecklist({ hasScan: null, scanFailed: true })
+
+    expect(await screen.findByText(/Retry it from the error above\./)).toBeInTheDocument()
+  })
+
+  it("offers to connect an org only for a user who is in none, and waits while that is unknown", async () => {
+    listForOrgMock.mockResolvedValue([install()])
+    const { unmount } = renderChecklist({ hasOrg: false })
+    expect(await screen.findByRole("link", { name: /Connect an organization/ })).toHaveAttribute("href", "/settings")
+    unmount()
+
+    for (const hasOrg of [true, null]) {
+      const { container, unmount: u } = renderChecklist({ hasOrg })
+      await waitFor(() => expect(listForOrgMock).toHaveBeenCalled())
+      expect(container).toBeEmptyDOMElement()
+      u()
+    }
+  })
+
+  it("lists the automation step only when it is known that none has run", async () => {
+    listForOrgMock.mockResolvedValue([install()])
+    const { unmount } = renderChecklist({ hasAutomationRun: false })
+    expect(await screen.findByRole("link", { name: /Run your first automation/ })).toHaveAttribute("href", "/automation")
+    unmount()
+
+    for (const hasAutomationRun of [true, null]) {
+      const { container, unmount: u } = renderChecklist({ hasAutomationRun })
+      await waitFor(() => expect(listForOrgMock).toHaveBeenCalled())
+      expect(container).toBeEmptyDOMElement()
+      u()
+    }
   })
 
   it("can be dismissed, and stays dismissed", async () => {
@@ -126,6 +182,42 @@ describe("FirstRunChecklist", () => {
     expect(container).toBeEmptyDOMElement()
   })
 
+  it("keeps a dismissal to the user and account that made it", async () => {
+    listForOrgMock.mockResolvedValue([])
+    const first = renderChecklist()
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss getting started" }))
+    first.unmount()
+
+    // another user, same browser and org
+    const otherUser = renderChecklist({ userId: 2 })
+    expect(await screen.findByText("Install the GitHub App")).toBeInTheDocument()
+    otherUser.unmount()
+    // same user, another org
+    const otherOrg = renderChecklist({ scope: { kind: "org", login: "globex" } })
+    expect(await screen.findByText("Install the GitHub App")).toBeInTheDocument()
+    otherOrg.unmount()
+    // same user, same org still dismissed
+    expect(renderChecklist().container).toBeEmptyDOMElement()
+  })
+
+  it("is not hidden by the old un-scoped dismissal key", async () => {
+    localStorage.setItem("clevis:first-run-checklist-dismissed", "1")
+    listForOrgMock.mockResolvedValue([])
+    renderChecklist()
+
+    expect(await screen.findByText("Install the GitHub App")).toBeInTheDocument()
+  })
+
+  it("re-reads the dismissal when the active account changes", async () => {
+    listForOrgMock.mockResolvedValue([])
+    localStorage.setItem(dismissalKey(1, "org", "acme"), "1")
+    const { container, update } = renderChecklist()
+    expect(container).toBeEmptyDOMElement()
+
+    update({ scope: { kind: "org", login: "globex" } })
+    expect(await screen.findByText("Install the GitHub App")).toBeInTheDocument()
+  })
+
   it("still shows the checklist when localStorage is unavailable", async () => {
     listForOrgMock.mockResolvedValue([])
     const spy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
@@ -136,5 +228,19 @@ describe("FirstRunChecklist", () => {
     expect(await screen.findByText("Install the GitHub App")).toBeInTheDocument()
     expect(screen.getByText("Getting started — 1 step left")).toBeInTheDocument()
     spy.mockRestore()
+  })
+})
+
+describe("clearDismissals", () => {
+  it("removes the legacy and every scoped dismissal but leaves other keys", () => {
+    localStorage.setItem("clevis:first-run-checklist-dismissed", "1")
+    localStorage.setItem(dismissalKey(1, "org", "acme"), "1")
+    localStorage.setItem(dismissalKey(2, "personal", "me"), "1")
+    localStorage.setItem("unrelated", "keep")
+
+    clearDismissals()
+
+    expect(localStorage.length).toBe(1)
+    expect(localStorage.getItem("unrelated")).toBe("keep")
   })
 })

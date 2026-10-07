@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 
-from sqlalchemy import text
+from sqlalchemy import exists, select, text
 from sqlalchemy.orm import Session
 
 from src.core.db import AuditLog
@@ -58,3 +58,24 @@ def list_for_tenant(
     if before_id is not None:
         q = q.filter(AuditLog.id < before_id)
     return q.order_by(AuditLog.id.desc()).limit(limit).all()
+
+
+# Audit actions written when an automation really ran (not a dry run or a settings save). Used for the
+# "run your first automation" onboarding step.
+AUTOMATION_RUN_ACTIONS = (
+    "automation.workflow.dispatch",
+    "branch_protection.bulk_apply",
+    "dependabot_triage.run",
+    "cache.clear.queued",
+    "security.remediate",
+    "workflow_lint.autofix_pr",
+    "pr_nudge.sweep",
+)
+
+
+def has_any_action(db: Session, tenant_id: int, actions: tuple[str, ...]) -> bool:
+    """Whether the tenant has at least one audit row for any of `actions`. The caller must have set the
+    tenant session context (audit_logs RLS is strict equality on it)."""
+    return db.execute(
+        select(exists().where(AuditLog.tenant_id == tenant_id, AuditLog.action.in_(actions)))
+    ).scalar_one()

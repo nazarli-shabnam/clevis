@@ -497,6 +497,8 @@ export interface PrCycleTimeWeek {
 }
 
 export interface CockpitResponse {
+  // Whether any automation has really run for the account; null/absent when unknown (hides that checklist step).
+  has_automation_run?: boolean | null
   repo_count: number
   member_count: number | null
   latest_score: number | null

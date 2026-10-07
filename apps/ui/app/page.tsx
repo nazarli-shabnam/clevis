@@ -88,7 +88,7 @@ export default function OverviewPage() {
 
   // Resolves members links to an org the user admins; same ["my-orgs"] key as the sidebar so the
   // request dedupes. Holds at /settings while loading rather than resolving off an empty [].
-  const { data: memberships = [], isLoading: membershipsLoading } = useQuery<MyOrgMembership[]>({
+  const { data: memberships = [], isLoading: membershipsLoading, isSuccess: membershipsLoaded } = useQuery<MyOrgMembership[]>({
     queryKey: ["my-orgs"],
     queryFn: () => api.orgs.mine(),
   })
@@ -199,7 +199,12 @@ export default function OverviewPage() {
       {org && (
         <FirstRunChecklist
           scope={scope}
+          userId={user?.id ?? null}
           hasScan={cockpitQuery.isSuccess ? cockpit?.latest_score != null : null}
+          scanFailed={cockpitQuery.isError}
+          // Unknown (null) until the lookup succeeds: a failed one must not offer "Connect an organization".
+          hasOrg={membershipsLoaded ? memberships.length > 0 : null}
+          hasAutomationRun={cockpit?.has_automation_run ?? null}
           canInvite={scope?.kind === "org" && memberships.some((m) => m.org_login === scope.login && m.role === "admin")}
           membersUrl={membersUrl}
         />
