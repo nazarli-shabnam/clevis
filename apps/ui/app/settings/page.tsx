@@ -20,6 +20,7 @@ import { useAuth } from "@/lib/auth-context"
 import { THEMES, useTheme } from "@/lib/theme"
 import type { InstallationMeta, MyOrgMembership, SavedTokenMeta } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
+import { invalidateInstallations, invalidateTokens } from "@/lib/query-invalidation"
 
 
 function ProfileSection() {
@@ -270,7 +271,7 @@ function ConnectedOrgsSection() {
   const [confirmRow, setConfirmRow] = useState<ConnectedInstallation | null>(null)
 
   const personalQuery = useQuery<InstallationMeta[]>({
-    queryKey: ["installations", "me"],
+    queryKey: ["installations"],
     queryFn: () => api.installations.list(),
   })
   const membershipsQuery = useMyOrgMemberships()
@@ -279,7 +280,7 @@ function ConnectedOrgsSection() {
   // Only orgs the caller admins -- listForOrg is 403 for a plain member.
   const orgInstallQueries = useQueries({
     queries: adminOrgLogins.map((orgLogin) => ({
-      queryKey: ["installations", "org", orgLogin],
+      queryKey: ["installations.org", orgLogin],
       queryFn: () => api.installations.listForOrg(orgLogin),
       enabled: !membershipsQuery.isLoading,
     })),
@@ -307,7 +308,7 @@ function ConnectedOrgsSection() {
       return api.installations.remove(row.scope === "me" ? { scope: "me" } : { scope: "org", orgLogin: row.orgLogin }, row.installation_id)
     },
     onSuccess: (_data, row) => {
-      queryClient.invalidateQueries({ queryKey: ["installations"] })
+      invalidateInstallations(queryClient)
       setConfirmRow(null)
       toast.success(`Disconnected ${row.account_login}.`)
     },
@@ -450,7 +451,7 @@ function SavedTokensSection() {
   const upsert = useMutation({
     mutationFn: () => api.tokens.upsert(addOrg.trim(), addToken.trim(), addLabel.trim() || undefined),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["tokens"] })
+      invalidateTokens(qc)
       setAddOrg("")
       setAddToken("")
       setAddLabel("")
@@ -476,7 +477,7 @@ function SavedTokensSection() {
         next.delete(org)
         return next
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["tokens"] }),
+    onSuccess: () => invalidateTokens(qc),
   })
 
   const canAdd = addOrg.trim().length > 0 && addToken.trim().length > 0

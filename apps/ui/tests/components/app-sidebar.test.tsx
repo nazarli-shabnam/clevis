@@ -295,6 +295,16 @@ describe("AppSidebar health dot and unread badge", () => {
     await waitFor(() => expect(link).toHaveTextContent("1"));
   });
 
+  it("still renders when localStorage cannot be read (#591)", async () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation((key: string) => {
+      if (key === "activity_last_seen_at") throw new Error("storage blocked");
+      return null;
+    });
+    renderSidebar();
+
+    expect(await screen.findByRole("link", { name: /Activity/ })).toBeInTheDocument();
+  });
+
   it("shows no unread badge when there are no events newer than last-seen", async () => {
     localStorage.setItem("activity_last_seen_at", "2026-07-20T00:00:00Z");
     cockpitResponse = {

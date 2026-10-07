@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useMutation, useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -17,6 +17,8 @@ import type { MyOrgMembership, PullSummary } from "@/lib/api/types"
 // No repo-count cap here; requests are fanned out in batches so large orgs don't fire
 // dozens of simultaneous requests.
 const REPO_BATCH_SIZE = 10
+// Same entries (and key) as the Repositories page rows, so visiting one warms the other.
+const REPO_PULLS_STALE_MS = 30_000
 
 interface PullRow extends PullSummary {
   repo: string
@@ -25,6 +27,7 @@ interface PullRow extends PullSummary {
 type GroupBy = "repo" | "author"
 
 export default function PullRequestsPage() {
+  const queryClient = useQueryClient()
   const { scope } = useActiveScope()
   // Pulls are listed via /orgs/{org}/repos; a personal scope has no org to list.
   const org = scope?.kind === "org" ? scope.login : ""
@@ -70,8 +73,12 @@ export default function PullRequestsPage() {
         const batch = repoNames.slice(i, i + REPO_BATCH_SIZE)
         const results = await Promise.all(
           batch.map((repo) =>
-            api.repos
-              .pulls(org, org, repo, token)
+            queryClient
+              .fetchQuery({
+                queryKey: ["repo-pulls", org, repo, token],
+                queryFn: () => api.repos.pulls(org, org, repo, token),
+                staleTime: REPO_PULLS_STALE_MS,
+              })
               .then((r) => r.pulls.map((p) => ({ ...p, repo })))
               .catch((e: unknown) => {
                 failedRepos.push(repo)
