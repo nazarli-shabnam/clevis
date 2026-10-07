@@ -152,6 +152,9 @@ def test_run_does_not_process_a_job_another_live_worker_holds(worker_db, monkeyp
 
     process.assert_not_called()
     assert "locked by another live worker" in caplog.text
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, retry_count FROM jobs WHERE id = %s", (job_id,))
+        assert cur.fetchone() == ("queued", 1)  # handed back for a backed-off retry, not stuck in 'processing' 
 
 
 def test_run_releases_the_lock_even_when_processing_raises(worker_db, monkeypatch):
@@ -172,20 +175,25 @@ def test_run_releases_the_lock_even_when_processing_raises(worker_db, monkeypatc
 # --- heartbeat failure visibility ---------------------------------------------------------------
 
 
-def test_heartbeat_escalates_to_an_error_once_per_failure_streak_and_resets_on_success(monkeypatch, caplog):
-    results = iter([False] * (_HEARTBEAT_FAILURES_BEFORE_ERROR + 2) + [True] + [False] * _HEARTBEAT_FAILURES_BEFORE_ERROR)
+def test_heartbeat_escalates_to_an_error_every_threshold_failures_and_resets_on_success(monkeypatch, caplog):
+    n = _HEARTBEAT_FAILURES_BEFORE_ERROR
+    results = iter([False] * (2 * n + 1) + [True] + [False] * n)
     monkeypatch.setattr(worker, "_touch_job_heartbeat", lambda job_id: next(results))
     hb = _JobHeartbeat(123)
 
     with caplog.at_level(logging.ERROR, logger="worker"):
-        for _ in range(_HEARTBEAT_FAILURES_BEFORE_ERROR + 2):
+        for _ in range(n - 1):
             hb._tick()
-        assert caplog.text.count("heartbeat failed") == 1  # logged once at the threshold, not every tick
+        assert "heartbeat failed" not in caplog.text  # below the threshold: warnings only
+        for _ in range(n + 2):
+            hb._tick()
+        # Logged at the threshold and again each further threshold failures, so a long outage stays alertable.
+        assert caplog.text.count("heartbeat failed") == 2
         hb._tick()  # success resets the streak
         assert hb._consecutive_failures == 0
-        for _ in range(_HEARTBEAT_FAILURES_BEFORE_ERROR):
+        for _ in range(n):
             hb._tick()
-    assert caplog.text.count("heartbeat failed") == 2  # a new streak escalates again
+    assert caplog.text.count("heartbeat failed") == 3  # a new streak escalates again
 
 
 def test_touch_job_heartbeat_reports_success_and_failure(worker_db, monkeypatch):

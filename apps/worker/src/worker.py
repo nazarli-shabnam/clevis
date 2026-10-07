@@ -592,8 +592,9 @@ class _JobHeartbeat:
             self._consecutive_failures = 0
             return
         self._consecutive_failures += 1
-        if self._consecutive_failures == _HEARTBEAT_FAILURES_BEFORE_ERROR:
-            # Logged once per streak, at error level so it is visible in alerting, not just warnings.
+        if self._consecutive_failures % _HEARTBEAT_FAILURES_BEFORE_ERROR == 0:
+            # At error level (so alerting sees it, not just warnings), repeated every N failures for as long
+            # as the streak lasts, so a long outage keeps producing an alertable line.
             log.error(
                 "job %d heartbeat failed %d times in a row; its row will look crashed to the reclaim sweep "
                 "(the job lock still protects it from a second worker)",
@@ -658,8 +659,11 @@ def run() -> None:
                     job_id = row[0]
                     if not _acquire_job_lock(conn, job_id):
                         # Only reachable if a live worker holds this job (reclaim skips locked jobs, so a
-                        # second claim should be impossible): leave it alone rather than run it twice.
-                        log.error("job %d is locked by another live worker; not processing it", job_id)
+                        # second claim should be impossible). Never run it twice: hand it back to the queue
+                        # (fenced on the retry_count we claimed, so it can't clobber the holder's own writes)
+                        # to be retried after the usual backoff instead of sitting in 'processing' until reclaim.
+                        log.error("job %d is locked by another live worker; requeueing instead of processing it", job_id)
+                        _requeue_for_retry(conn, job_id, row[3], "another live worker holds this job")
                     else:
                         try:
                             with _JobHeartbeat(job_id):
