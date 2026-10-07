@@ -10,7 +10,8 @@ import { PageHeader } from "@/components/page-header"
 import { Warning, Key, CircleNotch, Play, CheckCircle, XCircle, CircleDashed } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
-import { shouldApplyResolvedToken } from "@/lib/token-resolve"
+import { hasOrgLogin, shouldApplyResolvedToken } from "@/lib/token-resolve"
+import { invalidateTokens } from "@/lib/query-invalidation"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
 import { BranchProtectionCard } from "@/components/automation/branch-protection-card"
 import { DependabotTriageCard } from "@/components/automation/dependabot-triage-card"
@@ -21,8 +22,6 @@ import { relativeTime } from "@/lib/format"
 import { orgRoleFor } from "@/lib/members-href"
 import type { InstallationMeta, MyOrgMembership, RunSummary, WorkflowSummary } from "@/lib/api/types"
 
-// > 0, not > 1: valid GitHub org logins can be a single character.
-const MIN_OWNER_LEN_FOR_REPO_LOOKUP = 1
 // Pause after the last keystroke in the owner box before it drives network lookups.
 const OWNER_LOOKUP_DEBOUNCE_MS = 400
 
@@ -119,7 +118,7 @@ export default function AutomationPage() {
   useEffect(() => {
     setResolvedFor("")
     // > 0, not > 2: valid GitHub org logins can be 1-2 characters.
-    if (lookupOwner.length > 0) resolveMutation.mutate(lookupOwner)
+    if (hasOrgLogin(lookupOwner)) resolveMutation.mutate(lookupOwner)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lookupOwner])
 
@@ -128,7 +127,7 @@ export default function AutomationPage() {
     // request (and cache an entry) per keystroke. Saving a token refetches this instead.
     queryKey: ["repos.list", lookupOwner],
     queryFn: () => api.repos.list(lookupOwner, token),
-    enabled: lookupOwner.length >= MIN_OWNER_LEN_FOR_REPO_LOOKUP && resolvedFor === lookupOwner,
+    enabled: hasOrgLogin(lookupOwner) && resolvedFor === lookupOwner,
     retry: false,
   })
   const repoOptions = reposListQuery.data?.repos ?? []
@@ -138,6 +137,7 @@ export default function AutomationPage() {
     mutationFn: () => api.tokens.upsert(owner.trim(), token.trim()),
     onSuccess: () => {
       setTokenSaved(true)
+      invalidateTokens(queryClient)
       queryClient.invalidateQueries({ queryKey: ["repos.list", lookupOwner] })
     },
   })
@@ -276,8 +276,9 @@ export default function AutomationPage() {
           </div>
           <div className="p-4 flex flex-col gap-3">
             <div>
-              <label className="text-xs font-medium text-foreground block mb-1.5">Organization / Owner</label>
+              <label htmlFor="automation-owner" className="text-xs font-medium text-foreground block mb-1.5">Organization / Owner</label>
               <Input
+                id="automation-owner"
                 placeholder="e.g. octocat"
                 value={owner}
                 onChange={(e) => setOwner(e.target.value)}
@@ -313,9 +314,9 @@ export default function AutomationPage() {
             </div>
             {!hasInstallationForOwner && (
               <div>
-                <label className="text-xs font-medium text-foreground mb-1.5 flex items-center gap-1.5">
-                  GitHub Token
-                  <span className="text-[0.6875rem] text-muted-foreground font-normal">
+                <div className="mb-1.5 flex items-center gap-1.5">
+                  <label htmlFor="automation-token" className="text-xs font-medium text-foreground">GitHub Token</label>
+                  <span id="automation-token-hint" className="text-[0.6875rem] text-muted-foreground font-normal">
                     optional if the GitHub App is connected for this org
                   </span>
                   {tokenSaved && (
@@ -323,8 +324,10 @@ export default function AutomationPage() {
                       <Key className="size-3" />saved
                     </span>
                   )}
-                </label>
+                </div>
                 <Input
+                  id="automation-token"
+                  aria-describedby="automation-token-hint"
                   placeholder="ghp_... (leave blank to use the connected GitHub App)"
                   type="password"
                   value={token}
@@ -362,8 +365,8 @@ export default function AutomationPage() {
               <div className="mt-2 pt-3 border-t border-border flex flex-col gap-2.5">
                 <p className="text-xs font-medium text-foreground">Dispatch &ldquo;{selectedWorkflow.name}&rdquo;</p>
                 <div>
-                  <label className="text-xs font-medium text-foreground block mb-1.5">Ref (branch/tag)</label>
-                  <Input value={ref} onChange={(e) => handleRefChange(e.target.value)} />
+                  <label htmlFor="automation-ref" className="text-xs font-medium text-foreground block mb-1.5">Ref (branch/tag)</label>
+                  <Input id="automation-ref" value={ref} onChange={(e) => handleRefChange(e.target.value)} />
                 </div>
                 <Button
                   onClick={() => {

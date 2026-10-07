@@ -24,4 +24,11 @@ describe("repo-segment", () => {
     expect(parseOwnerRepo("double--hyphen~demo")).toBeNull();
     expect(parseOwnerRepo("acme~demo?query=1")).toBeNull();
   });
+
+  it("rejects \".\" and \"..\" as repo names but keeps dotted names", () => {
+    expect(parseOwnerRepo("acme~.")).toBeNull();
+    expect(parseOwnerRepo("acme~..")).toBeNull();
+    expect(parseOwnerRepo("acme~...")).toEqual({ owner: "acme", repo: "..." });
+    expect(parseOwnerRepo("acme~.github")).toEqual({ owner: "acme", repo: ".github" });
+  });
 });

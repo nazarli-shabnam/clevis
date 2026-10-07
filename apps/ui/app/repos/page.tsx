@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
-import { useMutation, useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { EmptyStateNoAccount } from "@/components/empty-state"
 import { Input } from "@/components/ui/input"
@@ -11,7 +11,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Warning, Key, CircleNotch, Lock, Star, GitPullRequest, ArrowSquareOut } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
-import { shouldApplyResolvedToken } from "@/lib/token-resolve"
+import { hasOrgLogin, shouldApplyResolvedToken } from "@/lib/token-resolve"
+import { invalidateTokens } from "@/lib/query-invalidation"
 import { MiniSparkline } from "@/components/charts/mini-sparkline"
 import { relativeTime } from "@/lib/format"
 import { useInView } from "@/lib/use-in-view"
@@ -192,6 +193,7 @@ function RepoRow({ org, repo, token }: { org: string; repo: RepoSummary; token: 
 }
 
 export default function ReposPage() {
+  const queryClient = useQueryClient()
   const [owner, setOwner] = useState("")
   const [token, setToken] = useState("")
   const [tokenSaved, setTokenSaved] = useState(false)
@@ -244,13 +246,16 @@ export default function ReposPage() {
   useEffect(() => {
     setToken("")
     setTokenSaved(false)
-    if (owner.trim().length > 2) resolveMutation.mutate(owner.trim())
+    if (hasOrgLogin(owner)) resolveMutation.mutate(owner.trim())
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner])
 
   const saveTokenMutation = useMutation({
     mutationFn: () => api.tokens.upsert(owner.trim(), token.trim()),
-    onSuccess: () => setTokenSaved(true),
+    onSuccess: () => {
+      setTokenSaved(true)
+      invalidateTokens(queryClient)
+    },
   })
 
   // Frozen when "Load repositories" fires so later owner/token edits don't retarget rendered rows.
@@ -335,8 +340,9 @@ export default function ReposPage() {
           </div>
           <div className="p-4 flex flex-col gap-3">
             <div>
-              <label className="text-xs font-medium text-foreground block mb-1.5">Organization</label>
+              <label htmlFor="repos-owner" className="text-xs font-medium text-foreground block mb-1.5">Organization</label>
               <Input
+                id="repos-owner"
                 placeholder="e.g. octocat"
                 value={owner}
                 onChange={(e) => setOwner(e.target.value)}
@@ -345,9 +351,9 @@ export default function ReposPage() {
             </div>
             {!hasInstallationForOwner && (
             <div>
-              <label className="text-xs font-medium text-foreground mb-1.5 flex items-center gap-1.5">
-                GitHub Token
-                <span className="text-[0.6875rem] text-muted-foreground font-normal">
+              <div className="mb-1.5 flex items-center gap-1.5">
+                <label htmlFor="repos-token" className="text-xs font-medium text-foreground">GitHub Token</label>
+                <span id="repos-token-hint" className="text-[0.6875rem] text-muted-foreground font-normal">
                   optional if the GitHub App is connected — a token with read:org connects the org only if you administer it on GitHub
                 </span>
                 {tokenSaved && (
@@ -355,8 +361,10 @@ export default function ReposPage() {
                     <Key className="size-3" />saved
                   </span>
                 )}
-              </label>
+              </div>
               <Input
+                id="repos-token"
+                aria-describedby="repos-token-hint"
                 placeholder="ghp_... (leave blank to use the connected GitHub App)"
                 type="password"
                 value={token}

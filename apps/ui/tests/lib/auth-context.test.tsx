@@ -780,12 +780,16 @@ describe("AuthProvider per-user browser state", () => {
     localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "acme" }));
     localStorage.setItem("default_org", "acme");
     localStorage.setItem("activity_last_seen_at", "2024-01-01T00:00:00Z");
+    localStorage.setItem("clevis:first-run-checklist-dismissed", "1");
+    localStorage.setItem("clevis:first-run-checklist-dismissed:7:org:acme", "1");
   }
 
   function expectPerUserStateCleared() {
     expect(localStorage.getItem("active_scope")).toBeNull();
     expect(localStorage.getItem("default_org")).toBeNull();
     expect(localStorage.getItem("activity_last_seen_at")).toBeNull();
+    expect(localStorage.getItem("clevis:first-run-checklist-dismissed")).toBeNull();
+    expect(localStorage.getItem("clevis:first-run-checklist-dismissed:7:org:acme")).toBeNull();
   }
 
   const wrapper = ({ children }: { children: React.ReactNode }) => <AuthProvider>{children}</AuthProvider>;

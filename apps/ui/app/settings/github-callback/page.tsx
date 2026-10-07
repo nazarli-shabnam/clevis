@@ -18,13 +18,25 @@ export default function GithubInstallCallbackPage() {
   const [errorMessage, setErrorMessage] = useState("")
   const [connectedAccount, setConnectedAccount] = useState<{ login: string; type: string } | null>(null)
   const ranRef = useRef(false)
+  const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const mountedRef = useRef(false)
+
+  // Tracks whether the page is *currently* mounted rather than using a cancel flag captured by the
+  // run-once effect below: under React StrictMode (dev) effects run, clean up and run again, and a
+  // flag set by that simulated cleanup would swallow the result of the one real run. Here the
+  // remount sets it back to true, while a real navigation away leaves it false so a slow
+  // lookup/sync can't update state or schedule a redirect on a page the user already left.
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      clearTimeout(redirectTimerRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     if (ranRef.current) return
     ranRef.current = true
-
-    let cancelled = false
-    let redirectTimer: ReturnType<typeof setTimeout> | undefined
 
     const installationId = searchParams.get("installation_id")
     const setupAction = searchParams.get("setup_action")
@@ -49,24 +61,19 @@ export default function GithubInstallCallbackPage() {
           account_type === "User" ? { scope: "me" } : { scope: "org", orgLogin: account_login },
           { account_login, account_type, installation_id: id },
         )
-        if (cancelled) return
+        if (!mountedRef.current) return
         setConnectedAccount({ login: account_login, type: account_type })
         setStatus("success")
-        redirectTimer = setTimeout(() => router.replace("/settings?installed=1"), 1800)
+        redirectTimerRef.current = setTimeout(() => router.replace("/settings?installed=1"), 1800)
       } catch (err) {
-        if (cancelled) return
+        if (!mountedRef.current) return
         setStatus("error")
         setErrorMessage(err instanceof Error ? err.message : "Failed to connect the installation.")
       }
     }
     run()
-
-    return () => {
-      cancelled = true
-      if (redirectTimer) clearTimeout(redirectTimer)
-    }
-    // router omitted: it isn't reference-stable, and re-running would cancel the redirect timer
-    // on every state update from run() in this run-once (ranRef-guarded) flow.
+    // router omitted: it isn't reference-stable, and this run-once (ranRef-guarded) flow must not
+    // re-run on its changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
 

@@ -95,6 +95,29 @@ def test_audit_non_owner_forbidden(db):
     assert resp.status_code == 403
 
 
+def test_audit_actions_lists_each_distinct_action_once_sorted(db):
+    from src.repositories import audit_repo, org_repo
+
+    # audit_logs RLS is strict on app.tenant_id, so rows need a tenant to be written (and read back).
+    tenant_id = org_repo.get_or_create(db, github_login="acme").tenant_id
+    for action in ("token.save", "config.update", "token.save", "cache.clear.queued"):
+        audit_repo.write(db, "owner@example.com", action, "acme", {}, tenant_id=tenant_id)
+    db.execute(text(f"SET app.tenant_id = {int(tenant_id)}"))
+
+    resp = _client(audit_router, db, _OWNER, prefix="/audit").get("/audit/actions")
+
+    assert resp.status_code == 200
+    actions = resp.json()
+    # audit_repo.write commits, so rows from other tests/dev data may also be present.
+    assert actions == sorted(set(actions))
+    assert {"cache.clear.queued", "config.update", "token.save"} <= set(actions)
+
+
+def test_audit_actions_non_owner_forbidden(db):
+    resp = _client(audit_router, db, _NON_OWNER, prefix="/audit").get("/audit/actions")
+    assert resp.status_code == 403
+
+
 # ── tokens ────────────────────────────────────────────────────────────────────
 
 def test_tokens_list_owner_ok(db):

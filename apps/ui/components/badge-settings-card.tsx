@@ -1,39 +1,20 @@
 "use client"
 
-import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { CircleNotch } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
-import { Button } from "@/components/ui/button"
+import { CopyButton } from "@/components/copy-button"
 import { SectionError } from "@/components/section-error"
 import { badgeHtml, badgeMarkdown, badgeUrl } from "@/lib/badge"
 
 const RATE_LIMIT_ISSUE = "https://github.com/nazarli-shabnam/clevis/issues/577"
 
 function Snippet({ label, value }: { label: string; value: string }) {
-  const [state, setState] = useState<"idle" | "copied" | "failed">("idle")
-  // Reset after a moment; keyed on state so rapid clicks restart one timer and unmount clears it.
-  useEffect(() => {
-    if (state === "idle") return
-    const t = setTimeout(() => setState("idle"), 2000)
-    return () => clearTimeout(t)
-  }, [state])
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(value)
-      setState("copied")
-    } catch {
-      setState("failed")
-    }
-  }
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-foreground">{label}</span>
-        <Button size="sm" variant="outline" onClick={copy} aria-label={`Copy ${label} snippet`}>
-          {state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : "Copy"}
-        </Button>
+        <CopyButton value={value} ariaLabel={`Copy ${label} snippet`} />
       </div>
       <code className="block text-xs font-mono bg-muted/30 border border-border/50 rounded-md p-2 break-all">{value}</code>
     </div>

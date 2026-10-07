@@ -29,6 +29,7 @@ from src.routers import (
     orgs,
     pr_nudges,
     remediation,
+    remediation_bulk,
     repos,
     security,
     tokens,
@@ -102,6 +103,7 @@ app.include_router(collab.router, tags=["collab"])
 app.include_router(security.router, tags=["security"])
 app.include_router(issues.router, tags=["issues"])
 app.include_router(remediation.router, tags=["security"])
+app.include_router(remediation_bulk.router, tags=["security"])
 app.include_router(automation.router, tags=["automation"])
 app.include_router(pr_nudges.router, tags=["pull-requests"])
 app.include_router(branch_protection.router, tags=["automation"])
