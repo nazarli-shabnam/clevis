@@ -1,6 +1,7 @@
 """Tests for the S6 aggregates-first activity-summary endpoints (JSON + SSE), the first
 concrete piece of the feat/aggregates-api-sse foundation -- see docs/plan.md's S6 section."""
 
+import asyncio
 import json
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
@@ -313,3 +314,84 @@ def rbac_ctx_factory(db):
         return OrgContext(org=org, membership=membership)
 
     return _make
+
+
+@pytest.mark.asyncio
+async def test_stream_route_survives_the_request_session_closing_before_the_body_streams(db, acme_org_with_installation, monkeypatch):
+    """Regression for #642: FastAPI 0.116 tears down `Depends(get_db)` as soon as the handler
+    returns the StreamingResponse, expiring and detaching the ORM objects in the OrgContext. The
+    generator must read plain ints, not those instances. Drives the real route and dependency stack
+    over raw ASGI (TestClient buffers the whole body, and this stream only ends after 15 minutes)."""
+    import src.routers.github as github_module
+
+    _insert_daily_count(
+        db, acme_org_with_installation.tenant_id, repo="acme/api", event_type="push", day=date.today(), count=4
+    )
+
+    class _PollSession:
+        """The test's transaction stands in for SessionLocal(); lifecycle calls are no-ops."""
+
+        def __getattr__(self, name):
+            return getattr(db, name)
+
+        def close(self):
+            pass
+
+        def rollback(self):
+            pass
+
+        def commit(self):
+            pass
+
+    monkeypatch.setattr(github_module, "SessionLocal", _PollSession)
+
+    def _closing_get_db():
+        try:
+            yield db
+        finally:  # what get_db's teardown does to the request's instances
+            db.expire_all()
+            db.expunge_all()
+
+    app = FastAPI()
+    app.include_router(github_router)
+    app.dependency_overrides[require_auth] = lambda: _MEMBER
+    app.dependency_overrides[get_db] = _closing_get_db
+
+    class _Enough(Exception):
+        pass
+
+    sent: list[dict] = []
+
+    async def receive():
+        await asyncio.Event().wait()  # no client disconnect
+
+    async def send(message):
+        sent.append(message)
+        if message["type"] == "http.response.body" and message.get("body"):
+            raise _Enough
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/github/orgs/acme/activity-summary/stream",
+        "raw_path": b"/github/orgs/acme/activity-summary/stream",
+        "query_string": b"",
+        "headers": [],
+        "client": ("testclient", 5000),
+        "server": ("testserver", 80),
+    }
+    try:
+        await asyncio.wait_for(app(scope, receive, send), timeout=20)
+    except BaseException:  # noqa: BLE001 - the send hook aborts the endless stream (wrapped by the ASGI stack)
+        pass
+    assert any(m["type"] == "http.response.body" and m.get("body") for m in sent), "the stream sent no data"
+
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    assert start["status"] == 200
+    body = next(m["body"] for m in sent if m["type"] == "http.response.body" and m.get("body")).decode()
+    assert body.startswith("event: activity_summary\ndata: ")
+    payload = json.loads(body.split("data: ", 1)[1].strip())
+    assert payload["totals"] == [{"repo": "acme/api", "event_type": "push", "count": 4}]

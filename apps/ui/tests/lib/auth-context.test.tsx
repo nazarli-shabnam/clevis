@@ -57,6 +57,64 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+describe("AuthProvider login failures", () => {
+  function stubLogin(handler: () => Promise<Response>) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/me")) return Promise.resolve(new Response(null, { status: 401 }));
+        if (url.endsWith("/auth/login")) return handler();
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+  }
+
+  beforeEach(() => localStorage.clear());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("reports 'Login failed' instead of a SyntaxError when a proxy answers with an HTML error page", async () => {
+    stubLogin(() => Promise.resolve(new Response("<html>502 Bad Gateway</html>", { status: 502 })));
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+
+    await expect(result.current.login("a@example.com", "pw")).rejects.toThrow("Login failed");
+  });
+
+  it("rejects a 200 response that carries no access token", async () => {
+    stubLogin(() => Promise.resolve(jsonResponse({ user: passwordUser })));
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+
+    await expect(result.current.login("a@example.com", "pw")).rejects.toThrow("Login failed");
+    expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
+  });
+
+  it("gives up with a timeout error when the API never answers", async () => {
+    vi.useFakeTimers();
+    // The login request hangs; only the abort signal can end it.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).endsWith("/auth/login")) {
+          return new Promise<Response>((_res, rej) =>
+            init?.signal?.addEventListener("abort", () => rej(new DOMException("aborted", "AbortError"))),
+          );
+        }
+        return Promise.resolve(new Response(null, { status: 401 }));
+      }),
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+
+    const pending = result.current.login("a@example.com", "pw");
+    const assertion = expect(pending).rejects.toThrow(/timed out/);
+    await vi.advanceTimersByTimeAsync(16_000);
+    await assertion;
+  });
+});
+
 describe("AuthProvider mount /auth/me race", () => {
   let meDeferred: {
     promise: Promise<Response>;

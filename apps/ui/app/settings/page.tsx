@@ -844,7 +844,7 @@ export default function SettingsPage() {
         <AppearanceSection />
         <OrgMembershipsSection />
         <ConnectedOrgsSection />
-        <SavedTokensSection />
+        {user?.is_workspace_admin && <SavedTokensSection />}
         {user?.is_workspace_admin && <InstanceConfigSection />}
       </div>
     </>

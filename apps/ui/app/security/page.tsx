@@ -18,6 +18,7 @@ import { api } from "@/lib/api/client"
 import { toCsv } from "@/lib/csv"
 import { downloadTextFile } from "@/lib/download"
 import { useActiveScope } from "@/lib/active-scope"
+import { useAuth } from "@/lib/auth-context"
 import { hasOrgLogin, shouldApplyResolvedToken } from "@/lib/token-resolve"
 import { invalidateTokens } from "@/lib/query-invalidation"
 import { DonutChart } from "@/components/charts/donut-chart"
@@ -86,6 +87,8 @@ export default function SecurityPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const queryClient = useQueryClient()
+  // Saved tokens are workspace-admin only on the API; for anyone else the button could only 403.
+  const canSaveToken = !!useAuth().user?.is_workspace_admin
 
   const [owner, setOwner] = useState("")
   const [token, setToken] = useState("")
@@ -224,12 +227,12 @@ export default function SecurityPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner])
 
+  // The selected repo belongs to the owner that was scanned, not whatever is in the input now.
+  const scannedOwner = matrixMutation.data?.owner ?? ""
   const secretScanning = useQuery({
-    queryKey: ["security.secret-scanning", owner, selectedRepo],
-    queryFn: () => api.security.secretScanning(owner, selectedRepo, token),
-    // variables === owner: the render right after an owner change still holds the old matrix and repo
-    // until the reset effect runs; without this it would fire one request for new-owner/old-repo.
-    enabled: !!selectedRepo && !!matrixMutation.data && matrixMutation.variables === owner,
+    queryKey: ["security.secret-scanning", scannedOwner, selectedRepo],
+    queryFn: () => api.security.secretScanning(scannedOwner, selectedRepo, token),
+    enabled: !!selectedRepo && !!scannedOwner,
   })
 
   // A failed history fetch must not look like "never scanned": the trend sections would otherwise
@@ -288,6 +291,8 @@ export default function SecurityPage() {
     { name: "Passed", value: allChecks.filter((c) => c.status === "pass").length, color: "#34d399" },
     { name: "Failed · high", value: allChecks.filter((c) => c.status === "fail" && c.severity === "high").length, color: "#f87171" },
     { name: "Failed · med/low", value: allChecks.filter((c) => c.status === "fail" && c.severity !== "high").length, color: "#fbbf24" },
+    // Errored checks count against the score and the "Failed" filter, so the donut total must include them.
+    { name: "Errored", value: allChecks.filter((c) => c.status === "error").length, color: "#a78bfa" },
   ].filter((d) => d.value > 0)
 
   return (
@@ -360,7 +365,7 @@ export default function SecurityPage() {
             >
               {scan.isPending ? "Scanning…" : "Run scan"}
             </Button>
-            {!tokenSaved && token && owner && (
+            {canSaveToken && !tokenSaved && token && owner && (
               <Button
                 variant="outline"
                 onClick={() => saveTokenMutation.mutate()}

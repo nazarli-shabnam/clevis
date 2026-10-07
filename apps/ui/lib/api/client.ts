@@ -19,6 +19,7 @@ import type {
   DependabotTriageResponse,
   DispatchResponse,
   DispatchAllResponse,
+  ActivitySummary,
   FailedRunsResponse,
   GithubMembershipStatus,
   GithubOrgInvitationsResponse,
@@ -69,10 +70,21 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 
+/** Opens the activity-summary SSE stream. Not routed through fetchWithTimeout: the stream is meant to
+ * stay open (the API ends it after ~15 min), so only the caller's signal may abort it. Sends the same
+ * credentials as every other call (Bearer header for password sessions, cookie for GitHub OAuth). */
+export function openActivityStream(org: string, days: number, signal: AbortSignal): Promise<Response> {
+  return fetch(`${BASE}/github/orgs/${encodeURIComponent(org)}/activity-summary/stream?days=${days}`, {
+    credentials: "include",
+    headers: { Accept: "text/event-stream", ...getAuthHeaders() },
+    signal,
+  })
+}
+
 // Hard ceiling so a hanging API surfaces an error instead of leaving callers loading forever.
 const REQUEST_TIMEOUT_MS = 15000
 
-async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
+export async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
@@ -166,14 +178,8 @@ async function del(path: string): Promise<void> {
     method: "DELETE",
     headers: { ...getAuthHeaders() },
   })
-  if (res.status === 401) {
-    if (typeof window !== "undefined") localStorage.removeItem(_TOKEN_KEY)
-    window.dispatchEvent(new Event("clevis:unauthorized"))
-  }
-  if (!res.ok) {
-    const json = await res.json().catch(() => ({}))
-    throw new Error(errorDetail(json, `Request failed: ${res.status}`))
-  }
+  // Same path as every other verb, so a failed delete throws an ApiError that carries `status`.
+  await handleResponse<unknown>(res)
 }
 
 
@@ -467,6 +473,9 @@ export const api = {
         token: token || undefined,
         per_page: perPage,
       }),
+    // Rollup of webhook-ingested events: no GitHub call, no token, so it is cheap to poll or stream.
+    activitySummary: (org: string, days = 7) =>
+      get<ActivitySummary>(`/github/orgs/${encodeURIComponent(org)}/activity-summary?days=${days}`),
     failedRuns: (org: string, token: string, limit = 20) =>
       post<FailedRunsResponse>(`/github/orgs/${encodeURIComponent(org)}/failed-runs`, {
         token: token || undefined,
