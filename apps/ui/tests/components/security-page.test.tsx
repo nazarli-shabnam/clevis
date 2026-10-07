@@ -196,9 +196,10 @@ describe("SecurityPage", () => {
     await waitFor(() => expect(screen.getByText("checks").previousElementSibling).toHaveTextContent("3"));
   });
 
-  it("keeps querying secret scanning for the scanned owner after the owner input is edited (#666)", async () => {
+  it("drops the previous owner's scan results and stops querying for them when the owner changes (#549)", async () => {
     analyticsOverviewMock.mockResolvedValue({
-      owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 1, checks: [],
+      owner: "acme", score: 50, total_checks: 1, failed_checks: 1, repo_count: 1,
+      checks: [{ id: "c1", title: "Acme-only check", severity: "high", remediation: "", status: "fail", value: { type: "boolean", enabled: false } }],
     });
     securityMatrixMock.mockResolvedValue({
       owner: "acme",
@@ -216,13 +217,43 @@ describe("SecurityPage", () => {
     const scanButton = screen.getByRole("button", { name: /run scan/i });
     await waitFor(() => expect(scanButton).not.toBeDisabled());
     fireEvent.click(scanButton);
+    expect(await screen.findByText("Acme-only check")).toBeInTheDocument();
     await waitFor(() => expect(secretScanningMock).toHaveBeenCalledWith("acme", "acme-repo", ""));
 
     secretScanningMock.mockClear();
     fireEvent.change(ownerInput, { target: { value: "beta" } });
-    await new Promise((r) => setTimeout(r, 50));
 
-    expect(secretScanningMock).not.toHaveBeenCalled(); // no "beta"/"acme-repo" request
+    await waitFor(() => expect(screen.queryByText("Acme-only check")).not.toBeInTheDocument());
+    expect(secretScanningMock).not.toHaveBeenCalled();
+  });
+
+  it("shows a scan failure for the owner it was run for, and drops it once the owner changes (#549)", async () => {
+    analyticsOverviewMock.mockRejectedValue(new Error("scan exploded"));
+
+    renderPage();
+    const ownerInput = screen.getByPlaceholderText("e.g. octocat");
+    fireEvent.change(ownerInput, { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+
+    expect(await screen.findByTestId("scan-error")).toHaveTextContent("scan exploded");
+
+    fireEvent.change(ownerInput, { target: { value: "beta" } });
+    await waitFor(() => expect(screen.queryByTestId("scan-error")).not.toBeInTheDocument());
+  });
+
+  it("shows the results card with a pending state while a scan is running (#549)", async () => {
+    analyticsOverviewMock.mockReturnValue(new Promise(() => {})); // never settles
+
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /scanning/i })).toBeInTheDocument());
+    expect(analyticsOverviewMock).toHaveBeenCalledWith("acme", "");
   });
 
   it("runs a scan on Enter in the organization field with no token entered", async () => {
@@ -487,6 +518,61 @@ describe("SecurityPage", () => {
     expect(screen.getByText("Failing check")).toBeInTheDocument();
   });
 
+  describe("bulk fix panel", () => {
+    const MATRIX = {
+      owner: "acme",
+      repos: [
+        {
+          repo: "api",
+          branch_protection: true,
+          secret_scanning: false,
+          dependabot_enabled: true,
+          dependabot_critical_count: 0,
+          dependabot_high_count: 0,
+          code_scanning: true,
+          force_push_allowed: false,
+          score: 80,
+          unknown_dimensions: [],
+          alerts_source: "github",
+        },
+      ],
+      summary: { fully_compliant_count: 0, critical_risk_count: 0, secret_hits_count: 0, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } },
+    };
+
+    async function scanAcme() {
+      analyticsOverviewMock.mockResolvedValue({ owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [] });
+      securityMatrixMock.mockResolvedValue(MATRIX);
+      renderPage();
+      fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+      await waitFor(() => expect(orgsMineMock).toHaveBeenCalled());
+      fireEvent.click(screen.getByRole("button", { name: /run scan/i }));
+      await waitFor(() => expect(screen.getByText("Compliance Matrix")).toBeInTheDocument());
+    }
+
+    it("is offered to an org admin once the matrix has loaded, scoped to that org's repos", async () => {
+      orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "admin" }]);
+      try {
+        await scanAcme();
+
+        expect(await screen.findByText("Fix many repos at once")).toBeInTheDocument();
+        expect(screen.getByRole("checkbox", { name: "api" })).toBeInTheDocument();
+      } finally {
+        orgsMineMock.mockResolvedValue([]);
+      }
+    });
+
+    it("is hidden from a plain member, who would only get a 403", async () => {
+      orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "member" }]);
+      try {
+        await scanAcme();
+
+        expect(screen.queryByText("Fix many repos at once")).not.toBeInTheDocument();
+      } finally {
+        orgsMineMock.mockResolvedValue([]);
+      }
+    });
+  });
+
   it("hides org-admin actions from a plain member of the scanned org", async () => {
     orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "member" }]);
     analyticsOverviewMock.mockResolvedValue({
@@ -624,6 +710,51 @@ describe("SecurityPage", () => {
     await waitFor(() => expect(screen.getByText("Compliance Matrix")).toBeInTheDocument());
     expect(screen.getAllByText("api").length).toBeGreaterThan(0);
     expect(secretScanningMock).toHaveBeenCalledWith("acme", "api", "");
+  });
+
+  it("gives the scan inputs accessible names", () => {
+    renderPage();
+    expect(screen.getByLabelText("Organization")).toBe(screen.getByPlaceholderText("e.g. octocat"));
+    const token = screen.getByLabelText("GitHub Token");
+    expect(token).toHaveAttribute("type", "password");
+    // the optional-token guidance stays announced with the field
+    expect(token).toHaveAccessibleDescription(/optional if the GitHub App is connected/);
+  });
+
+  it("lets keyboard users pick a matrix row through a real button", async () => {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [],
+    });
+    const row = (repo: string) => ({
+      repo,
+      branch_protection: true,
+      secret_scanning: true,
+      dependabot_enabled: true,
+      dependabot_critical_count: 0,
+      dependabot_high_count: 0,
+      code_scanning: true,
+      force_push_allowed: false,
+      score: 100,
+      unknown_dimensions: [],
+    });
+    securityMatrixMock.mockResolvedValue({
+      owner: "acme",
+      repos: [row("api"), row("web")],
+      summary: { fully_compliant_count: 2, critical_risk_count: 0, secret_hits_count: 0, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } },
+    });
+
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.click(screen.getByRole("button", { name: /run scan/i }));
+
+    const api = await screen.findByRole("button", { name: "api" });
+    const web = screen.getByRole("button", { name: "web" });
+    expect(api).toHaveAttribute("aria-current", "true");
+    expect(web).not.toHaveAttribute("aria-current");
+
+    fireEvent.click(web);
+    await waitFor(() => expect(web).toHaveAttribute("aria-current", "true"));
+    expect(api).not.toHaveAttribute("aria-current");
   });
 
   it("shows a '?' for dimensions the token couldn't evaluate, not a false pass", async () => {

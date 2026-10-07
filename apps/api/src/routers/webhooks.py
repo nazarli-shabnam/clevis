@@ -1,6 +1,8 @@
-"""GitHub App webhook receiver: POST /webhooks/github verifies X-Hub-Signature-256, keeps
-github_installations in sync on installation lifecycle events, and durably queues a
-bounded set of event types for apps/worker's event-processor fleet.
+"""GitHub App webhook receiver: POST /webhooks/github verifies X-Hub-Signature-256 and
+handles installation.deleted (purge) and installation.new_permissions_accepted
+(permissions refresh). installation.created is deliberately a no-op and suspend/unsuspend
+are only logged. A bounded set of other event types is durably queued for apps/worker's
+event-processor fleet.
 """
 
 import hashlib

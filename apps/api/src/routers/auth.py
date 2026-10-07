@@ -1,8 +1,8 @@
 """Auth router — /auth/*: setup/register/login, email verification, session management.
 
 Login/register are rate-limited per IP (login also per email). Self-registered accounts
-start unverified; setup() and GitHub-linked accounts are verified immediately since
-their email is already trusted.
+start unverified; setup() and accounts created by GitHub sign-in are verified immediately
+since their email is already trusted.
 """
 
 from datetime import datetime, timedelta, timezone

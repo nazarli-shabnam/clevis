@@ -130,6 +130,95 @@ describe("AuthGuard clevis:unauthorized handling", () => {
   });
 });
 
+describe("AuthGuard keeps the destination when it sends someone to sign in (#661)", () => {
+  const CALLBACK = "/settings/github-callback?installation_id=123&setup_action=install";
+  const CALLBACK_NEXT = "%2Fsettings%2Fgithub-callback%3Finstallation_id%3D123%26setup_action%3Dinstall";
+
+  function stubApi(setupRequired: boolean | "fail") {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/me")) return Promise.resolve(new Response(null, { status: 401 }));
+        if (url.endsWith("/auth/setup-required")) {
+          return setupRequired === "fail"
+            ? Promise.reject(new Error("offline"))
+            : Promise.resolve(jsonResponse({ setup_required: setupRequired }));
+        }
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+  }
+
+  function renderGuard() {
+    render(
+      <AuthProvider>
+        <AuthGuard>
+          <div>protected content</div>
+        </AuthGuard>
+      </AuthProvider>,
+    );
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+    replace.mockClear();
+    mockPathname = "/settings/github-callback";
+    window.history.pushState({}, "", CALLBACK);
+  });
+
+  afterEach(() => {
+    cleanup();
+    window.history.pushState({}, "", "/");
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("redirects a logged-out visitor to /login?next=<path and query>", async () => {
+    stubApi(false);
+    renderGuard();
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(`/login?next=${CALLBACK_NEXT}`));
+  });
+
+  it("still goes to /setup on a fresh install (no next)", async () => {
+    stubApi(true);
+    renderGuard();
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/setup"));
+  });
+
+  it("keeps the destination even when the setup check fails", async () => {
+    stubApi("fail");
+    renderGuard();
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(`/login?next=${CALLBACK_NEXT}`));
+  });
+
+  it("returns an expired session to the page it died on", async () => {
+    localStorage.setItem(TOKEN_KEY, makeJwt(1, "user@example.com"));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/me")) {
+          return Promise.resolve(jsonResponse({ id: 1, email: "user@example.com", name: null, is_workspace_admin: false }));
+        }
+        if (url.endsWith("/auth/logout")) return Promise.resolve(new Response(null, { status: 204 }));
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+    renderGuard();
+    await waitFor(() => expect(screen.getByText("protected content")).toBeInTheDocument());
+
+    await act(async () => {
+      window.dispatchEvent(new Event("clevis:unauthorized"));
+    });
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(`/login?next=${CALLBACK_NEXT}`));
+  });
+});
+
 describe("AuthGuard authUnconfirmed banner", () => {
   beforeEach(() => {
     localStorage.clear();
