@@ -121,7 +121,7 @@ def _mark_done(conn: psycopg.Connection, job_id: int, result: dict, expected_ret
     return _fenced_update(
         conn,
         job_id,
-        "UPDATE jobs SET status='done', result=%s, updated_at=NOW() "
+        "UPDATE jobs SET status='done', result=%s, payload=jobs_scrub_token(payload), updated_at=NOW() "
         "WHERE id=%s AND status='processing' AND retry_count=%s",
         (json.dumps(result), job_id, expected_retry_count),
     )
@@ -131,7 +131,7 @@ def _mark_failed(conn: psycopg.Connection, job_id: int, error_text: str, expecte
     return _fenced_update(
         conn,
         job_id,
-        "UPDATE jobs SET status='failed', result=%s, updated_at=NOW() "
+        "UPDATE jobs SET status='failed', result=%s, payload=jobs_scrub_token(payload), updated_at=NOW() "
         "WHERE id=%s AND status='processing' AND retry_count=%s",
         (error_text, job_id, expected_retry_count),
     )
@@ -144,7 +144,7 @@ def _requeue_for_retry(conn: psycopg.Connection, job_id: int, retry_count: int, 
         return _fenced_update(
             conn,
             job_id,
-            "UPDATE jobs SET status='failed', retry_count=%s, result=%s, updated_at=NOW() "
+            "UPDATE jobs SET status='failed', retry_count=%s, result=%s, payload=jobs_scrub_token(payload), updated_at=NOW() "
             "WHERE id=%s AND status='processing' AND retry_count=%s",
             (new_count, f"exceeded max retry attempts ({MAX_RETRIES}): {error_text}", job_id, retry_count),
         )
@@ -466,6 +466,7 @@ def _reclaim_stale_jobs(conn: psycopg.Connection) -> None:
             SET status = CASE WHEN retry_count + 1 > %(max_retries)s THEN 'failed' ELSE 'queued' END,
                 retry_count = retry_count + 1,
                 result = CASE WHEN retry_count + 1 > %(max_retries)s THEN %(exceeded_message)s ELSE result END,
+                payload = CASE WHEN retry_count + 1 > %(max_retries)s THEN jobs_scrub_token(payload) ELSE payload END,
                 updated_at = NOW()
             WHERE status = 'processing'
               AND updated_at < NOW() - make_interval(mins => %(timeout_minutes)s)
