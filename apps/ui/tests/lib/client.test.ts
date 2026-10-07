@@ -182,6 +182,14 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
     expect(JSON.parse(init.body as string)).toEqual({ repos: ["api"], dry_run: true, token: undefined });
   });
 
+  it("GETs a member's access review with both path segments encoded", async () => {
+    stubOkJson({ org: "acme", login: "octo cat", synced: true });
+    await api.collab.memberAccess("acme", "octo cat");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/github/orgs/acme/members/octo%20cat/access");
+    expect(init?.method ?? "GET").toBe("GET");
+  });
+
   it("POSTs security/remediate/bulk with the org in the path and drops an empty token", async () => {
     stubOkJson({ check_id: "repository_secret_scanning_enabled", dry_run: true, items: [] });
     await api.security.remediateBulk("acme", { check_id: "repository_secret_scanning_enabled", repos: ["api"], dry_run: true, token: "" });

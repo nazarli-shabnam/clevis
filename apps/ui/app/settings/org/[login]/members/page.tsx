@@ -1,7 +1,7 @@
 "use client"
 
 import { useParams, useRouter, useSearchParams } from "next/navigation"
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
@@ -17,11 +17,13 @@ import { orgRoleFor } from "@/lib/members-href"
 import { SectionError } from "@/components/section-error"
 import { HygieneScoringCard } from "@/components/hygiene-scoring-card"
 import { ScheduledScansCard } from "@/components/scheduled-scans-card"
+import { MemberAccessSheet } from "@/components/member-access-sheet"
 import { BadgeSettingsCard } from "@/components/badge-settings-card"
 import type { GithubOrgMember, InvitationOut, MyOrgMembership } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
 
-const MEMBER_COLUMNS: DataTableColumn<GithubOrgMember>[] = [
+function memberColumns(onReview: ((login: string) => void) | null): DataTableColumn<GithubOrgMember>[] {
+  return [
   {
     key: "login",
     header: "Member",
@@ -67,7 +69,22 @@ const MEMBER_COLUMNS: DataTableColumn<GithubOrgMember>[] = [
       </>
     ),
   },
-]
+  ...(onReview
+    ? [
+        {
+          key: "review",
+          header: "",
+          align: "right" as const,
+          render: (m: GithubOrgMember) => (
+            <Button size="sm" variant="outline" onClick={() => onReview(m.login)} aria-label={`Review access for ${m.login}`}>
+              Review access
+            </Button>
+          ),
+        },
+      ]
+    : []),
+  ]
+}
 
 const ROSTER_TABS = [
   { id: "members", label: "Members" },
@@ -78,7 +95,9 @@ const ROSTER_TABS = [
 
 type RosterTabId = (typeof ROSTER_TABS)[number]["id"]
 
-function GithubRoster({ orgLogin }: { orgLogin: string }) {
+function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: boolean }) {
+  const [reviewLogin, setReviewLogin] = useState<string | null>(null)
+  const columns = useMemo(() => memberColumns(canReview ? setReviewLogin : null), [canReview])
   const router = useRouter()
   const searchParams = useSearchParams()
   const rawTab = searchParams.get("roster") ?? "members"
@@ -233,7 +252,7 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
         ) : (
           <>
             <DataTable
-              columns={MEMBER_COLUMNS}
+              columns={columns}
               data={filteredMembers}
               getRowKey={(m) => m.login}
               exportCsv={{ name: `members-${orgLogin}` }}
@@ -423,6 +442,7 @@ function GithubRoster({ orgLogin }: { orgLogin: string }) {
           )}
         </>
       )}
+      {canReview && <MemberAccessSheet orgLogin={orgLogin} login={reviewLogin} onClose={() => setReviewLogin(null)} />}
     </div>
   )
 }
@@ -630,7 +650,7 @@ export default function OrgMembersPage() {
       {!rolePending && !notAdmin && <BadgeSettingsCard orgLogin={orgLogin} />}
 
       <div className="mt-4">
-        <GithubRoster orgLogin={orgLogin} />
+        <GithubRoster orgLogin={orgLogin} canReview={role === "admin"} />
       </div>
     </>
   )

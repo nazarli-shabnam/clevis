@@ -10,18 +10,21 @@ from datetime import datetime, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 from typing import Literal
 
 from src.core.db import get_db
 from src.core.db import OrgMember as OrgMemberRow
+from src.core.db import RepoCollaborator, RepoEvent
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import installation_repo
 from src.schemas.collab import (
     CollaboratorPermission,
     InactiveMember,
     InactiveMembersResponse,
+    MemberAccess,
+    MemberRepoGrant,
     MembershipStatus,
     OrgInvitation,
     OrgInvitationsResponse,
@@ -268,6 +271,74 @@ def get_membership(
         raise _github_error(exc) from exc
 
     return MembershipStatus(state=raw["state"], role=raw["role"])
+
+
+@router.get("/github/orgs/{org_login}/members/{username}/access", response_model=MemberAccess)
+def get_member_access(
+    org_login: str,
+    username: str,
+    ctx: OrgContext = Depends(require_org_role(min_role="admin")),
+    db: Session = Depends(get_db),
+):
+    """One person's role, 2FA, direct repo grants and last activity from the ingested tables, for
+    offboarding review. Admin only: it lists who can touch which repos. No GitHub call, no token.
+
+    `synced` is False (and the rest empty) until the org's first membership sync has completed."""
+    if not _org_members_synced(db, ctx):
+        return MemberAccess(org=org_login, login=username, synced=False, direct_grants=[])
+
+    tenant_id = ctx.org.tenant_id
+    lowered = username.lower()
+    member = (
+        db.query(OrgMemberRow)
+        .filter(OrgMemberRow.tenant_id == tenant_id, func.lower(OrgMemberRow.login) == lowered)
+        .order_by((OrgMemberRow.login == username).desc(), OrgMemberRow.id)  # an exact-case match wins a case-only clash
+        .first()
+    )
+    activity_synced = _activity_synced(db, ctx)
+    grants = (
+        db.query(RepoCollaborator)
+        .filter(RepoCollaborator.tenant_id == tenant_id, func.lower(RepoCollaborator.login) == lowered)
+        .order_by(RepoCollaborator.repo)
+        .all()
+    )
+    last_event_at = None
+    last_push = None
+    if activity_synced:
+        last_event_at = (
+            db.query(func.max(RepoEvent.occurred_at))
+            .filter(RepoEvent.tenant_id == tenant_id, func.lower(RepoEvent.actor) == lowered)
+            .scalar()
+        )
+        last_push = (
+            db.query(RepoEvent.repo, RepoEvent.occurred_at)
+            .filter(
+                RepoEvent.tenant_id == tenant_id, RepoEvent.event_type == "push", func.lower(RepoEvent.actor) == lowered
+            )
+            .order_by(RepoEvent.occurred_at.desc())
+            .first()
+        )
+    return MemberAccess(
+        org=org_login,
+        login=member.login if member else username,
+        synced=True,
+        is_member=member is not None,
+        activity_synced=activity_synced,
+        role=member.role if member else None,
+        two_factor_enabled=member.two_factor_enabled if member else None,
+        last_event_at=last_event_at,
+        last_push_at=last_push.occurred_at if last_push else None,
+        last_push_repo=last_push.repo if last_push else None,
+        direct_grants=[
+            MemberRepoGrant(
+                repo=g.repo,
+                permission=g.permission,
+                is_outside_collaborator=g.is_outside_collaborator,
+                granted_at=g.granted_at,
+            )
+            for g in grants
+        ],
+    )
 
 
 _PERMISSION_RANK = ["pull", "triage", "push", "maintain", "admin"]

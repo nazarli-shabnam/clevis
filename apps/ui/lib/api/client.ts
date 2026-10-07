@@ -1,6 +1,7 @@
 import type {
   ScanChanges,
   ScheduledScanSettings,
+  MemberAccess,
   NotificationFeed,
   ActionsUsageResponse,
   AnalyticsHistoryResponse,
@@ -591,6 +592,11 @@ export const api = {
       get<GithubMembershipStatus>(
         `/github/orgs/${encodeURIComponent(orgLogin)}/members/${encodeURIComponent(username)}/membership`,
         githubTokenHeader(token),
+      ),
+    // Admin only; read from ingested data, so no GitHub token is involved.
+    memberAccess: (orgLogin: string, username: string) =>
+      get<MemberAccess>(
+        `/github/orgs/${encodeURIComponent(orgLogin)}/members/${encodeURIComponent(username)}/access`,
       ),
     permissionAudit: (orgLogin: string, token?: string) =>
       get<PermissionAuditResponse>(
