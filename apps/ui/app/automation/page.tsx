@@ -10,7 +10,8 @@ import { PageHeader } from "@/components/page-header"
 import { Warning, Key, CircleNotch, Play, CheckCircle, XCircle, CircleDashed } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
-import { shouldApplyResolvedToken } from "@/lib/token-resolve"
+import { hasOrgLogin, shouldApplyResolvedToken } from "@/lib/token-resolve"
+import { invalidateTokens } from "@/lib/query-invalidation"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
 import { BranchProtectionCard } from "@/components/automation/branch-protection-card"
 import { DependabotTriageCard } from "@/components/automation/dependabot-triage-card"
@@ -21,8 +22,6 @@ import { relativeTime } from "@/lib/format"
 import { orgRoleFor } from "@/lib/members-href"
 import type { InstallationMeta, MyOrgMembership, RunSummary, WorkflowSummary } from "@/lib/api/types"
 
-// > 0, not > 1: valid GitHub org logins can be a single character.
-const MIN_OWNER_LEN_FOR_REPO_LOOKUP = 1
 // Pause after the last keystroke in the owner box before it drives network lookups.
 const OWNER_LOOKUP_DEBOUNCE_MS = 400
 
@@ -119,7 +118,7 @@ export default function AutomationPage() {
   useEffect(() => {
     setResolvedFor("")
     // > 0, not > 2: valid GitHub org logins can be 1-2 characters.
-    if (lookupOwner.length > 0) resolveMutation.mutate(lookupOwner)
+    if (hasOrgLogin(lookupOwner)) resolveMutation.mutate(lookupOwner)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lookupOwner])
 
@@ -128,7 +127,7 @@ export default function AutomationPage() {
     // request (and cache an entry) per keystroke. Saving a token refetches this instead.
     queryKey: ["repos.list", lookupOwner],
     queryFn: () => api.repos.list(lookupOwner, token),
-    enabled: lookupOwner.length >= MIN_OWNER_LEN_FOR_REPO_LOOKUP && resolvedFor === lookupOwner,
+    enabled: hasOrgLogin(lookupOwner) && resolvedFor === lookupOwner,
     retry: false,
   })
   const repoOptions = reposListQuery.data?.repos ?? []
@@ -138,6 +137,7 @@ export default function AutomationPage() {
     mutationFn: () => api.tokens.upsert(owner.trim(), token.trim()),
     onSuccess: () => {
       setTokenSaved(true)
+      invalidateTokens(queryClient)
       queryClient.invalidateQueries({ queryKey: ["repos.list", lookupOwner] })
     },
   })

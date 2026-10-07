@@ -16,7 +16,8 @@ import { api } from "@/lib/api/client"
 import { toCsv } from "@/lib/csv"
 import { downloadTextFile } from "@/lib/download"
 import { useActiveScope } from "@/lib/active-scope"
-import { shouldApplyResolvedToken } from "@/lib/token-resolve"
+import { hasOrgLogin, shouldApplyResolvedToken } from "@/lib/token-resolve"
+import { invalidateTokens } from "@/lib/query-invalidation"
 import { DonutChart } from "@/components/charts/donut-chart"
 import { AreaTimeChart } from "@/components/charts/area-time-chart"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
@@ -151,19 +152,22 @@ export default function SecurityPage() {
   useEffect(() => {
     setToken("")
     setTokenSaved(false)
-    if (owner.trim().length > 2) resolveMutation.mutate(owner.trim())
+    if (hasOrgLogin(owner)) resolveMutation.mutate(owner.trim())
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner])
 
   const saveTokenMutation = useMutation({
     mutationFn: () => api.tokens.upsert(owner.trim(), token.trim()),
-    onSuccess: () => setTokenSaved(true),
+    onSuccess: () => {
+      setTokenSaved(true)
+      invalidateTokens(queryClient)
+    },
   })
 
   const historyQuery = useQuery({
     queryKey: ["analytics.history", owner],
     queryFn: () => api.analytics.history(owner),
-    enabled: owner.trim().length > 2,
+    enabled: hasOrgLogin(owner),
   })
 
   const scan = useMutation({

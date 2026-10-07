@@ -67,7 +67,7 @@ export default function ActivityPage() {
   // Heatmap comes from the personal cockpit endpoint (no org membership needed); the same
   // resolved token works for it and the org-scoped calls below.
   const cockpitQuery = useQuery({
-    queryKey: ["analytics.cockpit-heatmap", org],
+    queryKey: ["analytics.cockpit", org],
     queryFn: () => api.analytics.cockpit(org, token),
     enabled: queriesEnabled,
     retry: false,

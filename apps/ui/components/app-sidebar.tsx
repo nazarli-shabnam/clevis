@@ -275,10 +275,21 @@ export function AppSidebar() {
   })
 
   const healthDot = healthDotColor(cockpit?.latest_score)
-  const lastSeenAt = typeof window !== "undefined" ? localStorage.getItem(ACTIVITY_LAST_SEEN_KEY) : null
-  const unreadCount = (cockpit?.recent_events ?? []).filter(
-    (e) => !lastSeenAt || e.created_at > lastSeenAt,
-  ).length
+  // Read after mount (never during render: the server render has no localStorage, and it can throw
+  // in private mode) and again on navigation, since the Activity page writes the stamp when opened.
+  const [lastSeenAt, setLastSeenAt] = useState<string | null>(null)
+  useEffect(() => {
+    try {
+      setLastSeenAt(localStorage.getItem(ACTIVITY_LAST_SEEN_KEY))
+    } catch {
+      setLastSeenAt(null)
+    }
+  }, [pathname])
+  // On the Activity page itself everything is being seen right now.
+  const unreadCount =
+    pathname === "/activity"
+      ? 0
+      : (cockpit?.recent_events ?? []).filter((e) => !lastSeenAt || e.created_at > lastSeenAt).length
 
   useEffect(() => {
     if (!open) return
