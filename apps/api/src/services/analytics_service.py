@@ -18,9 +18,23 @@ def get_account_type(owner: str, token: str, base_url: str | None = None) -> str
     return r.json().get("type", "User")
 
 
-def get_overview(owner: str, token: str, account_type: str = "Organization") -> dict:
+def instance_scores_hygiene() -> bool:
+    return get_config("score_hygiene_checks", "false") == "true"
+
+
+def org_scores_hygiene(org) -> bool:
+    """An org's own setting wins; NULL (never set) follows the instance-wide one."""
+    override = getattr(org, "score_hygiene_checks", None)
+    return override if override is not None else instance_scores_hygiene()
+
+
+def get_overview(
+    owner: str, token: str, account_type: str = "Organization", score_hygiene: bool | None = None
+) -> dict:
+    """`score_hygiene` None = the instance-wide setting; callers scanning a Clevis org pass the org's."""
     base_url = settings.github_api_base
-    score_hygiene = get_config("score_hygiene_checks", "false") == "true"
+    if score_hygiene is None:
+        score_hygiene = instance_scores_hygiene()
     # Unscored hygiene checks cost hundreds of GitHub calls per scan for a result that changes nothing.
     report = run_all_checks(
         owner=owner, token=token, base_url=base_url, account_type=account_type, include_hygiene=score_hygiene

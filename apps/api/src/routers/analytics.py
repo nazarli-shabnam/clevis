@@ -26,6 +26,8 @@ from src.schemas.analytics import (
     ActionsUsageResponse,
     AnalyticsInput,
     AnalyticsResponse,
+    HygieneScoringSettings,
+    HygieneScoringUpdate,
     AtRiskRepo,
     CockpitResponse,
     IssueSummary,
@@ -41,7 +43,12 @@ from src.schemas.analytics import (
     ScanHistoryEntry,
 )
 from src.services import notifications
-from src.services.analytics_service import get_account_type, get_overview
+from src.services.analytics_service import (
+    get_account_type,
+    get_overview,
+    instance_scores_hygiene,
+    org_scores_hygiene,
+)
 from src.services.github_client import GitHubClient, github_error as _github_error, list_owner_repos
 from src.services.token_resolution import (
     InsufficientOrgRole,
@@ -59,9 +66,13 @@ _MAX_REPOS_FOR_AGGREGATES = 30
 _CACHE_JOB_TYPE = "github.clear_actions_cache"
 
 
-async def _run_overview(owner: str, token: str, account_type: str = "Organization") -> AnalyticsResponse:
+async def _run_overview(
+    owner: str, token: str, account_type: str = "Organization", score_hygiene: bool | None = None
+) -> AnalyticsResponse:
     try:
-        return await anyio.to_thread.run_sync(lambda: get_overview(owner=owner, token=token, account_type=account_type))
+        return await anyio.to_thread.run_sync(
+            lambda: get_overview(owner=owner, token=token, account_type=account_type, score_hygiene=score_hygiene)
+        )
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=400, detail=f"GitHub API error: {exc.response.status_code}")
     except httpx.RequestError:
@@ -99,15 +110,41 @@ def _persist_scan(
     )
 
 
-def _notify_score_drop_best_effort(
-    db: Session, ctx: OrgContext, previous: int, current: int, *, actor: str = "system"
-) -> None:
+def _comparable_scans(previous: dict, result: dict) -> bool:
+    """Whether a score drop between two scans reflects a real change worth alerting on.
+
+    An errored check (GitHub hiccup, missing permission) lowers the score without the org getting
+    worse, and a different set of scored checks (e.g. ``score_hygiene_checks`` toggled) means the two
+    scores aren't on the same basis. Rows stored before the ``scored`` stamp count as scored unless informational."""
+    def scored_ids(checks: list[dict]) -> set[str]:
+        return {c.get("id") for c in checks if c.get("scored", not c.get("informational"))}
+
+    if any(c.get("status") == "error" for c in (*previous["checks"], *result["checks"])):
+        return False
+    return scored_ids(previous["checks"]) == scored_ids(result["checks"])
+
+
+def persist_scan_and_alert(db: Session, org, result: dict, tenant_id: int, *, actor: str = "system") -> dict | None:
+    """Store an org scan and alert if it dropped from the org's previous one.
+
+    The baseline matches on tenant and case-insensitive owner, so scans typed in different casing (UI
+    vs CI token) see each other. Used by both the session and API-token scan paths. `actor` is who the
+    alert is audited as ("system" for a session scan, the token for a CI scan). Returns the baseline scan
+    (or None) so callers can record it."""
+    previous = scan_results_repo.latest_with_checks(db, org.github_login, tenant_id)
+    _persist_scan(db, result, tenant_id=tenant_id)
+    if previous and _comparable_scans(previous, result):
+        _notify_score_drop_best_effort(db, org, previous["score"], result["score"], actor=actor)
+    return previous
+
+
+def _notify_score_drop_best_effort(db: Session, org, previous: int, current: int, *, actor: str = "system") -> None:
     # A chat-webhook problem must never fail or slow-fail the scan the user actually asked for.
     try:
-        notifications.notify_score_drop(db, ctx.org.tenant_id, ctx.org.github_login, previous, current, actor=actor)
+        notifications.notify_score_drop(db, org.tenant_id, org.github_login, previous, current, actor=actor)
     except Exception:
         db.rollback()
-        logger.exception("score-drop notification failed for %s", ctx.org.github_login)
+        logger.exception("score-drop notification failed for %s", org.github_login)
 
 
 class HistoryScope(NamedTuple):
@@ -168,6 +205,53 @@ def _persist_personal_scan(db: Session, user: UserOut, result: dict) -> None:
     _persist_scan(db, result, tenant_id=personal_tenant.id, scanned_by_user_id=user.id)
 
 
+def _hygiene_setting_for_member(db: Session, user: UserOut, owner: str) -> bool | None:
+    """The org's hygiene-scoring setting when `owner` is a Clevis org the user belongs to (their scan is
+    stored under the org, so it must be scored the way the org's own scans are); None otherwise, which
+    means the instance-wide setting."""
+    org = org_repo.get_by_login_ci(db, owner)
+    if org is None:
+        return None
+    org = org_repo.ensure_tenant_linked(db, org)
+    if tenant_repo.get_membership(db, org.tenant_id, user.id) is None:
+        return None
+    return org_scores_hygiene(org)
+
+
+@router.get("/orgs/{org_login}/hygiene-scoring", response_model=HygieneScoringSettings)
+def get_hygiene_scoring(ctx: OrgContext = Depends(require_org_role(min_role="admin"))):
+    return HygieneScoringSettings(
+        enabled=ctx.org.score_hygiene_checks,
+        effective=org_scores_hygiene(ctx.org),
+        instance_default=instance_scores_hygiene(),
+    )
+
+
+@router.put("/orgs/{org_login}/hygiene-scoring", response_model=HygieneScoringSettings)
+def set_hygiene_scoring(
+    body: HygieneScoringUpdate,
+    ctx: OrgContext = Depends(require_org_role(min_role="admin")),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    if ctx.org.score_hygiene_checks != body.enabled:
+        previous = ctx.org.score_hygiene_checks
+        ctx.org.score_hygiene_checks = body.enabled
+        audit_repo.write(
+            db,
+            actor=user.email,
+            action="hygiene_scoring.updated",
+            target=ctx.org.github_login,
+            payload={"enabled": body.enabled, "previous": previous},
+            tenant_id=ctx.org.tenant_id,
+            commit=False,
+        )
+        db.commit()
+    return HygieneScoringSettings(
+        enabled=body.enabled, effective=org_scores_hygiene(ctx.org), instance_default=instance_scores_hygiene()
+    )
+
+
 @router.post("/orgs/{org_login}/analytics/overview", response_model=AnalyticsResponse)
 async def org_analytics_overview(
     payload: AnalyticsInput,
@@ -192,18 +276,9 @@ async def org_analytics_overview(
         raise HTTPException(status_code=403, detail=str(exc))
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    result = await _run_overview(payload.owner, token)
+    result = await _run_overview(payload.owner, token, score_hygiene=org_scores_hygiene(ctx.org))
 
-    def _previous_then_persist() -> list[dict]:
-        previous = scan_results_repo.list_recent(db, payload.owner, limit=1, tenant_id=ctx.org.tenant_id)
-        _persist_scan(db, result, tenant_id=ctx.org.tenant_id)
-        return previous
-
-    previous = await anyio.to_thread.run_sync(_previous_then_persist)
-    if previous:
-        await anyio.to_thread.run_sync(
-            lambda: _notify_score_drop_best_effort(db, ctx, previous[0]["score"], result["score"])
-        )
+    await anyio.to_thread.run_sync(lambda: persist_scan_and_alert(db, ctx.org, result, ctx.org.tenant_id))
     return result
 
 
@@ -225,7 +300,8 @@ async def personal_analytics_overview(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     account_type = await _get_account_type(payload.owner, token)
-    result = await _run_overview(payload.owner, token, account_type=account_type)
+    score_hygiene = await anyio.to_thread.run_sync(lambda: _hygiene_setting_for_member(db, user, payload.owner))
+    result = await _run_overview(payload.owner, token, account_type=account_type, score_hygiene=score_hygiene)
     # owner can be any account the user has a token for (BYO-token); where the scan is stored depends
     # on whether they belong to that org (see _persist_personal_scan).
     await anyio.to_thread.run_sync(lambda: _persist_personal_scan(db, user, result))

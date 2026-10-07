@@ -5,8 +5,9 @@ only reads GitHub and stores a snapshot), nothing that changes configuration.
 """
 
 import logging
-from datetime import datetime, timezone
+import threading
 import time
+from datetime import datetime, timezone
 
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -20,7 +21,7 @@ from src.core.rate_limit import check_account_rate_limit
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import api_token_repo, audit_repo, org_repo, scan_results_repo
 from src.repositories.api_token_repo import ResolvedToken
-from src.routers.analytics import _notify_score_drop_best_effort, _persist_scan, _run_overview
+from src.routers.analytics import _run_overview, persist_scan_and_alert
 from src.schemas.api_token import (
     ApiTokenCreate,
     ApiTokenCreated,
@@ -29,6 +30,7 @@ from src.schemas.api_token import (
     ScoreCheck,
     ScoreOut,
 )
+from src.services.analytics_service import org_scores_hygiene
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token
 
 router = APIRouter()
@@ -142,13 +144,6 @@ def latest_score(org_login: str, token: ResolvedToken = Depends(require_scope("r
     return _score_out(token.org_login, scan)
 
 
-class _Ctx:
-    """Just enough of OrgContext for the shared score-drop notifier."""
-
-    def __init__(self, org):
-        self.org = org
-
-
 @router.post("/api/v1/orgs/{org_login}/scan", response_model=ScoreOut)
 async def run_scan(org_login: str, token: ResolvedToken = Depends(require_scope("read")), db: Session = Depends(get_db)):
     _own_org(org_login, token)
@@ -158,7 +153,8 @@ async def run_scan(org_login: str, token: ResolvedToken = Depends(require_scope(
         )
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    result = await _run_overview(token.org_login, github_token)
+    org = await anyio.to_thread.run_sync(lambda: org_repo.get_by_id(db, token.org_id))
+    result = await _run_overview(token.org_login, github_token, score_hygiene=org_scores_hygiene(org))
 
     # Attributes the scan, and any alert it triggers, to this token rather than to "system".
     actor = f"api_token:{token.token_id}"
@@ -166,10 +162,11 @@ async def run_scan(org_login: str, token: ResolvedToken = Depends(require_scope(
     # One thread for the whole DB sequence: a Session is not safe to share between threads at once,
     # and these steps depend on each other anyway.
     def _record_and_notify() -> dict:
-        previous = scan_results_repo.list_recent(db, token.org_login, limit=1, tenant_id=token.tenant_id)
-        _persist_scan(db, result, tenant_id=token.tenant_id)
-        # The scan is already stored; a failing audit write must not 500 it (a CI retry would just
-        # scan twice) or skip the alert below.
+        previous = persist_scan_and_alert(
+            db, org_repo.get_by_id(db, token.org_id), result, token.tenant_id, actor=actor
+        )
+        # The scan is already stored (and any alert sent); a failing audit write must not 500 it, or a CI
+        # retry would just scan twice.
         try:
             audit_repo.write(
                 db,
@@ -179,16 +176,13 @@ async def run_scan(org_login: str, token: ResolvedToken = Depends(require_scope(
                 payload={
                     "token_id": token.token_id,
                     "score": result["score"],
-                    "previous_score": previous[0]["score"] if previous else None,
+                    "previous_score": previous["score"] if previous else None,
                 },
                 tenant_id=token.tenant_id,
             )
         except Exception:
             db.rollback()
             logger.exception("could not audit the api-token scan for %s", token.org_login)
-        if previous:
-            org = org_repo.get_by_id(db, token.org_id)
-            _notify_score_drop_best_effort(db, _Ctx(org), previous[0]["score"], result["score"], actor=actor)
         return scan_results_repo.latest_with_checks(db, token.org_login, token.tenant_id)
 
     scan = await anyio.to_thread.run_sync(_record_and_notify)
@@ -222,7 +216,7 @@ def set_badge_setting(
     db.commit()
     # Drop this process's cached answer so opting out takes effect at once here (other replicas
     # keep serving theirs for up to _BADGE_CACHE_TTL_SECONDS).
-    _badge_cache.pop(ctx.org.github_login.lower(), None)
+    _badge_invalidate(ctx.org.github_login)
     return BadgeSettings(enabled=body.enabled)
 
 
@@ -248,11 +242,26 @@ _BADGE_CACHE_TTL_SECONDS = 60
 _BADGE_CACHE_MAX_ENTRIES = 1024
 _BADGE_MISS_LIMIT_PER_MINUTE = 60
 _badge_cache: dict[str, tuple[float, int | None]] = {}
+# Guards the cache and `_badge_epoch`. The epoch is bumped by every invalidation; a lookup records it
+# before reading the database and only stores its answer if it is unchanged afterwards, so a read that
+# started before an opt-out cannot write the pre-opt-out score back after the entry was dropped. One
+# counter for all logins is deliberate: a change elsewhere only makes an in-flight lookup skip caching.
+_badge_lock = threading.Lock()
+_badge_epoch = 0
+
+
+def _badge_invalidate(org_login: str) -> None:
+    global _badge_epoch
+    with _badge_lock:
+        _badge_epoch += 1
+        _badge_cache.pop(org_login.lower(), None)
 
 
 def _badge_score(db: Session, request: Request, org_login: str) -> int | None:
     key = org_login.lower()
-    hit = _badge_cache.get(key)
+    with _badge_lock:
+        hit = _badge_cache.get(key)
+        epoch = _badge_epoch
     if hit is not None and time.monotonic() - hit[0] < _BADGE_CACHE_TTL_SECONDS:
         return hit[1]
     # Keyed by client IP alone (not path): a per-path key would let a caller dodge the limit by
@@ -260,9 +269,11 @@ def _badge_score(db: Session, request: Request, org_login: str) -> int | None:
     ip = request.client.host if request.client else "unknown"
     check_account_rate_limit(f"badge:{ip}", max_requests=_BADGE_MISS_LIMIT_PER_MINUTE)
     score = db.execute(text("SELECT public_badge_score(:login)"), {"login": org_login}).scalar()
-    if len(_badge_cache) >= _BADGE_CACHE_MAX_ENTRIES:
-        _badge_cache.clear()
-    _badge_cache[key] = (time.monotonic(), score)
+    with _badge_lock:
+        if epoch == _badge_epoch:
+            if len(_badge_cache) >= _BADGE_CACHE_MAX_ENTRIES:
+                _badge_cache.clear()
+            _badge_cache[key] = (time.monotonic(), score)
     return score
 
 

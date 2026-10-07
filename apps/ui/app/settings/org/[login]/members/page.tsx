@@ -13,6 +13,7 @@ import { addRevokingId, isRevoking, removeRevokingId } from "@/lib/revoke-pendin
 import { relativeTime } from "@/lib/format"
 import { orgRoleFor } from "@/lib/members-href"
 import { SectionError } from "@/components/section-error"
+import { HygieneScoringCard } from "@/components/hygiene-scoring-card"
 import { BadgeSettingsCard } from "@/components/badge-settings-card"
 import type { GithubOrgMember, InvitationOut, MyOrgMembership } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
@@ -484,6 +485,8 @@ export default function OrgMembersPage() {
           </p>
         </div>
       ) : (
+        <>
+        <HygieneScoringCard orgLogin={orgLogin} />
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="card">
             <div className="px-4 py-3 border-b border-border">
@@ -575,6 +578,7 @@ export default function OrgMembersPage() {
             )}
           </div>
         </div>
+        </>
       )}
 
       {!rolePending && !notAdmin && <BadgeSettingsCard orgLogin={orgLogin} />}

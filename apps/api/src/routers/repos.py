@@ -160,9 +160,10 @@ def _fetch_stats(owner: str, repo: str, token: str, db: Session, tenant_id: int,
 def _evict_expired_stats(now: float) -> None:
     # Installation tokens rotate hourly, adding a new key each time -- without this sweep
     # the dict grows without bound for a long-running instance.
-    expired = [key for key, (cached_at, _) in _stats_cache.items() if now - cached_at >= _STATS_CACHE_TTL_SECONDS]
+    # Snapshot: other request threads insert while we sweep, and iterating a changing dict raises.
+    expired = [key for key, (cached_at, _) in list(_stats_cache.items()) if now - cached_at >= _STATS_CACHE_TTL_SECONDS]
     for key in expired:
-        del _stats_cache[key]
+        _stats_cache.pop(key, None)
 
 
 def _cached_stats(owner: str, repo: str, token: str, db: Session, tenant_id: int, connected: bool) -> RepoStatsResponse:
@@ -263,8 +264,8 @@ def org_repo_flow_metrics(
         raise _github_error(exc) from exc
     _flow_cache[key] = (now, result)
     # Same sweep as _stats_cache: rotating installation tokens add a key each hour.
-    for stale in [k for k, (at, _) in _flow_cache.items() if now - at >= _STATS_CACHE_TTL_SECONDS]:
-        del _flow_cache[stale]
+    for stale in [k for k, (at, _) in list(_flow_cache.items()) if now - at >= _STATS_CACHE_TTL_SECONDS]:
+        _flow_cache.pop(stale, None)
     return result
 
 

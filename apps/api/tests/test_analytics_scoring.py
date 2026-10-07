@@ -106,3 +106,42 @@ def test_overview_only_runs_hygiene_checks_when_they_are_scored():
         ) as run:
             get_overview(owner="acme", token="tok")
         assert run.call_args.kwargs["include_hygiene"] is expected
+
+
+def _report_with_hygiene():
+    return {
+        "checks": [
+            {"status": "pass"},
+            {"status": "fail", "informational": True},
+        ],
+        "repo_count": 1,
+    }
+
+
+def test_overview_explicit_score_hygiene_overrides_the_instance_setting():
+    with patch("src.services.analytics_service.get_config", return_value="false"):
+        with patch("src.services.analytics_service.run_all_checks", return_value=_report_with_hygiene()):
+            on = get_overview(owner="acme", token="t", score_hygiene=True)
+        with patch("src.services.analytics_service.run_all_checks", return_value=_report_with_hygiene()):
+            followed = get_overview(owner="acme", token="t")  # None -> instance (off)
+    assert on["total_checks"] == 2 and on["score"] == 50 and [c["scored"] for c in on["checks"]] == [True, True]
+    assert followed["total_checks"] == 1 and followed["score"] == 100
+    assert [c["scored"] for c in followed["checks"]] == [True, False]
+
+    with patch("src.services.analytics_service.get_config", return_value="true"):
+        with patch("src.services.analytics_service.run_all_checks", return_value=_report_with_hygiene()):
+            off = get_overview(owner="acme", token="t", score_hygiene=False)
+    assert off["total_checks"] == 1 and off["score"] == 100
+
+
+def test_org_scores_hygiene_prefers_its_own_setting_and_falls_back_to_the_instance():
+    from types import SimpleNamespace
+
+    from src.services.analytics_service import org_scores_hygiene
+
+    with patch("src.services.analytics_service.get_config", return_value="true"):
+        assert org_scores_hygiene(SimpleNamespace(score_hygiene_checks=None)) is True
+        assert org_scores_hygiene(SimpleNamespace(score_hygiene_checks=False)) is False
+    with patch("src.services.analytics_service.get_config", return_value="false"):
+        assert org_scores_hygiene(SimpleNamespace(score_hygiene_checks=None)) is False
+        assert org_scores_hygiene(SimpleNamespace(score_hygiene_checks=True)) is True
