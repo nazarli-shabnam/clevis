@@ -1,7 +1,7 @@
 "use client"
 
 import { usePathname, useRouter } from "next/navigation"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useId, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import { useQuery } from "@tanstack/react-query"
 import { GearSix, Check, SignOut, UserPlus, ArrowSquareOut, Plus } from "@phosphor-icons/react"
@@ -54,7 +54,9 @@ function ProfileDropdown({
   inviteHref,
   onClose,
   onSignOut,
+  id,
 }: {
+  id: string
   profile: Profile
   scopeOptions: ScopeOption[]
   activeScope: ActiveScope | null
@@ -68,6 +70,7 @@ function ProfileDropdown({
 
   return (
     <div
+      id={id}
       className="absolute top-full left-0 right-0 z-50 border-b border-sidebar-border bg-sidebar shadow-2xl"
       onClick={(e) => e.stopPropagation()}
     >
@@ -107,6 +110,7 @@ function ProfileDropdown({
               <button
                 key={`${opt.scope.kind}:${opt.scope.login}`}
                 onClick={() => { onSelectScope(opt.scope); onClose() }}
+                aria-current={isActive ? "true" : undefined}
                 className="flex w-full items-center gap-2 px-2 py-1.5 text-left rounded-md hover:bg-sidebar-accent/60 transition-colors"
               >
                 <div className="min-w-0 flex-1">
@@ -173,6 +177,8 @@ export function AppSidebar() {
   const { user, logout } = useAuth()
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
+  const toggleRef = useRef<HTMLButtonElement>(null)
+  const menuId = useId()
 
   const { scope, setScope } = useActiveScope()
   const scopeLogin = scope?.login ?? ""
@@ -277,8 +283,19 @@ export function AppSidebar() {
         setOpen(false)
       }
     }
+    function handleKeyDown(e: KeyboardEvent) {
+      // defaultPrevented: another Escape-dismissible element (a dialog, a select) already took it.
+      if (e.key === "Escape" && !e.defaultPrevented) {
+        setOpen(false)
+        toggleRef.current?.focus()
+      }
+    }
     document.addEventListener("mousedown", handleClickOutside)
-    return () => document.removeEventListener("mousedown", handleClickOutside)
+    document.addEventListener("keydown", handleKeyDown)
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside)
+      document.removeEventListener("keydown", handleKeyDown)
+    }
   }, [open])
 
   const initials = profile.name.charAt(0).toUpperCase()
@@ -292,7 +309,10 @@ export function AppSidebar() {
     <Sidebar>
       <SidebarHeader className="border-b border-sidebar-border p-0 relative" ref={containerRef}>
         <button
+          ref={toggleRef}
           onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-controls={open ? menuId : undefined}
           className="flex w-full items-center gap-2.5 px-3.5 py-3 hover:bg-sidebar-accent/60 transition-colors group text-left"
         >
           <div className="size-7 rounded-md bg-primary/15 border border-primary/25 flex items-center justify-center shrink-0">
@@ -311,6 +331,7 @@ export function AppSidebar() {
 
         {open && (
           <ProfileDropdown
+            id={menuId}
             profile={profile}
             scopeOptions={scopeOptions}
             activeScope={scope}
@@ -342,6 +363,7 @@ export function AppSidebar() {
                       <SidebarMenuItem key={item.title}>
                         <SidebarMenuButton
                           isActive={active}
+                          aria-current={active ? "page" : undefined}
                           className={[
                             "flex items-center rounded-md px-3 py-1.5 text-[0.8125rem]",
                             active

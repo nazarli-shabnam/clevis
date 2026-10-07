@@ -340,8 +340,9 @@ export default function ReposPage() {
           </div>
           <div className="p-4 flex flex-col gap-3">
             <div>
-              <label className="text-xs font-medium text-foreground block mb-1.5">Organization</label>
+              <label htmlFor="repos-owner" className="text-xs font-medium text-foreground block mb-1.5">Organization</label>
               <Input
+                id="repos-owner"
                 placeholder="e.g. octocat"
                 value={owner}
                 onChange={(e) => setOwner(e.target.value)}
@@ -350,9 +351,9 @@ export default function ReposPage() {
             </div>
             {!hasInstallationForOwner && (
             <div>
-              <label className="text-xs font-medium text-foreground mb-1.5 flex items-center gap-1.5">
-                GitHub Token
-                <span className="text-[0.6875rem] text-muted-foreground font-normal">
+              <div className="mb-1.5 flex items-center gap-1.5">
+                <label htmlFor="repos-token" className="text-xs font-medium text-foreground">GitHub Token</label>
+                <span id="repos-token-hint" className="text-[0.6875rem] text-muted-foreground font-normal">
                   optional if the GitHub App is connected — a token with read:org connects the org only if you administer it on GitHub
                 </span>
                 {tokenSaved && (
@@ -360,8 +361,10 @@ export default function ReposPage() {
                     <Key className="size-3" />saved
                   </span>
                 )}
-              </label>
+              </div>
               <Input
+                id="repos-token"
+                aria-describedby="repos-token-hint"
                 placeholder="ghp_... (leave blank to use the connected GitHub App)"
                 type="password"
                 value={token}

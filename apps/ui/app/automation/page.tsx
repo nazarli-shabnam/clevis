@@ -276,8 +276,9 @@ export default function AutomationPage() {
           </div>
           <div className="p-4 flex flex-col gap-3">
             <div>
-              <label className="text-xs font-medium text-foreground block mb-1.5">Organization / Owner</label>
+              <label htmlFor="automation-owner" className="text-xs font-medium text-foreground block mb-1.5">Organization / Owner</label>
               <Input
+                id="automation-owner"
                 placeholder="e.g. octocat"
                 value={owner}
                 onChange={(e) => setOwner(e.target.value)}
@@ -313,9 +314,9 @@ export default function AutomationPage() {
             </div>
             {!hasInstallationForOwner && (
               <div>
-                <label className="text-xs font-medium text-foreground mb-1.5 flex items-center gap-1.5">
-                  GitHub Token
-                  <span className="text-[0.6875rem] text-muted-foreground font-normal">
+                <div className="mb-1.5 flex items-center gap-1.5">
+                  <label htmlFor="automation-token" className="text-xs font-medium text-foreground">GitHub Token</label>
+                  <span id="automation-token-hint" className="text-[0.6875rem] text-muted-foreground font-normal">
                     optional if the GitHub App is connected for this org
                   </span>
                   {tokenSaved && (
@@ -323,8 +324,10 @@ export default function AutomationPage() {
                       <Key className="size-3" />saved
                     </span>
                   )}
-                </label>
+                </div>
                 <Input
+                  id="automation-token"
+                  aria-describedby="automation-token-hint"
                   placeholder="ghp_... (leave blank to use the connected GitHub App)"
                   type="password"
                   value={token}
@@ -362,8 +365,8 @@ export default function AutomationPage() {
               <div className="mt-2 pt-3 border-t border-border flex flex-col gap-2.5">
                 <p className="text-xs font-medium text-foreground">Dispatch &ldquo;{selectedWorkflow.name}&rdquo;</p>
                 <div>
-                  <label className="text-xs font-medium text-foreground block mb-1.5">Ref (branch/tag)</label>
-                  <Input value={ref} onChange={(e) => handleRefChange(e.target.value)} />
+                  <label htmlFor="automation-ref" className="text-xs font-medium text-foreground block mb-1.5">Ref (branch/tag)</label>
+                  <Input id="automation-ref" value={ref} onChange={(e) => handleRefChange(e.target.value)} />
                 </div>
                 <Button
                   onClick={() => {
