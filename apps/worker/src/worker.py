@@ -563,7 +563,7 @@ def _touch_heartbeat() -> None:
 
 
 _RLS_WARNING = (
-    "Row-Level Security is NOT enforced for the worker: the database role %r is a superuser or has BYPASSRLS, "
+    "Row-Level Security is NOT enforced for the worker: the database role %r is a superuser, has BYPASSRLS or owns the tables, "
     "so tenant isolation relies on application-level filters only. To enforce RLS as a second layer, set "
     "WORKER_DB_PASSWORD (and the API's API_DB_PASSWORD); see 'Enabling Row-Level Security enforcement' in "
     "docs/self-hosting.md."
@@ -575,10 +575,15 @@ def _warn_if_rls_bypassed() -> bool:
     never raises and never blocks startup. Returns True when it warned."""
     try:
         with psycopg.connect(_DB_URL) as conn, conn.cursor() as cur:
-            cur.execute("SELECT current_user, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user")
+            # Owning the tenant tables also escapes RLS on the ENABLE-only ones (see the API's core/rls_posture.py).
+            cur.execute(
+                "SELECT current_user, r.rolsuper, r.rolbypassrls OR EXISTS ("
+                "SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'orgs' AND tableowner = current_user"
+                ") FROM pg_roles r WHERE r.rolname = current_user"
+            )
             row = cur.fetchone()
     except Exception as exc:
-        log.debug("could not determine whether RLS applies to the worker's database role: %s", exc)
+        log.warning("could not determine whether Row-Level Security applies to the worker's database role: %s", exc)
         return False
     if row is None or not (row[1] or row[2]):
         return False

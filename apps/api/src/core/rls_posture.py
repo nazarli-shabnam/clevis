@@ -14,12 +14,16 @@ from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
 
+# Besides rolsuper / rolbypassrls, a role that OWNS the tenant tables is exempt from policies on the tables that
+# only have ENABLE (not FORCE) -- e.g. orgs -- so it counts too (the migrations run as DB_USER, which owns them).
 _ROLE_QUERY = text(
-    "SELECT current_user, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user"
+    "SELECT current_user, r.rolsuper, r.rolbypassrls OR EXISTS ("
+    "SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'orgs' AND tableowner = current_user"
+    ") FROM pg_roles r WHERE r.rolname = current_user"
 )
 
 WARNING = (
-    "Row-Level Security is NOT enforced: the database role %r is a superuser or has BYPASSRLS, so tenant "
+    "Row-Level Security is NOT enforced: the database role %r is a superuser, has BYPASSRLS or owns the tables, so tenant "
     "isolation relies on application-level filters only. To enforce RLS as a second layer, give the API its "
     "own role by setting API_DB_PASSWORD (and the worker WORKER_DB_PASSWORD); see 'Enabling Row-Level Security "
     "enforcement' in docs/self-hosting.md."
@@ -32,7 +36,7 @@ def rls_bypassed(engine: Engine) -> tuple[str, bool] | None:
         with engine.connect() as conn:
             row = conn.execute(_ROLE_QUERY).first()
     except Exception:
-        logger.debug("could not determine whether RLS applies to the database role", exc_info=True)
+        logger.warning("could not determine whether Row-Level Security applies to the database role", exc_info=True)
         return None
     if row is None:
         return None

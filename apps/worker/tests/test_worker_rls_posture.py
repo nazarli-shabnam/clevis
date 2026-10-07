@@ -27,7 +27,7 @@ def test_worker_warns_once_when_its_role_bypasses_rls(caplog):
     assert "NOT enforced for the worker" in caplog.text and "WORKER_DB_PASSWORD" in caplog.text
 
 
-def test_worker_is_silent_for_an_ordinary_role_or_when_the_check_fails(caplog):
+def test_worker_is_silent_for_an_ordinary_role_and_reports_a_failed_check(caplog):
     with caplog.at_level(logging.WARNING, logger="worker"):
         with _patched_connect(row=("clevis_worker", False, False)):
             assert worker._warn_if_rls_bypassed() is False
@@ -36,6 +36,7 @@ def test_worker_is_silent_for_an_ordinary_role_or_when_the_check_fails(caplog):
         with _patched_connect(error=psycopg.OperationalError("down")):
             assert worker._warn_if_rls_bypassed() is False
     assert "NOT enforced" not in caplog.text
+    assert "could not determine whether Row-Level Security applies" in caplog.text  # a failed check is visible
 
 
 def test_run_checks_the_rls_posture_before_polling(monkeypatch):

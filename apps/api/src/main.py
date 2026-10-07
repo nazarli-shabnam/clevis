@@ -54,10 +54,11 @@ _cors_origins = settings.cors_origins
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     setup_logging()
-    # One-time, best-effort notice when the DB role bypasses RLS (the default deployment); see core/rls_posture.py.
-    await asyncio.to_thread(warn_if_rls_bypassed, engine)
     # Separate tasks: unrelated concerns, each tolerating its own iteration errors.
     tasks = [
+        # One-time, best-effort notice when the DB role bypasses RLS (the default deployment); see
+        # core/rls_posture.py. Not awaited: an unreachable DB must not delay startup.
+        asyncio.create_task(asyncio.to_thread(warn_if_rls_bypassed, engine)),
         asyncio.create_task(gap_heal_loop()),
         asyncio.create_task(membership_reconcile_loop()),
         # No-op unless digest_cadence is configured.

@@ -143,11 +143,13 @@ score-drop alert. It is **off by default**.
 
 RLS stays opt-in because turning it on changes which database roles the API and worker connect as, which an existing deployment has to provision by hand (the role-creation init scripts only run against a brand-new data volume). Nothing here is required, but it is recommended for any multi-tenant instance.
 
-**Check where you are.** On startup the API and worker each log `Row-Level Security is NOT enforced ...` when their role is a superuser or has `BYPASSRLS`. No warning means the role is subject to RLS. You can also check directly:
+**Check where you are.** On startup the API and worker each log `Row-Level Security is NOT enforced ...` when their database role is a superuser, has `BYPASSRLS` or owns the tables (an owner skips policies on tables that only have `ENABLE`). No such line (and no `could not determine whether Row-Level Security applies` line, which means the check itself failed) means the role is subject to RLS. To see whether the dedicated roles exist and are least-privilege, list the database roles:
 
 ```bash
-docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname IN (current_user, '"'"'clevis_api'"'"', '"'"'clevis_worker'"'"')"'
+docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\du"'
 ```
+
+`clevis_api` and `clevis_worker` should appear with no `Superuser` and no `Bypass RLS` attribute. (This shows which roles exist, not which one a service is using; the startup log does.)
 
 **Cut over an existing deployment.**
 
@@ -157,7 +159,7 @@ docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SEL
 4. Restart the API and worker (`docker compose up -d`). Migrations still run as `DB_USER`; only the runtime connection changes.
 5. Confirm: neither service logs the `NOT enforced` warning, `/healthz` is ok, and sign-in, the Overview page and a scan work. A `permission denied for table ...` error in the API or worker log means a grant is missing: re-run the provisioning script for that role (new tables added by later migrations need their grants too).
 
-**Roll back.** Unset `API_DB_PASSWORD` / `WORKER_DB_PASSWORD` and restart. The services go back to sharing `DB_USER`, exactly as before; the roles and grants are harmless to leave in place.
+**Roll back.** Unset `API_DB_PASSWORD` / `WORKER_DB_PASSWORD` and restart. The services go back to connecting as `DB_USER`, as before. The `clevis_api` / `clevis_worker` roles stay valid logins with their old passwords; if you want them gone, `ALTER ROLE clevis_api NOLOGIN` (and the same for `clevis_worker`) or drop them once nothing uses them.
 
 ## Observability
 
