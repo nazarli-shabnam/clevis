@@ -179,6 +179,15 @@ describe("AppSidebar Invite members button", () => {
     const link = await screen.findByRole("link", { name: /invite members/i });
     await waitFor(() => expect(link).toHaveAttribute("href", "/settings"));
   });
+
+  it("still sends a plain member to the org's roster from the Collaborators item (#663)", async () => {
+    orgMemberships = [{ org_login: "acme", role: "member" }];
+    localStorage.setItem("default_org", "acme");
+    renderSidebar();
+
+    const link = await screen.findByRole("link", { name: /collaborators/i });
+    await waitFor(() => expect(link).toHaveAttribute("href", "/settings/org/acme/members"));
+  });
 });
 
 describe("AppSidebar health dot and unread badge", () => {
@@ -293,6 +302,16 @@ describe("AppSidebar health dot and unread badge", () => {
 
     const link = await screen.findByRole("link", { name: /Activity/ });
     await waitFor(() => expect(link).toHaveTextContent("1"));
+  });
+
+  it("still renders when localStorage cannot be read (#591)", async () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation((key: string) => {
+      if (key === "activity_last_seen_at") throw new Error("storage blocked");
+      return null;
+    });
+    renderSidebar();
+
+    expect(await screen.findByRole("link", { name: /Activity/ })).toBeInTheDocument();
   });
 
   it("shows no unread badge when there are no events newer than last-seen", async () => {
@@ -536,6 +555,69 @@ describe("AppSidebar scope switcher", () => {
     expect(addLink).toHaveAttribute("href", "https://github.com/apps/clevis/installations/new");
     // A switchable option (the personal account) exists here, so the original heading holds.
     expect(screen.getByText("Switch account")).toBeInTheDocument();
+  });
+
+  it("exposes the profile menu state to assistive tech and closes it on Escape, returning focus", async () => {
+    renderSidebar();
+
+    const toggle = screen.getByRole("button", { name: /user/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).not.toHaveAttribute("aria-controls");
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findByText("Sign out")).toBeInTheDocument();
+    // aria-controls points at the open panel
+    const panel = document.getElementById(toggle.getAttribute("aria-controls")!);
+    expect(panel).toContainElement(screen.getByText("Sign out"));
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-expanded", "false"));
+    expect(screen.queryByText("Sign out")).not.toBeInTheDocument();
+    expect(toggle).toHaveFocus();
+  });
+
+  it("leaves the menu open when another handler already consumed Escape", async () => {
+    renderSidebar();
+    const toggle = screen.getByRole("button", { name: /user/i });
+    fireEvent.click(toggle);
+
+    const event = new KeyboardEvent("keydown", { key: "Escape", cancelable: true });
+    event.preventDefault();
+    document.dispatchEvent(event);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("ignores other keys while the profile menu is open", async () => {
+    renderSidebar();
+    const toggle = screen.getByRole("button", { name: /user/i });
+    fireEvent.click(toggle);
+
+    fireEvent.keyDown(document, { key: "a" });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("marks the current account in the switcher and the current page in the nav", async () => {
+    orgMemberships = [
+      { org_login: "acme", role: "admin" },
+      { org_login: "globex", role: "member" },
+    ];
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "acme" }));
+    renderSidebar();
+
+    // usePathname is mocked to "/", so Overview is the current page and nothing else is.
+    const overview = await screen.findByRole("link", { name: "Overview" });
+    expect(overview).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Health & Security" })).not.toHaveAttribute("aria-current");
+
+    fireEvent.click(screen.getByRole("button", { name: /user/i }));
+    // Scoped to the switcher list: the profile toggle's own label also mentions the active org.
+    const switcher = (await screen.findByText("Switch account")).parentElement!;
+    const options = Array.from(switcher.querySelectorAll("button"));
+    const acme = options.find((b) => b.textContent?.includes("acme"))!;
+    const globex = options.find((b) => b.textContent?.includes("globex"))!;
+    expect(acme).toHaveAttribute("aria-current", "true");
+    expect(globex).not.toHaveAttribute("aria-current");
   });
 
   it("auto-selects the sole org membership as the active scope when nothing is persisted", async () => {

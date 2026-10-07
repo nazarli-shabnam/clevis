@@ -6,6 +6,7 @@ import { X } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
 import { isPublicRoute } from "@/lib/public-routes"
+import { currentLocationNext, withNext } from "@/lib/safe-next"
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, isLoading, logout, authUnconfirmed, pendingInvitations, dismissPendingInvitations } = useAuth()
@@ -24,10 +25,10 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     if (!user) {
       api.auth.setupRequired()
         .then(({ setup_required }) => {
-          router.replace(setup_required ? "/setup" : "/login")
+          router.replace(setup_required ? "/setup" : withNext("/login", currentLocationNext()))
         })
         .catch(() => {
-          router.replace("/login")
+          router.replace(withNext("/login", currentLocationNext()))
         })
     }
   }, [isLoading, user, isPublic, router])
@@ -43,8 +44,10 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       // A stale token can still get attached to a best-effort call on a public route (e.g.
       // an invite preview); that must not force-log-out someone who was never logged in here.
       if (isPublicRef.current) return
+      // Read the location before logout() can re-render: the user returns to where the session died.
+      const loginUrl = withNext("/login", currentLocationNext())
       logout()
-      router.replace("/login")
+      router.replace(loginUrl)
     }
     window.addEventListener("clevis:unauthorized", handle401)
     return () => window.removeEventListener("clevis:unauthorized", handle401)

@@ -107,6 +107,14 @@ describe("AutomationPage", () => {
     expect(workflowsMock).not.toHaveBeenCalled();
   });
 
+  it("gives the owner and token inputs accessible names", () => {
+    renderPage();
+    expect(screen.getByLabelText("Organization / Owner")).toBe(screen.getByPlaceholderText("e.g. octocat"));
+    const token = screen.getByLabelText("GitHub Token");
+    expect(token).toHaveAttribute("type", "password");
+    expect(token).toHaveAccessibleDescription(/optional if the GitHub App is connected/);
+  });
+
   it("disables the repository dropdown until an owner is entered", () => {
     renderPage();
     expect(screen.getByLabelText("Repository")).toBeDisabled();

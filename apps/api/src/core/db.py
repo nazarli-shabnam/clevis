@@ -309,8 +309,8 @@ class User(Base):
     github_login: Mapped[str | None] = mapped_column(Text, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    # True for GitHub-linked and first-run setup accounts (email trusted); self-registered accounts
-    # start False until they click the verification link.
+    # True for accounts created by GitHub sign-in or first-run setup (email trusted); self-registered
+    # accounts start False until they click the verification link.
     email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     email_verify_token: Mapped[str | None] = mapped_column(Text, nullable=True, unique=True)
     email_verify_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

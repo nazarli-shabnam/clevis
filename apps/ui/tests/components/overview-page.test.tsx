@@ -7,6 +7,8 @@ const cockpitMock = vi.fn();
 const myViewMock = vi.fn();
 const actionsUsageMock = vi.fn();
 const orgsMineMock = vi.fn();
+const installationsListForOrgMock = vi.fn();
+const installationsListMock = vi.fn();
 
 let authUser: { id: number } | null = { id: 1 };
 vi.mock("@/lib/auth-context", () => ({
@@ -26,6 +28,11 @@ vi.mock("@/lib/api/client", () => ({
     orgs: {
       mine: (...args: unknown[]) => orgsMineMock(...args),
     },
+    installations: {
+      list: (...args: unknown[]) => installationsListMock(...args),
+      listForOrg: (...args: unknown[]) => installationsListForOrgMock(...args),
+    },
+    invitations: { list: vi.fn().mockResolvedValue([]) },
   },
 }));
 
@@ -79,6 +86,12 @@ describe("OverviewPage cockpit", () => {
     actionsUsageMock.mockReset();
     orgsMineMock.mockReset();
     orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockReset();
+    installationsListMock.mockResolvedValue([]);
+    installationsListForOrgMock.mockReset();
+    installationsListForOrgMock.mockResolvedValue([
+      { id: 1, account_login: "acme", account_type: "Organization", installation_id: 42, created_at: "2026-01-01T00:00:00Z", permissions_synced_at: "2026-09-01T00:00:00Z", blocked_features: [] },
+    ]);
     myViewMock.mockResolvedValue(EMPTY_MY_VIEW);
     // Default: Actions-usage fails (App lacks billing permission), so the card is absent.
     actionsUsageMock.mockRejectedValue(new Error("GitHub API error: 400"));
@@ -144,6 +157,29 @@ describe("OverviewPage cockpit", () => {
     expect(screen.queryAllByText("Configure →")).toHaveLength(0);
     // A single cockpit call once token-resolve settles, not a second waterfalled fetch.
     expect(cockpitMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows real values, not Configure, for an org with no saved PAT when the cockpit still loads (GitHub App / member)", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockRejectedValue(new Error("No saved token for this org"));
+    cockpitMock.mockResolvedValue({ ...EMPTY_COCKPIT, repo_count: 12, open_pr_count: 5, latest_score: 87, member_count: 9 });
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText("12")).toBeInTheDocument());
+    expect(screen.getByText("87")).toBeInTheDocument();
+    expect(screen.queryAllByText("Configure →")).toHaveLength(0);
+    expect(cockpitMock).toHaveBeenCalledWith("acme", undefined);
+  });
+
+  it("still asks to configure when there is no PAT and the cockpit fails too", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockRejectedValue(new Error("No saved token for this org"));
+    cockpitMock.mockRejectedValue(new Error("No GitHub token available for this organization"));
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getAllByText("Configure →")).toHaveLength(4));
   });
 
   it("labels commit activity as estimated when the cockpit source is an aggregate", async () => {
@@ -445,8 +481,7 @@ describe("OverviewPage cockpit", () => {
         {
           repo: "acme/api",
           title: "v2",
-          // Computed relative to now so relativeTime() keeps rendering "just now".
-          due_on: new Date(Date.now() + 60_000).toISOString(),
+          due_on: new Date(Date.now() + 3 * 86400_000 + 60_000).toISOString(),
           open_issues: 2,
           closed_issues: 8,
           progress_pct: 80,
@@ -460,7 +495,7 @@ describe("OverviewPage cockpit", () => {
     await waitFor(() => {
       expect(screen.getByText(/v2/)).toBeInTheDocument();
     });
-    expect(screen.getByText((_, el) => el?.textContent === "8/10 closed · due just now")).toBeInTheDocument();
+    expect(screen.getByText((_, el) => el?.textContent === "8/10 closed · due in 3 days")).toBeInTheDocument();
   });
 
   it("renders overdue and at-risk milestone chips with their own styling", async () => {
@@ -578,5 +613,88 @@ describe("OverviewPage cockpit", () => {
     // Retry re-fires both queries that feed the shared error banner.
     await waitFor(() => expect(cockpitMock).toHaveBeenCalledTimes(2));
     expect(myViewMock).toHaveBeenCalledTimes(2);
+  });
+
+  describe("getting-started checklist wiring", () => {
+    const MEMBERSHIP = { org_login: "acme", role: "member" };
+
+    function setUpOrg(cockpit: Record<string, unknown>) {
+      localStorage.setItem("default_org", "acme");
+      tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+      orgsMineMock.mockResolvedValue([MEMBERSHIP]);
+      cockpitMock.mockResolvedValue({ ...EMPTY_COCKPIT, latest_score: 87, ...cockpit });
+    }
+
+    it("lists the first-automation step from the cockpit's has_automation_run flag", async () => {
+      setUpOrg({ has_automation_run: false });
+      renderPage();
+
+      expect(await screen.findByRole("link", { name: /Run your first automation/ })).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: /Connect an organization/ })).toBeNull();
+    });
+
+    it("hides the first-automation step once one has run", async () => {
+      setUpOrg({ has_automation_run: true });
+      renderPage();
+
+      await waitFor(() => expect(installationsListForOrgMock).toHaveBeenCalled());
+      await waitFor(() => expect(screen.queryByLabelText("Getting started")).toBeNull());
+    });
+
+    it("offers to connect an org when the user belongs to none", async () => {
+      localStorage.setItem("active_scope", JSON.stringify({ kind: "personal", login: "me" }));
+      tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+      cockpitMock.mockResolvedValue({ ...EMPTY_COCKPIT, latest_score: 87 });
+      installationsListMock.mockResolvedValue([
+        { id: 1, account_login: "me", account_type: "User", installation_id: 7, created_at: "2026-01-01T00:00:00Z", permissions_synced_at: "2026-09-01T00:00:00Z", blocked_features: [] },
+      ]);
+      renderPage();
+
+      expect(await screen.findByRole("link", { name: /Connect an organization/ })).toHaveAttribute("href", "/settings");
+    });
+
+    it("does not offer to connect an org when the membership lookup itself failed", async () => {
+      localStorage.setItem("active_scope", JSON.stringify({ kind: "personal", login: "me" }));
+      tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+      orgsMineMock.mockRejectedValue(new Error("memberships down"));
+      cockpitMock.mockResolvedValue({ ...EMPTY_COCKPIT, latest_score: 87 });
+      installationsListMock.mockResolvedValue([
+        { id: 1, account_login: "me", account_type: "User", installation_id: 7, created_at: "2026-01-01T00:00:00Z", permissions_synced_at: "2026-09-01T00:00:00Z", blocked_features: [] },
+      ]);
+      renderPage();
+
+      await waitFor(() => expect(installationsListMock).toHaveBeenCalled());
+      await waitFor(() => expect(orgsMineMock).toHaveBeenCalled());
+      expect(screen.queryByRole("link", { name: /Connect an organization/ })).toBeNull();
+    });
+
+    it("tells the user why the checklist is missing when the cockpit failed", async () => {
+      localStorage.setItem("default_org", "acme");
+      tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+      orgsMineMock.mockResolvedValue([MEMBERSHIP]);
+      cockpitMock.mockRejectedValue(new Error("GitHub API error: 502"));
+      renderPage();
+
+      expect(await screen.findByText(/checklist will appear once the Overview data loads/)).toBeInTheDocument();
+      // the page's own error banner keeps the single Retry
+      expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
+    });
+
+    it("remembers a dismissal per signed-in user", async () => {
+      setUpOrg({ has_automation_run: false });
+      const first = renderPage();
+      fireEvent.click(await screen.findByRole("button", { name: "Dismiss getting started" }));
+      first.unmount();
+
+      authUser = { id: 2 };
+      const second = renderPage();
+      expect(await screen.findByRole("link", { name: /Run your first automation/ })).toBeInTheDocument();
+      second.unmount();
+
+      authUser = { id: 1 };
+      renderPage();
+      await waitFor(() => expect(cockpitMock).toHaveBeenCalledTimes(3));
+      expect(screen.queryByLabelText("Getting started")).toBeNull();
+    });
   });
 });

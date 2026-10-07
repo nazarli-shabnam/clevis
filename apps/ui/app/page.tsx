@@ -14,7 +14,7 @@ import { useActiveScope } from "@/lib/active-scope"
 import { membersHref } from "@/lib/members-href"
 import { useAuth } from "@/lib/auth-context"
 import { CHART_COLORS } from "@/lib/charts/theme"
-import { relativeTime } from "@/lib/format"
+import { dueTime, relativeTime } from "@/lib/format"
 import { SectionError } from "@/components/section-error"
 import { EmptyStateNoAccount } from "@/components/empty-state"
 import { FirstRunChecklist } from "@/components/first-run-checklist"
@@ -87,7 +87,7 @@ export default function OverviewPage() {
 
   // Resolves members links to an org the user admins; same ["my-orgs"] key as the sidebar so the
   // request dedupes. Holds at /settings while loading rather than resolving off an empty [].
-  const { data: memberships = [], isLoading: membershipsLoading } = useQuery<MyOrgMembership[]>({
+  const { data: memberships = [], isLoading: membershipsLoading, isSuccess: membershipsLoaded } = useQuery<MyOrgMembership[]>({
     queryKey: ["my-orgs"],
     queryFn: () => api.orgs.mine(),
   })
@@ -97,14 +97,14 @@ export default function OverviewPage() {
     setOrgChecked(true)
   }, [])
 
-  // Fires in parallel with the cockpit query; only drives the "not configured yet" CTA branch.
+  // Fires in parallel with the cockpit query. A saved PAT is optional (GitHub App installs and plain
+  // members have none: /tokens/resolve is admin-only and 404s), so it only feeds the cockpit call.
   const resolveQuery = useQuery({
     queryKey: ["tokens.resolve", org],
     queryFn: () => api.tokens.resolve(org),
     enabled: org.trim().length > 0,
     retry: false,
   })
-  const configured = !!resolveQuery.data?.token
 
   // Cockpit waits for resolveQuery to settle so a saved PAT isn't missed on the first request
   // (queryKey excludes token, so a later-arriving token wouldn't trigger a refetch).
@@ -116,6 +116,9 @@ export default function OverviewPage() {
     refetchInterval: 30_000,
   })
   const cockpit = cockpitQuery.data
+  // "Configure →" means there is no data source. The cockpit loading or succeeding proves there is one,
+  // PAT or not; only a failed (or never-started) cockpit with no PAT leaves the cards unconfigured.
+  const configured = !!resolveQuery.data?.token || resolveQuery.isLoading || cockpitQuery.isLoading || cockpitQuery.isSuccess
 
   // Best-effort: needs an App permission not requested by default, so retry: false and the card
   // renders only on success. Keyed by user because the QueryClient outlives logout/login, so keying
@@ -196,7 +199,12 @@ export default function OverviewPage() {
       {org && (
         <FirstRunChecklist
           scope={scope}
+          userId={user?.id ?? null}
           hasScan={cockpitQuery.isSuccess ? cockpit?.latest_score != null : null}
+          scanFailed={cockpitQuery.isError}
+          // Unknown (null) until the lookup succeeds: a failed one must not offer "Connect an organization".
+          hasOrg={membershipsLoaded ? memberships.length > 0 : null}
+          hasAutomationRun={cockpit?.has_automation_run ?? null}
           canInvite={scope?.kind === "org" && memberships.some((m) => m.org_login === scope.login && m.role === "admin")}
           membersUrl={membersUrl}
         />
@@ -425,7 +433,7 @@ export default function OverviewPage() {
                   </div>
                   <p className="text-[0.6875rem] text-muted-foreground mt-1">
                     {m.closed_issues}/{m.open_issues + m.closed_issues} closed
-                    {m.due_on && <> · due {relativeTime(m.due_on)}</>}
+                    {m.due_on && <> · due {dueTime(m.due_on)}</>}
                   </p>
                 </div>
               ))}
