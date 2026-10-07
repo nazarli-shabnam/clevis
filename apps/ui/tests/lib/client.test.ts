@@ -96,6 +96,14 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
     expect(JSON.parse(init.body as string)).toEqual({ repos: ["api"], dry_run: true, token: undefined });
   });
 
+  it("GETs a member's access review with both path segments encoded", async () => {
+    stubOkJson({ org: "acme", login: "octo cat", synced: true });
+    await api.collab.memberAccess("acme", "octo cat");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/github/orgs/acme/members/octo%20cat/access");
+    expect(init?.method ?? "GET").toBe("GET");
+  });
+
   it("GETs the saved branch-protection preset for the org", async () => {
     stubOkJson({ preset: null });
     await api.branchProtection.savedPreset("acme");
