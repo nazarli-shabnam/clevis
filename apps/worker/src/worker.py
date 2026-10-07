@@ -55,6 +55,16 @@ RECLAIM_TIMEOUT_MINUTES = 30
 
 # Kept well below RECLAIM_TIMEOUT_MINUTES so a slow-but-alive job stays fresh.
 _JOB_HEARTBEAT_INTERVAL_SECONDS = 10
+# Consecutive failed heartbeat writes after which the log escalates from warning to error: the job
+# row is then drifting toward "looks crashed" (the job lock below still keeps it from being reclaimed).
+_HEARTBEAT_FAILURES_BEFORE_ERROR = 3
+
+# Per-job session-level advisory lock, held by the worker that claimed the job for as long as it
+# processes it. The reclaim sweep skips a job whose lock is held, so a heartbeat that can't be written
+# can't get a still-running job reclaimed and run twice (duplicate cache deletes, duplicate backfill
+# fetches). It is released on completion, and Postgres drops it if the worker's connection dies, so a
+# genuinely crashed worker's job is still reclaimed. Two-int form: (namespace hash, job id).
+_JOB_LOCK_NAMESPACE = "clevis.jobs.processing"
 
 
 def _read_app_config(key: str, default: str) -> str:
@@ -482,11 +492,34 @@ JOB_HANDLERS = {
 }
 
 
+def _acquire_job_lock(conn: psycopg.Connection, job_id: int) -> bool:
+    """Take the non-blocking per-job lock; False means another live worker already holds it."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_try_advisory_lock(hashtext(%s), %s)", (_JOB_LOCK_NAMESPACE, job_id))
+        acquired = bool(cur.fetchone()[0])
+    conn.commit()
+    return acquired
+
+
+def _release_job_lock(conn: psycopg.Connection, job_id: int) -> None:
+    """Release _acquire_job_lock's lock. Rolls back first: a handler that errored mid-transaction leaves
+    the connection unusable, and a session-level lock survives a rollback. Never raises: the lock also
+    dies with the connection, so a failed release must not mask the job's own outcome."""
+    try:
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_unlock(hashtext(%s), %s)", (_JOB_LOCK_NAMESPACE, job_id))
+        conn.commit()
+    except Exception as exc:
+        log.warning("could not release the lock for job %d (it is dropped with the connection): %s", job_id, exc)
+
+
 def _reclaim_stale_jobs(conn: psycopg.Connection) -> None:
     """Reset jobs stuck in 'processing' past RECLAIM_TIMEOUT_MINUTES back to 'queued'.
 
     Only reclaims when heartbeat_at is also stale (or null), since updated_at is set once at
-    claim time. Shares retry_count/MAX_RETRIES with process_job so a crash loop ends 'failed'."""
+    claim time, and never a job whose per-job lock is held: a live worker still owns it, whatever
+    its heartbeat says. Shares retry_count/MAX_RETRIES with process_job so a crash loop ends 'failed'."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -499,12 +532,21 @@ def _reclaim_stale_jobs(conn: psycopg.Connection) -> None:
             WHERE status = 'processing'
               AND updated_at < NOW() - make_interval(mins => %(timeout_minutes)s)
               AND (heartbeat_at IS NULL OR heartbeat_at < NOW() - make_interval(mins => %(timeout_minutes)s))
+              -- Skip a job a live worker holds the lock for (pg_locks shows the two-int advisory key
+              -- as classid = namespace hash, unsigned; objid = job id).
+              AND NOT EXISTS (
+                  SELECT 1 FROM pg_locks l
+                  WHERE l.locktype = 'advisory' AND l.granted AND l.objsubid = 2
+                    AND l.classid = (hashtext(%(lock_namespace)s)::bigint & 4294967295)::oid
+                    AND l.objid = jobs.id::oid
+              )
             RETURNING id, status
             """,
             {
                 "max_retries": MAX_RETRIES,
                 "exceeded_message": f"exceeded max reclaim attempts ({MAX_RETRIES})",
                 "timeout_minutes": RECLAIM_TIMEOUT_MINUTES,
+                "lock_namespace": _JOB_LOCK_NAMESPACE,
             },
         )
         reclaimed = cur.fetchall()
@@ -513,8 +555,10 @@ def _reclaim_stale_jobs(conn: psycopg.Connection) -> None:
         log.warning("reclaimed stale job %d -> %s", job_id, status)
 
 
-def _touch_job_heartbeat(job_id: int) -> None:
-    """Runs on its own connection; psycopg connections aren't thread-safe."""
+def _touch_job_heartbeat(job_id: int) -> bool:
+    """Runs on its own connection; psycopg connections aren't thread-safe. Returns whether the
+    jobs.heartbeat_at write succeeded."""
+    ok = True
     try:
         with psycopg.connect(_DB_URL) as hb_conn:
             with hb_conn.cursor() as cur:
@@ -524,11 +568,13 @@ def _touch_job_heartbeat(job_id: int) -> None:
                 )
             hb_conn.commit()
     except Exception as exc:
-        # Non-fatal: worst case the reclaim sweep reclaims a still-running job.
+        # Non-fatal: the per-job lock (not the heartbeat) is what keeps the reclaim sweep off a live job.
+        ok = False
         log.warning("could not touch heartbeat for job %d: %s", job_id, exc)
     # Also refresh the file heartbeat, or a handler running past 60s would mark the
     # container unhealthy mid-job.
     _touch_heartbeat()
+    return ok
 
 
 class _JobHeartbeat:
@@ -539,13 +585,29 @@ class _JobHeartbeat:
         self._job_id = job_id
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
+        self._consecutive_failures = 0
+
+    def _tick(self) -> None:
+        if _touch_job_heartbeat(self._job_id):
+            self._consecutive_failures = 0
+            return
+        self._consecutive_failures += 1
+        if self._consecutive_failures % _HEARTBEAT_FAILURES_BEFORE_ERROR == 0:
+            # At error level (so alerting sees it, not just warnings), repeated every N failures for as long
+            # as the streak lasts, so a long outage keeps producing an alertable line.
+            log.error(
+                "job %d heartbeat failed %d times in a row; its row will look crashed to the reclaim sweep "
+                "(the job lock still protects it from a second worker)",
+                self._job_id,
+                self._consecutive_failures,
+            )
 
     def _run(self) -> None:
         while not self._stop.wait(_JOB_HEARTBEAT_INTERVAL_SECONDS):
-            _touch_job_heartbeat(self._job_id)
+            self._tick()
 
     def __enter__(self) -> "_JobHeartbeat":
-        _touch_job_heartbeat(self._job_id)  # immediate first tick, don't wait a full interval
+        self._tick()  # immediate first tick, don't wait a full interval
         self._thread.start()
         return self
 
@@ -624,8 +686,20 @@ def run() -> None:
 
                 if row:
                     conn.commit()
-                    with _JobHeartbeat(row[0]):
-                        process_job(conn, *row)
+                    job_id = row[0]
+                    if not _acquire_job_lock(conn, job_id):
+                        # Only reachable if a live worker holds this job (reclaim skips locked jobs, so a
+                        # second claim should be impossible). Never run it twice: hand it back to the queue
+                        # (fenced on the retry_count we claimed, so it can't clobber the holder's own writes)
+                        # to be retried after the usual backoff instead of sitting in 'processing' until reclaim.
+                        log.error("job %d is locked by another live worker; requeueing instead of processing it", job_id)
+                        _requeue_for_retry(conn, job_id, row[3], "another live worker holds this job")
+                    else:
+                        try:
+                            with _JobHeartbeat(job_id):
+                                process_job(conn, *row)
+                        finally:
+                            _release_job_lock(conn, job_id)
         except psycopg.OperationalError:
             log.error("database connection failed, retrying in %ds", poll_seconds)
         except Exception:
