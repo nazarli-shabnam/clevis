@@ -3,7 +3,9 @@
 // GitHub owner/repo charset rules. "~" can't appear in GitHub names; validating the charset is
 // defense-in-depth so a malformed segment never reaches the API.
 const OWNER_PATTERN = /^(?!-)(?!.*--)[a-zA-Z0-9-]{1,39}(?<!-)$/
-const REPO_PATTERN = /^[\w.-]+$/
+// "." and ".." match the charset but are path-traversal segments: encodeURIComponent leaves them alone
+// and fetch would collapse /repos/acme/../x, so they are not repository names.
+const REPO_PATTERN = /^(?!\.{1,2}$)[\w.-]+$/
 
 export function parseOwnerRepo(segment: string): { owner: string; repo: string } | null {
   const parts = segment.split("~")

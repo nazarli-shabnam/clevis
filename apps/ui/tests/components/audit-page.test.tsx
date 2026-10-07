@@ -5,6 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const auditListMock = vi.fn();
 const auditActionsMock = vi.fn();
 const jobsListMock = vi.fn();
+const downloadTextFileMock = vi.fn();
+
+vi.mock("@/lib/download", () => ({
+  downloadTextFile: (...args: unknown[]) => downloadTextFileMock(...args),
+}));
 
 let mockSearchParams = new URLSearchParams();
 
@@ -52,6 +57,7 @@ describe("AuditPage", () => {
     mockIsWorkspaceAdmin = true;
     jobsListMock.mockReset();
     jobsListMock.mockResolvedValue([]);
+    downloadTextFileMock.mockReset();
     mockSearchParams = new URLSearchParams();
   });
 
@@ -104,6 +110,41 @@ describe("AuditPage", () => {
     ]);
     renderPage();
     await waitFor(() => expect(screen.getByText("installation.connected")).toBeInTheDocument());
+  });
+
+  it("exports the shown events as CSV with ISO timestamps and the job status", async () => {
+    auditListMock.mockResolvedValue([
+      { id: 1, actor: "u@e.com", action: "cache.clear.queued", target: "acme/api", payload: JSON.stringify({ job_id: 7 }), created_at: "2026-01-01T00:00:00Z" },
+      { id: 2, actor: "v@e.com", action: "token.save", target: "acme", payload: "{}", created_at: "2026-01-02T00:00:00Z" },
+    ]);
+    jobsListMock.mockResolvedValue([{ id: 7, job_type: "github.clear_actions_cache", status: "done", result: null, created_at: "", updated_at: "" }]);
+    renderPage();
+
+    // the job list loads separately from the log, so wait for it before exporting
+    await waitFor(() => expect(screen.getAllByText("done").length).toBeGreaterThan(0));
+    fireEvent.click(await screen.findByRole("button", { name: /export csv/i }));
+
+    const [filename, csv, mime] = downloadTextFileMock.mock.calls[0];
+    expect(filename).toMatch(/^clevis-audit-\d{4}-\d{2}-\d{2}\.csv$/);
+    expect(mime).toBe("text/csv");
+    expect(csv.split("\r\n")).toEqual([
+      "Actor,Action,Target,Job status,Time",
+      "u@e.com,cache.clear.queued,acme/api,done,2026-01-01T00:00:00Z",
+      "v@e.com,token.save,acme,,2026-01-02T00:00:00Z",
+    ]);
+  });
+
+  it("exports 'unknown' (not a blank) for a job status that can't be looked up, and says how many events it holds", async () => {
+    auditListMock.mockResolvedValue([
+      { id: 1, actor: "u@e.com", action: "cache.clear.queued", target: "acme/api", payload: JSON.stringify({ job_id: 99 }), created_at: "2026-01-01T00:00:00Z" },
+    ]);
+    jobsListMock.mockResolvedValue([]); // job 99 isn't in the (capped) job list
+    renderPage();
+
+    expect(await screen.findByText(/Exports the 1 loaded events\./)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /export csv/i }));
+
+    expect(downloadTextFileMock.mock.calls[0][1].split("\r\n")[1]).toBe("u@e.com,cache.clear.queued,acme/api,unknown,2026-01-01T00:00:00Z");
   });
 
   it("shows a retry option instead of a fake empty state when the query fails", async () => {

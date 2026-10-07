@@ -22,6 +22,28 @@ export function relativeTime(iso: string): string {
   return `${year} year${year === 1 ? "" : "s"} ago`
 }
 
+/**
+ * For a due date, either side of now: "in 3 days" | "tomorrow" | "in 2 hours" | "3 days ago".
+ * relativeTime() treats every future timestamp as "just now", which reads as overdue.
+ */
+export function dueTime(iso: string): string {
+  const diffMs = new Date(iso).getTime() - Date.now()
+  if (isNaN(diffMs)) return "unknown"
+  if (diffMs <= 0) return relativeTime(iso)
+  const min = Math.floor(diffMs / 60_000)
+  if (min < 1) return "in under a minute"
+  if (min < 60) return `in ${min} minute${min === 1 ? "" : "s"}`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `in ${hr} hour${hr === 1 ? "" : "s"}`
+  const day = Math.floor(hr / 24)
+  if (day === 1) return "tomorrow"
+  if (day < 30) return `in ${day} days`
+  const month = Math.floor(day / 30)
+  if (month < 12) return `in ${month} month${month === 1 ? "" : "s"}`
+  const year = Math.floor(month / 12)
+  return `in ${year} year${year === 1 ? "" : "s"}`
+}
+
 /** "May 24, 2026 at 14:33 UTC" (24-hour clock, UTC) */
 export function exactTime(iso: string): string {
   const d = new Date(iso)

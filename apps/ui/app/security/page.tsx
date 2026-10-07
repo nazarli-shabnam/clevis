@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { EmptyStateNoAccount } from "@/components/empty-state"
 import { CheckCard } from "@/components/check-card"
+import { BulkFixPanel } from "@/components/bulk-fix-panel"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -714,6 +715,11 @@ export default function SecurityPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Same gating as "Fix this": plain members would only get a 403 from the API. */}
+      {matrixMutation.data && !isOrgMemberOnly(memberships, matrixMutation.data.owner) && (
+        <BulkFixPanel owner={matrixMutation.data.owner} repos={matrixMutation.data.repos} token={token || undefined} />
       )}
     </>
   )

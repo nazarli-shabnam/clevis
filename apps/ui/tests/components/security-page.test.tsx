@@ -499,6 +499,61 @@ describe("SecurityPage", () => {
     expect(screen.getByText("Failing check")).toBeInTheDocument();
   });
 
+  describe("bulk fix panel", () => {
+    const MATRIX = {
+      owner: "acme",
+      repos: [
+        {
+          repo: "api",
+          branch_protection: true,
+          secret_scanning: false,
+          dependabot_enabled: true,
+          dependabot_critical_count: 0,
+          dependabot_high_count: 0,
+          code_scanning: true,
+          force_push_allowed: false,
+          score: 80,
+          unknown_dimensions: [],
+          alerts_source: "github",
+        },
+      ],
+      summary: { fully_compliant_count: 0, critical_risk_count: 0, secret_hits_count: 0, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } },
+    };
+
+    async function scanAcme() {
+      analyticsOverviewMock.mockResolvedValue({ owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [] });
+      securityMatrixMock.mockResolvedValue(MATRIX);
+      renderPage();
+      fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+      await waitFor(() => expect(orgsMineMock).toHaveBeenCalled());
+      fireEvent.click(screen.getByRole("button", { name: /run scan/i }));
+      await waitFor(() => expect(screen.getByText("Compliance Matrix")).toBeInTheDocument());
+    }
+
+    it("is offered to an org admin once the matrix has loaded, scoped to that org's repos", async () => {
+      orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "admin" }]);
+      try {
+        await scanAcme();
+
+        expect(await screen.findByText("Fix many repos at once")).toBeInTheDocument();
+        expect(screen.getByRole("checkbox", { name: "api" })).toBeInTheDocument();
+      } finally {
+        orgsMineMock.mockResolvedValue([]);
+      }
+    });
+
+    it("is hidden from a plain member, who would only get a 403", async () => {
+      orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "member" }]);
+      try {
+        await scanAcme();
+
+        expect(screen.queryByText("Fix many repos at once")).not.toBeInTheDocument();
+      } finally {
+        orgsMineMock.mockResolvedValue([]);
+      }
+    });
+  });
+
   it("hides org-admin actions from a plain member of the scanned org", async () => {
     orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "member" }]);
     analyticsOverviewMock.mockResolvedValue({

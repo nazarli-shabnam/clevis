@@ -88,6 +88,7 @@ export default function AuditPage() {
       key: "actor",
       header: "Actor",
       sortValue: (log) => log.actor,
+      csvValue: (log) => log.actor,
       cellClassName: "font-mono text-foreground/80",
       render: (log) => log.actor,
     },
@@ -95,6 +96,7 @@ export default function AuditPage() {
       key: "action",
       header: "Action",
       sortValue: (log) => log.action,
+      csvValue: (log) => log.action,
       cellClassName: "text-primary font-mono",
       render: (log) => log.action,
     },
@@ -102,12 +104,19 @@ export default function AuditPage() {
       key: "target",
       header: "Target",
       sortValue: (log) => log.target,
+      csvValue: (log) => log.target,
       cellClassName: "text-muted-foreground max-w-[14rem] truncate",
       render: (log) => log.target,
     },
     {
       key: "job_status",
       header: "Job status",
+      csvValue: (log) => {
+        const jobId = parseJobId(log.payload)
+        if (jobId === null) return ""
+        // The job list loads separately and is capped, so "not found" is unknown, not "no job".
+        return jobsById.get(jobId)?.status ?? "unknown"
+      },
       cellClassName: "font-mono",
       render: (log) => {
         const jobId = parseJobId(log.payload)
@@ -126,6 +135,8 @@ export default function AuditPage() {
       header: "Time",
       align: "right",
       sortValue: (log) => new Date(log.created_at).getTime(),
+      // ISO 8601 (not the locale string shown in the table) so it sorts and parses in a spreadsheet.
+      csvValue: (log) => log.created_at,
       cellClassName: "font-mono text-muted-foreground whitespace-nowrap",
       render: (log) => new Date(log.created_at).toLocaleString(),
     },
@@ -183,6 +194,14 @@ export default function AuditPage() {
               columns={columns}
               data={logs}
               getRowKey={(log) => log.id}
+              exportCsv={{
+                name: actionFilter ? `audit-${actionFilter}` : "audit",
+                // The table only holds the events loaded so far (see "Load more"), not the whole log.
+                note:
+                  logs.length >= limit && limit < MAX_LIMIT
+                    ? `Exports the ${logs.length} loaded events. Load more to include older ones.`
+                    : `Exports the ${logs.length} loaded events.`,
+              }}
               // High enough that table pagination never triggers (backend caps at MAX_LIMIT); "Load more"
               // keeps a highlighted row reachable instead of hiding it behind a page click.
               pageSize={MAX_LIMIT}

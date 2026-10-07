@@ -36,16 +36,24 @@ def _aware(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
+def _critical_alert_filters(tenant_id: int, since: datetime) -> list:
+    return [
+        SecurityAlert.tenant_id == tenant_id,
+        SecurityAlert.kind == "dependabot",
+        SecurityAlert.severity == "critical",
+        SecurityAlert.state == "open",
+        SecurityAlert.created_at >= since,
+    ]
+
+
+def _failed_job_filters(tenant_id: int, since: datetime) -> list:
+    return [Job.tenant_id == tenant_id, Job.status == "failed", Job.updated_at >= since]
+
+
 def _critical_alert_items(db: Session, tenant_id: int, since: datetime) -> list[dict]:
     rows = (
         db.query(SecurityAlert)
-        .filter(
-            SecurityAlert.tenant_id == tenant_id,
-            SecurityAlert.kind == "dependabot",
-            SecurityAlert.severity == "critical",
-            SecurityAlert.state == "open",
-            SecurityAlert.created_at >= since,
-        )
+        .filter(*_critical_alert_filters(tenant_id, since))
         .order_by(SecurityAlert.created_at.desc())
         .limit(_PER_SOURCE)
         .all()
@@ -99,7 +107,7 @@ def _score_drop_items(db: Session, org_login: str, tenant_id: int, since: dateti
 def _failed_job_items(db: Session, org_login: str, tenant_id: int, since: datetime) -> list[dict]:
     rows = (
         db.query(Job)
-        .filter(Job.tenant_id == tenant_id, Job.status == "failed", Job.updated_at >= since)
+        .filter(*_failed_job_filters(tenant_id, since))
         .order_by(Job.updated_at.desc())
         .limit(_PER_SOURCE)
         .all()
@@ -138,6 +146,16 @@ def _permission_drift_items(db: Session, ctx: OrgContext, org_login: str, since:
     ]
 
 
+def _unread_beyond_limit(db: Session, filters: list, at_column, last_read, items: list, kind: str) -> int:
+    """Unread rows of one source that the per-source LIMIT kept out of ``items``."""
+    q = db.query(func.count()).select_from(at_column.class_).filter(*filters)
+    if last_read is not None:
+        q = q.filter(at_column > last_read)
+    unread_total = q.scalar() or 0
+    unread_listed = sum(1 for i in items if i.kind == kind and not i.read)
+    return max(0, unread_total - unread_listed)
+
+
 @router.get("/orgs/{org_login}/notifications", response_model=NotificationFeed)
 def get_notifications(
     org_login: str,
@@ -157,10 +175,15 @@ def get_notifications(
     items = [
         NotificationItem(**i, read=last_read is not None and _aware(i["at"]) <= _aware(last_read)) for i in raw
     ]
+    # Counted before the list is cut to MAX_ITEMS, and (for the sources that are cut to _PER_SOURCE
+    # rows) including the unread rows that cut left out, so a long list never under-reports.
+    unread_count = sum(1 for i in items if not i.read)
+    unread_count += _unread_beyond_limit(db, _critical_alert_filters(tenant_id, since), SecurityAlert.created_at, last_read, items, "critical_alert")
+    if ctx.membership.role == "admin":
+        unread_count += _unread_beyond_limit(db, _failed_job_filters(tenant_id, since), Job.updated_at, last_read, items, "job_failed")
     return NotificationFeed(
         org=org_login,
-        # Counted before the list is cut to MAX_ITEMS, so a long list never under-reports.
-        unread_count=sum(1 for i in items if not i.read),
+        unread_count=unread_count,
         items=items[:MAX_ITEMS],
         last_read_at=last_read,
     )

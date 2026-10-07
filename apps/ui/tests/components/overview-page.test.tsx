@@ -159,6 +159,29 @@ describe("OverviewPage cockpit", () => {
     expect(cockpitMock).toHaveBeenCalledTimes(1);
   });
 
+  it("shows real values, not Configure, for an org with no saved PAT when the cockpit still loads (GitHub App / member)", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockRejectedValue(new Error("No saved token for this org"));
+    cockpitMock.mockResolvedValue({ ...EMPTY_COCKPIT, repo_count: 12, open_pr_count: 5, latest_score: 87, member_count: 9 });
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText("12")).toBeInTheDocument());
+    expect(screen.getByText("87")).toBeInTheDocument();
+    expect(screen.queryAllByText("Configure →")).toHaveLength(0);
+    expect(cockpitMock).toHaveBeenCalledWith("acme", undefined);
+  });
+
+  it("still asks to configure when there is no PAT and the cockpit fails too", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockRejectedValue(new Error("No saved token for this org"));
+    cockpitMock.mockRejectedValue(new Error("No GitHub token available for this organization"));
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getAllByText("Configure →")).toHaveLength(4));
+  });
+
   it("labels commit activity as estimated when the cockpit source is an aggregate", async () => {
     localStorage.setItem("default_org", "acme");
     tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
@@ -458,8 +481,7 @@ describe("OverviewPage cockpit", () => {
         {
           repo: "acme/api",
           title: "v2",
-          // Computed relative to now so relativeTime() keeps rendering "just now".
-          due_on: new Date(Date.now() + 60_000).toISOString(),
+          due_on: new Date(Date.now() + 3 * 86400_000 + 60_000).toISOString(),
           open_issues: 2,
           closed_issues: 8,
           progress_pct: 80,
@@ -473,7 +495,7 @@ describe("OverviewPage cockpit", () => {
     await waitFor(() => {
       expect(screen.getByText(/v2/)).toBeInTheDocument();
     });
-    expect(screen.getByText((_, el) => el?.textContent === "8/10 closed · due just now")).toBeInTheDocument();
+    expect(screen.getByText((_, el) => el?.textContent === "8/10 closed · due in 3 days")).toBeInTheDocument();
   });
 
   it("renders overdue and at-risk milestone chips with their own styling", async () => {

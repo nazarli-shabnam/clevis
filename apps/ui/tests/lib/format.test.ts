@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import {
   relativeTime,
+  dueTime,
   exactTime,
   formatBytes,
   jobTypeLabel,
@@ -62,6 +63,36 @@ describe("relativeTime", () => {
 
   it("handles invalid ISO gracefully", () => {
     expect(relativeTime("not-a-date")).toBe("unknown")
+  })
+})
+
+describe("dueTime", () => {
+  const at = (ms: number) => new Date(NOW + ms).toISOString()
+
+  it("reads past dates like relativeTime", () => {
+    expect(dueTime(at(-3 * 86400_000))).toBe("3 days ago")
+  })
+
+  it("does not call a date that is due right now overdue", () => {
+    expect(dueTime(at(0))).toBe("just now")
+  })
+
+  it("covers each future unit, singular and plural", () => {
+    expect(dueTime(at(30_000))).toBe("in under a minute")
+    expect(dueTime(at(60_000))).toBe("in 1 minute")
+    expect(dueTime(at(5 * 60_000))).toBe("in 5 minutes")
+    expect(dueTime(at(3600_000))).toBe("in 1 hour")
+    expect(dueTime(at(5 * 3600_000))).toBe("in 5 hours")
+    expect(dueTime(at(86400_000 + 1000))).toBe("tomorrow")
+    expect(dueTime(at(3 * 86400_000 + 1000))).toBe("in 3 days")
+    expect(dueTime(at(40 * 86400_000))).toBe("in 1 month")
+    expect(dueTime(at(90 * 86400_000))).toBe("in 3 months")
+    expect(dueTime(at(400 * 86400_000))).toBe("in 1 year")
+    expect(dueTime(at(800 * 86400_000))).toBe("in 2 years")
+  })
+
+  it("handles an invalid date", () => {
+    expect(dueTime("not-a-date")).toBe("unknown")
   })
 })
 

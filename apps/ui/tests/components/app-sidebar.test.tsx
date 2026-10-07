@@ -179,6 +179,15 @@ describe("AppSidebar Invite members button", () => {
     const link = await screen.findByRole("link", { name: /invite members/i });
     await waitFor(() => expect(link).toHaveAttribute("href", "/settings"));
   });
+
+  it("still sends a plain member to the org's roster from the Collaborators item (#663)", async () => {
+    orgMemberships = [{ org_login: "acme", role: "member" }];
+    localStorage.setItem("default_org", "acme");
+    renderSidebar();
+
+    const link = await screen.findByRole("link", { name: /collaborators/i });
+    await waitFor(() => expect(link).toHaveAttribute("href", "/settings/org/acme/members"));
+  });
 });
 
 describe("AppSidebar health dot and unread badge", () => {

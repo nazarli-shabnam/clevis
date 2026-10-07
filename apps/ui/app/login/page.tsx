@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
+import { safeNextPath, withNext } from "@/lib/safe-next"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Field, FieldLabel } from "@/components/ui/field"
@@ -18,15 +19,6 @@ function GithubMark() {
       <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
     </svg>
   )
-}
-
-// Only accept unambiguous same-site relative paths: reject protocol-relative ("//..."),
-// backslash variants (some browsers normalize "/\..." to "//..."), and control characters
-// that could let URL parsing reinterpret this as an external navigation target.
-function safeNextPath(next: string | null): string {
-  if (!next || !next.startsWith("/") || next.startsWith("//")) return "/"
-  if (next.includes("\\") || /[\x00-\x1f\x7f]/.test(next)) return "/"
-  return next
 }
 
 const GITHUB_ERROR_MESSAGES: Record<string, string> = {
@@ -161,8 +153,7 @@ export default function LoginPage() {
           variant="outline"
           className="w-full"
           onClick={() => {
-            const qs = next !== "/" ? `?next=${encodeURIComponent(next)}` : ""
-            window.location.href = `${API_BASE}/auth/github/login${qs}`
+            window.location.href = `${API_BASE}${withNext("/auth/github/login", next)}`
           }}
         >
           <GithubMark />
@@ -171,7 +162,7 @@ export default function LoginPage() {
 
         <p className="text-xs text-muted-foreground mt-4 text-center">
           Don&apos;t have an account?{" "}
-          <a href="/register" className="text-foreground underline underline-offset-2">
+          <a href={withNext("/register", next)} className="text-foreground underline underline-offset-2">
             Sign up
           </a>
         </p>

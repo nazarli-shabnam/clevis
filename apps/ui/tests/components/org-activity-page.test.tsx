@@ -125,6 +125,12 @@ describe("OrgActivityPage", () => {
     expect(csv).toContain("job.enqueued");
   });
 
+  it("says the CSV holds only the loaded rows while older events remain", async () => {
+    auditMock.mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => row(500 - i)));
+    renderPage();
+    expect(await screen.findByRole("button", { name: "Export CSV (100 loaded)" })).toBeInTheDocument();
+  });
+
   it("shows a retry state when the audit query fails", async () => {
     auditMock.mockRejectedValue(new Error("nope"));
     renderPage();

@@ -181,6 +181,20 @@ def test_unread_count_is_not_cut_off_by_the_item_limit(db, world):
     assert feed["unread_count"] == 80
 
 
+def test_unread_count_includes_rows_past_the_per_source_limit(db, world):
+    t = world["acme"].tenant_id
+    for n in range(45):
+        _alert(db, t, number=n)
+    for _ in range(45):
+        _failed_job(db, t)
+    admin = _client(db, world["users"]["admin"])
+    assert admin.get("/orgs/acme/notifications").json()["unread_count"] == 90
+    # A member cannot see jobs, so they are not counted for them either.
+    assert _client(db, world["users"]["member"]).get("/orgs/acme/notifications").json()["unread_count"] == 45
+    admin.post("/orgs/acme/notifications/read")
+    assert admin.get("/orgs/acme/notifications").json()["unread_count"] == 0
+
+
 def test_the_read_marker_only_moves_forward(db, world):
     from src.repositories import notification_read_repo as repo
 
