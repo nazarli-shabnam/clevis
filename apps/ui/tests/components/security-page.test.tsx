@@ -208,6 +208,35 @@ describe("SecurityPage", () => {
     expect(secretScanningMock).not.toHaveBeenCalled();
   });
 
+  it("shows a scan failure for the owner it was run for, and drops it once the owner changes (#549)", async () => {
+    analyticsOverviewMock.mockRejectedValue(new Error("scan exploded"));
+
+    renderPage();
+    const ownerInput = screen.getByPlaceholderText("e.g. octocat");
+    fireEvent.change(ownerInput, { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+
+    expect(await screen.findByTestId("scan-error")).toHaveTextContent("scan exploded");
+
+    fireEvent.change(ownerInput, { target: { value: "beta" } });
+    await waitFor(() => expect(screen.queryByTestId("scan-error")).not.toBeInTheDocument());
+  });
+
+  it("shows the results card with a pending state while a scan is running (#549)", async () => {
+    analyticsOverviewMock.mockReturnValue(new Promise(() => {})); // never settles
+
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /scanning/i })).toBeInTheDocument());
+    expect(analyticsOverviewMock).toHaveBeenCalledWith("acme", "");
+  });
+
   it("runs a scan on Enter in the organization field with no token entered", async () => {
     analyticsOverviewMock.mockResolvedValue({
       owner: "acme",
