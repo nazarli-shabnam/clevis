@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import type { PendingInvitationSummary } from "@/lib/api/types"
 import { clearActiveScope } from "@/lib/active-scope"
 import { clearDismissals } from "@/lib/first-run-dismissal"
+import { errorDetail } from "@/lib/api/client"
 
 export interface AuthUser {
   id: number
@@ -220,7 +221,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ email, password }),
     })
     const data = await res.json()
-    if (!res.ok) throw new Error(data.detail ?? "Login failed")
+    if (!res.ok) throw new Error(errorDetail(data, "Login failed"))
     const { access_token, user: u, pending_invitations } = data as {
       access_token: string
       user: AuthUser

@@ -122,6 +122,34 @@ describe("AutomationPage", () => {
     expect(screen.getByLabelText("Repository")).not.toBeDisabled();
   });
 
+  it("does not refetch the repo list (or key it on the token) while a token is typed (#548)", async () => {
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    await waitFor(() => expect(reposListMock).toHaveBeenCalledTimes(1));
+
+    const tokenInput = await screen.findByPlaceholderText(/ghp_/);
+    for (const partial of ["g", "gh", "ghp", "ghp_a", "ghp_ab"]) {
+      fireEvent.change(tokenInput, { target: { value: partial } });
+    }
+    await new Promise((r) => setTimeout(r, 600));
+
+    expect(reposListMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for typing in the owner box to pause before resolving, listing and looking up installations (#548)", async () => {
+    renderPage();
+    const ownerInput = screen.getByPlaceholderText("e.g. octocat");
+    for (const partial of ["a", "ac", "acm", "acme"]) {
+      fireEvent.change(ownerInput, { target: { value: partial } });
+    }
+
+    await waitFor(() => expect(reposListMock).toHaveBeenCalledWith("acme", ""));
+    expect(reposListMock).toHaveBeenCalledTimes(1);
+    expect(tokensResolveMock).toHaveBeenCalledTimes(1);
+    expect(tokensResolveMock).toHaveBeenCalledWith("acme");
+    expect(installationsListForOrgMock).toHaveBeenCalledTimes(1);
+  });
+
   it("clears a selected repository when the owner changes, disabling Load workflows until a new one is picked", async () => {
     // A stale repo name from the old owner must not be submittable against the new owner.
     renderPage();

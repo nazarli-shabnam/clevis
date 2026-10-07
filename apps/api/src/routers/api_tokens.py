@@ -1,9 +1,12 @@
 """API tokens for CI, the machine score endpoints they unlock, and the opt-in score badge.
 
-Tokens are org-scoped and read-only: they can read the latest scan and trigger a fresh one (which
-only reads GitHub and stores a snapshot), nothing that changes configuration.
+Tokens are org-scoped and cannot change configuration: they can read the latest scan and trigger a
+fresh one. A scan only reads GitHub, but it does store a score snapshot (feeding the badge, the score
+API and trend history) and can send score-drop alerts, so "read" is a scope name, not a promise that
+nothing is written. Scans are single-flight per org and reused for a short window (see ``run_scan``).
 """
 
+import asyncio
 import logging
 import threading
 import time
@@ -37,6 +40,22 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 _MAX_TOKENS_PER_ORG = 20
+
+# A scan costs hundreds of GitHub calls under the org's shared installation token. One that finished
+# within this window is returned instead of running another, so a looping or parallel CI job can't
+# burn the org's rate limit.
+_SCAN_REUSE_SECONDS = 60
+# ponytail: per-process lock, so N API replicas allow N concurrent scans per org; a Redis/advisory
+# lock if replicas ever matter. One entry per org that ever scanned, so it can't grow unboundedly.
+_scan_locks: dict[str, asyncio.Lock] = {}
+
+
+def _recent_scan(db: Session, token: ResolvedToken) -> dict | None:
+    scan = scan_results_repo.latest_with_checks(db, token.org_login, token.tenant_id)
+    if scan is None or not scan["scanned_at"]:
+        return None
+    age = datetime.now(timezone.utc) - datetime.fromisoformat(scan["scanned_at"])
+    return scan if age.total_seconds() < _SCAN_REUSE_SECONDS else None
 
 
 # --- token management (org admins, session auth) ---
@@ -147,6 +166,15 @@ def latest_score(org_login: str, token: ResolvedToken = Depends(require_scope("r
 @router.post("/api/v1/orgs/{org_login}/scan", response_model=ScoreOut)
 async def run_scan(org_login: str, token: ResolvedToken = Depends(require_scope("read")), db: Session = Depends(get_db)):
     _own_org(org_login, token)
+    # Callers queue behind an in-flight scan, then find its result as the "recent" one and return it.
+    async with _scan_locks.setdefault(token.org_login.lower(), asyncio.Lock()):
+        recent = await anyio.to_thread.run_sync(lambda: _recent_scan(db, token))
+        if recent is not None:
+            return _score_out(token.org_login, recent)
+        return await _scan_and_record(token, db)
+
+
+async def _scan_and_record(token: ResolvedToken, db: Session) -> ScoreOut:
     try:
         github_token = await anyio.to_thread.run_sync(
             lambda: resolve_org_token(db, org_id=token.org_id, account_login=token.org_login, client_token=None)
