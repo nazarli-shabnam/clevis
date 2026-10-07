@@ -46,15 +46,15 @@ def _client(db, user):
     return TestClient(app)
 
 
-def _alert(db, tenant_id, *, number, severity="critical", state="open", kind="dependabot", when=None, repo="acme/api"):
+def _alert(db, tenant_id, *, number, severity="critical", state="open", kind="dependabot", when=None, repo="acme/api", ingested=None):
     db.execute(text(f"SET app.tenant_id = {int(tenant_id)}"))
     db.execute(
         text(
-            "INSERT INTO security_alerts (tenant_id, repo, kind, number, state, severity, details, created_at, updated_at) "
-            "VALUES (:t, :repo, :kind, :n, :state, :sev, :d, :at, :at)"
+            "INSERT INTO security_alerts (tenant_id, repo, kind, number, state, severity, details, created_at, updated_at, ingested_at) "
+            "VALUES (:t, :repo, :kind, :n, :state, :sev, :d, :at, :at, :ing)"
         ),
         {"t": tenant_id, "repo": repo, "kind": kind, "n": number, "state": state, "sev": severity,
-         "d": json.dumps({"summary": "RCE in lib"}), "at": when or NOW},
+         "d": json.dumps({"summary": "RCE in lib"}), "at": when or NOW, "ing": ingested or when or NOW},
     )
     db.commit()
 
@@ -134,11 +134,45 @@ def test_permission_drift_shows_for_admins_when_automations_are_blocked(db, worl
     )
     inst.granted_permissions = {"metadata": "read"}
     inst.permissions_synced_at = NOW
+    inst.permissions_changed_at = NOW
     db.commit()
     admin = _client(db, world["users"]["admin"]).get("/orgs/acme/notifications")
     member = _client(db, world["users"]["member"]).get("/orgs/acme/notifications")
     assert _kinds(admin) == ["permission_drift"]
     assert _kinds(member) == []
+
+
+def test_unchanged_permissions_resync_does_not_reflag_drift_as_unread(db, world):
+    db.execute(text(f"SET app.tenant_id = {world['acme'].tenant_id}"))
+    inst = installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=7, org_id=world["acme"].id
+    )
+    inst.granted_permissions = {"metadata": "read"}
+    inst.permissions_synced_at = inst.permissions_changed_at = NOW - timedelta(hours=2)
+    db.commit()
+    admin = _client(db, world["users"]["admin"])
+    assert admin.get("/orgs/acme/notifications").json()["unread_count"] == 1
+    admin.post("/orgs/acme/notifications/read")
+
+    _, changed = installation_repo.update_permissions(db, installation_id=7, permissions={"metadata": "read"})
+    assert changed is False
+    assert admin.get("/orgs/acme/notifications").json()["unread_count"] == 0
+
+    # A real change of the granted permissions is new again.
+    _, changed = installation_repo.update_permissions(db, installation_id=7, permissions={"metadata": "read", "issues": "read"})
+    assert changed is True
+    assert admin.get("/orgs/acme/notifications").json()["unread_count"] == 1
+
+
+def test_alert_ingested_after_the_read_marker_is_unread_even_if_github_created_it_earlier(db, world):
+    t = world["acme"].tenant_id
+    admin = _client(db, world["users"]["admin"])
+    admin.post("/orgs/acme/notifications/read")
+    # GitHub opened the alert 3 days ago, but a delayed webhook / backfill only stored it just now.
+    _alert(db, t, number=1, when=NOW - timedelta(days=3), ingested=datetime.now(timezone.utc) + timedelta(seconds=5))
+    feed = admin.get("/orgs/acme/notifications").json()
+    assert feed["unread_count"] == 1
+    assert feed["items"][0]["read"] is False
 
 
 def test_mark_read_is_per_user_and_per_org(db, world):

@@ -257,18 +257,16 @@ def update_permissions(
         .with_for_update()
         .all()
     )
-    changed = any(r.granted_permissions != permissions for r in rows)
-
-    count = (
-        db.query(GitHubInstallation)
-        .filter(GitHubInstallation.installation_id == installation_id)
-        .update(
-            {
-                GitHubInstallation.granted_permissions: permissions,
-                GitHubInstallation.permissions_synced_at: synced_at or datetime.now(timezone.utc),
-            },
-            synchronize_session=False,
-        )
-    )
+    stamp = synced_at or datetime.now(timezone.utc)
+    changed = False
+    for r in rows:
+        if r.granted_permissions != permissions:
+            changed = True
+            # Only a real difference moves permissions_changed_at (what the notification feed dates the
+            # "permission drift" item by); permissions_synced_at moves on every sync.
+            r.permissions_changed_at = stamp
+        r.granted_permissions = permissions
+        r.permissions_synced_at = stamp
+    count = len(rows)
     db.commit()
     return count, changed
