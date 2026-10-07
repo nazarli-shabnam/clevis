@@ -132,11 +132,32 @@ score-drop alert. It is **off by default**.
 
 ## Security notes
 
-- **Row-Level Security is opt-in, not on by default.** Tenant-scoped tables have RLS policies (`FORCE` is set on most; `orgs`, `saved_tokens`, `invitations` and `audit_logs` only have `ENABLE`, and `webhook_deliveries` has no RLS because the webhook receiver has no tenant context), but in the default deployment both the API and worker connect as the Postgres bootstrap superuser (`DB_USER`), which bypasses RLS unconditionally. Tenant isolation in a default deployment is enforced **entirely at the application layer** — every query is expected to filter by `tenant_id`, and that's the only thing standing between one tenant's data and another's. Set `API_DB_PASSWORD` (step 6) and `WORKER_DB_PASSWORD` (step 5) if you want RLS to actually enforce isolation as a second, independent layer.
+- **Row-Level Security is opt-in, not on by default.** Tenant-scoped tables have RLS policies (`FORCE` is set on most; `orgs`, `saved_tokens`, `invitations` and `audit_logs` only have `ENABLE`, and `webhook_deliveries` has no RLS because the webhook receiver has no tenant context), but in the default deployment both the API and worker connect as the Postgres bootstrap superuser (`DB_USER`), which bypasses RLS unconditionally. Tenant isolation in a default deployment is enforced **entirely at the application layer** — every query is expected to filter by `tenant_id`, and that's the only thing standing between one tenant's data and another's. Set `API_DB_PASSWORD` (step 6) and `WORKER_DB_PASSWORD` (step 5) if you want RLS to actually enforce isolation as a second, independent layer. Both services log a one-time `Row-Level Security is NOT enforced` warning at startup while they connect as a superuser or `BYPASSRLS` role, so you can tell which posture you are in; see below to switch.
 - **How the session token is held depends on how the user signed in.** "Sign in with GitHub" sets the JWT as an httpOnly `clevis_session` cookie. Password sign-in (`/auth/setup`, `/auth/register`, `/auth/login`) returns the JWT in the response body instead; the UI keeps it in the browser's `localStorage` and sends it as an `Authorization: Bearer` header, so any script running on the UI's origin (for example via an XSS bug) can read it. The API accepts either form. Revoke sessions with sign-out (per session) or "sign out of all devices".
 - The session cookie is configured with `SESSION_COOKIE_SECURE` (default `true`; set `false` only for local HTTP dev, never in production — a `Secure` cookie is not sent over plain HTTP), `SESSION_COOKIE_SAMESITE` (default `lax`; use `none` when the UI and API are on different sites, which also requires `SESSION_COOKIE_SECURE=true`) and `SESSION_COOKIE_DOMAIN` (default unset, i.e. host-only). `SESSION_COOKIE_SECURE` and `SESSION_COOKIE_DOMAIN` also apply to the short-lived OAuth `state` cookie set at the start of GitHub sign-in; that cookie is always `SameSite=Lax` (it must be sent on the top-level redirect back from github.com), so `SESSION_COOKIE_SAMESITE` does not affect it. These are optional environment variables; see `.env.example`.
 - Restrict API ingress behind your reverse proxy/SSO; the base `docker-compose.yml` deliberately publishes no host ports (Traefik-only) for this reason.
 - Prefer GitHub App auth over the legacy personal-access-token path for anything beyond local testing — tokens are Fernet-encrypted at rest either way, but App installation tokens are short-lived and scoped per-org.
+
+
+### Enabling Row-Level Security enforcement
+
+RLS stays opt-in because turning it on changes which database roles the API and worker connect as, which an existing deployment has to provision by hand (the role-creation init scripts only run against a brand-new data volume). Nothing here is required, but it is recommended for any multi-tenant instance.
+
+**Check where you are.** On startup the API and worker each log `Row-Level Security is NOT enforced ...` when their role is a superuser or has `BYPASSRLS`. No warning means the role is subject to RLS. You can also check directly:
+
+```bash
+docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname IN (current_user, '"'"'clevis_api'"'"', '"'"'clevis_worker'"'"')"'
+```
+
+**Cut over an existing deployment.**
+
+1. Back up the database (`pg_dump`). The steps below only create roles and grants and change which credential the services use; they do not modify your data, but you want a restore point before changing how production connects.
+2. Set `API_DB_PASSWORD` and `WORKER_DB_PASSWORD` in `.env` (`openssl rand -hex 32` for each).
+3. Provision the roles on the existing volume: step 6 above (`docker/provision-api-role-existing-deployment.sh`) for the API, and step 5 above for the worker. Run them while the stack is up; they are idempotent.
+4. Restart the API and worker (`docker compose up -d`). Migrations still run as `DB_USER`; only the runtime connection changes.
+5. Confirm: neither service logs the `NOT enforced` warning, `/healthz` is ok, and sign-in, the Overview page and a scan work. A `permission denied for table ...` error in the API or worker log means a grant is missing: re-run the provisioning script for that role (new tables added by later migrations need their grants too).
+
+**Roll back.** Unset `API_DB_PASSWORD` / `WORKER_DB_PASSWORD` and restart. The services go back to sharing `DB_USER`, exactly as before; the roles and grants are harmless to leave in place.
 
 ## Observability
 

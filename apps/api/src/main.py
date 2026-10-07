@@ -5,8 +5,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.core.config import settings
+from src.core.db import engine
 from src.core.logging import setup_logging
 from src.core.middleware import RequestIdMiddleware
+from src.core.rls_posture import warn_if_rls_bypassed
 from src.routers import (
     actions_cache,
     analytics,
@@ -52,6 +54,8 @@ _cors_origins = settings.cors_origins
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     setup_logging()
+    # One-time, best-effort notice when the DB role bypasses RLS (the default deployment); see core/rls_posture.py.
+    await asyncio.to_thread(warn_if_rls_bypassed, engine)
     # Separate tasks: unrelated concerns, each tolerating its own iteration errors.
     tasks = [
         asyncio.create_task(gap_heal_loop()),
