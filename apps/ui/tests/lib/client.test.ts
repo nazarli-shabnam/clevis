@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { api } from "@/lib/api/client";
+import { api, errorDetail } from "@/lib/api/client";
 
 const TOKEN_KEY = "clevis:token";
 
@@ -932,5 +932,35 @@ describe("analytics.history", () => {
     stubStatus(200, rows);
 
     await expect(api.analytics.history("acme")).resolves.toEqual(rows);
+  });
+});
+
+describe("errorDetail", () => {
+  it("passes a string detail through", () => {
+    expect(errorDetail({ detail: "Not found" }, "fb")).toBe("Not found");
+  });
+
+  it("joins the msg of each FastAPI 422 validation entry", () => {
+    const json = { detail: [{ loc: ["body", "email"], msg: "value is not a valid email address", type: "value_error" }, { loc: ["body", "label"], msg: "too long", type: "string_too_long" }] };
+    expect(errorDetail(json, "fb")).toBe("value is not a valid email address; too long");
+  });
+
+  it("falls back when detail is missing, empty or unusable", () => {
+    expect(errorDetail(null, "fb")).toBe("fb");
+    expect(errorDetail({}, "fb")).toBe("fb");
+    expect(errorDetail({ detail: [] }, "fb")).toBe("fb");
+    expect(errorDetail({ detail: [{}] }, "fb")).toBe("fb");
+  });
+});
+
+describe("handleResponse 422", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("surfaces the validation message instead of [object Object]", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify({ detail: [{ loc: ["body", "email"], msg: "bad email", type: "value_error" }] }), { status: 422 }))),
+    );
+    await expect(api.tokens.delete("acme")).rejects.toThrow("bad email");
   });
 });

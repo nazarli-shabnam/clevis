@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { useMutation, useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -23,6 +23,8 @@ import type { InstallationMeta, MyOrgMembership, RunSummary, WorkflowSummary } f
 
 // > 0, not > 1: valid GitHub org logins can be a single character.
 const MIN_OWNER_LEN_FOR_REPO_LOOKUP = 1
+// Pause after the last keystroke in the owner box before it drives network lookups.
+const OWNER_LOOKUP_DEBOUNCE_MS = 400
 
 function runDurationSeconds(run: RunSummary): number | null {
   return run.duration_ms == null ? null : Math.round(run.duration_ms / 1000)
@@ -38,6 +40,7 @@ function StatusIcon({ status, conclusion }: { status: string; conclusion: string
 }
 
 export default function AutomationPage() {
+  const queryClient = useQueryClient()
   const [owner, setOwner] = useState("")
   const [repo, setRepo] = useState("")
   const [token, setToken] = useState("")
@@ -64,6 +67,14 @@ export default function AutomationPage() {
   })
   const triageRole = membershipsQuery.data ? orgRoleFor(membershipsQuery.data, owner.trim()) : undefined
 
+  // The owner box drives token resolution, the installation lookup and the repo list; follow it
+  // only once typing pauses, so each keystroke doesn't fire three requests.
+  const [lookupOwner, setLookupOwner] = useState("")
+  useEffect(() => {
+    const timer = setTimeout(() => setLookupOwner(owner.trim()), OWNER_LOOKUP_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [owner])
+
   const { data: installs = [] } = useQuery<InstallationMeta[]>({
     queryKey: ["installations"],
     queryFn: () => api.installations.list(),
@@ -71,39 +82,53 @@ export default function AutomationPage() {
   // Org installs need the org-scoped endpoint (list() is personal-only). 403/404 is treated as
   // "not installed": this is only a soft signal to hide the token field.
   const orgInstallsQuery = useQuery<InstallationMeta[]>({
-    queryKey: ["installations.org", owner.trim()],
-    queryFn: () => api.installations.listForOrg(owner.trim()),
-    enabled: owner.trim().length > 0,
+    queryKey: ["installations.org", lookupOwner],
+    queryFn: () => api.installations.listForOrg(lookupOwner),
+    enabled: lookupOwner.length > 0,
     retry: false,
   })
   const hasInstallationForOwner =
-    installs.some((i) => i.account_login === owner.trim()) || (orgInstallsQuery.data?.length ?? 0) > 0
+    installs.some((i) => i.account_login === lookupOwner) || (orgInstallsQuery.data?.length ?? 0) > 0
+
+  // The owner whose token lookup has finished (found or not). The repo list waits for it so it
+  // runs once with the right token, instead of keying the query on the token's text.
+  const [resolvedFor, setResolvedFor] = useState("")
 
   const resolveMutation = useMutation({
     mutationFn: (org: string) => api.tokens.resolve(org),
     onSuccess: (data, org) => {
       // Skip a legacy saved token once an installation covers this owner, or the hidden token
       // would silently override the installation-token path.
+      setResolvedFor(org)
       if (shouldApplyResolvedToken(org, owner) && !hasInstallationForOwner) {
         setToken(data.token)
         setTokenSaved(true)
       }
     },
-    onError: () => setTokenSaved(false),
+    onError: (_error, org) => {
+      setResolvedFor(org)
+      setTokenSaved(false)
+    },
   })
 
   useEffect(() => {
     setToken("")
     setTokenSaved(false)
+  }, [owner.trim()]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    setResolvedFor("")
     // > 0, not > 2: valid GitHub org logins can be 1-2 characters.
-    if (owner.trim().length > 0) resolveMutation.mutate(owner.trim())
+    if (lookupOwner.length > 0) resolveMutation.mutate(lookupOwner)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [owner])
+  }, [lookupOwner])
 
   const reposListQuery = useQuery({
-    queryKey: ["repos.list", owner.trim(), token],
-    queryFn: () => api.repos.list(owner.trim(), token),
-    enabled: owner.trim().length >= MIN_OWNER_LEN_FOR_REPO_LOOKUP,
+    // The token stays out of the key: it is a live password field, so keying on it would fire a
+    // request (and cache an entry) per keystroke. Saving a token refetches this instead.
+    queryKey: ["repos.list", lookupOwner],
+    queryFn: () => api.repos.list(lookupOwner, token),
+    enabled: lookupOwner.length >= MIN_OWNER_LEN_FOR_REPO_LOOKUP && resolvedFor === lookupOwner,
     retry: false,
   })
   const repoOptions = reposListQuery.data?.repos ?? []
@@ -111,7 +136,10 @@ export default function AutomationPage() {
 
   const saveTokenMutation = useMutation({
     mutationFn: () => api.tokens.upsert(owner.trim(), token.trim()),
-    onSuccess: () => setTokenSaved(true),
+    onSuccess: () => {
+      setTokenSaved(true)
+      queryClient.invalidateQueries({ queryKey: ["repos.list", lookupOwner] })
+    },
   })
 
   const dispatchMutation = useMutation({

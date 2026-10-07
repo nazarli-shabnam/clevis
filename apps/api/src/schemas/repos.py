@@ -22,6 +22,9 @@ class RepoSummary(BaseModel):
     pushed_at: str | None = None
     default_branch: str
     html_url: str
+    # GitHub's repo objects always carry this; defaulted so a payload (or test fixture) without it
+    # still validates and reads as "not archived".
+    archived: bool = False
 
 
 class RepoListResponse(BaseModel):

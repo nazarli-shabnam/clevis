@@ -637,11 +637,11 @@ describe("ReposPage", () => {
     // Default sort is "pushed" (most recent first) — zebra (07-01) before alpha (06-01).
     expect(rowNames()[0]).toContain("zebra");
 
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "stars" } });
+    fireEvent.change(screen.getByLabelText("Sort repositories"), { target: { value: "stars" } });
     // Sorted by stars descending — alpha (99) now first.
     await waitFor(() => expect(rowNames()[0]).toContain("alpha"));
 
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "name" } });
+    fireEvent.change(screen.getByLabelText("Sort repositories"), { target: { value: "name" } });
     // Alphabetical — alpha before zebra.
     await waitFor(() => expect(rowNames()[0]).toContain("alpha"));
   });
