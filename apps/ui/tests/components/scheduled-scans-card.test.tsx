@@ -58,11 +58,28 @@ describe("ScheduledScansCard", () => {
     await waitFor(() => expect(setMock).toHaveBeenLastCalledWith("acme", null))
   })
 
-  it("shows a retry instead of controls when settings fail to load", async () => {
+  it("shows a retry instead of controls when settings fail to load, and Retry refetches", async () => {
     getMock.mockRejectedValue(new Error("forbidden"))
     wrap(<ScheduledScansCard orgLogin="acme" />)
     await waitFor(() => expect(screen.getByText(/Couldn't load the scheduled-scan settings: forbidden/)).toBeInTheDocument())
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument()
+    getMock.mockResolvedValue({ enabled: null, effective: false, cadence: null, instance_cadence: "off" })
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }))
+    await waitFor(() => expect(screen.getByLabelText(/Scan this organization automatically/)).toBeInTheDocument())
+  })
+
+  it("shows a generic message when the settings failure is not an Error", async () => {
+    getMock.mockRejectedValue("nope")
+    wrap(<ScheduledScansCard orgLogin="acme" />)
+    await waitFor(() => expect(screen.getByText(/unknown error/)).toBeInTheDocument())
+  })
+
+  it("shows the error when saving the choice fails", async () => {
+    getMock.mockResolvedValue({ enabled: null, effective: false, cadence: null, instance_cadence: "off" })
+    setMock.mockRejectedValue(new Error("not an admin"))
+    wrap(<ScheduledScansCard orgLogin="acme" />)
+    fireEvent.change(await screen.findByLabelText(/Scan this organization automatically/), { target: { value: "on" } })
+    await waitFor(() => expect(screen.getByText("not an admin")).toBeInTheDocument())
   })
 })
 
@@ -110,9 +127,33 @@ describe("ScanChangesCard", () => {
     expect(await screen.findByText(/Only one scan so far/)).toBeInTheDocument()
   })
 
-  it("shows an error with retry when the comparison fails", async () => {
+  it("shows an error with retry when the comparison fails, and Retry refetches", async () => {
     changesMock.mockRejectedValue(new Error("boom"))
     wrap(<ScanChangesCard org="acme" />)
     await waitFor(() => expect(screen.getByText("boom")).toBeInTheDocument())
+    changesMock.mockResolvedValue(changes())
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }))
+    await waitFor(() => expect(screen.getByText("Branch protection")).toBeInTheDocument())
+  })
+
+  it("falls back to generic wording for a non-Error rejection and for missing timestamps", async () => {
+    changesMock.mockRejectedValue("nope")
+    const { unmount } = wrap(<ScanChangesCard org="acme" />)
+    expect(await screen.findByText("Failed to load scan changes.")).toBeInTheDocument()
+    unmount()
+
+    changesMock.mockResolvedValue(changes({ scanned_at: null, previous_scanned_at: null, changes: [
+      { id: "c", title: "Code scanning", severity: "medium", change: "still_failing", previous_status: "fail", status: "fail", repos: ["only-one", "two"] },
+    ] }))
+    wrap(<ScanChangesCard org="acme" />)
+    expect(await screen.findByText("only-one, two")).toBeInTheDocument()
+    expect(screen.getByText("Still failing")).toBeInTheDocument()
+    expect(screen.getByText(/compared with the one before/)).toBeInTheDocument()
+  })
+
+  it("says there are no scans at all when none exist", async () => {
+    changesMock.mockResolvedValue({ org: "acme", has_previous: false, scanned_at: null, score: null, changes: [], comparable: true })
+    wrap(<ScanChangesCard org="acme" />)
+    expect(await screen.findByText("No scans yet.")).toBeInTheDocument()
   })
 })

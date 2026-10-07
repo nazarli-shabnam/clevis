@@ -8,6 +8,7 @@ const tokensUpsertMock = vi.fn();
 const analyticsOverviewMock = vi.fn();
 const analyticsHistoryMock = vi.fn();
 const analyticsExportMock = vi.fn();
+const analyticsChangesMock = vi.fn();
 const downloadTextFileMock = vi.fn();
 
 vi.mock("@/lib/download", () => ({
@@ -57,6 +58,7 @@ vi.mock("@/lib/api/client", () => ({
       overview: (...args: unknown[]) => analyticsOverviewMock(...args),
       history: (...args: unknown[]) => analyticsHistoryMock(...args),
       exportHistory: (...args: unknown[]) => analyticsExportMock(...args),
+      changes: (...args: unknown[]) => analyticsChangesMock(...args),
     },
     security: {
       matrix: (...args: unknown[]) => securityMatrixMock(...args),
@@ -98,6 +100,8 @@ describe("SecurityPage", () => {
     downloadTextFileMock.mockReset();
     tokensResolveMock.mockRejectedValue(new Error("no saved token"));
     analyticsHistoryMock.mockResolvedValue([]);
+    analyticsChangesMock.mockReset();
+    analyticsChangesMock.mockResolvedValue({ org: "acme", has_previous: false, scanned_at: null, score: null, comparable: true, changes: [] });
     securityMatrixMock.mockResolvedValue({
       owner: "acme",
       repos: [],
@@ -115,6 +119,20 @@ describe("SecurityPage", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+  });
+
+  it("shows the changed-since-last-scan panel for the active org scope", async () => {
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "acme" }));
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Changed since the last scan")).toBeInTheDocument());
+    expect(analyticsChangesMock).toHaveBeenCalledWith("acme");
+  });
+
+  it("does not show the changed-since-last-scan panel without an org scope", async () => {
+    renderPage();
+    await waitFor(() => expect(analyticsHistoryMock).not.toHaveBeenCalled());
+    expect(screen.queryByText("Changed since the last scan")).not.toBeInTheDocument();
+    expect(analyticsChangesMock).not.toHaveBeenCalled();
   });
 
   it("hides the GitHub Token field when an installation covers the entered org", async () => {
