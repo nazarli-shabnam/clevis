@@ -386,8 +386,8 @@ class NotificationRead(Base):
 
     __tablename__ = "notification_reads"
 
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True)
     last_read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

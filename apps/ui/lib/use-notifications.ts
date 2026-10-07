@@ -25,7 +25,8 @@ export function useNotifications() {
   })
 
   const markRead = useMutation({
-    mutationFn: () => api.notifications.markRead(org),
+    // Items are newest first; mark up to the newest one this feed actually showed.
+    mutationFn: () => api.notifications.markRead(org, query.data?.items[0]?.at),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: notificationsKey(org) }),
   })
 

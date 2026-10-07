@@ -154,6 +154,33 @@ def test_mark_read_is_per_user_and_per_org(db, world):
     assert again["unread_count"] == 1
 
 
+def test_mark_read_up_to_leaves_later_items_unread_and_is_clamped_to_now(db, world):
+    t = world["acme"].tenant_id
+    seen = NOW - timedelta(minutes=10)
+    _alert(db, t, number=1, when=seen)
+    _alert(db, t, number=2, when=NOW - timedelta(minutes=1))  # arrived after the feed was loaded
+    admin = _client(db, world["users"]["admin"])
+
+    assert admin.post("/orgs/acme/notifications/read", json={"up_to": seen.isoformat()}).status_code == 204
+    assert admin.get("/orgs/acme/notifications").json()["unread_count"] == 1
+
+    far_future = (NOW + timedelta(days=365)).isoformat()
+    assert admin.post("/orgs/acme/notifications/read", json={"up_to": far_future}).status_code == 204
+    marker = admin.get("/orgs/acme/notifications").json()["last_read_at"]
+    assert datetime.fromisoformat(marker) <= datetime.now(timezone.utc)
+
+
+def test_unread_count_is_not_cut_off_by_the_item_limit(db, world):
+    t = world["acme"].tenant_id
+    for n in range(40):
+        _alert(db, t, number=n)
+    for n in range(40):
+        _failed_job(db, t)
+    feed = _client(db, world["users"]["admin"]).get("/orgs/acme/notifications").json()
+    assert len(feed["items"]) == 50
+    assert feed["unread_count"] == 80
+
+
 def test_the_read_marker_only_moves_forward(db, world):
     from src.repositories import notification_read_repo as repo
 

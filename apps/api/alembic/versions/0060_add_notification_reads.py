@@ -26,8 +26,8 @@ _TENANT_FILTER = "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')
 def upgrade() -> None:
     op.create_table(
         "notification_reads",
-        sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id"), primary_key=True),
-        sa.Column("tenant_id", sa.Integer(), sa.ForeignKey("tenants.id"), primary_key=True),
+        sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+        sa.Column("tenant_id", sa.Integer(), sa.ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True),
         sa.Column("last_read_at", sa.DateTime(timezone=True), nullable=False),
     )
     op.execute(sa.text("ALTER TABLE notification_reads ENABLE ROW LEVEL SECURITY"))

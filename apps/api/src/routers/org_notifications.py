@@ -9,10 +9,12 @@ to" time (``notification_reads``), so read status follows them across devices.
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from src.core._sanitize import sanitize_error
 from src.core.auth import UserOut, require_auth
 from src.core.db import Job, ScanResult, SecurityAlert, get_db
 from src.core.rbac import OrgContext, require_org_role
@@ -26,7 +28,7 @@ router = APIRouter()
 # Older changes are history, not notifications.
 WINDOW_DAYS = 14
 MAX_ITEMS = 50
-_PER_SOURCE = 25
+_PER_SOURCE = 40
 _SCANS_CONSIDERED = 30
 
 
@@ -109,16 +111,16 @@ def _failed_job_items(db: Session, org_login: str, tenant_id: int, since: dateti
             "at": r.updated_at,
             "title": f"Background job failed: {r.job_type}",
             # The stored result is an error string; keep the line short, the activity log has the rest.
-            "detail": (r.result or "")[:140],
+            "detail": sanitize_error(r.result or "")[:140],
             "href": f"/settings/org/{org_login}/activity",
         }
         for r in rows
     ]
 
 
-def _permission_drift_items(db: Session, ctx: OrgContext, org_login: str) -> list[dict]:
+def _permission_drift_items(db: Session, ctx: OrgContext, org_login: str, since: datetime) -> list[dict]:
     install = installation_repo.get_for_org(db, org_id=ctx.org.id, account_login=org_login)
-    if install is None or install.permissions_synced_at is None:
+    if install is None or install.permissions_synced_at is None or _aware(install.permissions_synced_at) < since:
         return []
     blocked = app_permissions.blocked_features(install.granted_permissions)
     if not blocked:
@@ -149,26 +151,36 @@ def get_notifications(
 
     raw = _critical_alert_items(db, tenant_id, since) + _score_drop_items(db, org_login, tenant_id, since)
     if ctx.membership.role == "admin":
-        raw += _failed_job_items(db, org_login, tenant_id, since) + _permission_drift_items(db, ctx, org_login)
+        raw += _failed_job_items(db, org_login, tenant_id, since) + _permission_drift_items(db, ctx, org_login, since)
 
     raw.sort(key=lambda i: _aware(i["at"]), reverse=True)
     items = [
-        NotificationItem(**i, read=last_read is not None and _aware(i["at"]) <= _aware(last_read)) for i in raw[:MAX_ITEMS]
+        NotificationItem(**i, read=last_read is not None and _aware(i["at"]) <= _aware(last_read)) for i in raw
     ]
     return NotificationFeed(
         org=org_login,
-        items=items,
+        # Counted before the list is cut to MAX_ITEMS, so a long list never under-reports.
         unread_count=sum(1 for i in items if not i.read),
+        items=items[:MAX_ITEMS],
         last_read_at=last_read,
     )
+
+
+class MarkReadBody(BaseModel):
+    # The newest item the client has shown. Only items up to here are marked read, so one that arrived
+    # after the feed was loaded is not silently swallowed. Omitted = everything up to now.
+    up_to: datetime | None = None
 
 
 @router.post("/orgs/{org_login}/notifications/read", status_code=204)
 def mark_notifications_read(
     org_login: str,
+    body: MarkReadBody = Body(default_factory=MarkReadBody),
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
-    """Mark everything currently in the feed as read for the caller (only the caller's marker moves)."""
-    notification_read_repo.mark_read(db, user.id, ctx.org.tenant_id, datetime.now(timezone.utc))
+    """Mark notifications read for the caller only, up to ``up_to`` (clamped to now)."""
+    now = datetime.now(timezone.utc)
+    at = min(_aware(body.up_to), now) if body.up_to else now
+    notification_read_repo.mark_read(db, user.id, ctx.org.tenant_id, at)

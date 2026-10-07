@@ -55,7 +55,7 @@ describe("NotificationBell", () => {
     wrap(<NotificationBell />);
     fireEvent.click(await screen.findByRole("button", { name: /Notifications, 1 unread/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Mark all read" }));
-    await waitFor(() => expect(markReadMock).toHaveBeenCalledWith("acme"));
+    await waitFor(() => expect(markReadMock).toHaveBeenCalledWith("acme", "2026-01-01T00:00:00Z"));
     await waitFor(() => expect(screen.getByRole("button", { name: "Notifications" })).toBeInTheDocument());
   });
 
@@ -96,6 +96,13 @@ describe("SinceLastVisitCard", () => {
     );
     wrap(<SinceLastVisitCard />);
     await waitFor(() => expect(screen.getByText("2 new critical alerts, 1 score drop")).toBeInTheDocument());
+  });
+
+  it("links to the first unread item rather than always to Security", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "job_failed", false, { href: "/settings/org/acme/activity" })]));
+    wrap(<SinceLastVisitCard />);
+    const link = await screen.findByRole("link", { name: "Review" });
+    expect(link).toHaveAttribute("href", "/settings/org/acme/activity");
   });
 
   it("renders nothing when everything is read", async () => {

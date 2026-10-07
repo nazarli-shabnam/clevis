@@ -27,7 +27,7 @@ export function SinceLastVisitCard() {
         <span className="font-medium">Since you last checked:</span>{" "}
         <span className="text-muted-foreground">{parts.join(", ")}</span>
       </span>
-      <Link href="/security" className="text-xs text-primary hover:underline shrink-0">
+      <Link href={items.find((n) => !n.read)?.href ?? "/security"} className="text-xs text-primary hover:underline shrink-0">
         Review
       </Link>
     </div>
