@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
+import { SinceLastVisitCard } from "@/components/since-last-visit-card"
 import { StatCard } from "@/components/stat-card"
 import { EventActivityList } from "@/components/event-activity-list"
 import { AreaTimeChart } from "@/components/charts/area-time-chart"
@@ -175,6 +176,8 @@ export default function OverviewPage() {
       <PageHeader title="Overview" description="Your GitHub organization at a glance." />
 
       {orgChecked && !org && <EmptyStateNoAccount />}
+
+      {org && <SinceLastVisitCard />}
 
       {org && orgQueryIsError && (
         <div className="card mb-6">

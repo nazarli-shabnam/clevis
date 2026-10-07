@@ -768,3 +768,20 @@ export interface CreateIssueResponse {
   number: number
   html_url: string
 }
+
+export interface NotificationItem {
+  id: string
+  kind: "critical_alert" | "score_drop" | "job_failed" | "permission_drift"
+  at: string
+  title: string
+  detail: string
+  href: string
+  read: boolean
+}
+
+export interface NotificationFeed {
+  org: string
+  items: NotificationItem[]
+  unread_count: number
+  last_read_at: string | null
+}
