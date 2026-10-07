@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import AuditLog, Job, User, get_db
@@ -39,6 +40,8 @@ def _client(db, user: User):
         id=user.id, email=user.email, name=None, is_workspace_admin=False
     )
     app.dependency_overrides[get_db] = lambda: db
+    # Overriding require_auth skips its SET app.user_id side effect, which RLS (membership lookups) depends on.
+    db.execute(text(f"SET app.user_id = {user.id}"))
     return TestClient(app)
 
 
@@ -65,8 +68,11 @@ def _job(db, tenant_id, job_type="github.clear_actions_cache", status="done", re
 def test_org_admin_sees_only_their_orgs_audit_rows(db, world):
     mine = _audit(db, world["acme"].tenant_id, "token.save")
     _audit(db, world["globex"].tenant_id, "token.save", target="globex")  # another org
-    _audit(db, None, "config.update")  # unattributed (pre-attribution) row
-    _audit(db, None, "membership.github_granted")
+    # Rows with no tenant (written before attribution) can't be inserted under RLS, which requires the
+    # row's tenant to match the session's; an admin's personal tenant stands in for "not this org".
+    personal = org_repo.get_or_create(db, github_login="someone-else").tenant_id
+    _audit(db, personal, "config.update")
+    _audit(db, personal, "membership.github_granted")
 
     resp = _client(db, world["users"]["acme_admin"]).get("/orgs/acme/audit")
 
