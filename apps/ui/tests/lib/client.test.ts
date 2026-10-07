@@ -108,6 +108,18 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
     expect(JSON.parse(init.body as string)).toEqual({ repos: ["api"], dry_run: true, token: undefined });
   });
 
+  it("POSTs security/remediate/bulk with the org in the path and drops an empty token", async () => {
+    stubOkJson({ check_id: "repository_secret_scanning_enabled", dry_run: true, items: [] });
+    await api.security.remediateBulk("acme", { check_id: "repository_secret_scanning_enabled", repos: ["api"], dry_run: true, token: "" });
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/orgs/acme/security/remediate/bulk");
+    expect(JSON.parse(init.body as string)).toEqual({
+      check_id: "repository_secret_scanning_enabled",
+      repos: ["api"],
+      dry_run: true,
+    });
+  });
+
   it("GETs the saved branch-protection preset for the org", async () => {
     stubOkJson({ preset: null });
     await api.branchProtection.savedPreset("acme");

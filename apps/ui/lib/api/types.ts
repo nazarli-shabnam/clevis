@@ -696,6 +696,22 @@ export interface DependabotTriageResponse {
   decisions: DependabotTriageDecision[]
 }
 
+export type BulkRemediateStatus = "would_change" | "unchanged" | "applied" | "failed"
+
+export interface BulkRemediateItem {
+  repo: string
+  status: BulkRemediateStatus
+  detail: string
+}
+
+export interface BulkRemediateResponse {
+  check_id: string
+  dry_run: boolean
+  items: BulkRemediateItem[]
+  // Set when every repo came back 403 (almost always a missing GitHub permission).
+  hint?: string | null
+}
+
 export interface RepoSecurityRow {
   repo: string
   branch_protection: boolean
