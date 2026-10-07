@@ -244,6 +244,21 @@ export interface OrgEventsResponse {
   events: OrgEvent[]
 }
 
+export interface ActivitySummaryEntry {
+  repo: string
+  event_type: string
+  count: number
+}
+
+export interface ActivitySummary {
+  org: string
+  days: number
+  // False for an org with no connected GitHub App installation: totals is [] because nothing is ingested.
+  connected: boolean
+  generated_at: string
+  totals: ActivitySummaryEntry[]
+}
+
 export interface FailedRunSummary {
   repo: string
   workflow_name: string
@@ -283,6 +298,17 @@ export interface JobOut {
   result: string | null
   created_at: string
   updated_at: string
+}
+
+// Filters for GET /orgs/{org}/audit; all optional, combined with AND.
+export interface OrgAuditFilters {
+  action_prefix?: string
+  actor?: string
+  target?: string
+  since?: string
+  until?: string
+  before_id?: number
+  limit?: number
 }
 
 export interface AuditLogOut {
@@ -798,4 +824,21 @@ export interface SecretScanningResponse {
 export interface CreateIssueResponse {
   number: number
   html_url: string
+}
+
+export interface NotificationItem {
+  id: string
+  kind: "critical_alert" | "score_drop" | "job_failed" | "permission_drift"
+  at: string
+  title: string
+  detail: string
+  href: string
+  read: boolean
+}
+
+export interface NotificationFeed {
+  org: string
+  items: NotificationItem[]
+  unread_count: number
+  last_read_at: string | null
 }

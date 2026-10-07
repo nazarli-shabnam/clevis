@@ -151,6 +151,26 @@ describe("SettingsPage", () => {
     expect(screen.getAllByRole("button", { name: "Save" }).length).toBeGreaterThan(0);
   });
 
+  it("hides the saved tokens section from a non-admin, who would only see a permanent 403 (#660)", async () => {
+    // A member: confirmed by /auth/me and by the stored JWT.
+    const payload = b64url({ sub: "2", email: "member@example.com", name: "Member", is_workspace_admin: false, exp: Math.floor(Date.now() / 1000) + 3600 });
+    localStorage.setItem(TOKEN_KEY, `${b64url({ alg: "none", typ: "JWT" })}.${payload}.`);
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ id: 2, email: "member@example.com", name: "Member", is_workspace_admin: false }), { status: 200 }),
+    );
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockRejectedValue(new Error("Workspace admin access required"));
+
+    renderPage();
+
+    await screen.findByRole("button", { name: "Save profile" });
+    expect(screen.queryByText("Personal access tokens (legacy)")).not.toBeInTheDocument();
+    expect(screen.queryByText("Workspace admin access required")).not.toBeInTheDocument();
+    expect(tokensListMock).not.toHaveBeenCalled();
+    expect(screen.queryByText("Instance configuration")).not.toBeInTheDocument();
+  });
+
   it("lets a plain member open the roster from their org row ('View members'), admins get 'Manage members' (#663)", async () => {
     orgsMineMock.mockResolvedValue([
       { org_login: "acme", role: "admin" },

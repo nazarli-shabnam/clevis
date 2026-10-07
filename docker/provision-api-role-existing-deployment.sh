@@ -173,6 +173,17 @@ BEGIN
 END
 $do$;
 
+-- notification_reads (migration 0060): the per-user "notifications read up to" marker, read and
+-- upserted by the API. Composite primary key, so no sequence. Same CI-runs-as-clevis_api
+-- reasoning as above (migration 0060's own GRANT is skipped when clevis_api doesn't exist yet).
+DO $do$
+BEGIN
+  IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'notification_reads') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON notification_reads TO clevis_api;
+  END IF;
+END
+$do$;
+
 -- revoked_tokens (migration 0050): the per-session logout denylist require_auth reads and the
 -- logout endpoint writes. Natural text primary key, so no sequence. No RLS (not tenant data).
 -- Skipped in CI for the same reason as the tables above.

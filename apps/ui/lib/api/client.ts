@@ -1,9 +1,11 @@
 import type {
   MemberAccess,
+  NotificationFeed,
   ActionsUsageResponse,
   AnalyticsHistoryResponse,
   AnalyticsOverviewResponse,
   AuditLogOut,
+  OrgAuditFilters,
   BranchProtectionBulkResponse,
   BranchProtectionPreset,
   BulkRemediateResponse,
@@ -16,6 +18,7 @@ import type {
   DependabotTriageResponse,
   DispatchResponse,
   DispatchAllResponse,
+  ActivitySummary,
   FailedRunsResponse,
   GithubMembershipStatus,
   GithubOrgInvitationsResponse,
@@ -66,10 +69,21 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 
+/** Opens the activity-summary SSE stream. Not routed through fetchWithTimeout: the stream is meant to
+ * stay open (the API ends it after ~15 min), so only the caller's signal may abort it. Sends the same
+ * credentials as every other call (Bearer header for password sessions, cookie for GitHub OAuth). */
+export function openActivityStream(org: string, days: number, signal: AbortSignal): Promise<Response> {
+  return fetch(`${BASE}/github/orgs/${encodeURIComponent(org)}/activity-summary/stream?days=${days}`, {
+    credentials: "include",
+    headers: { Accept: "text/event-stream", ...getAuthHeaders() },
+    signal,
+  })
+}
+
 // Hard ceiling so a hanging API surfaces an error instead of leaving callers loading forever.
 const REQUEST_TIMEOUT_MS = 15000
 
-async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
+export async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
@@ -163,14 +177,8 @@ async function del(path: string): Promise<void> {
     method: "DELETE",
     headers: { ...getAuthHeaders() },
   })
-  if (res.status === 401) {
-    if (typeof window !== "undefined") localStorage.removeItem(_TOKEN_KEY)
-    window.dispatchEvent(new Event("clevis:unauthorized"))
-  }
-  if (!res.ok) {
-    const json = await res.json().catch(() => ({}))
-    throw new Error(errorDetail(json, `Request failed: ${res.status}`))
-  }
+  // Same path as every other verb, so a failed delete throws an ApiError that carries `status`.
+  await handleResponse<unknown>(res)
 }
 
 
@@ -216,6 +224,13 @@ function normalizeCheckValue(id: string, raw: unknown): CheckValue {
 
 
 export const api = {
+  notifications: {
+    feed: (org: string) => get<NotificationFeed>(`/orgs/${encodeURIComponent(org)}/notifications`),
+    // 204: marks everything currently in the feed as read for the caller.
+    // `upTo` = the newest item shown, so an item that arrived after the feed loaded stays unread.
+    markRead: (org: string, upTo?: string) =>
+      post<null>(`/orgs/${encodeURIComponent(org)}/notifications/read`, upTo ? { up_to: upTo } : {}),
+  },
   analytics: {
     // token is optional — the API falls back to a connected GitHub App installation.
     overview: async (owner: string, token: string): Promise<AnalyticsOverviewResponse> => {
@@ -358,6 +373,14 @@ export const api = {
   },
   jobs: {
     list: () => get<JobOut[]>("/jobs"),
+    // One org's own jobs, newest first (no payload). Org-admin only; pages with `before_id`.
+    listForOrg: (org: string, params: { before_id?: number; limit?: number } = {}) => {
+      const qs = new URLSearchParams()
+      if (params.before_id !== undefined) qs.set("before_id", String(params.before_id))
+      if (params.limit !== undefined) qs.set("limit", String(params.limit))
+      const suffix = qs.toString()
+      return get<JobOut[]>(`/orgs/${encodeURIComponent(org)}/jobs${suffix ? `?${suffix}` : ""}`)
+    },
     get: (jobId: number) => get<JobOut>(`/jobs/${jobId}`),
   },
   automation: {
@@ -447,6 +470,9 @@ export const api = {
         token: token || undefined,
         per_page: perPage,
       }),
+    // Rollup of webhook-ingested events: no GitHub call, no token, so it is cheap to poll or stream.
+    activitySummary: (org: string, days = 7) =>
+      get<ActivitySummary>(`/github/orgs/${encodeURIComponent(org)}/activity-summary?days=${days}`),
     failedRuns: (org: string, token: string, limit = 20) =>
       post<FailedRunsResponse>(`/github/orgs/${encodeURIComponent(org)}/failed-runs`, {
         token: token || undefined,
@@ -465,6 +491,16 @@ export const api = {
       const params = new URLSearchParams({ limit: String(limit) })
       if (action) params.set("action", action)
       return get<AuditLogOut[]>(`/audit?${params.toString()}`)
+    },
+    // One org's own audit rows, newest first. Org-admin only. Pages with `before_id` (the id of the
+    // last row already loaded); `since`/`until` are ISO timestamps.
+    listForOrg: (org: string, filters: OrgAuditFilters = {}) => {
+      const params = new URLSearchParams()
+      for (const [key, value] of Object.entries(filters)) {
+        if (value !== undefined && value !== "") params.set(key, String(value))
+      }
+      const qs = params.toString()
+      return get<AuditLogOut[]>(`/orgs/${encodeURIComponent(org)}/audit${qs ? `?${qs}` : ""}`)
     },
     // Distinct action names actually present in the log, for the filter dropdown.
     actions: () => get<string[]>("/audit/actions"),

@@ -9,6 +9,12 @@ const installationsListForOrgMock = vi.fn();
 
 vi.mock("next/navigation", () => ({ useParams: () => ({}) }));
 
+// Workspace admin by default (saved tokens are admin-only); member tests flip it.
+let mockIsWorkspaceAdmin = true
+vi.mock("@/lib/auth-context", () => ({
+  useAuth: () => ({ user: { is_workspace_admin: mockIsWorkspaceAdmin } }),
+}))
+
 vi.mock("@/lib/api/client", () => ({
   api: {
     tokens: { resolve: (...args: unknown[]) => tokensResolveMock(...args), upsert: vi.fn() },
@@ -70,6 +76,7 @@ const visibleNames = () => ["api", "web", "legacy"].filter((n) => screen.queryBy
 
 describe("ReposPage filters", () => {
   beforeEach(() => {
+    mockIsWorkspaceAdmin = true;
     localStorage.clear();
     tokensResolveMock.mockReset();
     tokensResolveMock.mockRejectedValue(new Error("no saved token"));

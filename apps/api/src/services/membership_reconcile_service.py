@@ -22,4 +22,5 @@ def enqueue(db: Session, *, tenant_id: int, org_login: str, token: str) -> int:
             "org_login": org_login,
             "token": encrypted_token,
         },
+        tenant_id=tenant_id,
     )

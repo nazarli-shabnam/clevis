@@ -75,6 +75,10 @@ class GitHubInstallation(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
+    __table_args__ = (
+        # The org activity log reads "this tenant's newest rows" with a before_id cursor.
+        Index("ix_audit_logs_tenant_id_id", "tenant_id", "id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     actor: Mapped[str] = mapped_column(String, nullable=False)
@@ -88,13 +92,20 @@ class AuditLog(Base):
 
 class Job(Base):
     __tablename__ = "jobs"
-    __table_args__ = (Index("ix_jobs_status_job_type", "status", "job_type"),)
+    __table_args__ = (
+        Index("ix_jobs_status_job_type", "status", "job_type"),
+        # Per-org job views read "this tenant's newest jobs".
+        Index("ix_jobs_tenant_id_id", "tenant_id", "id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     job_type: Mapped[str] = mapped_column(String, nullable=False)
     payload: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
     result: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The tenant the job was enqueued for, so an org's admins can see their own jobs. Nullable: jobs
+    # that predate the column can only be attributed when their payload names the tenant or owner.
+    tenant_id: Mapped[int | None] = mapped_column(ForeignKey("tenants.id"), nullable=True)
     # One shared cap for crash-reclaims and transient-failure requeues, so a job can't retry forever.
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -365,6 +376,19 @@ class Tenant(Base):
     org_id: Mapped[int | None] = mapped_column(ForeignKey("orgs.id"), nullable=True)
     personal_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class NotificationRead(Base):
+    """When a user last marked an org's in-app notifications read (one row per user and tenant).
+
+    The notifications themselves are derived on demand from existing tables, so this is the only
+    stored state; keeping it server-side makes "read" follow the user across browsers and devices."""
+
+    __tablename__ = "notification_reads"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True)
+    last_read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class Membership(Base):

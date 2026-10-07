@@ -13,6 +13,12 @@ const installationsListForOrgMock = vi.fn();
 const orgsMineMock = vi.fn();
 const triageGetRepoMock = vi.fn();
 
+// Workspace admin by default (saved tokens are admin-only); member tests flip it.
+let mockIsWorkspaceAdmin = true
+vi.mock("@/lib/auth-context", () => ({
+  useAuth: () => ({ user: { is_workspace_admin: mockIsWorkspaceAdmin } }),
+}))
+
 vi.mock("@/lib/api/client", () => ({
   api: {
     tokens: {
@@ -78,6 +84,7 @@ async function enterOwnerAndSelectRepo(owner: string, name: string) {
 
 describe("AutomationPage", () => {
   beforeEach(() => {
+    mockIsWorkspaceAdmin = true;
     tokensResolveMock.mockReset();
     workflowsMock.mockReset();
     runsMock.mockReset();
@@ -99,6 +106,24 @@ describe("AutomationPage", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+  });
+
+  it("offers 'Save token for this org' to a workspace admin who typed a token (#660)", async () => {
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.change(await screen.findByPlaceholderText(/ghp_/), { target: { value: "ghp_typed" } });
+
+    expect(await screen.findByText("Save token for this org")).toBeInTheDocument();
+  });
+
+  it("hides 'Save token for this org' from a non-admin, since saved tokens are admin-only (#660)", async () => {
+    mockIsWorkspaceAdmin = false;
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    fireEvent.change(await screen.findByPlaceholderText(/ghp_/), { target: { value: "ghp_typed" } });
+
+    await screen.findByDisplayValue("ghp_typed");
+    expect(screen.queryByText("Save token for this org")).not.toBeInTheDocument();
   });
 
   it("renders no results panel before any repository is loaded", () => {
