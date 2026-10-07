@@ -113,6 +113,23 @@ Clevis already stores — no additional GitHub App permission.
   API's background sweep checks whether a digest is due; a tenant is emailed at most once
   per cadence interval, tracked via a `digest.sent` audit-log entry.
 
+## Scheduled security scans (optional)
+
+Without this, an org's score only changes when someone clicks Scan (or CI calls the scan API),
+so a drop can sit unnoticed. When enabled, the API re-scans each connected org on a schedule,
+stores the result like a manual scan (score history, badge, score API) and sends the usual
+score-drop alert. It is **off by default**.
+
+- Enable it in **Settings → Instance Configuration → Scheduled Security Scans** (`daily` or
+  `weekly`), or set the `scheduled_scan_cadence` app-config key. Org admins can override this
+  per organization (on or off) from the org's settings page.
+- It only runs for orgs with a connected GitHub App installation: it never uses a pasted token.
+  An org the instance setting leaves off but whose admins switched on runs weekly.
+- `scheduled_scan_poll_seconds` (default `3600`, clamped `[300, 86400]`) is how often the sweep
+  looks for orgs whose latest scan is older than the cadence. At most a few orgs are scanned per
+  check, so a large instance spreads its GitHub API usage across checks. Each run is recorded in
+  the audit log as `scan.scheduled`.
+
 ## Security notes
 
 - **Row-Level Security is opt-in, not on by default.** Every tenant-scoped table has RLS policies with `FORCE` set, but in the default deployment both the API and worker connect as the Postgres bootstrap superuser (`DB_USER`), which bypasses RLS unconditionally. Tenant isolation in a default deployment is enforced **entirely at the application layer** — every query is expected to filter by `tenant_id`, and that's the only thing standing between one tenant's data and another's. Set `API_DB_PASSWORD` (step 6) and `WORKER_DB_PASSWORD` (step 5) if you want RLS to actually enforce isolation as a second, independent layer.

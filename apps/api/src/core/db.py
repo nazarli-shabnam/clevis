@@ -344,6 +344,9 @@ class Org(Base):
     badge_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     # Per-org override of the instance-wide `score_hygiene_checks` setting; NULL = follow the instance.
     score_hygiene_checks: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Per-org override of the instance-wide `scheduled_scan_cadence`: True = scan on a schedule, False = never,
+    # NULL = follow the instance setting.
+    scheduled_scans: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # Stays nullable: a new Org and its Tenant reference each other, and NOT NULL can't be deferred
     # like a FK can. org_repo.get_or_create self-heals missing values.
     tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

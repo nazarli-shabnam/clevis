@@ -28,6 +28,7 @@ from src.routers import (
     notifications,
     org_activity,
     org_notifications,
+    scheduled_scans,
     orgs,
     pr_nudges,
     remediation,
@@ -39,6 +40,7 @@ from src.routers import (
 )
 from src.services.digest_loop import digest_loop
 from src.services.gap_heal_loop import gap_heal_loop
+from src.services.scheduled_scan_loop import scheduled_scan_loop
 from src.services.membership_reconcile_loop import membership_reconcile_loop
 from src.services.webhook_requeue_loop import webhook_requeue_loop
 
@@ -55,6 +57,8 @@ async def lifespan(_: FastAPI):
         asyncio.create_task(membership_reconcile_loop()),
         # No-op unless digest_cadence is configured.
         asyncio.create_task(digest_loop()),
+        # No-op unless scheduled_scan_cadence is configured (or an org opted in).
+        asyncio.create_task(scheduled_scan_loop()),
         # Retries webhook_deliveries rows left at queue_failed.
         asyncio.create_task(webhook_requeue_loop()),
     ]
@@ -115,6 +119,7 @@ app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 app.include_router(audit.router, prefix="/audit", tags=["audit"])
 app.include_router(org_activity.router, tags=["audit", "jobs"])
 app.include_router(org_notifications.router, tags=["notifications"])
+app.include_router(scheduled_scans.router, tags=["analytics"])
 app.include_router(tokens.router, prefix="/tokens", tags=["tokens"])
 app.include_router(config.router, prefix="/config", tags=["config"])
 app.include_router(webhooks.router, tags=["webhooks"])

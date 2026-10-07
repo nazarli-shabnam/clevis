@@ -211,6 +211,20 @@ class OrgMFARequired(Check):
         return {"status": "pass" if enabled else "fail", "value": enabled}
 
 
+# A failing check names the repos behind it so a later scan can show what changed. Capped because the
+# value is stored with every scan (a 2,000-repo org with nothing protected must not store 2,000 names).
+MAX_AFFECTED_REPOS = 25
+
+
+def _with_repos(value: dict, names: list[str]) -> dict:
+    """`value` plus an additive, capped, sorted ``repos`` list when there are any (absent otherwise, so
+    passing results keep their exact shape)."""
+    if names:
+        value["repos"] = sorted(names)[:MAX_AFFECTED_REPOS]
+    return value
+
+
+
 class BranchProtectionEnabled(Check):
     metadata = CheckMetadata(
         check_id="repository_default_branch_protection_enabled",
@@ -234,6 +248,7 @@ class BranchProtectionEnabled(Check):
         checked = 0
         protected = 0
         unknown = 0
+        unprotected: list[str] = []
         for repo in repos:
             checked += 1
             branch = repo.get("default_branch")
@@ -241,6 +256,8 @@ class BranchProtectionEnabled(Check):
                 details = _get(f"{base_url}/repos/{owner}/{repo['name']}/branches/{branch}", token)
                 if details.get("protected"):
                     protected += 1
+                else:
+                    unprotected.append(repo["name"])
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 404:
                     # The branch itself doesn't exist (an empty repository): nothing to protect,
@@ -257,7 +274,7 @@ class BranchProtectionEnabled(Check):
         compliant = protected == evaluable
         return {
             "status": "pass" if compliant else "fail",
-            "value": {"checked": checked, "protected": protected, "unknown": unknown},
+            "value": _with_repos({"checked": checked, "protected": protected, "unknown": unknown}, unprotected),
         }
 
 
@@ -283,12 +300,18 @@ class SecretScanningEnabled(Check):
         if total == 0:
             return {"status": "not_applicable", "value": {"enabled": 0, "total": 0}}
         enabled = 0
+        disabled_repos: list[str] = []
         for repo in repos:
             sec = repo.get("security_and_analysis") or {}
             if sec.get("secret_scanning", {}).get("status") == "enabled":
                 enabled += 1
+            else:
+                disabled_repos.append(repo["name"])
         compliant = enabled == total
-        return {"status": "pass" if compliant else "fail", "value": {"enabled": enabled, "total": total}}
+        return {
+            "status": "pass" if compliant else "fail",
+            "value": _with_repos({"enabled": enabled, "total": total}, disabled_repos),
+        }
 
 
 class DependabotAlertsCheck(Check):
@@ -314,6 +337,7 @@ class DependabotAlertsCheck(Check):
         counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
         forbidden = 0
         disabled = 0
+        affected: list[str] = []
         for repo in repos:
             try:
                 # Paginated: GitHub returns 30 alerts per page by default, and counts past page 1
@@ -333,10 +357,14 @@ class DependabotAlertsCheck(Check):
                     forbidden += 1
                     continue
                 raise
+            urgent = False
             for alert in alerts:
                 severity = (alert.get("security_advisory") or {}).get("severity")
                 if severity in counts:
                     counts[severity] += 1
+                    urgent = urgent or severity in ("critical", "high")
+            if urgent:
+                affected.append(repo["name"])
         if disabled == len(repos):
             return {"status": "not_applicable", "value": counts}
         if forbidden and forbidden + disabled == len(repos):
@@ -346,7 +374,7 @@ class DependabotAlertsCheck(Check):
             # A clean result from only the reachable repos must not be reported as "pass";
             # a "fail" from visible repos stays valid.
             return {"status": "error", "value": counts}
-        return {"status": "pass" if compliant else "fail", "value": counts}
+        return {"status": "pass" if compliant else "fail", "value": _with_repos(counts, affected)}
 
 
 class CodeScanningCheck(Check):
@@ -374,6 +402,7 @@ class CodeScanningCheck(Check):
         repos_with_alerts = 0
         forbidden = 0
         disabled = 0
+        with_alerts: list[str] = []
         for repo in repos:
             try:
                 alerts = _get_all_pages(
@@ -394,7 +423,10 @@ class CodeScanningCheck(Check):
             if alerts:
                 repos_with_alerts += 1
                 open_count += len(alerts)
-        value = {"open": open_count, "repos_with_alerts": repos_with_alerts, "total_repos": total_repos}
+                with_alerts.append(repo["name"])
+        value = _with_repos(
+            {"open": open_count, "repos_with_alerts": repos_with_alerts, "total_repos": total_repos}, with_alerts
+        )
         if disabled == total_repos:
             return {"status": "not_applicable", "value": value}
         if forbidden and forbidden + disabled == total_repos:
@@ -429,6 +461,7 @@ class DefaultBranchNoForcePushCheck(Check):
         checked = 0
         force_push_allowed = 0
         unknown = 0
+        allowing: list[str] = []
         for repo in repos:
             branch = repo.get("default_branch")
             name = repo["name"]
@@ -460,10 +493,11 @@ class DefaultBranchNoForcePushCheck(Check):
                     continue
                 if not ruleset_blocks:
                     force_push_allowed += 1
+                    allowing.append(name)
             checked += 1
         if checked == 0:
             return {"status": "error", "value": {"repos_checked": checked, "force_push_allowed": force_push_allowed}}
         return {
             "status": "pass" if force_push_allowed == 0 else "fail",
-            "value": {"repos_checked": checked, "force_push_allowed": force_push_allowed},
+            "value": _with_repos({"repos_checked": checked, "force_push_allowed": force_push_allowed}, allowing),
         }
