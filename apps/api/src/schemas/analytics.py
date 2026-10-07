@@ -187,6 +187,9 @@ class CockpitResponse(BaseModel):
     # zero/empty/partial value (see the _safe_* helpers below) -- lets the UI distinguish "this org
     # genuinely has none" from "we couldn't fully fetch this," which previously rendered identically.
     degraded: bool = False
+    # Whether any automation has really run for this account's tenant (onboarding checklist). None when it
+    # couldn't be determined, so the UI hides that step rather than nagging.
+    has_automation_run: bool | None = None
 
 
 class PRSummary(BaseModel):

@@ -70,7 +70,7 @@ function AuditCard({ orgLogin }: { orgLogin: string }) {
       <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
         <span className="section-title">Audit log</span>
         <Button size="sm" variant="outline" onClick={exportCsv} disabled={rows.length === 0}>
-          <DownloadSimple className="size-3.5" /> Export CSV
+          <DownloadSimple className="size-3.5" /> {query.hasNextPage ? `Export CSV (${rows.length} loaded)` : "Export CSV"}
         </Button>
       </div>
 

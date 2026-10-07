@@ -44,6 +44,75 @@ describe("del() 401 handling", () => {
   });
 });
 
+describe("audit.actions", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("fetches the distinct audit actions from /audit/actions", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify(["config.update", "token.save"]), { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.audit.actions()).resolves.toEqual(["config.update", "token.save"]);
+    expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toMatch(/\/audit\/actions$/);
+  });
+});
+
+describe("org-scoped endpoints", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function stub(body: unknown, status = 200) {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(status === 204 ? new Response(null, { status }) : new Response(JSON.stringify(body), { status })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return () => [String((fetchMock.mock.calls[0] as unknown[])[0]), (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit] as const;
+  }
+
+  it("audit.listForOrg sends only the non-blank filters", async () => {
+    const call = stub([]);
+    await api.audit.listForOrg("a/b", { action_prefix: "token.", actor: "", before_id: 7, limit: 50 });
+    const [url] = call();
+    expect(url).toMatch(/\/orgs\/a%2Fb\/audit\?/);
+    expect(url).toContain("action_prefix=token.");
+    expect(url).toContain("before_id=7");
+    expect(url).toContain("limit=50");
+    expect(url).not.toContain("actor=");
+  });
+
+  it("audit.listForOrg omits the query string with no filters", async () => {
+    const call = stub([]);
+    await api.audit.listForOrg("acme");
+    expect(call()[0]).toMatch(/\/orgs\/acme\/audit$/);
+  });
+
+  it("jobs.listForOrg pages with before_id and limit", async () => {
+    const call = stub([]);
+    await api.jobs.listForOrg("acme", { before_id: 9, limit: 25 });
+    expect(call()[0]).toMatch(/\/orgs\/acme\/jobs\?before_id=9&limit=25$/);
+  });
+
+  it("jobs.listForOrg omits the query string with no params", async () => {
+    const call = stub([]);
+    await api.jobs.listForOrg("acme");
+    expect(call()[0]).toMatch(/\/orgs\/acme\/jobs$/);
+  });
+
+  it("notifications.feed fetches the org's feed", async () => {
+    const call = stub({ org: "acme", items: [], unread_count: 0, last_read_at: null });
+    await api.notifications.feed("acme");
+    expect(call()[0]).toMatch(/\/orgs\/acme\/notifications$/);
+  });
+
+  it("notifications.markRead posts up_to only when given", async () => {
+    const withUpTo = stub(null, 204);
+    await api.notifications.markRead("acme", "2026-01-01T00:00:00Z");
+    expect(JSON.parse(String(withUpTo()[1].body))).toEqual({ up_to: "2026-01-01T00:00:00Z" });
+
+    const without = stub(null, 204);
+    await api.notifications.markRead("acme");
+    expect(JSON.parse(String(without()[1].body))).toEqual({});
+  });
+});
+
 describe("optional token coercion (GitHub App installation fallback)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -96,6 +165,18 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
     expect(JSON.parse(init.body as string)).toEqual({ repos: ["api"], dry_run: true, token: undefined });
   });
 
+  it("POSTs security/remediate/bulk with the org in the path and drops an empty token", async () => {
+    stubOkJson({ check_id: "repository_secret_scanning_enabled", dry_run: true, items: [] });
+    await api.security.remediateBulk("acme", { check_id: "repository_secret_scanning_enabled", repos: ["api"], dry_run: true, token: "" });
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/orgs/acme/security/remediate/bulk");
+    expect(JSON.parse(init.body as string)).toEqual({
+      check_id: "repository_secret_scanning_enabled",
+      repos: ["api"],
+      dry_run: true,
+    });
+  });
+
   it("GETs the saved branch-protection preset for the org", async () => {
     stubOkJson({ preset: null });
     await api.branchProtection.savedPreset("acme");
@@ -145,6 +226,48 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
     expect(putUrl).toContain("/orgs/acme/hygiene-scoring");
     expect(putInit.method).toBe("PUT");
     expect(JSON.parse(putInit.body as string)).toEqual({ enabled: null });
+  });
+
+  it("GETs one org's jobs with only the paging params that were given", async () => {
+    stubOkJson([]);
+    await api.jobs.listForOrg("acme");
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/\/orgs\/acme\/jobs$/);
+
+    stubOkJson([]);
+    await api.jobs.listForOrg("acme", { before_id: 40, limit: 50 });
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/\/orgs\/acme\/jobs\?before_id=40&limit=50$/);
+  });
+
+  it("GETs one org's audit log, dropping empty and undefined filters", async () => {
+    stubOkJson([]);
+    await api.audit.listForOrg("acme");
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatch(/\/orgs\/acme\/audit$/);
+
+    stubOkJson([]);
+    await api.audit.listForOrg("acme", { action_prefix: "token.", actor: "", target: undefined, before_id: 9, limit: 100 });
+    const url = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(url).toContain("/orgs/acme/audit?");
+    expect(url).toContain("action_prefix=token.");
+    expect(url).toContain("before_id=9");
+    expect(url).not.toContain("actor=");
+    expect(url).not.toContain("target=");
+  });
+
+  it("GETs the notification feed and POSTs mark-read, sending up_to only when given", async () => {
+    stubOkJson({ org: "acme", items: [], unread_count: 0, last_read_at: null });
+    await api.notifications.feed("acme");
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain("/orgs/acme/notifications");
+
+    stubOkJson(null);
+    await api.notifications.markRead("acme");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/orgs/acme/notifications/read");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({});
+
+    stubOkJson(null);
+    await api.notifications.markRead("acme", "2026-01-01T00:00:00Z");
+    expect(JSON.parse((fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body as string)).toEqual({ up_to: "2026-01-01T00:00:00Z" });
   });
 
   it("GET/PUTs the org's badge setting", async () => {

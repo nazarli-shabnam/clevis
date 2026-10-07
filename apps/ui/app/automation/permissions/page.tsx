@@ -9,6 +9,7 @@ import { reviewUrl } from "@/components/permission-drift-notice"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
 import { relativeTime } from "@/lib/format"
+import { invalidateInstallations } from "@/lib/query-invalidation"
 import type { InstallationMeta } from "@/lib/api/types"
 
 const formatPermissions = (perms: Record<string, string>) =>
@@ -32,7 +33,7 @@ export default function PermissionsPage() {
         scope?.kind === "org" ? { scope: "org", orgLogin: scope.login } : { scope: "me" },
         installationId,
       ),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+    onSuccess: () => invalidateInstallations(queryClient),
   })
 
   const installs = (installsQuery.data ?? []).filter((i) => i.installation_id != null)

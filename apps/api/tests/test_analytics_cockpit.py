@@ -11,7 +11,7 @@ from sqlalchemy import text
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import Job, User, get_db
-from src.repositories import installation_repo, org_membership_repo, org_repo, scan_results_repo, tenant_repo
+from src.repositories import audit_repo, installation_repo, org_membership_repo, org_repo, scan_results_repo, tenant_repo
 from src.routers.analytics import router
 
 _HTTP_ERROR = httpx.HTTPStatusError(
@@ -127,6 +127,40 @@ def test_cockpit_success_all_sources(http, db, mock_user):
     assert body["score_trend"] == [70, 85]
     assert body["cache_job_success_rate"] == 0.75
     assert body["degraded"] is False
+
+
+def _cockpit(http):
+    patchers = _patch_all()
+    _start_all(patchers)
+    try:
+        with patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"):
+            return http.get("/me/analytics/cockpit/acme")
+    finally:
+        _stop_all(patchers)
+
+
+def test_cockpit_reports_whether_an_automation_has_really_run(http, db, mock_user):
+    org = org_repo.get_or_create(db, github_login="acme")
+    other = org_repo.get_or_create(db, github_login="other-org")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
+
+    assert _cockpit(http).json()["has_automation_run"] is False
+
+    # Previews and settings saves, and another tenant's automation, don't count.
+    audit_repo.write(db, "x", "branch_protection.bulk_dryrun", "acme", {}, tenant_id=org.tenant_id)
+    audit_repo.write(db, "x", "cache.clear.dry_run", "acme/api", {}, tenant_id=org.tenant_id)
+    audit_repo.write(db, "x", "automation.workflow.dispatch", "other-org/api", {}, tenant_id=other.tenant_id)
+    assert _cockpit(http).json()["has_automation_run"] is False
+
+    audit_repo.write(db, "x", "automation.workflow.dispatch", "acme/api", {}, tenant_id=org.tenant_id)
+    assert _cockpit(http).json()["has_automation_run"] is True
+
+
+def test_cockpit_automation_flag_is_unknown_not_false_when_the_read_fails(http, db, mock_user):
+    with patch("src.routers.analytics.audit_repo.has_any_action", side_effect=RuntimeError("boom")):
+        resp = _cockpit(http)
+    assert resp.status_code == 200
+    assert resp.json()["has_automation_run"] is None
 
 
 def test_cockpit_no_scans_yet(http, db, mock_user):

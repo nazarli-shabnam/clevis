@@ -41,6 +41,8 @@ def _client(db, user):
         id=user.id, email=user.email, name=None, is_workspace_admin=False
     )
     app.dependency_overrides[get_db] = lambda: db
+    # Overriding require_auth skips its SET app.user_id side effect, which RLS (membership lookups) depends on.
+    db.execute(text(f"SET app.user_id = {user.id}"))
     return TestClient(app)
 
 
@@ -126,6 +128,7 @@ def test_failed_jobs_are_tenant_scoped_recent_and_hide_nothing_sensitive(db, wor
 
 
 def test_permission_drift_shows_for_admins_when_automations_are_blocked(db, world):
+    db.execute(text(f"SET app.tenant_id = {world['acme'].tenant_id}"))  # RLS: the row's tenant must be the session's
     inst = installation_repo.create(
         db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=7, org_id=world["acme"].id
     )
@@ -181,10 +184,25 @@ def test_unread_count_is_not_cut_off_by_the_item_limit(db, world):
     assert feed["unread_count"] == 80
 
 
+def test_unread_count_includes_rows_past_the_per_source_limit(db, world):
+    t = world["acme"].tenant_id
+    for n in range(45):
+        _alert(db, t, number=n)
+    for _ in range(45):
+        _failed_job(db, t)
+    admin = _client(db, world["users"]["admin"])
+    assert admin.get("/orgs/acme/notifications").json()["unread_count"] == 90
+    # A member cannot see jobs, so they are not counted for them either.
+    assert _client(db, world["users"]["member"]).get("/orgs/acme/notifications").json()["unread_count"] == 45
+    admin.post("/orgs/acme/notifications/read")
+    assert admin.get("/orgs/acme/notifications").json()["unread_count"] == 0
+
+
 def test_the_read_marker_only_moves_forward(db, world):
     from src.repositories import notification_read_repo as repo
 
     t, uid = world["acme"].tenant_id, world["users"]["admin"].id
+    db.execute(text(f"SET app.tenant_id = {t}"))
     repo.mark_read(db, uid, t, NOW)
     repo.mark_read(db, uid, t, NOW - timedelta(hours=1))
     assert repo.get_last_read(db, uid, t) == NOW

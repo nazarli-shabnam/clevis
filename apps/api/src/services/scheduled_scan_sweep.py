@@ -72,6 +72,17 @@ def _due_since(db: Session, org_login: str, tenant_id: int, cadence: str, now: d
     return last_scan or datetime.fromtimestamp(0, tz=timezone.utc)
 
 
+def _has_installation(db: Session, org_id: int) -> bool:
+    """Whether the org has a GitHub App installation: the only way a scheduled scan gets a token."""
+    return (
+        db.execute(
+            text("SELECT 1 FROM github_installations WHERE org_id = :o AND installation_id IS NOT NULL LIMIT 1"),
+            {"o": org_id},
+        ).first()
+        is not None
+    )
+
+
 def _scan_one(db: Session, org_id: int, tenant_id: int, org_login: str, cadence: str, now: datetime) -> bool:
     """Scan one org if it is still due once this replica holds its lock. True when a scan was stored."""
     set_session_tenant(db, tenant_id)
@@ -131,18 +142,16 @@ def run_scheduled_scan_sweep(db: Session) -> None:
         )
     ).fetchall()
 
-    # Orgs with an App installation: the only ones a scheduled scan can use (no pasted tokens).
-    installed = {
-        r[0] for r in db.execute(text("SELECT DISTINCT org_id FROM github_installations WHERE org_id IS NOT NULL AND installation_id IS NOT NULL"))
-    }
-
     candidates: list[tuple[datetime, int, int, str, str]] = []
     for tenant_id, org_id, org_login, override in rows:
         cadence = effective_cadence(override, instance)
-        if cadence is None or org_id not in installed:
+        if cadence is None:
             continue
         try:
+            # github_installations is tenant-isolated (RLS), so it can only be read with the tenant set.
             set_session_tenant(db, tenant_id)
+            if not _has_installation(db, org_id):
+                continue
             since = _due_since(db, org_login, tenant_id, cadence, now)
         except Exception:
             db.rollback()

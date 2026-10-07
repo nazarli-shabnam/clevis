@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/page-header"
 import { ScanChangesCard, scanChangesKey } from "@/components/scan-changes-card"
 import { EmptyStateNoAccount } from "@/components/empty-state"
 import { CheckCard } from "@/components/check-card"
+import { BulkFixPanel } from "@/components/bulk-fix-panel"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -17,7 +18,8 @@ import { api } from "@/lib/api/client"
 import { toCsv } from "@/lib/csv"
 import { downloadTextFile } from "@/lib/download"
 import { useActiveScope } from "@/lib/active-scope"
-import { shouldApplyResolvedToken } from "@/lib/token-resolve"
+import { hasOrgLogin, shouldApplyResolvedToken } from "@/lib/token-resolve"
+import { invalidateTokens } from "@/lib/query-invalidation"
 import { DonutChart } from "@/components/charts/donut-chart"
 import { AreaTimeChart } from "@/components/charts/area-time-chart"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
@@ -152,26 +154,29 @@ export default function SecurityPage() {
   useEffect(() => {
     setToken("")
     setTokenSaved(false)
-    if (owner.trim().length > 2) resolveMutation.mutate(owner.trim())
+    if (hasOrgLogin(owner)) resolveMutation.mutate(owner.trim())
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner])
 
   const saveTokenMutation = useMutation({
     mutationFn: () => api.tokens.upsert(owner.trim(), token.trim()),
-    onSuccess: () => setTokenSaved(true),
+    onSuccess: () => {
+      setTokenSaved(true)
+      invalidateTokens(queryClient)
+    },
   })
 
   const historyQuery = useQuery({
     queryKey: ["analytics.history", owner],
     queryFn: () => api.analytics.history(owner),
-    enabled: owner.trim().length > 2,
+    enabled: hasOrgLogin(owner),
   })
 
   const scan = useMutation({
-    mutationFn: () => api.analytics.overview(owner, token),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["analytics.history", owner] })
-      queryClient.invalidateQueries({ queryKey: scanChangesKey(owner) })
+    mutationFn: (forOwner: string) => api.analytics.overview(forOwner, token),
+    onSuccess: (_data, forOwner) => {
+      queryClient.invalidateQueries({ queryKey: ["analytics.history", forOwner] })
+      queryClient.invalidateQueries({ queryKey: scanChangesKey(forOwner) })
     },
   })
 
@@ -201,14 +206,30 @@ export default function SecurityPage() {
 
   const [selectedRepo, setSelectedRepo] = useState("")
   const matrixMutation = useMutation({
-    mutationFn: () => api.security.matrix(owner, token),
+    mutationFn: (forOwner: string) => api.security.matrix(forOwner, token),
     onSuccess: (data) => setSelectedRepo(data.repos[0]?.repo ?? ""),
   })
+
+  // The render right after an owner change still holds the previous owner's results until the reset
+  // effect below runs; these keep them off the screen for that render instead of relying on the effect.
+  const scanIsForOwner = scan.variables === owner
+  const matrixIsForOwner = matrixMutation.variables === owner
+
+  // Results belong to the owner they were scanned for: drop them (and the repo picked from them)
+  // when the owner changes, or the old org's data stays up under the new name and keeps querying.
+  useEffect(() => {
+    scan.reset()
+    matrixMutation.reset()
+    setSelectedRepo("")
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [owner])
 
   const secretScanning = useQuery({
     queryKey: ["security.secret-scanning", owner, selectedRepo],
     queryFn: () => api.security.secretScanning(owner, selectedRepo, token),
-    enabled: !!selectedRepo && !!matrixMutation.data,
+    // variables === owner: the render right after an owner change still holds the old matrix and repo
+    // until the reset effect runs; without this it would fire one request for new-owner/old-repo.
+    enabled: !!selectedRepo && !!matrixMutation.data && matrixMutation.variables === owner,
   })
 
   // A failed history fetch must not look like "never scanned": the trend sections would otherwise
@@ -247,8 +268,8 @@ export default function SecurityPage() {
   }))
 
   function runScan() {
-    scan.mutate()
-    matrixMutation.mutate()
+    scan.mutate(owner)
+    matrixMutation.mutate(owner)
   }
 
   const filteredChecks = scan.data
@@ -292,8 +313,9 @@ export default function SecurityPage() {
           </div>
           <div className="p-4 flex flex-col gap-3">
             <div>
-              <label className="text-xs font-medium text-foreground block mb-1.5">Organization</label>
+              <label htmlFor="security-owner" className="text-xs font-medium text-foreground block mb-1.5">Organization</label>
               <Input
+                id="security-owner"
                 placeholder="e.g. octocat"
                 value={owner}
                 onChange={(e) => setOwner(e.target.value)}
@@ -305,9 +327,9 @@ export default function SecurityPage() {
             </div>
             {!hasInstallationForOwner && (
               <div>
-                <label className="text-xs font-medium text-foreground mb-1.5 flex items-center gap-1.5">
-                  GitHub Token
-                  <span className="text-[0.6875rem] text-muted-foreground font-normal">
+                <div className="mb-1.5 flex items-center gap-1.5">
+                  <label htmlFor="security-token" className="text-xs font-medium text-foreground">GitHub Token</label>
+                  <span id="security-token-hint" className="text-[0.6875rem] text-muted-foreground font-normal">
                     optional if the GitHub App is connected for this org
                   </span>
                   {tokenSaved && (
@@ -315,8 +337,10 @@ export default function SecurityPage() {
                       <Key className="size-3" />saved
                     </span>
                   )}
-                </label>
+                </div>
                 <Input
+                  id="security-token"
+                  aria-describedby="security-token-hint"
                   placeholder="ghp_... (leave blank to use the connected GitHub App)"
                   type="password"
                   value={token}
@@ -352,7 +376,7 @@ export default function SecurityPage() {
                 {saveTokenMutation.error.message}
               </div>
             )}
-            {scan.isError && (
+            {scan.isError && scanIsForOwner && (
               <div data-testid="scan-error" className="flex items-start gap-2 text-xs text-destructive">
                 <Warning className="size-3.5 mt-0.5 shrink-0" />
                 {scan.error.message}
@@ -408,7 +432,7 @@ export default function SecurityPage() {
 
         {scopeOrgLogin !== "" && owner === scopeOrgLogin && <ScanChangesCard org={scopeOrgLogin} />}
 
-        {(scan.data || scan.isPending) && (
+        {scanIsForOwner && (scan.data || scan.isPending) && (
           <div className="card lg:col-span-2">
             {scan.data && (
               <div className="px-4 py-3 border-b border-border">
@@ -515,7 +539,7 @@ export default function SecurityPage() {
         )}
       </div>
 
-      {(matrixMutation.data || matrixMutation.isPending || matrixMutation.error) && (
+      {matrixIsForOwner && (matrixMutation.data || matrixMutation.isPending || matrixMutation.error) && (
         <div className="grid gap-4 lg:grid-cols-2 mt-6">
           <div className="card">
             <div className="px-4 py-3 border-b border-border flex items-center justify-between">
@@ -559,7 +583,16 @@ export default function SecurityPage() {
                         className={`hover:bg-elevated transition-colors cursor-pointer ${selectedRepo === r.repo ? "bg-elevated" : ""}`}
                         onClick={() => setSelectedRepo(r.repo)}
                       >
-                        <td className="px-4 py-2 font-mono text-foreground/90 truncate max-w-[10rem]">{r.repo}</td>
+                        <td className="px-4 py-2 font-mono text-foreground/90 truncate max-w-[10rem]">
+                          {/* A real button so keyboard and screen-reader users can select a row; the row's own onClick keeps the whole row clickable for the mouse. */}
+                          <button
+                            type="button"
+                            aria-current={selectedRepo === r.repo ? "true" : undefined}
+                            className="block max-w-[10rem] truncate text-left font-mono rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                          >
+                            {r.repo}
+                          </button>
+                        </td>
                         <td className="text-center px-2 py-2" title={r.unknown_dimensions.includes("branch_protection") ? "unknown — token can't see this" : undefined}>
                           {r.unknown_dimensions.includes("branch_protection") ? "?" : r.branch_protection ? "✓" : "—"}
                         </td>
@@ -686,6 +719,11 @@ export default function SecurityPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Same gating as "Fix this": plain members would only get a 403 from the API. */}
+      {matrixMutation.data && !isOrgMemberOnly(memberships, matrixMutation.data.owner) && (
+        <BulkFixPanel owner={matrixMutation.data.owner} repos={matrixMutation.data.repos} token={token || undefined} />
       )}
     </>
   )

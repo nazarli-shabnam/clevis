@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import ScanResult, User, get_db
@@ -38,6 +39,8 @@ def _client(db, user):
     app.include_router(router)
     app.dependency_overrides[require_auth] = lambda: UserOut(id=user.id, email=user.email, name=None, is_workspace_admin=False)
     app.dependency_overrides[get_db] = lambda: db
+    # Overriding require_auth skips its SET app.user_id side effect, which RLS (membership lookups) depends on.
+    db.execute(text(f"SET app.user_id = {user.id}"))
     return TestClient(app)
 
 

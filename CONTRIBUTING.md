@@ -70,7 +70,7 @@ Use **Conventional Commits**, for example:
 - `fix(api): handle rate-limit responses`
 - `chore: bump worker deps`
 
-CI runs Commitlint on the commits in each push or pull request, so messages that do not follow the convention will fail the **Commit Messages** check.
+CI runs Commitlint on the commits in each pull request, so messages that do not follow the convention will fail the **Commit Messages** check.
 
 ## Testing
 

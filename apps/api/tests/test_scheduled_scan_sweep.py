@@ -33,6 +33,7 @@ def _org(db, login, override=None, installed=True):
     org.scheduled_scans = override
     db.commit()
     if installed:
+        db.execute(text(f"SET app.tenant_id = {int(org.tenant_id)}"))  # RLS: the row's tenant must be the session's
         installation_repo.create(
             db, account_login=login, account_type="Organization", auth_mode="app",
             installation_id=next(_installation_ids), org_id=org.id,

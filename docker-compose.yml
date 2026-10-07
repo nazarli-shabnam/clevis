@@ -128,8 +128,10 @@ services:
         NEXT_PUBLIC_GITHUB_APP_SLUG: ${NEXT_PUBLIC_GITHUB_APP_SLUG:-}
         NEXT_PUBLIC_GITHUB_WEB_BASE: ${NEXT_PUBLIC_GITHUB_WEB_BASE:-https://github.com}
     mem_limit: 512m
-    env_file:
-      - .env
+    # Deliberately no `env_file: .env`: this container only serves the prebuilt bundle, and the
+    # NEXT_PUBLIC_* values it needs are baked in at build time (build args above). Passing the
+    # whole .env would hand it the DB credentials, JOB_SECRET_KEY, AUTH_SECRET, REDIS_PASSWORD
+    # and the GitHub App private key, none of which it uses.
     expose:
       - "3000"
     depends_on:

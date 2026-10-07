@@ -50,6 +50,16 @@ describe("NotificationBell", () => {
     expect(screen.getByText(/Critical alert ·/)).toBeInTheDocument();
   });
 
+  it("closes the popover when an item is followed", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "critical_alert")]));
+    wrap(<NotificationBell />);
+    fireEvent.click(await screen.findByRole("button", { name: /Notifications, 1 unread/ }));
+    const link = await screen.findByRole("link", { name: /title a/ });
+    link.addEventListener("click", (e) => e.preventDefault());
+    fireEvent.click(link);
+    await waitFor(() => expect(screen.queryByRole("link", { name: /title a/ })).not.toBeInTheDocument());
+  });
+
   it("marks everything read and refetches", async () => {
     feedMock.mockResolvedValueOnce(feed([item("a", "job_failed")])).mockResolvedValue(feed([item("a", "job_failed", true)]));
     wrap(<NotificationBell />);
@@ -73,6 +83,33 @@ describe("NotificationBell", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Notifications" }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("boom"));
     expect(screen.queryByText(/Nothing new/)).not.toBeInTheDocument();
+  });
+
+  it("caps the badge at 9+ and shows each item's detail", async () => {
+    const many = Array.from({ length: 12 }, (_, i) => item(`n${i}`, "score_drop", false, { detail: `detail n${i}` }));
+    feedMock.mockResolvedValue(feed(many));
+    wrap(<NotificationBell />);
+    const bell = await screen.findByRole("button", { name: "Notifications, 12 unread" });
+    expect(bell).toHaveTextContent("9+");
+    fireEvent.click(bell);
+    await waitFor(() => expect(screen.getByText("detail n0")).toBeInTheDocument());
+  });
+
+  it("closes the popover when an item is followed", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "critical_alert")]));
+    wrap(<NotificationBell />);
+    fireEvent.click(await screen.findByRole("button", { name: /Notifications, 1 unread/ }));
+    fireEvent.click(await screen.findByRole("link", { name: /title a/ }));
+    await waitFor(() => expect(screen.queryByText("title a")).not.toBeInTheDocument());
+  });
+
+  it("shows an error when marking as read fails", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "job_failed")]));
+    markReadMock.mockRejectedValue(new Error("nope"));
+    wrap(<NotificationBell />);
+    fireEvent.click(await screen.findByRole("button", { name: /Notifications, 1 unread/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Mark all read" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Couldn't mark as read: nope"));
   });
 
   it("renders nothing and fetches nothing for a personal scope", () => {

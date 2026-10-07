@@ -166,4 +166,16 @@ describe("InviteAcceptPage", () => {
     await screen.findByText(/joined acme/i);
     await waitFor(() => expect(push).toHaveBeenCalledWith("/"));
   });
+
+  it("invalidates the cached org memberships on accept so the new org shows up immediately (#591)", async () => {
+    const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+    previewMock.mockResolvedValue({ org_login: "acme", status: "pending" });
+    acceptMock.mockResolvedValue({ org_login: "acme", role: "member" });
+
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /accept invitation/i }));
+
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["my-orgs"] }));
+    invalidate.mockRestore();
+  });
 });

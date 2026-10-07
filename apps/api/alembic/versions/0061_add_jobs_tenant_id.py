@@ -21,8 +21,8 @@ which is small. Downgrade drops the FK, index and column (losing only the attrib
 cover the new column, so no grant changes are needed. RLS is deliberately not enabled on ``jobs``
 (the worker reads and claims rows across tenants).
 
-Revision ID: 0059
-Revises: 0058
+Revision ID: 0061
+Revises: 0060
 Create Date: 2026-10-06
 """
 
@@ -31,8 +31,8 @@ import json
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0059"
-down_revision = "0058"
+revision = "0061"
+down_revision = "0060"
 branch_labels = None
 depends_on = None
 

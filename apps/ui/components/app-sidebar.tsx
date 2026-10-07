@@ -1,7 +1,7 @@
 "use client"
 
 import { usePathname, useRouter } from "next/navigation"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useId, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import { useQuery } from "@tanstack/react-query"
 import { GearSix, Check, SignOut, UserPlus, ArrowSquareOut, Plus } from "@phosphor-icons/react"
@@ -19,9 +19,10 @@ import {
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
 import { useActiveScope, type ActiveScope } from "@/lib/active-scope"
-import { membersHref } from "@/lib/members-href"
+import { inviteMembersHref, membersHref } from "@/lib/members-href"
 import type { InstallationMeta, MyOrgMembership } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
+import { NAV_GROUPS } from "@/lib/nav-items"
 
 const ACTIVITY_LAST_SEEN_KEY = "activity_last_seen_at"
 
@@ -31,28 +32,6 @@ function healthDotColor(score: number | null | undefined): string | null {
   if (score >= 50) return "bg-yellow-400"
   return "bg-red-400"
 }
-
-const groups = [
-  [
-    { title: "Overview",         href: "/" },
-    { title: "Activity",         href: "/activity", showUnreadBadge: true },
-    { title: "Pull Requests",    href: "/pulls" },
-    { title: "Releases",         href: "/releases" },
-  ],
-  [
-    { title: "Repositories",     href: "/repos" },
-    { title: "Health & Security",href: "/security", showHealthDot: true },
-  ],
-  [
-    // "/collaborators" is a sentinel, not a real route: the render loop swaps in membersNavHref.
-    { title: "Collaborators",    href: "/collaborators" },
-    { title: "Automation",       href: "/automation" },
-    { title: "Audit Log",        href: "/audit" },
-  ],
-  [
-    { title: "My Work",    href: "/my" },
-  ],
-]
 
 interface Profile {
   name: string
@@ -75,7 +54,9 @@ function ProfileDropdown({
   inviteHref,
   onClose,
   onSignOut,
+  id,
 }: {
+  id: string
   profile: Profile
   scopeOptions: ScopeOption[]
   activeScope: ActiveScope | null
@@ -89,6 +70,7 @@ function ProfileDropdown({
 
   return (
     <div
+      id={id}
       className="absolute top-full left-0 right-0 z-50 border-b border-sidebar-border bg-sidebar shadow-2xl"
       onClick={(e) => e.stopPropagation()}
     >
@@ -128,6 +110,7 @@ function ProfileDropdown({
               <button
                 key={`${opt.scope.kind}:${opt.scope.login}`}
                 onClick={() => { onSelectScope(opt.scope); onClose() }}
+                aria-current={isActive ? "true" : undefined}
                 className="flex w-full items-center gap-2 px-2 py-1.5 text-left rounded-md hover:bg-sidebar-accent/60 transition-colors"
               >
                 <div className="min-w-0 flex-1">
@@ -194,6 +177,8 @@ export function AppSidebar() {
   const { user, logout } = useAuth()
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
+  const toggleRef = useRef<HTMLButtonElement>(null)
+  const menuId = useId()
 
   const { scope, setScope } = useActiveScope()
   const scopeLogin = scope?.login ?? ""
@@ -256,6 +241,7 @@ export function AppSidebar() {
   // Target for the Collaborators item and "Invite members": the resolved org members page.
   // While memberships load, point at /settings rather than flicker between fallbacks.
   const membersNavHref = membershipsLoading ? "/settings" : membersHref(memberships, scope)
+  const inviteNavHref = membershipsLoading ? "/settings" : inviteMembersHref(memberships, scope)
 
   // Falls back to a saved PAT for orgs without a GitHub App installation.
   const tokenQuery = useQuery({
@@ -275,10 +261,21 @@ export function AppSidebar() {
   })
 
   const healthDot = healthDotColor(cockpit?.latest_score)
-  const lastSeenAt = typeof window !== "undefined" ? localStorage.getItem(ACTIVITY_LAST_SEEN_KEY) : null
-  const unreadCount = (cockpit?.recent_events ?? []).filter(
-    (e) => !lastSeenAt || e.created_at > lastSeenAt,
-  ).length
+  // Read after mount (never during render: the server render has no localStorage, and it can throw
+  // in private mode) and again on navigation, since the Activity page writes the stamp when opened.
+  const [lastSeenAt, setLastSeenAt] = useState<string | null>(null)
+  useEffect(() => {
+    try {
+      setLastSeenAt(localStorage.getItem(ACTIVITY_LAST_SEEN_KEY))
+    } catch {
+      setLastSeenAt(null)
+    }
+  }, [pathname])
+  // On the Activity page itself everything is being seen right now.
+  const unreadCount =
+    pathname === "/activity"
+      ? 0
+      : (cockpit?.recent_events ?? []).filter((e) => !lastSeenAt || e.created_at > lastSeenAt).length
 
   useEffect(() => {
     if (!open) return
@@ -287,8 +284,19 @@ export function AppSidebar() {
         setOpen(false)
       }
     }
+    function handleKeyDown(e: KeyboardEvent) {
+      // defaultPrevented: another Escape-dismissible element (a dialog, a select) already took it.
+      if (e.key === "Escape" && !e.defaultPrevented) {
+        setOpen(false)
+        toggleRef.current?.focus()
+      }
+    }
     document.addEventListener("mousedown", handleClickOutside)
-    return () => document.removeEventListener("mousedown", handleClickOutside)
+    document.addEventListener("keydown", handleKeyDown)
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside)
+      document.removeEventListener("keydown", handleKeyDown)
+    }
   }, [open])
 
   const initials = profile.name.charAt(0).toUpperCase()
@@ -302,7 +310,10 @@ export function AppSidebar() {
     <Sidebar>
       <SidebarHeader className="border-b border-sidebar-border p-0 relative" ref={containerRef}>
         <button
+          ref={toggleRef}
           onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-controls={open ? menuId : undefined}
           className="flex w-full items-center gap-2.5 px-3.5 py-3 hover:bg-sidebar-accent/60 transition-colors group text-left"
         >
           <div className="size-7 rounded-md bg-primary/15 border border-primary/25 flex items-center justify-center shrink-0">
@@ -321,12 +332,13 @@ export function AppSidebar() {
 
         {open && (
           <ProfileDropdown
+            id={menuId}
             profile={profile}
             scopeOptions={scopeOptions}
             activeScope={scope}
             onSelectScope={setScope}
             addInstallUrl={addInstallUrl}
-            inviteHref={membersNavHref}
+            inviteHref={inviteNavHref}
             onClose={() => setOpen(false)}
             onSignOut={() => { logout(); setOpen(false); router.replace("/login") }}
           />
@@ -334,7 +346,7 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        {groups.map((items, groupIndex) => (
+        {NAV_GROUPS.map((items, groupIndex) => (
           <div key={groupIndex}>
             {groupIndex > 0 && <SidebarSeparator className="my-1 bg-sidebar-border/60" />}
             <SidebarGroup className="py-1">
@@ -352,6 +364,7 @@ export function AppSidebar() {
                       <SidebarMenuItem key={item.title}>
                         <SidebarMenuButton
                           isActive={active}
+                          aria-current={active ? "page" : undefined}
                           className={[
                             "flex items-center rounded-md px-3 py-1.5 text-[0.8125rem]",
                             active
