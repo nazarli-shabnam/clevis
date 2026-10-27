@@ -57,7 +57,10 @@ def _get_all_pages(client: httpx.Client, base: str, headers: dict, path: str, pa
 def _is_secondary_rate_limit(resp: httpx.Response) -> bool:
     if resp.status_code != 403:
         return False
-    return "Retry-After" in resp.headers or resp.headers.get("X-RateLimit-Remaining") == "0"
+    if "Retry-After" in resp.headers or resp.headers.get("X-RateLimit-Remaining") == "0":
+        return True
+    # GitHub also sends this 403 with neither signal; only the message then tells it from a permission refusal.
+    return "secondary rate limit" in resp.text.lower()
 
 
 def _retry_delay_seconds(resp: httpx.Response, attempt: int) -> float:

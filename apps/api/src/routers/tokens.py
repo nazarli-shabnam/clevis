@@ -86,9 +86,15 @@ def upsert_token(
     # If this admin can't already reach the org, try to establish the Org + admin
     # membership from the pasted PAT -- otherwise every /orgs/{org}/... page 404s.
     if not nothing_to_do:
-        connected_org = org_provisioning.connect_admin_org_from_token(
-            db, user, org, body.token.get_secret_value()
-        )
+        try:
+            connected_org = org_provisioning.connect_admin_org_from_token(
+                db, user, org, body.token.get_secret_value()
+            )
+        except org_repo.OrgIdentityMismatch:
+            # The login-matched Org belongs to a different GitHub org now; don't file this PAT
+            # under its tenant.
+            existing_org = None
+            connected_org = None
         if connected_org is not None:
             existing_org = connected_org
 

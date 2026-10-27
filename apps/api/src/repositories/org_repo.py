@@ -46,17 +46,23 @@ def get_by_org_id(db: Session, github_org_id: int) -> Org | None:
     return db.query(Org).filter(Org.github_org_id == github_org_id).first()
 
 
+def _refuse_other_orgs_row(org: Org, github_login: str, github_org_id: int | None) -> None:
+    if github_org_id is not None and org.github_org_id is not None and org.github_org_id != github_org_id:
+        # Reusing the row would hand the old org's tenant (members, events, alerts, scans) to
+        # whoever GitHub now reports as admin of this login.
+        logger.warning(
+            "refusing to reuse org %r (id %d): login now belongs to GitHub org id %d",
+            github_login, org.id, github_org_id,
+        )
+        raise OrgIdentityMismatch(github_login)
+
+
 def get_or_create(db: Session, github_login: str, github_org_id: int | None = None) -> Org:
-    org = get_by_login(db, github_login)
+    # Case-insensitive: GitHub logins are, and an exact-case lookup would miss a casing variant of a
+    # connected org and insert a duplicate instead of reaching the identity check below.
+    org = get_by_login_ci(db, github_login)
     if org is not None:
-        if github_org_id is not None and org.github_org_id is not None and org.github_org_id != github_org_id:
-            # Reusing the row would hand the old org's tenant (members, events, alerts, scans) to
-            # whoever GitHub now reports as admin of this login.
-            logger.warning(
-                "refusing to reuse org %r (id %d): login now belongs to GitHub org id %d",
-                github_login, org.id, github_org_id,
-            )
-            raise OrgIdentityMismatch(github_login)
+        _refuse_other_orgs_row(org, github_login, github_org_id)
         if github_org_id is not None and org.github_org_id is None:
             org.github_org_id = github_org_id
             db.commit()
@@ -81,8 +87,10 @@ def get_or_create(db: Session, github_login: str, github_org_id: int | None = No
     except IntegrityError:
         # Lost a race with a concurrent insert of the same github_login or github_org_id.
         db.rollback()
-        org = get_by_login(db, github_login)
-        if org is None and github_org_id is not None:
+        org = get_by_login_ci(db, github_login)
+        if org is not None:
+            _refuse_other_orgs_row(org, github_login, github_org_id)
+        elif github_org_id is not None:
             org = get_by_org_id(db, github_org_id)
         if org is None:
             raise

@@ -12,7 +12,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.core.auth import SESSION_COOKIE_NAME, create_access_token
+from src.core.auth import SESSION_COOKIE_NAME, _revocation_key, create_access_token
 from src.core.config import settings
 from src.core.db import RevokedToken, User, get_db
 from src.core.rate_limit import _account_buckets, _buckets
@@ -169,8 +169,8 @@ def test_logout_revokes_a_legacy_token_without_ending_other_sessions(client, own
     assert client.get("/auth/me", headers=_bearer(other_legacy)).status_code == 200
 
 
-def test_legacy_signature_encoding_cannot_bypass_logout(client, owner_token):
-    """Equivalent signature encodings must share the same legacy revocation record."""
+def test_a_padded_legacy_signature_is_rejected_and_logout_still_revokes_the_canonical_token(client, owner_token):
+    """PyJWT rejects the padded form before logout; revoking the canonical token keeps both dead."""
     claims = {k: v for k, v in _claims(owner_token).items() if k != "jti"}
     legacy = _encode(**claims)
     padded = legacy + "="
@@ -181,6 +181,23 @@ def test_legacy_signature_encoding_cannot_bypass_logout(client, owner_token):
 
     assert client.get("/auth/me", headers=_bearer(legacy)).status_code == 401
     assert client.get("/auth/me", headers=_bearer(padded)).status_code == 401
+
+
+def test_equivalent_signature_encodings_share_one_legacy_revocation_key():
+    """The key hashes only the signed header.payload, so any encoding of the same signature (here the
+    unpadded, padded and non-canonical-final-character forms) maps to one denylist record. PyJWT >= 2.14
+    refuses the latter two before authentication, so this is the only place that property is exercised."""
+    claims = {k: v for k, v in _claims(create_access_token(1, "a@example.com", False)).items() if k != "jti"}
+    canonical = _encode(**claims)
+    sig = canonical.rsplit(".", 1)[1]
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    # A 32-byte HS256 signature leaves the last base64url character's low 2 bits unused.
+    variant = canonical[: -len(sig)] + sig[:-1] + alphabet[(alphabet.index(sig[-1]) & ~3) | ((alphabet.index(sig[-1]) + 1) & 3)]
+    assert variant != canonical
+
+    keys = {_revocation_key(t, {}) for t in (canonical, canonical + "=", variant)}
+
+    assert len(keys) == 1 and keys.pop().startswith("legacy:")
 
 
 @pytest.mark.parametrize(

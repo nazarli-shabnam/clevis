@@ -106,3 +106,35 @@ def test_login_claimed_by_a_different_github_org_is_refused_not_reused(db):
     db.refresh(original)
     assert original.github_org_id == 1
     assert org_repo.get_by_org_id(db, 2) is None
+
+
+def test_a_casing_variant_of_a_connected_login_resolves_to_it_instead_of_inserting_a_duplicate(db):
+    original = org_repo.get_or_create(db, github_login="Acme", github_org_id=1)
+
+    assert org_repo.get_or_create(db, github_login="acme", github_org_id=1).id == original.id
+    assert org_repo.get_or_create(db, github_login="ACME").id == original.id
+
+
+def test_a_casing_variant_claimed_by_a_different_github_org_is_refused(db):
+    org_repo.get_or_create(db, github_login="Acme", github_org_id=1)
+
+    with pytest.raises(org_repo.OrgIdentityMismatch):
+        org_repo.get_or_create(db, github_login="acme", github_org_id=2)
+
+
+def test_insert_race_recovery_refuses_a_login_row_owned_by_a_different_github_org(db):
+    # The pre-insert lookup misses (a concurrent insert had not landed yet); the insert then collides
+    # on github_login, and the recovered row belongs to another GitHub org.
+    org_repo.get_or_create(db, github_login="acme", github_org_id=1)
+
+    original_first = Query.first
+    calls = {"n": 0}
+
+    def racy_first(self):
+        calls["n"] += 1
+        if calls["n"] == 1:  # get_by_login_ci
+            return None
+        return original_first(self)
+
+    with patch.object(Query, "first", racy_first), pytest.raises(org_repo.OrgIdentityMismatch):
+        org_repo.get_or_create(db, github_login="acme", github_org_id=2)

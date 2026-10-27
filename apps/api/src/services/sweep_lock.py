@@ -32,13 +32,13 @@ def has_blocking_job(db: Session, job_type: str, tenant_id: int, cutoff: datetim
     queued/processing (the cursor only advances once one succeeds, so a slow job would otherwise be
     re-enqueued every tick), or one failed since `cutoff` (a job that fails permanently never advances
     the cursor either, so without this the tenant would get a fresh job and token mint every tick;
-    it is retried once the failure ages past the stale window). jobs rows are matched through the
-    payload's tenant_id, as job_repo.enqueue writes it."""
+    it is retried once the failure ages past the stale window). jobs rows are matched on the indexed
+    ``tenant_id`` column, which ``job_repo.enqueue`` sets."""
     row = db.execute(
         text(
             "SELECT 1 FROM jobs WHERE job_type = :job_type "
             "AND (status IN ('queued', 'processing') OR (status = 'failed' AND updated_at >= :cutoff)) "
-            "AND (payload::jsonb ->> 'tenant_id')::int = :tenant_id LIMIT 1"
+            "AND tenant_id = :tenant_id LIMIT 1"
         ),
         {"job_type": job_type, "tenant_id": tenant_id, "cutoff": cutoff},
     ).fetchone()
