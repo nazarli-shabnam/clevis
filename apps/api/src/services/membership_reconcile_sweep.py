@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from src.core.app_config import get_config
 from src.core.db import set_session_tenant
 from src.services import membership_reconcile_service
-from src.services.sweep_lock import try_acquire_sweep_slot
+from src.services.sweep_lock import has_blocking_job, try_acquire_sweep_slot
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token
 
 logger = logging.getLogger(__name__)
@@ -33,21 +33,6 @@ def _read_stale_hours() -> int:
     except ValueError:
         logger.warning("membership_reconcile_stale_hours %r is not an integer; using 24", raw)
         return 24
-
-
-def _has_active_reconcile_job(db: Session, tenant_id: int) -> bool:
-    """Same reasoning as gap_heal_sweep.py's _has_active_backfill_job: the cursor only
-    advances once a job reaches a terminal state, so without this a slow-to-finish job would
-    still look stale on every subsequent sweep tick and get re-enqueued repeatedly."""
-    row = db.execute(
-        text(
-            "SELECT 1 FROM jobs WHERE job_type = :job_type "
-            "AND status IN ('queued', 'processing') "
-            "AND (payload::jsonb ->> 'tenant_id')::int = :tenant_id LIMIT 1"
-        ),
-        {"job_type": _JOB_TYPE, "tenant_id": tenant_id},
-    ).fetchone()
-    return row is not None
 
 
 def run_membership_reconcile_sweep(db: Session) -> None:
@@ -80,7 +65,7 @@ def run_membership_reconcile_sweep(db: Session) -> None:
         # process skips this tenant this tick rather than re-deriving a stale answer.
         if not try_acquire_sweep_slot(db, _JOB_TYPE, tenant_id):
             continue
-        if _has_active_reconcile_job(db, tenant_id):
+        if has_blocking_job(db, _JOB_TYPE, tenant_id, cutoff):
             db.commit()  # nothing to persist; releases the advisory lock promptly
             continue
 

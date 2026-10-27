@@ -174,9 +174,10 @@ def test_legacy_signature_encoding_cannot_bypass_logout(client, owner_token):
     claims = {k: v for k, v in _claims(owner_token).items() if k != "jti"}
     legacy = _encode(**claims)
     padded = legacy + "="
-    assert client.get("/auth/me", headers=_bearer(padded)).status_code == 200
+    assert client.get("/auth/me", headers=_bearer(legacy)).status_code == 200
+    assert client.get("/auth/me", headers=_bearer(padded)).status_code == 401  # PyJWT >= 2.14 rejects padded signatures
 
-    assert client.post("/auth/logout", headers=_bearer(padded)).status_code == 200
+    assert client.post("/auth/logout", headers=_bearer(legacy)).status_code == 200
 
     assert client.get("/auth/me", headers=_bearer(legacy)).status_code == 401
     assert client.get("/auth/me", headers=_bearer(padded)).status_code == 401

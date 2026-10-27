@@ -456,9 +456,12 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
                 # Session context for RLS, same as event_consumer.py's _process_entry.
                 cur.execute(f"SET app.tenant_id = {int(payload.tenant_id)}")
                 org_membership_store.reconcile_org_members(cur, tenant_id=payload.tenant_id, members=members, synced_at=synced_at)
-                org_membership_store.reconcile_repo_collaborator_outside_status(
-                    cur, tenant_id=payload.tenant_id, member_logins=member_logins, outside_logins=roster["outside_logins"]
-                )
+                # None = outside_collaborators was refused (missing permission): marking everyone
+                # outside from a missing list would be wrong, so leave the flags as they are.
+                if roster["outside_logins"] is not None:
+                    org_membership_store.reconcile_repo_collaborator_outside_status(
+                        cur, tenant_id=payload.tenant_id, member_logins=member_logins, outside_logins=roster["outside_logins"]
+                    )
                 # Upserted in the same transaction so a rollback doesn't advance the cursor.
                 cur.execute(
                     """

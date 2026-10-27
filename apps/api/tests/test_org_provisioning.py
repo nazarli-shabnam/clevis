@@ -182,3 +182,36 @@ def test_github_admin_promotion_of_an_invited_member_is_revocable_by_github(db):
     with patch.object(github_oauth, "list_user_org_memberships", return_value=[]):
         org_provisioning.sync_org_admin_memberships(db, user, "fake-token")
     assert org_membership_repo.get(db, org_id=org.id, user_id=user.id) is None
+
+
+def test_login_reused_by_a_different_github_org_grants_no_access_and_does_not_block_other_orgs(db):
+    old = org_repo.get_or_create(db, github_login="acme", github_org_id=1)
+    carol = _make_user(db, "carol@example.com")
+
+    with patch.object(
+        github_oauth,
+        "list_user_org_memberships",
+        return_value=[
+            github_oauth.GitHubOrgMembership(github_org_id=2, login="acme", role="admin"),
+            github_oauth.GitHubOrgMembership(github_org_id=3, login="other", role="admin"),
+        ],
+    ):
+        org_provisioning.sync_org_admin_memberships(db, carol, "fake-token")
+
+    assert org_membership_repo.get(db, org_id=old.id, user_id=carol.id) is None
+    other = org_repo.get_by_login(db, "other")
+    assert org_membership_repo.get(db, org_id=other.id, user_id=carol.id).role == "admin"
+
+
+def test_pat_connect_refuses_a_login_reused_by_a_different_github_org(db):
+    old = org_repo.get_or_create(db, github_login="acme", github_org_id=1)
+    carol = _make_user(db, "carol@example.com")
+
+    with patch.object(
+        github_oauth,
+        "list_user_org_memberships",
+        return_value=[github_oauth.GitHubOrgMembership(github_org_id=2, login="acme", role="admin")],
+    ):
+        assert org_provisioning.connect_admin_org_from_token(db, carol, "acme", "pat") is None
+
+    assert org_membership_repo.get(db, org_id=old.id, user_id=carol.id) is None

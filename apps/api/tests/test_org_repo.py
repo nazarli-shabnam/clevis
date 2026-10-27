@@ -2,6 +2,7 @@
 
 from unittest.mock import patch
 
+import pytest
 from sqlalchemy.orm import Query
 
 from src.core.db import Tenant
@@ -92,3 +93,16 @@ def test_different_orgs_stay_separate(db):
     acme_id = acme.id
     globex = org_repo.get_or_create(db, github_login="globex", github_org_id=2)
     assert acme_id != globex.id
+
+
+def test_login_claimed_by_a_different_github_org_is_refused_not_reused(db):
+    # The old org was deleted/renamed on GitHub and a different org now holds its login: reusing the
+    # row would hand the old tenant's data to the new owner.
+    original = org_repo.get_or_create(db, github_login="acme", github_org_id=1)
+
+    with pytest.raises(org_repo.OrgIdentityMismatch):
+        org_repo.get_or_create(db, github_login="acme", github_org_id=2)
+
+    db.refresh(original)
+    assert original.github_org_id == 1
+    assert org_repo.get_by_org_id(db, 2) is None

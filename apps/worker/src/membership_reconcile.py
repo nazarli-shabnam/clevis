@@ -97,11 +97,12 @@ def _get_with_retry(client: httpx.Client, url: str, headers: dict, params: dict 
 
 
 def fetch_org_roster(client: httpx.Client, base: str, headers: dict, org_login: str) -> dict:
-    """Return {"members": [...], "two_factor_disabled_logins": set|None, "outside_logins": set}.
+    """Return {"members": [...], "two_factor_disabled_logins": set|None, "outside_logins": set|None}.
 
     A member is "admin" iff in the role=admin-filtered call (the plain list has no role).
     two_factor_disabled_logins is None if the overlay failed (needs org-owner scope), kept
-    distinct from an empty set so callers don't overwrite known-good data.
+    distinct from an empty set so callers don't overwrite known-good data. outside_logins is None
+    likewise when the outside_collaborators call is refused (403/404: missing App permission).
     """
     admins_raw = _get_all_pages(client, base, headers, f"/orgs/{org_login}/members", {"role": "admin"})
     all_raw = _get_all_pages(client, base, headers, f"/orgs/{org_login}/members", {"role": "all"})
@@ -123,8 +124,17 @@ def fetch_org_roster(client: httpx.Client, base: str, headers: dict, org_login: 
     except (httpx.HTTPStatusError, httpx.RequestError, RosterIncomplete):
         two_factor_disabled_logins = None
 
-    outside_raw = _get_all_pages(client, base, headers, f"/orgs/{org_login}/outside_collaborators", {})
-    outside_logins = {c["login"] for c in outside_raw if "login" in c}
+    outside_logins: set[str] | None
+    try:
+        outside_raw = _get_all_pages(client, base, headers, f"/orgs/{org_login}/outside_collaborators", {})
+        outside_logins = {c["login"] for c in outside_raw if "login" in c}
+    except httpx.HTTPStatusError as error:
+        resp = error.response
+        # The App may lack the permission for this endpoint; that must not fail the whole roster
+        # (members and 2FA are still good). Rate limits and 5xx stay raised so the job is requeued.
+        if resp.status_code not in (403, 404) or _is_secondary_rate_limit(resp):
+            raise
+        outside_logins = None
 
     return {
         "members": members,

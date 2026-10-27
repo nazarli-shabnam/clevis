@@ -21,7 +21,7 @@ from src.core.app_config import get_config
 from src.core.db import set_session_tenant
 from src.repositories import installation_repo
 from src.services import backfill_service
-from src.services.sweep_lock import try_acquire_sweep_slot
+from src.services.sweep_lock import has_blocking_job, try_acquire_sweep_slot
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token, resolve_personal_token
 
 logger = logging.getLogger(__name__)
@@ -36,22 +36,6 @@ def _read_stale_hours() -> int:
     except ValueError:
         logger.warning("gap_heal_stale_hours %r is not an integer; using 6", raw)
         return 6
-
-
-def _has_active_backfill_job(db: Session, tenant_id: int) -> bool:
-    """True if a github.backfill_repo_events job for this tenant is already queued or
-    processing. Without this check, a job that's slow to finish would still look stale on
-    every subsequent sweep tick and get re-enqueued repeatedly. jobs has no tenant_id
-    column, so this matches against the JSON payload the way job_repo.enqueue writes it."""
-    row = db.execute(
-        text(
-            "SELECT 1 FROM jobs WHERE job_type = :job_type "
-            "AND status IN ('queued', 'processing') "
-            "AND (payload::jsonb ->> 'tenant_id')::int = :tenant_id LIMIT 1"
-        ),
-        {"job_type": _JOB_TYPE, "tenant_id": tenant_id},
-    ).fetchone()
-    return row is not None
 
 
 def _installation_account(db: Session, *, kind: str, org_id: int | None, personal_user_id: int | None) -> tuple[str | None, str | None]:
@@ -106,7 +90,7 @@ def run_gap_heal_sweep(db: Session) -> None:
         # process skips this tenant this tick rather than re-deriving a stale answer.
         if not try_acquire_sweep_slot(db, _JOB_TYPE, tenant_id):
             continue
-        if _has_active_backfill_job(db, tenant_id):
+        if has_blocking_job(db, _JOB_TYPE, tenant_id, cutoff):
             db.commit()  # nothing to persist; releases the advisory lock promptly
             continue
 

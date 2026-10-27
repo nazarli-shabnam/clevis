@@ -611,3 +611,56 @@ def test_removal_received_during_the_roster_fetch_still_deletes_the_new_member(p
             cur, tenant_id=tenant_id, login=login, event_received_at=received["at"]
         )
     assert login not in {r[0] for r in _org_members(pg_conn, tenant_id)}
+
+
+def test_fetch_org_roster_outside_logins_is_none_when_the_app_lacks_permission():
+    forbidden = _FakeResponse({}, status_code=403)  # genuine 403: no rate-limit headers, so no retry
+    client = _FakeClient(
+        {
+            "/orgs/acme/members": [_FakeResponse([]), _FakeResponse([_member("someone")]), _FakeResponse([])],
+            "/orgs/acme/outside_collaborators": [forbidden],
+        }
+    )
+
+    roster = membership_reconcile.fetch_org_roster(client, "https://api.github.com", {}, "acme")
+
+    assert roster["outside_logins"] is None
+    assert [m["login"] for m in roster["members"]] == ["someone"]
+
+
+def test_fetch_org_roster_still_raises_when_outside_collaborators_hits_a_server_error():
+    client = _FakeClient(
+        {
+            "/orgs/acme/members": [_FakeResponse([]), _FakeResponse([_member("someone")]), _FakeResponse([])],
+            "/orgs/acme/outside_collaborators": [_FakeResponse({}, status_code=502)] * 3,
+        }
+    )
+
+    with patch("membership_reconcile.time.sleep"), pytest.raises(httpx.HTTPStatusError):
+        membership_reconcile.fetch_org_roster(client, "https://api.github.com", {}, "acme")
+
+
+def test_handler_keeps_outside_flags_when_the_outside_collaborators_call_was_refused(pg_conn, tenant_id):
+    login = f"reconcile-keep-{uuid.uuid4().hex[:8]}"
+    repo = f"acme/keep-{uuid.uuid4().hex[:8]}"
+    with pg_conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        cur.execute(
+            "INSERT INTO repo_collaborators (tenant_id, repo, login, permission, source, is_outside_collaborator, granted_at) "
+            "VALUES (%s, %s, %s, 'push', 'direct', FALSE, %s)",
+            (tenant_id, repo, login, datetime.now(timezone.utc)),
+        )
+    roster = {
+        "members": [{"login": "someone-else", "avatar_url": "a", "role": "member"}],
+        "two_factor_disabled_logins": set(),
+        "outside_logins": None,
+    }
+
+    with patch("worker.membership_reconcile.fetch_org_roster", return_value=roster), patch("worker.httpx.Client"):
+        worker._handle_reconcile_org_membership(pg_conn, 130, _payload_for(tenant_id, "keep-org"), 0)
+
+    assert "someone-else" in {r[0] for r in _org_members(pg_conn, tenant_id)}
+    with pg_conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        cur.execute("SELECT is_outside_collaborator FROM repo_collaborators WHERE tenant_id = %s AND repo = %s", (tenant_id, repo))
+        assert cur.fetchone() == (False,)  # not flipped to outside by a missing list

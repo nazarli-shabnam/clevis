@@ -547,7 +547,7 @@ export interface CockpitResponse {
   pr_merge_rate_4w: PrWeekBucket[]
   commit_activity_4w: number[]
   total_cache_size_bytes: number
-  cache_job_success_rate: number
+  cache_job_success_rate: number | null
   commit_heatmap_52w: number[]
   at_risk_repos: AtRiskRepo[]
   milestones: MilestoneSummary[]

@@ -1,6 +1,7 @@
 import json
 
-from sqlalchemy import func
+from sqlalchemy import cast, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session, defer
 
 from src.core._sanitize import sanitize_error
@@ -45,10 +46,16 @@ def get_job(db: Session, job_id: int) -> Job | None:
     return db.query(Job).filter(Job.id == job_id).one_or_none()
 
 
-def list_recent_by_type(db: Session, job_type: str, limit: int = 20) -> list[dict]:
+def list_recent_by_type(db: Session, job_type: str, *, owner: str, actor: str | None = None, limit: int = 20) -> list[dict]:
+    """Newest jobs of a type for one GitHub owner (login, matched case-insensitively against the
+    payload's `owner`), optionally only those enqueued by `actor`. jobs has no RLS, so an unscoped
+    read would mix other orgs' and users' jobs."""
+    payload = cast(Job.payload, JSONB)
+    query = db.query(Job).filter(Job.job_type == job_type, func.lower(payload["owner"].astext) == owner.lower())
+    if actor is not None:
+        query = query.filter(payload["actor"].astext == actor)
     rows = (
-        db.query(Job)
-        .filter(Job.job_type == job_type)
+        query
         .order_by(Job.id.desc())
         .limit(limit)
         .all()
