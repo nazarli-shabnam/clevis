@@ -937,7 +937,10 @@ def test_sync_org_installation_leaves_a_legacy_row_unbound_without_a_live_admin_
     assert acme_org["org"].github_org_id is None
 
 
-def test_sync_org_installation_cannot_bind_an_id_already_held_by_another_org(db, acme_org):
+@pytest.mark.parametrize("role, github_login", [("admin", "admin-gh"), ("member", "admin-gh"), (None, "admin-gh"), ("admin", None)])
+def test_sync_org_installation_refuses_an_id_already_held_by_another_org_whatever_the_live_check_says(
+    db, acme_org, role, github_login
+):
     org_repo.get_or_create(db, github_login="globex", github_org_id=77)
 
-    assert _sync_as_known_admin(db, acme_org, role="admin").status_code == 409
+    assert _sync_as_known_admin(db, acme_org, role=role, github_login=github_login).status_code == 409

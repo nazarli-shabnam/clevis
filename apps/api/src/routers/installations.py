@@ -329,17 +329,17 @@ def sync_org_installation(
         # Legacy row from before ids were recorded. Bind the id GitHub verified for this login only when
         # the caller is live-verified as a GitHub admin of it; a stale local admin can still sync (as
         # before) but leaves the row unbound for the bootstrap path to claim.
-        github_login = db.query(User.github_login).filter(User.id == user.id).scalar()
-        try:
-            role = _live_org_role(org_login, payload.installation_id, github_login) if github_login else None
-        except HTTPException:
-            role = None
-        holder = org_repo.get_by_org_id(db, github_org_id) if role == "admin" else None
+        holder = org_repo.get_by_org_id(db, github_org_id)
         if holder is not None and holder.id != org.id:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This GitHub organization is already connected under a different login",
             )
+        github_login = db.query(User.github_login).filter(User.id == user.id).scalar()
+        try:
+            role = _live_org_role(org_login, payload.installation_id, github_login) if github_login else None
+        except HTTPException:
+            role = None
         if role == "admin":
             org.github_org_id = github_org_id
 
