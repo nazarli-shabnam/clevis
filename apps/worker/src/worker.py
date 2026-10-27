@@ -2,7 +2,6 @@ import json
 import logging
 import threading
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -411,10 +410,10 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
 
     # Held from before the roster fetch until the snapshot commits; must span the HTTP
     # round trip, so it can't be transaction-scoped.
-    org_membership_store.acquire_tenant_lock(conn, payload.tenant_id)
-    # Taken before the roster request so a removal webhook received during the fetch (which the
-    # consumer then applies after this commit) compares as newer than the `added_at` we insert.
-    synced_at = datetime.now(timezone.utc)
+    # The snapshot time is read before the roster request so a removal webhook received during the
+    # fetch (which the consumer then applies after this commit) compares as newer than the `added_at`
+    # we insert. It is the database's clock, the same one that stamps the webhook's received_at.
+    synced_at = org_membership_store.acquire_tenant_lock(conn, payload.tenant_id)
     try:
         try:
             with httpx.Client(timeout=20) as client:

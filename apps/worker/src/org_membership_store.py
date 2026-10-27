@@ -15,17 +15,24 @@ import psycopg
 _LOCK_NAMESPACE = "org_membership_reconcile"
 
 
-def acquire_tenant_lock(conn: psycopg.Connection, tenant_id: int) -> None:
+def acquire_tenant_lock(conn: psycopg.Connection, tenant_id: int) -> datetime:
     """Session-level advisory lock serializing one tenant's org-membership writes.
 
     Keeps the webhook path from interleaving with the reconcile job's roster-fetch-to-snapshot
     window, where a snapshot could resurrect or wipe members. Session-scoped (not xact) because
     the reconcile side holds it across an HTTP call before any transaction; callers MUST call
     release_tenant_lock in a finally.
+
+    Returns the database's wall clock (``clock_timestamp()``, not the transaction-start ``now()``)
+    read once the lock is held. Webhook ``received_at`` is stamped by the database, so a snapshot
+    time that must compare against it has to come from the same clock, not the worker's.
     """
     with conn.cursor() as cur:
         cur.execute("SELECT pg_advisory_lock(hashtext(%s), %s)", (_LOCK_NAMESPACE, tenant_id))
+        cur.execute("SELECT clock_timestamp()")
+        locked_at = cur.fetchone()[0]
     conn.commit()
+    return locked_at
 
 
 def release_tenant_lock(conn: psycopg.Connection, tenant_id: int) -> None:

@@ -594,7 +594,11 @@ def test_removal_received_during_the_roster_fetch_still_deletes_the_new_member(p
     login = f"reconcile-raced-{uuid.uuid4().hex[:8]}"  # fixtures commit; a reused login keeps its old added_at
 
     def fetch(*_args, **_kwargs):
-        received["at"] = datetime.now(timezone.utc)
+        # webhook_deliveries.received_at is stamped by the database, so the stand-in uses its clock too
+        with pg_conn.cursor() as cur:
+            cur.execute("SELECT clock_timestamp()")
+            received["at"] = cur.fetchone()[0]
+        pg_conn.commit()
         return {
             "members": [{"login": login, "avatar_url": "a", "role": "member"}],
             "two_factor_disabled_logins": set(),
