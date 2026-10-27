@@ -886,3 +886,20 @@ def test_sync_org_installation_bootstrap_requires_the_installation_to_report_an_
         )
     assert resp.status_code == 502
     assert org_repo.get_by_login(db, "acme") is None
+
+
+def test_sync_org_installation_known_admin_cannot_attach_an_installation_of_a_different_github_org(db, acme_org):
+    acme_org["org"].github_org_id = 1
+    db.commit()
+    with _mock_installation("acme", "Organization", account_id=2):
+        resp = _client(db, acme_org["admin"]).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 409
+    with _mock_installation("acme", "Organization", account_id=1):
+        resp = _client(db, acme_org["admin"]).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 200

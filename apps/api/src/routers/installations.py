@@ -306,11 +306,19 @@ def sync_org_installation(
 
     installation = _verify_installation(payload.installation_id, payload.account_login, payload.account_type)
 
+    reported_id = ((installation or {}).get("account") or {}).get("id")
+    github_org_id = reported_id if isinstance(reported_id, int) and not isinstance(reported_id, bool) else None
     if not is_known_admin:
-        github_org_id = (installation.get("account") or {}).get("id")
-        if not isinstance(github_org_id, int) or isinstance(github_org_id, bool):
+        if github_org_id is None:
             raise HTTPException(status_code=502, detail="GitHub did not report an id for this organization")
         org = _bootstrap_org_admin_from_installation(db, db_user, org_login, payload.installation_id, github_org_id)
+    elif github_org_id is not None and org.github_org_id is not None and org.github_org_id != github_org_id:
+        # A known admin of the old tenant must not attach the installation of whoever holds this
+        # login now; the bootstrap path enforces the same identity inside get_or_create.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This installation belongs to a different GitHub organization than the one connected under this login",
+        )
 
     # github_installations' org-scoped rows have no per-row user column, so the RLS
     # self-access clause (owner_user_id match) can't cover this write like it does for
