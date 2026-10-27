@@ -2,7 +2,6 @@ import json
 import logging
 import threading
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -411,7 +410,10 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
 
     # Held from before the roster fetch until the snapshot commits; must span the HTTP
     # round trip, so it can't be transaction-scoped.
-    org_membership_store.acquire_tenant_lock(conn, payload.tenant_id)
+    # The snapshot time is read before the roster request so a removal webhook received during the
+    # fetch (which the consumer then applies after this commit) compares as newer than the `added_at`
+    # we insert. It is the database's clock, the same one that stamps the webhook's received_at.
+    synced_at = org_membership_store.acquire_tenant_lock(conn, payload.tenant_id)
     try:
         try:
             with httpx.Client(timeout=20) as client:
@@ -452,7 +454,6 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
             with conn.cursor() as cur:
                 # Session context for RLS, same as event_consumer.py's _process_entry.
                 cur.execute(f"SET app.tenant_id = {int(payload.tenant_id)}")
-                synced_at = datetime.now(timezone.utc)
                 org_membership_store.reconcile_org_members(cur, tenant_id=payload.tenant_id, members=members, synced_at=synced_at)
                 # None = outside_collaborators was refused (missing permission): marking everyone
                 # outside from a missing list would be wrong, so leave the flags as they are.

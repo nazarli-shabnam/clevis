@@ -10,6 +10,7 @@ import psycopg
 import pytest
 
 import membership_reconcile
+import org_membership_store
 import worker
 from _crypto import encrypt_job_token
 from config import settings
@@ -584,6 +585,36 @@ def test_handler_preserves_two_factor_enabled_when_the_overlay_is_unavailable(pg
     with patch("worker.membership_reconcile.fetch_org_roster", return_value=second), patch("worker.httpx.Client"):
         worker._handle_reconcile_org_membership(pg_conn, 105, _payload_for(tenant_id, "twofa-org"), 0)
     assert _org_members(pg_conn, tenant_id)[0][2] is True
+
+
+def test_removal_received_during_the_roster_fetch_still_deletes_the_new_member(pg_conn, tenant_id):
+    # The roster still lists the user; the member_removed webhook arrives while it is being
+    # fetched, and the consumer applies it only after the reconcile commits.
+    received = {}
+    login = f"reconcile-raced-{uuid.uuid4().hex[:8]}"  # fixtures commit; a reused login keeps its old added_at
+
+    def fetch(*_args, **_kwargs):
+        # webhook_deliveries.received_at is stamped by the database, so the stand-in uses its clock too
+        with pg_conn.cursor() as cur:
+            cur.execute("SELECT clock_timestamp()")
+            received["at"] = cur.fetchone()[0]
+        pg_conn.commit()
+        return {
+            "members": [{"login": login, "avatar_url": "a", "role": "member"}],
+            "two_factor_disabled_logins": set(),
+            "outside_logins": set(),
+        }
+
+    with patch("worker.membership_reconcile.fetch_org_roster", side_effect=fetch), patch("worker.httpx.Client"):
+        worker._handle_reconcile_org_membership(pg_conn, 120, _payload_for(tenant_id, "raced-org"), 0)
+    assert login in {r[0] for r in _org_members(pg_conn, tenant_id)}
+
+    with pg_conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        org_membership_store.remove_org_member(
+            cur, tenant_id=tenant_id, login=login, event_received_at=received["at"]
+        )
+    assert login not in {r[0] for r in _org_members(pg_conn, tenant_id)}
 
 
 def test_fetch_org_roster_outside_logins_is_none_when_the_app_lacks_permission():

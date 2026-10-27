@@ -53,3 +53,19 @@ def test_acquire_tenant_lock_is_reentrant_on_same_connection(worker_db):
     acquire_tenant_lock(conn, tenant_id)  # would hang here if this weren't reentrant
     release_tenant_lock(conn, tenant_id)
     release_tenant_lock(conn, tenant_id)
+
+
+def test_acquire_tenant_lock_returns_the_database_clock(worker_db):
+    from datetime import datetime, timedelta, timezone
+
+    conn, _ = worker_db
+    tenant_id = 999_000_003
+
+    before = datetime.now(timezone.utc) - timedelta(seconds=30)  # generous: the DB host's clock may differ a little
+    locked_at = acquire_tenant_lock(conn, tenant_id)
+    release_tenant_lock(conn, tenant_id)
+
+    assert locked_at.tzinfo is not None and before < locked_at < before + timedelta(seconds=90)
+    with conn.cursor() as cur:
+        cur.execute("SELECT clock_timestamp()")
+        assert cur.fetchone()[0] >= locked_at
