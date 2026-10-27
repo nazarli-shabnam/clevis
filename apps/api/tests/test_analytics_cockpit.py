@@ -1,5 +1,6 @@
 """Tests for the Overview cockpit aggregate endpoint."""
 
+import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -104,7 +105,7 @@ def test_cockpit_success_all_sources(http, db, mock_user):
     scan_results_repo.insert(db, owner="acme", score=70, total_checks=5, failed_checks=1, checks=[], tenant_id=org.tenant_id)
     scan_results_repo.insert(db, owner="acme", score=85, total_checks=5, failed_checks=0, checks=[], tenant_id=org.tenant_id)
     for status in ("done", "done", "done", "failed"):
-        job = Job(job_type="github.clear_actions_cache", payload="{}", status=status)
+        job = Job(job_type="github.clear_actions_cache", payload=json.dumps({"owner": "acme"}), status=status)
         db.add(job)
     db.commit()
 
@@ -272,7 +273,7 @@ def test_cockpit_no_cache_jobs_yet(http, db, mock_user):
         _stop_all(patchers)
 
     assert resp.status_code == 200
-    assert resp.json()["cache_job_success_rate"] == 0.0
+    assert resp.json()["cache_job_success_rate"] is None
 
 
 def test_cockpit_degrades_when_pr_search_fails(http, db, mock_user):
@@ -979,29 +980,41 @@ def test_safe_total_cache_bytes_one_bad_repo_sums_the_rest_but_flags_not_ok():
     assert ok is False
 
 
+def _cache_job(db, owner, status):
+    db.add(Job(job_type="github.clear_actions_cache", payload=json.dumps({"owner": owner}), status=status))
+    db.commit()
+
+
 def test_cache_job_success_rate_mixed(db):
     from src.routers.analytics import _cache_job_success_rate
 
     for status in ("done", "done", "done", "failed"):
-        job = Job(job_type="github.clear_actions_cache", payload="{}", status=status)
-        db.add(job)
-    db.commit()
-    assert _cache_job_success_rate(db) == 0.75
+        _cache_job(db, "acme", status)
+    assert _cache_job_success_rate(db, "acme") == 0.75
 
 
-def test_cache_job_success_rate_zero_jobs(db):
+def test_cache_job_success_rate_is_none_without_jobs(db):
     from src.routers.analytics import _cache_job_success_rate
 
-    assert _cache_job_success_rate(db) == 0.0
+    assert _cache_job_success_rate(db, "acme") is None
 
 
 def test_cache_job_success_rate_ignores_other_job_types(db):
     from src.routers.analytics import _cache_job_success_rate
 
-    job = Job(job_type="some.other.job", payload="{}", status="failed")
-    db.add(job)
+    db.add(Job(job_type="some.other.job", payload=json.dumps({"owner": "acme"}), status="failed"))
     db.commit()
-    assert _cache_job_success_rate(db) == 0.0
+    assert _cache_job_success_rate(db, "acme") is None
+
+
+def test_cache_job_success_rate_ignores_other_owners_jobs(db):
+    from src.routers.analytics import _cache_job_success_rate
+
+    for status in ("failed", "failed", "failed"):
+        _cache_job(db, "other-org", status)
+    _cache_job(db, "Acme", "done")  # owner match is case-insensitive
+    assert _cache_job_success_rate(db, "acme") == 1.0
+    assert _cache_job_success_rate(db, "never-cleared") is None
 
 
 # ---------------------------------------------------------------------------

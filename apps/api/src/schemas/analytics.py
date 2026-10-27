@@ -171,7 +171,7 @@ class CockpitResponse(BaseModel):
     pr_merge_rate_4w: list[PrWeekBucket]
     commit_activity_4w: list[int]
     total_cache_size_bytes: int
-    cache_job_success_rate: float
+    cache_job_success_rate: float | None
     commit_heatmap_52w: list[int] = []
     at_risk_repos: list[AtRiskRepo] = []
     milestones: list[MilestoneSummary] = []
