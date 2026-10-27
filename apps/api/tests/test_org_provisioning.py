@@ -2,6 +2,8 @@
 
 from unittest.mock import patch
 
+import pytest
+
 from src.core.db import User
 from src.repositories import org_membership_repo, org_repo
 from src.services import github_oauth, org_provisioning
@@ -212,6 +214,7 @@ def test_pat_connect_refuses_a_login_reused_by_a_different_github_org(db):
         "list_user_org_memberships",
         return_value=[github_oauth.GitHubOrgMembership(github_org_id=2, login="acme", role="admin")],
     ):
-        assert org_provisioning.connect_admin_org_from_token(db, carol, "acme", "pat") is None
+        with pytest.raises(org_repo.OrgIdentityMismatch):
+            org_provisioning.connect_admin_org_from_token(db, carol, "acme", "pat")
 
     assert org_membership_repo.get(db, org_id=old.id, user_id=carol.id) is None

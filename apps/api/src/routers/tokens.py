@@ -78,6 +78,7 @@ def upsert_token(
     # Skip the auto-connect path (a paginated GitHub crawl) only when the caller already
     # has an *admin* membership for this org; a missing/stale row still goes through it.
     nothing_to_do = False
+    unlink_stale_tenant = False
     if existing_org is not None:
         existing_org = org_repo.ensure_tenant_linked(db, existing_org)
         membership = tenant_repo.get_membership(db, existing_org.tenant_id, user.id)
@@ -85,20 +86,33 @@ def upsert_token(
 
     # If this admin can't already reach the org, try to establish the Org + admin
     # membership from the pasted PAT -- otherwise every /orgs/{org}/... page 404s.
+    connected_org = None
     if not nothing_to_do:
-        connected_org = org_provisioning.connect_admin_org_from_token(
-            db, user, org, body.token.get_secret_value()
-        )
+        try:
+            connected_org = org_provisioning.connect_admin_org_from_token(
+                db, user, org, body.token.get_secret_value()
+            )
+        except org_repo.OrgIdentityMismatch:
+            # The login-matched Org belongs to a different GitHub org now; don't file this PAT
+            # under its tenant (including a row saved earlier, while the login was still theirs).
+            existing_org = None
+            connected_org = None
+            unlink_stale_tenant = True
         if connected_org is not None:
             existing_org = connected_org
 
-    tenant_id = existing_org.tenant_id if existing_org else None
+    # Link the token to a tenant only when this caller is already an admin of it or the PAT just proved
+    # they are; an org matched by login alone may now belong to a different GitHub org.
+    verified = nothing_to_do or connected_org is not None
+    tenant_id = existing_org.tenant_id if existing_org is not None and verified else None
 
     row = db.query(SavedToken).filter_by(org=org).first()
     if row:
         row.encrypted_token = encrypted
         row.label = body.label
-        if row.tenant_id is None:
+        if unlink_stale_tenant:
+            row.tenant_id = None
+        elif row.tenant_id is None:
             row.tenant_id = tenant_id
     else:
         row = SavedToken(org=org, label=body.label, encrypted_token=encrypted, tenant_id=tenant_id)

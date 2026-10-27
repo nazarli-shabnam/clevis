@@ -237,7 +237,23 @@ def delete_org_installation(
     )
 
 
-def _bootstrap_org_admin_from_installation(db: Session, db_user: User, org_login: str, installation_id: int) -> Org:
+def _live_org_role(org_login: str, installation_id: int, github_login: str) -> str | None:
+    """The caller's current role in the org per GitHub, read with the installation's own token.
+    Raises HTTPException when GitHub can't be asked."""
+    try:
+        installation_token = github_app.get_installation_token(installation_id)
+        return github_app.get_org_membership_role(installation_token, org_login, github_login)
+    except github_app.GitHubAppNotConfigured:
+        raise HTTPException(status_code=503, detail="GitHub App is not configured")
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=400, detail=f"GitHub API error: {exc.response.status_code}")
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail="GitHub API unreachable")
+
+
+def _bootstrap_org_admin_from_installation(
+    db: Session, db_user: User, org_login: str, installation_id: int, github_org_id: int
+) -> Org:
     """No Clevis Org exists for org_login yet, or the caller isn't a known admin of it --
     live-verify the caller is actually a GitHub admin of this org right now, using the
     just-installed App's own installation token, then get-or-create the Org/OrgMembership
@@ -247,21 +263,19 @@ def _bootstrap_org_admin_from_installation(db: Session, db_user: User, org_login
     for the same org_login could both pass the live-admin check before either commits, then
     race to attach to (or duplicate) the same Org row."""
     db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:org_login))"), {"org_login": org_login})
-    try:
-        installation_token = github_app.get_installation_token(installation_id)
-        role = github_app.get_org_membership_role(installation_token, org_login, db_user.github_login)
-    except github_app.GitHubAppNotConfigured:
-        raise HTTPException(status_code=503, detail="GitHub App is not configured")
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(status_code=400, detail=f"GitHub API error: {exc.response.status_code}")
-    except httpx.RequestError:
-        raise HTTPException(status_code=503, detail="GitHub API unreachable")
+    role = _live_org_role(org_login, installation_id, db_user.github_login)
     if role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You must be an admin of this GitHub organization to connect it",
         )
-    org = org_repo.get_or_create(db, github_login=org_login)
+    try:
+        org = org_repo.get_or_create(db, github_login=org_login, github_org_id=github_org_id)
+    except org_repo.OrgIdentityMismatch:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This organization login is already connected to a different GitHub organization",
+        )
     org_membership_repo.get_or_create(db, org_id=org.id, user_id=db_user.id, role="admin")
     return org
 
@@ -298,8 +312,36 @@ def sync_org_installation(
 
     installation = _verify_installation(payload.installation_id, payload.account_login, payload.account_type)
 
+    reported_id = ((installation or {}).get("account") or {}).get("id")
+    github_org_id = reported_id if isinstance(reported_id, int) and not isinstance(reported_id, bool) else None
     if not is_known_admin:
-        org = _bootstrap_org_admin_from_installation(db, db_user, org_login, payload.installation_id)
+        if github_org_id is None:
+            raise HTTPException(status_code=502, detail="GitHub did not report an id for this organization")
+        org = _bootstrap_org_admin_from_installation(db, db_user, org_login, payload.installation_id, github_org_id)
+    elif github_org_id is not None and org.github_org_id is not None and org.github_org_id != github_org_id:
+        # A known admin of the old tenant must not attach the installation of whoever holds this
+        # login now; the bootstrap path enforces the same identity inside get_or_create.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This installation belongs to a different GitHub organization than the one connected under this login",
+        )
+    elif github_org_id is not None and org.github_org_id is None:
+        # Legacy row from before ids were recorded. Bind the id GitHub verified for this login only when
+        # the caller is live-verified as a GitHub admin of it; a stale local admin can still sync (as
+        # before) but leaves the row unbound for the bootstrap path to claim.
+        holder = org_repo.get_by_org_id(db, github_org_id)
+        if holder is not None and holder.id != org.id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This GitHub organization is already connected under a different login",
+            )
+        github_login = db.query(User.github_login).filter(User.id == user.id).scalar()
+        try:
+            role = _live_org_role(org_login, payload.installation_id, github_login) if github_login else None
+        except HTTPException:
+            role = None
+        if role == "admin":
+            org.github_org_id = github_org_id
 
     # github_installations' org-scoped rows have no per-row user column, so the RLS
     # self-access clause (owner_user_id match) can't cover this write like it does for

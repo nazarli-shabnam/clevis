@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from src.core.db import Job
+from src.core.db import Job, Org
 from src.repositories import org_repo
 
 _PATH = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "0061_add_jobs_tenant_id.py"
@@ -38,7 +38,12 @@ def _tenant_of(db, job_id):
 def test_backfill_attributes_only_what_is_unambiguous(db, migration):
     acme = org_repo.get_or_create(db, github_login="Acme")
     dup1 = org_repo.get_or_create(db, github_login="dup")
-    dup2 = org_repo.get_or_create(db, github_login="DUP")
+    # get_or_create now resolves a casing variant to the existing row, so build the legacy
+    # case-duplicate (from before it did) directly.
+    dup2 = Org(github_login="DUP")
+    db.add(dup2)
+    db.commit()
+    dup2 = org_repo.ensure_tenant_linked(db, dup2)
 
     ids = {
         "backfill_by_tenant": _job(db, "github.backfill_repo_events", {"tenant_id": acme.tenant_id, "token": "x"}),

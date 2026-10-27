@@ -24,6 +24,7 @@ class _FakeResponse:
         self.links = links or {}
         self.status_code = status_code
         self.headers = headers or {}
+        self.text = ""
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -668,3 +669,32 @@ def test_handler_keeps_outside_flags_when_the_outside_collaborators_call_was_ref
         cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
         cur.execute("SELECT is_outside_collaborator FROM repo_collaborators WHERE tenant_id = %s AND repo = %s", (tenant_id, repo))
         assert cur.fetchone() == (False,)  # not flipped to outside by a missing list
+
+
+@pytest.mark.parametrize(
+    "status, headers, body, expected",
+    [
+        (403, {"X-RateLimit-Remaining": "4999"}, '{"message": "You have exceeded a secondary rate limit."}', True),
+        (403, {"X-RateLimit-Remaining": "4999"}, '{"message": "Resource not accessible by integration"}', False),
+        (403, {"Retry-After": "30"}, "", True),
+        (404, {}, '{"message": "secondary rate limit"}', False),
+    ],
+    ids=["message-only", "permission-refusal", "retry-after", "not-a-403"],
+)
+def test_secondary_rate_limit_is_detected_from_the_message_too(status, headers, body, expected):
+    resp = httpx.Response(status, headers=headers, text=body)
+
+    assert membership_reconcile._is_secondary_rate_limit(resp) is expected
+
+
+def test_a_message_only_secondary_rate_limit_is_not_slept_on_in_line():
+    limited = _FakeResponse({}, status_code=403)
+    limited.text = '{"message": "You have exceeded a secondary rate limit."}'
+    client = _FakeClient({"/orgs/acme/members": [limited]})
+
+    with patch("membership_reconcile.time.sleep") as mock_sleep:
+        resp = membership_reconcile._get_with_retry(client, "https://api.github.com/orgs/acme/members", {}, None)
+
+    assert resp is limited
+    mock_sleep.assert_not_called()
+    assert membership_reconcile._is_secondary_rate_limit(resp) is True

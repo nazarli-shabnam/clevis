@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from src.core.auth import UserOut, require_auth, require_workspace_admin
-from src.core.db import AuditLog, User, get_db
+from src.core.db import AuditLog, SavedToken, User, get_db
 from src.core.rbac import require_org_role
 from src.repositories import org_repo, tenant_repo
 from src.routers.tokens import router as tokens_router
@@ -125,3 +125,48 @@ def test_token_save_and_delete_are_audited(db, admin):
 
     actions = [r.action for r in db.query(AuditLog).filter(AuditLog.target == "acme").order_by(AuditLog.id)]
     assert "token.save" in actions and "token.delete" in actions
+
+
+def test_pat_for_a_login_now_owned_by_a_different_github_org_is_not_filed_under_the_old_tenant(db, admin):
+    old = org_repo.get_or_create(db, github_login="acme", github_org_id=1)
+    old_tenant_id = old.tenant_id
+    client = _admin_client(db, admin)
+    memberships = [GitHubOrgMembership(github_org_id=2, login="acme", role="admin")]
+
+    with patch(_PATCH_TARGET, return_value=memberships):
+        resp = client.put("/tokens/acme", json={"token": "ghp_valid"})
+
+    assert resp.status_code == 200
+    assert tenant_repo.get_membership(db, old_tenant_id, admin.id) is None
+    assert db.query(SavedToken).filter_by(org="acme").one().tenant_id is None
+
+
+def test_a_token_saved_before_the_login_changed_hands_is_unlinked_from_the_old_tenant(db, admin):
+    old = org_repo.get_or_create(db, github_login="acme", github_org_id=1)
+    db.add(SavedToken(org="acme", label="old", encrypted_token="x", tenant_id=old.tenant_id))
+    db.commit()
+    client = _admin_client(db, admin)
+    memberships = [GitHubOrgMembership(github_org_id=2, login="acme", role="admin")]
+
+    with patch(_PATCH_TARGET, return_value=memberships):
+        resp = client.put("/tokens/acme", json={"token": "ghp_new", "label": "new"})
+
+    assert resp.status_code == 200
+    row = db.query(SavedToken).filter_by(org="acme").one()
+    assert row.label == "new" and row.tenant_id is None
+    assert db.query(AuditLog).filter(AuditLog.action == "token.save").one().tenant_id != old.tenant_id
+
+
+def test_pat_that_cannot_prove_org_admin_does_not_link_a_login_matched_org(db, admin):
+    # A workspace admin who is not an admin of the org, and whose PAT does not list it as admin, must not
+    # get the token filed under the tenant that merely shares the login.
+    org = org_repo.get_or_create(db, github_login="acme", github_org_id=1)
+    client = _admin_client(db, admin)
+    memberships = [GitHubOrgMembership(github_org_id=9, login="other-org", role="admin")]
+
+    with patch(_PATCH_TARGET, return_value=memberships):
+        resp = client.put("/tokens/acme", json={"token": "ghp_valid"})
+
+    assert resp.status_code == 200
+    assert db.query(SavedToken).filter_by(org="acme").one().tenant_id is None
+    assert tenant_repo.get_membership(db, org.tenant_id, admin.id) is None

@@ -38,7 +38,9 @@ def connect_admin_org_from_token(
     Same authorization policy as the OAuth path: only connects when GitHub reports the
     caller as an admin/owner -- pasting a PAT must not be a back door around the
     invite-accept flow. Returns the connected ``Org``, or ``None`` if it can't be resolved.
-    **Never raises** — the token save must succeed regardless.
+    Raises :class:`org_repo.OrgIdentityMismatch` when the login now belongs to a different GitHub
+    org than the stored one, so the caller can tell that apart from "not connectable" and must
+    not fall back to the stored org. Any other failure is swallowed — the token save must succeed.
     """
     try:
         memberships = github_oauth.list_user_org_memberships(user_token)
@@ -54,10 +56,7 @@ def connect_admin_org_from_token(
         return None
 
     set_session_user(db, user.id)
-    try:
-        org = org_repo.get_or_create(db, github_login=match.login, github_org_id=match.github_org_id)
-    except org_repo.OrgIdentityMismatch:
-        return None
+    org = org_repo.get_or_create(db, github_login=match.login, github_org_id=match.github_org_id)
     membership = org_membership_repo.get_or_create(db, org_id=org.id, user_id=user.id, role="admin")
     if membership.role != "admin":
         org_membership_repo.update_role(db, org_id=org.id, user_id=user.id, role="admin")
