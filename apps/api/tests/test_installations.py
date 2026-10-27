@@ -905,23 +905,39 @@ def test_sync_org_installation_known_admin_cannot_attach_an_installation_of_a_di
     assert resp.status_code == 200
 
 
-def test_sync_org_installation_known_admin_binds_the_verified_org_id_to_a_legacy_row(db, acme_org):
-    assert acme_org["org"].github_org_id is None
-    with _mock_installation("acme", "Organization", account_id=77):
-        resp = _client(db, acme_org["admin"]).post(
+def _sync_as_known_admin(db, acme_org, *, role, github_login="admin-gh", account_id=77):
+    if github_login is not None:
+        db.query(User).filter(User.id == acme_org["admin"].id).update({"github_login": github_login})
+        db.commit()
+    with (
+        _mock_installation("acme", "Organization", account_id=account_id),
+        patch("src.routers.installations.github_app.get_installation_token", return_value="itok"),
+        patch("src.routers.installations.github_app.get_org_membership_role", return_value=role),
+    ):
+        return _client(db, acme_org["admin"]).post(
             "/orgs/acme/installations/sync",
             json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
         )
-    assert resp.status_code == 200
+
+
+def test_sync_org_installation_binds_the_verified_org_id_to_a_legacy_row_for_a_live_admin(db, acme_org):
+    assert acme_org["org"].github_org_id is None
+
+    assert _sync_as_known_admin(db, acme_org, role="admin").status_code == 200
+
     db.refresh(acme_org["org"])
     assert acme_org["org"].github_org_id == 77
 
 
-def test_sync_org_installation_known_admin_cannot_bind_an_id_already_held_by_another_org(db, acme_org):
+@pytest.mark.parametrize("role, github_login", [("member", "admin-gh"), (None, "admin-gh"), ("admin", None)])
+def test_sync_org_installation_leaves_a_legacy_row_unbound_without_a_live_admin_check(db, acme_org, role, github_login):
+    assert _sync_as_known_admin(db, acme_org, role=role, github_login=github_login).status_code == 200
+
+    db.refresh(acme_org["org"])
+    assert acme_org["org"].github_org_id is None
+
+
+def test_sync_org_installation_cannot_bind_an_id_already_held_by_another_org(db, acme_org):
     org_repo.get_or_create(db, github_login="globex", github_org_id=77)
-    with _mock_installation("acme", "Organization", account_id=77):
-        resp = _client(db, acme_org["admin"]).post(
-            "/orgs/acme/installations/sync",
-            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
-        )
-    assert resp.status_code == 409
+
+    assert _sync_as_known_admin(db, acme_org, role="admin").status_code == 409
