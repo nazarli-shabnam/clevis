@@ -314,9 +314,10 @@ def sync_org_installation(
 
     reported_id = ((installation or {}).get("account") or {}).get("id")
     github_org_id = reported_id if isinstance(reported_id, int) and not isinstance(reported_id, bool) else None
+    if installation is not None and github_org_id is None:
+        # Without GitHub's id for the account the installation can't be tied to this org's identity.
+        raise HTTPException(status_code=502, detail="GitHub did not report an id for this organization")
     if not is_known_admin:
-        if github_org_id is None:
-            raise HTTPException(status_code=502, detail="GitHub did not report an id for this organization")
         org = _bootstrap_org_admin_from_installation(db, db_user, org_login, payload.installation_id, github_org_id)
     elif github_org_id is not None and org.github_org_id is not None and org.github_org_id != github_org_id:
         # A known admin of the old tenant must not attach the installation of whoever holds this

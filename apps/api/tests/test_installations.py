@@ -722,7 +722,7 @@ def test_sync_org_installation_captures_granted_permissions(db, acme_org):
     with patch(
         "src.routers.installations.github_app.get_installation",
         return_value={
-            "account": {"login": "acme", "type": "Organization"},
+            "account": {"login": "acme", "type": "Organization", "id": 4242},
             "permissions": {"issues": "write", "contents": "read", "metadata": "read"},
         },
     ):
@@ -944,3 +944,12 @@ def test_sync_org_installation_refuses_an_id_already_held_by_another_org_whateve
     org_repo.get_or_create(db, github_login="globex", github_org_id=77)
 
     assert _sync_as_known_admin(db, acme_org, role=role, github_login=github_login).status_code == 409
+
+
+def test_sync_org_installation_known_admin_is_rejected_when_the_installation_reports_no_org_id(db, acme_org):
+    with _mock_installation("acme", "Organization", account_id=None):
+        resp = _client(db, acme_org["admin"]).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 502
