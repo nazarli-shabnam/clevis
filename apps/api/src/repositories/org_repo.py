@@ -1,9 +1,18 @@
+import logging
+
 from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.db import Org
 from src.repositories import tenant_repo
+
+logger = logging.getLogger(__name__)
+
+
+class OrgIdentityMismatch(Exception):
+    """A login matches an existing Org whose stored github_org_id is a different GitHub org: the
+    login was deleted/renamed away and claimed by someone else."""
 
 
 def ensure_tenant_linked(db: Session, org: Org) -> Org:
@@ -40,6 +49,14 @@ def get_by_org_id(db: Session, github_org_id: int) -> Org | None:
 def get_or_create(db: Session, github_login: str, github_org_id: int | None = None) -> Org:
     org = get_by_login(db, github_login)
     if org is not None:
+        if github_org_id is not None and org.github_org_id is not None and org.github_org_id != github_org_id:
+            # Reusing the row would hand the old org's tenant (members, events, alerts, scans) to
+            # whoever GitHub now reports as admin of this login.
+            logger.warning(
+                "refusing to reuse org %r (id %d): login now belongs to GitHub org id %d",
+                github_login, org.id, github_org_id,
+            )
+            raise OrgIdentityMismatch(github_login)
         if github_org_id is not None and org.github_org_id is None:
             org.github_org_id = github_org_id
             db.commit()
