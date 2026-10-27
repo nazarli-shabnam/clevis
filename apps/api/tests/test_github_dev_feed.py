@@ -1,5 +1,6 @@
 """Tests for the org-wide failed-runs and release-timeline routes."""
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import httpx
@@ -134,7 +135,7 @@ def test_release_timeline_filters_by_days_and_excludes_missing_published_at(clie
             {
                 "tag_name": "v1.0.0",
                 "name": "v1.0.0",
-                "published_at": "2026-07-20T00:00:00Z",
+                "published_at": (datetime.now(timezone.utc) - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ"),  # inside the 90-day window
                 "prerelease": False,
                 "body": "x" * 200,
                 "html_url": "https://github.com/acme/api/releases/v1.0.0",
