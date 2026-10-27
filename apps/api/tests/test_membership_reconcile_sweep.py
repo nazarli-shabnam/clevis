@@ -113,11 +113,32 @@ def test_sweep_re_enqueues_once_the_active_job_reaches_a_terminal_state(db):
 
     with patch("src.services.membership_reconcile_sweep.resolve_org_token", return_value="tok"):
         run_membership_reconcile_sweep(db)
-        db.execute(text("UPDATE jobs SET status = 'failed' WHERE job_type = 'github.reconcile_org_membership'"))
+        # Failed long enough ago to be outside the stale window, so it no longer blocks a retry.
+        db.execute(
+            text(
+                "UPDATE jobs SET status = 'failed', updated_at = NOW() - INTERVAL '30 days' "
+                "WHERE job_type = 'github.reconcile_org_membership'"
+            )
+        )
         db.commit()
         run_membership_reconcile_sweep(db)
 
     assert len(_reconcile_jobs(db)) == 2
+
+
+def test_sweep_does_not_re_enqueue_while_the_last_reconcile_failed_within_the_stale_window(db):
+    # E.g. the App lacks a permission the roster fetch needs: the job fails every time and never
+    # advances the cursor, so without a backoff the tenant gets a fresh job every tick.
+    org_repo.get_or_create(db, github_login="acme-reconcile-failed")
+
+    with patch("src.services.membership_reconcile_sweep.resolve_org_token", return_value="tok"):
+        run_membership_reconcile_sweep(db)
+        db.execute(text("UPDATE jobs SET status = 'failed' WHERE job_type = 'github.reconcile_org_membership'"))
+        db.commit()
+        run_membership_reconcile_sweep(db)
+        run_membership_reconcile_sweep(db)
+
+    assert len(_reconcile_jobs(db)) == 1
 
 
 def test_sweep_survives_a_generic_error_during_enqueue_for_one_tenant(db):

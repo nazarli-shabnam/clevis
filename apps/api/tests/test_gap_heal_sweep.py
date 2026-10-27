@@ -216,11 +216,34 @@ def test_sweep_re_enqueues_once_the_active_job_reaches_a_terminal_state(db):
 
     with patch("src.services.gap_heal_sweep.resolve_org_token", return_value="tok"):
         run_gap_heal_sweep(db)
-        db.execute(text("UPDATE jobs SET status = 'failed' WHERE job_type = 'github.backfill_repo_events'"))
+        # Failed long enough ago to be outside the stale window, so it no longer blocks a retry.
+        db.execute(
+            text(
+                "UPDATE jobs SET status = 'failed', updated_at = NOW() - INTERVAL '30 days' "
+                "WHERE job_type = 'github.backfill_repo_events'"
+            )
+        )
         db.commit()
         run_gap_heal_sweep(db)
 
     assert len(_backfill_jobs(db)) == 2
+
+
+def test_sweep_does_not_re_enqueue_while_the_last_backfill_failed_within_the_stale_window(db):
+    # A job that fails permanently never advances the cursor, so the tenant stays stale: without a
+    # backoff it would get a fresh job (and token mint) every tick.
+    org = org_repo.get_or_create(db, github_login="acme-sweep-failed")
+    stale = datetime.now(timezone.utc) - timedelta(hours=10)
+    _seed_cursor(db, org.tenant_id, "acme-sweep-failed", "Organization", stale)
+
+    with patch("src.services.gap_heal_sweep.resolve_org_token", return_value="tok"):
+        run_gap_heal_sweep(db)
+        db.execute(text("UPDATE jobs SET status = 'failed' WHERE job_type = 'github.backfill_repo_events'"))
+        db.commit()
+        run_gap_heal_sweep(db)
+        run_gap_heal_sweep(db)
+
+    assert len(_backfill_jobs(db)) == 1
 
 
 def test_sweep_survives_a_generic_error_during_enqueue_for_one_tenant(db):
