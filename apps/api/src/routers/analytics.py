@@ -837,9 +837,9 @@ def _has_automation_run(db: Session, user: UserOut, owner: str) -> bool | None:
         return None
 
 
-def _cache_job_success_rate(db: Session, owner: str) -> float | None:
+def _cache_job_success_rate(db: Session, owner: str, actor: str | None = None) -> float | None:
     """None (not 0.0) when the owner has no finished cache-clear jobs: "no data" is not a 0% rate."""
-    jobs = job_repo.list_recent_by_type(db, job_type=_CACHE_JOB_TYPE, owner=owner, limit=20)
+    jobs = job_repo.list_recent_by_type(db, job_type=_CACHE_JOB_TYPE, owner=owner, actor=actor, limit=20)
     done = sum(1 for j in jobs if j["status"] == "done")
     failed = sum(1 for j in jobs if j["status"] == "failed")
     return done / (done + failed) if (done + failed) else None
@@ -872,7 +872,14 @@ async def personal_analytics_cockpit(
             if history_scope is not None
             else []
         )
-        return scans, _cache_job_success_rate(db, owner)
+        # Same gate as the scan history: no claim on this owner, no rate. A caller whose only claim is a
+        # scan of their own (no org membership) sees only the cache-clears they enqueued themselves.
+        cache_rate = (
+            None
+            if history_scope is None
+            else _cache_job_success_rate(db, owner, actor=user.email if history_scope.kind == "own" else None)
+        )
+        return scans, cache_rate
 
     scans, cache_job_success_rate = await anyio.to_thread.run_sync(_scans_and_cache_job_rate)
     latest_score = scans[0]["score"] if scans else None

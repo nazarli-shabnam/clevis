@@ -980,8 +980,8 @@ def test_safe_total_cache_bytes_one_bad_repo_sums_the_rest_but_flags_not_ok():
     assert ok is False
 
 
-def _cache_job(db, owner, status):
-    db.add(Job(job_type="github.clear_actions_cache", payload=json.dumps({"owner": owner}), status=status))
+def _cache_job(db, owner, status, actor="someone@example.com"):
+    db.add(Job(job_type="github.clear_actions_cache", payload=json.dumps({"owner": owner, "actor": actor}), status=status))
     db.commit()
 
 
@@ -1015,6 +1015,51 @@ def test_cache_job_success_rate_ignores_other_owners_jobs(db):
     _cache_job(db, "Acme", "done")  # owner match is case-insensitive
     assert _cache_job_success_rate(db, "acme") == 1.0
     assert _cache_job_success_rate(db, "never-cleared") is None
+
+
+def test_cache_job_success_rate_can_be_limited_to_one_actor(db):
+    from src.routers.analytics import _cache_job_success_rate
+
+    _cache_job(db, "acme", "failed", actor="a@example.com")
+    _cache_job(db, "acme", "done", actor="b@example.com")
+    assert _cache_job_success_rate(db, "acme", actor="b@example.com") == 1.0
+    assert _cache_job_success_rate(db, "acme") == 0.5
+
+
+def test_cockpit_hides_the_cache_rate_from_a_caller_with_no_claim_on_the_owner(http, db, mock_user):
+    org_repo.get_or_create(db, github_login="acme")
+    _cache_job(db, "acme", "done")
+
+    patchers = _patch_all()
+    _start_all(patchers)
+    try:
+        with patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"):
+            resp = http.get("/me/analytics/cockpit/acme")
+    finally:
+        _stop_all(patchers)
+
+    assert resp.status_code == 200
+    assert resp.json()["cache_job_success_rate"] is None
+
+
+def test_cockpit_cache_rate_for_an_own_scope_caller_counts_only_their_jobs(http, db, mock_user):
+    org = org_repo.get_or_create(db, github_login="acme")
+    scan_results_repo.insert(
+        db, owner="acme", score=60, total_checks=5, failed_checks=2, checks=[],
+        tenant_id=org.tenant_id, scanned_by_user_id=mock_user.id,
+    )
+    _cache_job(db, "acme", "failed", actor="someone-else@example.com")
+    _cache_job(db, "acme", "done", actor=mock_user.email)
+
+    patchers = _patch_all()
+    _start_all(patchers)
+    try:
+        with patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"):
+            resp = http.get("/me/analytics/cockpit/acme")
+    finally:
+        _stop_all(patchers)
+
+    assert resp.json()["cache_job_success_rate"] == 1.0
 
 
 # ---------------------------------------------------------------------------
