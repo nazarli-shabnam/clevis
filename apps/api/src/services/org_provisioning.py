@@ -54,7 +54,10 @@ def connect_admin_org_from_token(
         return None
 
     set_session_user(db, user.id)
-    org = org_repo.get_or_create(db, github_login=match.login, github_org_id=match.github_org_id)
+    try:
+        org = org_repo.get_or_create(db, github_login=match.login, github_org_id=match.github_org_id)
+    except org_repo.OrgIdentityMismatch:
+        return None
     membership = org_membership_repo.get_or_create(db, org_id=org.id, user_id=user.id, role="admin")
     if membership.role != "admin":
         org_membership_repo.update_role(db, org_id=org.id, user_id=user.id, role="admin")
@@ -86,7 +89,10 @@ def sync_org_admin_memberships(db: Session, user: User, user_token: str) -> None
     for gh_membership in memberships:
         if gh_membership.role != "admin":
             continue
-        org = org_repo.get_or_create(db, github_login=gh_membership.login, github_org_id=gh_membership.github_org_id)
+        try:
+            org = org_repo.get_or_create(db, github_login=gh_membership.login, github_org_id=gh_membership.github_org_id)
+        except org_repo.OrgIdentityMismatch:
+            continue  # logged by get_or_create; one stale org must not block login or the other orgs
         existing = org_membership_repo.get(db, org_id=org.id, user_id=user.id)
         if existing is not None and existing.role == "admin":
             continue
