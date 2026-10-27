@@ -837,11 +837,12 @@ def _has_automation_run(db: Session, user: UserOut, owner: str) -> bool | None:
         return None
 
 
-def _cache_job_success_rate(db: Session) -> float:
-    jobs = job_repo.list_recent_by_type(db, job_type=_CACHE_JOB_TYPE, limit=20)
+def _cache_job_success_rate(db: Session, owner: str, actor: str | None = None) -> float | None:
+    """None (not 0.0) when the owner has no finished cache-clear jobs: "no data" is not a 0% rate."""
+    jobs = job_repo.list_recent_by_type(db, job_type=_CACHE_JOB_TYPE, owner=owner, actor=actor, limit=20)
     done = sum(1 for j in jobs if j["status"] == "done")
     failed = sum(1 for j in jobs if j["status"] == "failed")
-    return done / (done + failed) if (done + failed) else 0.0
+    return done / (done + failed) if (done + failed) else None
 
 
 @router.get("/me/analytics/cockpit/{owner}", response_model=CockpitResponse)
@@ -864,14 +865,21 @@ async def personal_analytics_cockpit(
 
     # Scan history is a local DB read, so it needs its own access gate (same as /me/analytics/history).
     # A caller with no claim still gets the rest of the cockpit, just no trend.
-    def _scans_and_cache_job_rate() -> tuple[list[dict], float]:
+    def _scans_and_cache_job_rate() -> tuple[list[dict], float | None]:
         history_scope = _user_history_scope(db, user, owner)
         scans = (
             scan_results_repo.list_recent(db, limit=10, **_scope_filters(history_scope, owner, user))
             if history_scope is not None
             else []
         )
-        return scans, _cache_job_success_rate(db)
+        # Same gate as the scan history: no claim on this owner, no rate. A caller whose only claim is a
+        # scan of their own (no org membership) sees only the cache-clears they enqueued themselves.
+        cache_rate = (
+            None
+            if history_scope is None
+            else _cache_job_success_rate(db, owner, actor=user.email if history_scope.kind == "own" else None)
+        )
+        return scans, cache_rate
 
     scans, cache_job_success_rate = await anyio.to_thread.run_sync(_scans_and_cache_job_rate)
     latest_score = scans[0]["score"] if scans else None
