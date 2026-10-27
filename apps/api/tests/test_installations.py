@@ -18,11 +18,11 @@ from src.services import app_permissions, github_app
 _OUTSIDER = UserOut(id=99999, email="outsider@e.com", name=None, is_workspace_admin=False)
 
 
-def _mock_installation(account_login: str, account_type: str):
-    return patch(
-        "src.routers.installations.github_app.get_installation",
-        return_value={"account": {"login": account_login, "type": account_type}},
-    )
+def _mock_installation(account_login: str, account_type: str, account_id: int | None = 4242):
+    account = {"login": account_login, "type": account_type}
+    if account_id is not None:
+        account["id"] = account_id
+    return patch("src.routers.installations.github_app.get_installation", return_value={"account": account})
 
 
 def _make_user(db, email: str, github_login: str | None = None) -> UserOut:
@@ -343,7 +343,7 @@ def test_sync_org_installation_bootstraps_new_org_for_live_github_admin(db):
     assert resp.json()["synced"] is True
     mock_role.assert_called_once_with("itok", "acme", "founder")
     org = org_repo.get_by_login(db, "acme")
-    assert org is not None
+    assert org is not None and org.github_org_id == 4242
     membership = org_membership_repo.get(db, org.id, me.id)
     assert membership is not None
     assert membership.role == "admin"
@@ -855,3 +855,34 @@ def test_refresh_personal_installation_permissions_only_for_owner(db):
     assert ok.status_code == 200
     assert "fix_this" not in {b["feature"] for b in ok.json()["blocked_features"]}
     assert denied.status_code == 404
+
+
+def test_sync_org_installation_bootstrap_refuses_a_login_now_owned_by_a_different_github_org(db):
+    old = org_repo.get_or_create(db, github_login="acme", github_org_id=1)
+    me = _make_user(db, "newowner@e.com", github_login="newowner")
+    with (
+        _mock_installation("acme", "Organization", account_id=2),
+        patch("src.routers.installations.github_app.get_installation_token", return_value="itok"),
+        patch("src.routers.installations.github_app.get_org_membership_role", return_value="admin"),
+    ):
+        resp = _client(db, me).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 409
+    assert org_membership_repo.get(db, old.id, me.id) is None
+
+
+def test_sync_org_installation_bootstrap_requires_the_installation_to_report_an_org_id(db):
+    me = _make_user(db, "founder2@e.com", github_login="founder2")
+    with (
+        _mock_installation("acme", "Organization", account_id=None),
+        patch("src.routers.installations.github_app.get_installation_token", return_value="itok"),
+        patch("src.routers.installations.github_app.get_org_membership_role", return_value="admin"),
+    ):
+        resp = _client(db, me).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 502
+    assert org_repo.get_by_login(db, "acme") is None

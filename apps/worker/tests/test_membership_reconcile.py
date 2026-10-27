@@ -654,3 +654,16 @@ def test_secondary_rate_limit_is_detected_from_the_message_too(status, headers, 
     resp = httpx.Response(status, headers=headers, text=body)
 
     assert membership_reconcile._is_secondary_rate_limit(resp) is expected
+
+
+def test_a_message_only_secondary_rate_limit_is_not_slept_on_in_line():
+    limited = _FakeResponse({}, status_code=403)
+    limited.text = '{"message": "You have exceeded a secondary rate limit."}'
+    client = _FakeClient({"/orgs/acme/members": [limited]})
+
+    with patch("membership_reconcile.time.sleep") as mock_sleep:
+        resp = membership_reconcile._get_with_retry(client, "https://api.github.com/orgs/acme/members", {}, None)
+
+    assert resp is limited
+    mock_sleep.assert_not_called()
+    assert membership_reconcile._is_secondary_rate_limit(resp) is True

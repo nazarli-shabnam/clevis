@@ -237,7 +237,9 @@ def delete_org_installation(
     )
 
 
-def _bootstrap_org_admin_from_installation(db: Session, db_user: User, org_login: str, installation_id: int) -> Org:
+def _bootstrap_org_admin_from_installation(
+    db: Session, db_user: User, org_login: str, installation_id: int, github_org_id: int
+) -> Org:
     """No Clevis Org exists for org_login yet, or the caller isn't a known admin of it --
     live-verify the caller is actually a GitHub admin of this org right now, using the
     just-installed App's own installation token, then get-or-create the Org/OrgMembership
@@ -261,7 +263,13 @@ def _bootstrap_org_admin_from_installation(db: Session, db_user: User, org_login
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You must be an admin of this GitHub organization to connect it",
         )
-    org = org_repo.get_or_create(db, github_login=org_login)
+    try:
+        org = org_repo.get_or_create(db, github_login=org_login, github_org_id=github_org_id)
+    except org_repo.OrgIdentityMismatch:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This organization login is already connected to a different GitHub organization",
+        )
     org_membership_repo.get_or_create(db, org_id=org.id, user_id=db_user.id, role="admin")
     return org
 
@@ -299,7 +307,10 @@ def sync_org_installation(
     installation = _verify_installation(payload.installation_id, payload.account_login, payload.account_type)
 
     if not is_known_admin:
-        org = _bootstrap_org_admin_from_installation(db, db_user, org_login, payload.installation_id)
+        github_org_id = (installation.get("account") or {}).get("id")
+        if not isinstance(github_org_id, int) or isinstance(github_org_id, bool):
+            raise HTTPException(status_code=502, detail="GitHub did not report an id for this organization")
+        org = _bootstrap_org_admin_from_installation(db, db_user, org_login, payload.installation_id, github_org_id)
 
     # github_installations' org-scoped rows have no per-row user column, so the RLS
     # self-access clause (owner_user_id match) can't cover this write like it does for

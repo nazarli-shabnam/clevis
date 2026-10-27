@@ -78,6 +78,7 @@ def upsert_token(
     # Skip the auto-connect path (a paginated GitHub crawl) only when the caller already
     # has an *admin* membership for this org; a missing/stale row still goes through it.
     nothing_to_do = False
+    unlink_stale_tenant = False
     if existing_org is not None:
         existing_org = org_repo.ensure_tenant_linked(db, existing_org)
         membership = tenant_repo.get_membership(db, existing_org.tenant_id, user.id)
@@ -92,9 +93,10 @@ def upsert_token(
             )
         except org_repo.OrgIdentityMismatch:
             # The login-matched Org belongs to a different GitHub org now; don't file this PAT
-            # under its tenant.
+            # under its tenant (including a row saved earlier, while the login was still theirs).
             existing_org = None
             connected_org = None
+            unlink_stale_tenant = True
         if connected_org is not None:
             existing_org = connected_org
 
@@ -104,7 +106,9 @@ def upsert_token(
     if row:
         row.encrypted_token = encrypted
         row.label = body.label
-        if row.tenant_id is None:
+        if unlink_stale_tenant:
+            row.tenant_id = None
+        elif row.tenant_id is None:
             row.tenant_id = tenant_id
     else:
         row = SavedToken(org=org, label=body.label, encrypted_token=encrypted, tenant_id=tenant_id)

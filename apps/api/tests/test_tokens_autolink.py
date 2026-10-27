@@ -139,3 +139,19 @@ def test_pat_for_a_login_now_owned_by_a_different_github_org_is_not_filed_under_
     assert resp.status_code == 200
     assert tenant_repo.get_membership(db, old_tenant_id, admin.id) is None
     assert db.query(SavedToken).filter_by(org="acme").one().tenant_id is None
+
+
+def test_a_token_saved_before_the_login_changed_hands_is_unlinked_from_the_old_tenant(db, admin):
+    old = org_repo.get_or_create(db, github_login="acme", github_org_id=1)
+    db.add(SavedToken(org="acme", label="old", encrypted_token="x", tenant_id=old.tenant_id))
+    db.commit()
+    client = _admin_client(db, admin)
+    memberships = [GitHubOrgMembership(github_org_id=2, login="acme", role="admin")]
+
+    with patch(_PATCH_TARGET, return_value=memberships):
+        resp = client.put("/tokens/acme", json={"token": "ghp_new", "label": "new"})
+
+    assert resp.status_code == 200
+    row = db.query(SavedToken).filter_by(org="acme").one()
+    assert row.label == "new" and row.tenant_id is None
+    assert db.query(AuditLog).filter(AuditLog.action == "token.save").one().tenant_id != old.tenant_id

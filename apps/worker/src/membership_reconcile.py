@@ -54,13 +54,15 @@ def _get_all_pages(client: httpx.Client, base: str, headers: dict, path: str, pa
     return results
 
 
+def _has_rate_limit_headers(resp: httpx.Response) -> bool:
+    return resp.status_code == 403 and ("Retry-After" in resp.headers or resp.headers.get("X-RateLimit-Remaining") == "0")
+
+
 def _is_secondary_rate_limit(resp: httpx.Response) -> bool:
-    if resp.status_code != 403:
-        return False
-    if "Retry-After" in resp.headers or resp.headers.get("X-RateLimit-Remaining") == "0":
-        return True
-    # GitHub also sends this 403 with neither signal; only the message then tells it from a permission refusal.
-    return "secondary rate limit" in resp.text.lower()
+    # GitHub also sends this 403 with neither header signal; only the message then tells it from a
+    # permission refusal. That variant is not slept on in-line (no wait hint to honour): it surfaces
+    # so the job is requeued with its own backoff.
+    return _has_rate_limit_headers(resp) or (resp.status_code == 403 and "secondary rate limit" in resp.text.lower())
 
 
 def _retry_delay_seconds(resp: httpx.Response, attempt: int) -> float:
@@ -78,7 +80,7 @@ def _retry_delay_seconds(resp: httpx.Response, attempt: int) -> float:
                 return min(delay, _MAX_RETRY_AFTER_SECONDS)
         except ValueError:
             pass
-    if resp.status_code == 429 or _is_secondary_rate_limit(resp):
+    if resp.status_code == 429 or _has_rate_limit_headers(resp):
         return _MAX_RETRY_AFTER_SECONDS
     return 2**attempt
 
@@ -92,7 +94,7 @@ def _get_with_retry(client: httpx.Client, url: str, headers: dict, params: dict 
                 time.sleep(2**attempt)
                 continue
             raise
-        if (resp.status_code == 429 or _is_secondary_rate_limit(resp) or resp.status_code >= 500) and attempt < 2:
+        if (resp.status_code == 429 or _has_rate_limit_headers(resp) or resp.status_code >= 500) and attempt < 2:
             time.sleep(_retry_delay_seconds(resp, attempt))
             continue
         return resp
