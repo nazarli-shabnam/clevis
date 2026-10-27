@@ -86,6 +86,7 @@ def upsert_token(
 
     # If this admin can't already reach the org, try to establish the Org + admin
     # membership from the pasted PAT -- otherwise every /orgs/{org}/... page 404s.
+    connected_org = None
     if not nothing_to_do:
         try:
             connected_org = org_provisioning.connect_admin_org_from_token(
@@ -100,7 +101,10 @@ def upsert_token(
         if connected_org is not None:
             existing_org = connected_org
 
-    tenant_id = existing_org.tenant_id if existing_org else None
+    # Link the token to a tenant only when this caller is already an admin of it or the PAT just proved
+    # they are; an org matched by login alone may now belong to a different GitHub org.
+    verified = nothing_to_do or connected_org is not None
+    tenant_id = existing_org.tenant_id if existing_org is not None and verified else None
 
     row = db.query(SavedToken).filter_by(org=org).first()
     if row:

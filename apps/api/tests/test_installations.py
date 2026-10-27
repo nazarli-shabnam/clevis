@@ -903,3 +903,25 @@ def test_sync_org_installation_known_admin_cannot_attach_an_installation_of_a_di
             json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
         )
     assert resp.status_code == 200
+
+
+def test_sync_org_installation_known_admin_binds_the_verified_org_id_to_a_legacy_row(db, acme_org):
+    assert acme_org["org"].github_org_id is None
+    with _mock_installation("acme", "Organization", account_id=77):
+        resp = _client(db, acme_org["admin"]).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 200
+    db.refresh(acme_org["org"])
+    assert acme_org["org"].github_org_id == 77
+
+
+def test_sync_org_installation_known_admin_cannot_bind_an_id_already_held_by_another_org(db, acme_org):
+    org_repo.get_or_create(db, github_login="globex", github_org_id=77)
+    with _mock_installation("acme", "Organization", account_id=77):
+        resp = _client(db, acme_org["admin"]).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 409

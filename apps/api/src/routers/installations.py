@@ -319,6 +319,16 @@ def sync_org_installation(
             status_code=status.HTTP_409_CONFLICT,
             detail="This installation belongs to a different GitHub organization than the one connected under this login",
         )
+    elif github_org_id is not None and org.github_org_id is None:
+        # Legacy row from before ids were recorded: bind the id GitHub just verified for this login so
+        # a later change of hands is detected.
+        holder = org_repo.get_by_org_id(db, github_org_id)
+        if holder is not None and holder.id != org.id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This GitHub organization is already connected under a different login",
+            )
+        org.github_org_id = github_org_id
 
     # github_installations' org-scoped rows have no per-row user column, so the RLS
     # self-access clause (owner_user_id match) can't cover this write like it does for
