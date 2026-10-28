@@ -562,7 +562,7 @@ def _cockpit_commit_activity_from_aggregate(db: Session, tenant_id: int) -> tupl
 
 
 def _week_start(weeks_ago: int) -> date:
-    today = date.today()
+    today = datetime.now(timezone.utc).date()
     start_of_this_week = today - timedelta(days=today.weekday())
     return start_of_this_week - timedelta(weeks=weeks_ago)
 
@@ -590,8 +590,10 @@ def _safe_pr_merge_rate_4w(owner: str, token: str, account_type: str = "Organiza
             futures = [
                 (
                     start,
-                    pool.submit(_search_count, client, f"{qualifier} type:pr created:{start}..{start + timedelta(days=7)}"),
-                    pool.submit(_search_count, client, f"{qualifier} type:pr merged:{start}..{start + timedelta(days=7)}"),
+                    # Search date ranges are inclusive on both ends: +6 days keeps Monday..Sunday from
+                    # sharing a day with the next week.
+                    pool.submit(_search_count, client, f"{qualifier} type:pr created:{start}..{start + timedelta(days=6)}"),
+                    pool.submit(_search_count, client, f"{qualifier} type:pr merged:{start}..{start + timedelta(days=6)}"),
                 )
                 for start in week_starts
             ]

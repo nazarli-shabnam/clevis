@@ -740,6 +740,21 @@ def test_safe_pr_merge_rate_4w_returns_four_chronological_buckets():
     assert all(b.opened == 3 and b.merged == 3 for b in buckets)
 
 
+def test_safe_pr_merge_rate_4w_week_ranges_do_not_overlap():
+    import re
+
+    from src.routers.analytics import _safe_pr_merge_rate_4w
+
+    with patch("src.routers.analytics.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = {"total_count": 1}
+        _safe_pr_merge_rate_4w("acme", "ghp_test")
+        queries = [c.kwargs["params"]["q"] for c in mock_client.return_value.request.call_args_list]
+    ranges = sorted({tuple(m.groups()) for q in queries if (m := re.search(r"created:(\S+)\.\.(\S+)", q))})
+    assert len(ranges) == 4
+    for (_, end), (next_start, _) in zip(ranges, ranges[1:]):
+        assert end < next_start
+
+
 def test_safe_commit_activity_4w_and_heatmap_52w_returns_zeros_and_not_ok_when_every_repo_fails():
     from src.routers.analytics import _safe_commit_activity_4w_and_heatmap_52w
 
