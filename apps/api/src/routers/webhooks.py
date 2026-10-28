@@ -102,8 +102,14 @@ async def github_webhook(request: Request, db: Session = Depends(get_db)):
     if not secret:
         raise HTTPException(status_code=503, detail="GitHub webhook secret not configured")
 
+    signature = request.headers.get("X-Hub-Signature-256")
+    if not signature or not signature.startswith("sha256="):
+        # Cheap reject before streaming the body: unsigned traffic never costs a 5MB read.
+        _failed_signature_limit(request)
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
     raw_body = await _read_bounded_body(request)
-    if not _verify_signature(raw_body, request.headers.get("X-Hub-Signature-256"), secret.get_secret_value()):
+    if not _verify_signature(raw_body, signature, secret.get_secret_value()):
         _failed_signature_limit(request)
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
