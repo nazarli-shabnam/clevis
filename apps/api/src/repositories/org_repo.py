@@ -98,6 +98,7 @@ def get_or_create(db: Session, github_login: str, github_org_id: int | None = No
         org = get_by_org_id(db, github_org_id)
         if org is not None:
             if org.github_login != github_login:
+                org = ensure_tenant_linked(db, org)
                 _apply_rename(db, org, github_login)
             return ensure_tenant_linked(db, org)
 
