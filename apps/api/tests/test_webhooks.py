@@ -97,6 +97,20 @@ def test_rejects_signature_signed_with_wrong_secret(webhook_client):
     assert resp.status_code == 401
 
 
+def test_valid_deliveries_are_not_rate_limited_but_failed_signatures_are(webhook_client):
+    from src.core import rate_limit as rl
+
+    rl._buckets.clear()
+    try:
+        for _ in range(130):
+            assert _post(webhook_client, "ping", {"zen": "x"}).status_code == 200
+        codes = {_post(webhook_client, "ping", {}, signature="sha256=bad").status_code for _ in range(130)}
+        assert codes == {401, 429}
+        assert _post(webhook_client, "ping", {"zen": "x"}).status_code == 200
+    finally:
+        rl._buckets.clear()
+
+
 def test_returns_503_when_webhook_secret_not_configured(db, monkeypatch):
     monkeypatch.setattr(settings, "github_app_webhook_secret", None)
     app = FastAPI()
