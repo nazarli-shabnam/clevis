@@ -18,6 +18,24 @@ def get_account_type(owner: str, token: str, base_url: str | None = None) -> str
     return r.json().get("type", "User")
 
 
+def get_token_login(token: str, base_url: str | None = None) -> str | None:
+    """The login a user token belongs to, or None when it has none (a GitHub App installation token
+    is refused by /user with 401/403). Other failures propagate."""
+    base_url = base_url or settings.github_api_base
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    with httpx.Client(timeout=20) as client:
+        r = client.get(f"{base_url}/user", headers=headers)
+    if r.status_code in (401, 403):
+        return None
+    r.raise_for_status()
+    login = r.json().get("login")
+    return login if isinstance(login, str) else None
+
+
 def instance_scores_hygiene() -> bool:
     return get_config("score_hygiene_checks", "false") == "true"
 

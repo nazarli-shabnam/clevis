@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.core.auth import UserOut, require_auth
-from src.core.db import User, get_db
+from src.core.db import ScanResult, User, get_db
 from src.repositories import scan_results_repo, installation_repo, org_membership_repo, org_repo
 from src.routers.analytics import router
 
@@ -255,10 +255,40 @@ def test_personal_overview_member_cannot_scan_their_org_with_their_own_token(htt
 def test_personal_overview_byo_token_scan_of_a_non_org_login_is_unaffected(http, db):
     with (
         patch("src.routers.analytics.get_account_type", return_value="User"),
+        patch("src.routers.analytics.get_token_login", return_value="octocat"),
         patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW),
     ):
         resp = http.post("/me/analytics/overview", json={"owner": "octocat", "token": "ghp_mine"})
     assert resp.status_code == 200
+
+
+def test_personal_overview_refuses_a_user_token_scanning_another_login(http, db):
+    with (
+        patch("src.routers.analytics.get_account_type", return_value="User"),
+        patch("src.routers.analytics.get_token_login", return_value="alice"),
+        patch("src.routers.analytics.get_overview") as overview,
+    ):
+        resp = http.post("/me/analytics/overview", json={"owner": "bob", "token": "ghp_alice"})
+    assert resp.status_code == 403
+    assert "belongs to 'alice'" in resp.json()["detail"]
+    overview.assert_not_called()
+    assert db.query(ScanResult).filter(ScanResult.owner == "bob").count() == 0
+
+
+def test_personal_overview_login_match_is_case_insensitive_and_skipped_for_non_user_tokens(http, db):
+    with (
+        patch("src.routers.analytics.get_account_type", return_value="User"),
+        patch("src.routers.analytics.get_token_login", return_value="OctoCat"),
+        patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW),
+    ):
+        assert http.post("/me/analytics/overview", json={"owner": "octocat", "token": "ghp_mine"}).status_code == 200
+    # An installation token has no /user login (None): the owner is whatever the installation covers.
+    with (
+        patch("src.routers.analytics.get_account_type", return_value="User"),
+        patch("src.routers.analytics.get_token_login", return_value=None),
+        patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW),
+    ):
+        assert http.post("/me/analytics/overview", json={"owner": "octocat", "token": "ghp_mine"}).status_code == 200
 
 
 def test_org_overview_owner_mismatch_forbidden(http, db, mock_user):
