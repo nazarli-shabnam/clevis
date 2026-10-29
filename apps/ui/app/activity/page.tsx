@@ -24,9 +24,23 @@ const HEATMAP_COLOR_SCALE = [CHART_COLORS.grid, "#1d4ed8", "#3b82f6", "#60a5fa",
 const queryErrorMessage = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback)
 
 export default function ActivityPage() {
-  // Marks cockpit events as read so the sidebar's unread badge clears.
+  // Marks cockpit events as read so the sidebar's unread badge clears. Stamped again on leaving, so
+  // events that arrived while the page was open don't come back as unread, and on pagehide for a
+  // tab that is closed rather than navigated away from.
   useEffect(() => {
-    localStorage.setItem("activity_last_seen_at", new Date().toISOString())
+    const stamp = () => {
+      try {
+        localStorage.setItem("activity_last_seen_at", new Date().toISOString())
+      } catch {
+        // Storage blocked (private mode): the badge simply can't clear.
+      }
+    }
+    stamp()
+    window.addEventListener("pagehide", stamp)
+    return () => {
+      window.removeEventListener("pagehide", stamp)
+      stamp()
+    }
   }, [])
 
   // /jobs is workspace-admin only; don't poll a 403 for everyone else.

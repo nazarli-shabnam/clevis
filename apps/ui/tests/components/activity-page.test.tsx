@@ -91,6 +91,17 @@ describe("ActivityPage", () => {
     vi.restoreAllMocks();
   });
 
+  it("re-stamps the last-seen time when the page is left, so events seen while open are not unread", async () => {
+    const { unmount } = renderPage();
+    const onOpen = localStorage.getItem("activity_last_seen_at");
+    expect(onOpen).not.toBeNull();
+
+    await new Promise((r) => setTimeout(r, 5));
+    unmount();
+
+    expect(localStorage.getItem("activity_last_seen_at")! > onOpen!).toBe(true);
+  });
+
   it("shows a configure prompt when no org is set", async () => {
     renderPage();
 
