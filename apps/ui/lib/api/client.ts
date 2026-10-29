@@ -3,6 +3,7 @@ import type {
   ScheduledScanSettings,
   MemberAccess,
   NotificationFeed,
+  NotificationPreferences,
   ActionsUsageResponse,
   AnalyticsHistoryResponse,
   AnalyticsOverviewResponse,
@@ -232,6 +233,11 @@ export const api = {
     // `upTo` = the newest item shown, so an item that arrived after the feed loaded stays unread.
     markRead: (org: string, upTo?: string) =>
       post<null>(`/orgs/${encodeURIComponent(org)}/notifications/read`, upTo ? { up_to: upTo } : {}),
+    // The caller's own muted kinds for this org; the server drops them from the feed and unread count.
+    preferences: (org: string) =>
+      get<NotificationPreferences>(`/orgs/${encodeURIComponent(org)}/notifications/preferences`),
+    setPreferences: (org: string, muted_kinds: NotificationPreferences["muted_kinds"]) =>
+      put<NotificationPreferences>(`/orgs/${encodeURIComponent(org)}/notifications/preferences`, { muted_kinds }),
   },
   analytics: {
     // The org's latest scan compared with the one before it, check by check.

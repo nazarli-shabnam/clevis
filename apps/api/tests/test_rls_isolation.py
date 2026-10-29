@@ -125,8 +125,8 @@ _EXPECTED_FORCE_RLS_TABLES = {
     "automation_repo_settings",
     "notification_destinations",
     "notification_reads",
+    "notification_preferences",
     "api_tokens",
-    "notification_reads",
 }
 
 

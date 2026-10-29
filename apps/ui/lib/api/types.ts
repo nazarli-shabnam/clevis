@@ -827,9 +827,16 @@ export interface CreateIssueResponse {
   html_url: string
 }
 
+export type NotificationKind = "critical_alert" | "score_drop" | "job_failed" | "permission_drift"
+
+export interface NotificationPreferences {
+  // Kinds this user has hidden from the org's feed and unread count; empty = show everything.
+  muted_kinds: NotificationKind[]
+}
+
 export interface NotificationItem {
   id: string
-  kind: "critical_alert" | "score_drop" | "job_failed" | "permission_drift"
+  kind: NotificationKind
   at: string
   title: string
   detail: string
