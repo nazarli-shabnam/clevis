@@ -306,6 +306,8 @@ export default function ReposPage() {
         // Both describe a specific org's repos, so they must not outlive a reload.
         setSelected(new Set())
         setProtection(new Map())
+        // The protection select is disabled without results, so a leftover choice would hide every repo.
+        setFilters((f) => ({ ...f, protection: "all" }))
       },
     })
   }

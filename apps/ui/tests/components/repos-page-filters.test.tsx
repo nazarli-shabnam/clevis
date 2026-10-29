@@ -146,6 +146,23 @@ describe("ReposPage filters", () => {
     await waitFor(() => expect(visibleNames()).toEqual(["web"]));
   });
 
+  it("drops the protection filter when repos are reloaded, so the list is not left empty", async () => {
+    securityMock.mockReset();
+    securityMock.mockResolvedValue({ repository: "x", branch_protection: "protected", secret_scanning: "unknown" });
+    renderPage();
+    await loadReposByHand();
+
+    fireEvent.click(screen.getByRole("button", { name: "Check protection" }));
+    const select = screen.getByLabelText("Filter by branch protection");
+    await waitFor(() => expect(select).not.toBeDisabled());
+    fireEvent.change(select, { target: { value: "unprotected" } });
+    await waitFor(() => expect(visibleNames()).toEqual([]));
+
+    fireEvent.click(screen.getByRole("button", { name: /load repositories/i }));
+    await waitFor(() => expect(visibleNames().sort()).toEqual(["api", "legacy", "web"]));
+    expect(screen.getByLabelText("Filter by branch protection")).toHaveValue("all");
+  });
+
   it("selects repos (individually or all visible)", async () => {
     renderPage();
     await loadReposByHand();
