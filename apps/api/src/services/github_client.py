@@ -1,20 +1,22 @@
 import time
 import httpx
+from checks.github_checks import retry_delay
 from fastapi import HTTPException
 
 from src.core.config import settings
 
+# A 5xx can mean the write was applied before the gateway failed, so only these are retried on one.
+# Rate-limit responses (429 / secondary 403) mean nothing was applied and are retried for any method.
+_RETRY_5XX_METHODS = ("GET", "HEAD")
 
-def _is_secondary_rate_limit(resp: httpx.Response) -> bool:
-    """GitHub's secondary/abuse rate limit commonly returns 403 (not 429), often with a
-    Retry-After header -- especially under this codebase's concurrent ThreadPoolExecutor
-    fan-out (repos.py, collab.py, analytics.py). Without this, a 403 that would succeed on
-    retry raises immediately instead of backing off like the 429 case already does. A
-    genuine permission-denied 403 (e.g. token lacks scope) has neither header, so it's
-    unaffected and still surfaces immediately."""
-    if resp.status_code != 403:
-        return False
-    return "Retry-After" in resp.headers or resp.headers.get("X-RateLimit-Remaining") == "0"
+
+def _retry_wait(method: str, resp: httpx.Response, attempt: int) -> float | None:
+    """How long to wait before retrying `resp`, or None to surface it. The policy (429 / secondary 403 /
+    5xx, honouring Retry-After and X-RateLimit-Reset, bounded) is checks.github_checks.retry_delay, shared
+    with the checks package; the last attempt never retries."""
+    if attempt >= 2 or (resp.status_code >= 500 and method.upper() not in _RETRY_5XX_METHODS):
+        return None
+    return retry_delay(resp, attempt)
 
 
 def github_error(exc: Exception) -> HTTPException:
@@ -54,8 +56,9 @@ class GitHubClient:
                         time.sleep(2 ** attempt)
                         continue
                     raise
-                if (resp.status_code == 429 or _is_secondary_rate_limit(resp)) and attempt < 2:
-                    time.sleep(2 ** attempt)
+                delay = _retry_wait(method, resp, attempt)
+                if delay is not None:
+                    time.sleep(delay)
                     continue
                 resp.raise_for_status()
                 return resp.json() if resp.text else {}
@@ -80,8 +83,9 @@ class GitHubClient:
                             time.sleep(2 ** attempt)
                             continue
                         raise
-                    if (resp.status_code == 429 or _is_secondary_rate_limit(resp)) and attempt < 2:
-                        time.sleep(2 ** attempt)
+                    delay = _retry_wait("GET", resp, attempt)
+                    if delay is not None:
+                        time.sleep(delay)
                         continue
                     resp.raise_for_status()
                     break

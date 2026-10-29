@@ -14,7 +14,7 @@ import org_membership_store
 import repo_events_store
 from _crypto import decrypt_job_token
 from _sanitize import sanitize_error
-from config import settings
+from config import plain_db_url, settings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,20 +28,7 @@ HEARTBEAT_FILE = Path("/tmp/worker_heartbeat")
 # interval well below that so a normal sleep can't look like a hang.
 _MAX_POLL_SECONDS = 30
 
-# psycopg.connect() expects plain postgresql://, not the SQLAlchemy +psycopg dialect prefix
-_CONNECT_TIMEOUT_SECONDS = 5
-
-
-def _plain_db_url(url: str) -> str:
-    """Strip the SQLAlchemy dialect prefix and bound connect time.
-
-    Without connect_timeout, psycopg.connect() can hang indefinitely on the hot poll path."""
-    stripped = url.replace("postgresql+psycopg://", "postgresql://")
-    sep = "&" if "?" in stripped else "?"
-    return f"{stripped}{sep}connect_timeout={_CONNECT_TIMEOUT_SECONDS}"
-
-
-_DB_URL = _plain_db_url(settings.database_url.get_secret_value())
+_DB_URL = plain_db_url(settings.database_url.get_secret_value())
 
 # Shared cap on retry_count for both reclaim-after-crash and transient-failure requeue.
 MAX_RETRIES = 5
