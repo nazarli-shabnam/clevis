@@ -48,13 +48,13 @@ const DRY_RUN_RESP = {
   ],
 }
 
-function renderCard(repos: RepoSummary[] = [repo("api"), repo("web")]) {
+function renderCard(repos: RepoSummary[] = [repo("api"), repo("web")], initialSelected: string[] = []) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   return render(
     <QueryClientProvider client={qc}>
-      <BranchProtectionCard org="acme" token="" repos={repos} />
+      <BranchProtectionCard org="acme" token="" repos={repos} initialSelected={initialSelected} />
     </QueryClientProvider>,
   )
 }
@@ -66,6 +66,12 @@ describe("BranchProtectionCard", () => {
     mockSavedPreset.mockResolvedValue({ preset: null })
   })
   afterEach(cleanup)
+
+  it("starts with the handed-over repos selected", () => {
+    renderCard([repo("api"), repo("web")], ["web"])
+    expect(screen.getByLabelText("web")).toBeChecked()
+    expect(screen.getByLabelText("api")).not.toBeChecked()
+  })
 
   it("prompts for an org when there are no repos", () => {
     renderCard([])

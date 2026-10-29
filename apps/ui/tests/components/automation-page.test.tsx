@@ -13,6 +13,8 @@ const installationsListForOrgMock = vi.fn();
 const orgsMineMock = vi.fn();
 const triageGetRepoMock = vi.fn();
 
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }))
+
 // Workspace admin by default (saved tokens are admin-only); member tests flip it.
 let mockIsWorkspaceAdmin = true
 vi.mock("@/lib/auth-context", () => ({
