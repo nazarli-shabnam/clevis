@@ -7,6 +7,8 @@ that late "added" (would need tombstones).
 """
 
 import json
+import time
+from collections.abc import Callable
 from datetime import datetime
 
 import psycopg
@@ -33,6 +35,39 @@ def acquire_tenant_lock(conn: psycopg.Connection, tenant_id: int) -> datetime:
         locked_at = cur.fetchone()[0]
     conn.commit()
     return locked_at
+
+
+def try_acquire_tenant_lock(
+    conn: psycopg.Connection,
+    tenant_id: int,
+    *,
+    timeout_s: float,
+    poll_s: float = 0.25,
+    on_wait: Callable[[], None] | None = None,
+) -> datetime | None:
+    """acquire_tenant_lock without the unbounded block: poll ``pg_try_advisory_lock`` for up to
+    ``timeout_s`` and return None if another connection (typically a long reconcile job) still holds it.
+
+    For callers that serve many tenants on one thread and must not stall all of them behind one tenant's
+    lock. ``on_wait`` runs between polls (e.g. to refresh a liveness heartbeat). On success the lock is
+    held and must be released with release_tenant_lock, exactly as for acquire_tenant_lock."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_try_advisory_lock(hashtext(%s), %s)", (_LOCK_NAMESPACE, tenant_id))
+            got = cur.fetchone()[0]
+            locked_at = None
+            if got:
+                cur.execute("SELECT clock_timestamp()")
+                locked_at = cur.fetchone()[0]
+        conn.commit()
+        if got:
+            return locked_at
+        if time.monotonic() >= deadline:
+            return None
+        if on_wait is not None:
+            on_wait()
+        time.sleep(poll_s)
 
 
 def release_tenant_lock(conn: psycopg.Connection, tenant_id: int) -> None:

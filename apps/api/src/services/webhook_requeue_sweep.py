@@ -41,6 +41,9 @@ _MAX_AGE_HOURS = 24
 # null tenant_id, or an event_type with no normalizer yet (membership/team). Without this
 # exclusion, this sweep would re-XADD those every tick forever -- the consumer re-acks
 # without ever changing their status, defeating the whole point of bounding the stream.
+# A delivery the consumer gives up on (malformed payload, missing required fields, too many
+# failed attempts) is marked 'dropped' there, so it leaves this query for good instead of
+# being re-queued each tick and crowding out genuinely stuck rows within the batch limit.
 _STUCK_QUEUED_MINUTES = 30
 _NOT_YET_NORMALIZED_EVENT_TYPES = ("membership", "team")
 # Cap per tick so a large backlog can't block the loop indefinitely; the next tick picks

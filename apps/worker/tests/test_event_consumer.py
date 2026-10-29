@@ -9,6 +9,7 @@ import pytest
 import redis
 
 import event_consumer
+import org_membership_store
 from config import settings
 
 _DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg://", "postgresql://")
@@ -497,7 +498,7 @@ def test_security_alert_with_missing_alert_number_is_dropped_not_crashed(pg_conn
     assert len(redis_client.acked) == 1
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM webhook_deliveries WHERE id = %s", (row_id,))
-        assert cur.fetchone()[0] == "queued"  # left as-is, not marked processed
+        assert cur.fetchone()[0] == "dropped"
 
 
 def test_unknown_stream_entry_missing_delivery_row_id_is_dropped_not_crashed(pg_conn):
@@ -849,7 +850,7 @@ def test_member_event_with_missing_login_is_dropped_not_crashed(pg_conn, tenant_
     assert len(redis_client.acked) == 1
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM webhook_deliveries WHERE id = %s", (row_id,))
-        assert cur.fetchone()[0] == "queued"
+        assert cur.fetchone()[0] == "dropped"
 
 
 def test_organization_member_added_with_missing_login_is_dropped_not_crashed(pg_conn, tenant_id):
@@ -863,7 +864,7 @@ def test_organization_member_added_with_missing_login_is_dropped_not_crashed(pg_
     assert len(redis_client.acked) == 1
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM webhook_deliveries WHERE id = %s", (row_id,))
-        assert cur.fetchone()[0] == "queued"
+        assert cur.fetchone()[0] == "dropped"
 
 
 def test_organization_event_db_error_still_releases_the_tenant_lock(pg_conn, tenant_id, monkeypatch):
@@ -997,7 +998,7 @@ def test_process_entry_drops_malformed_json_payload(pg_conn, tenant_id):
     assert len(redis_client.acked) == 1
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM webhook_deliveries WHERE id = %s", (row_id,))
-        assert cur.fetchone()[0] == "queued"
+        assert cur.fetchone()[0] == "dropped"
 
 
 def test_process_entry_drops_payload_missing_repository(pg_conn, tenant_id):
@@ -1013,7 +1014,7 @@ def test_process_entry_drops_payload_missing_repository(pg_conn, tenant_id):
     assert len(redis_client.acked) == 1
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM webhook_deliveries WHERE id = %s", (row_id,))
-        assert cur.fetchone()[0] == "queued"
+        assert cur.fetchone()[0] == "dropped"
 
 
 def test_ensure_group_is_idempotent_when_group_already_exists(redis_client):
@@ -1070,7 +1071,7 @@ def test_sweep_pending_drops_entries_past_max_delivery_attempts(pg_conn, tenant_
     assert pending == []  # dropped (acked), not reclaimed/reprocessed
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM webhook_deliveries WHERE id = %s", (row_id,))
-        assert cur.fetchone()[0] == "queued"  # never actually processed
+        assert cur.fetchone()[0] == "dropped"
 
 
 def test_sweep_pending_logs_and_continues_when_claimed_entry_processing_raises(pg_conn, tenant_id, redis_client, monkeypatch):
@@ -1184,3 +1185,77 @@ def test_start_background_thread_runs_in_the_background(monkeypatch):
 
     assert ran == [True]
     assert not thread.is_alive()
+
+
+def test_membership_event_is_deferred_not_blocked_while_the_tenant_lock_is_held(pg_conn, tenant_id, monkeypatch):
+    conn, state = pg_conn
+    monkeypatch.setattr(event_consumer, "_TENANT_LOCK_WAIT_SECONDS", 0.3)
+    payload = {"action": "member_added", "membership": {"role": "member", "user": {"login": "lockwait-user"}}}
+    row_id = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-org-lock-busy-1", event_type="organization", payload=payload)
+    redis_client = _FakeRedis()
+
+    holder = psycopg.connect(_DB_URL, autocommit=False)  # stands in for a long-running reconcile job
+    try:
+        org_membership_store.acquire_tenant_lock(holder, tenant_id)
+        with pytest.raises(event_consumer.TenantLockBusy):
+            event_consumer._process_entry(conn, redis_client, "1-0", _entry_fields(row_id, "organization", tenant_id))
+        # Left unacked and unprocessed so the pending sweep retries it.
+        assert redis_client.acked == []
+        assert _org_member(conn, tenant_id, "lockwait-user") is None
+        org_membership_store.release_tenant_lock(holder, tenant_id)
+    finally:
+        holder.close()
+
+    event_consumer._process_entry(conn, redis_client, "1-0", _entry_fields(row_id, "organization", tenant_id))
+    assert redis_client.acked == [(event_consumer._STREAM_KEY, event_consumer._GROUP_NAME, "1-0")]
+    assert _org_member(conn, tenant_id, "lockwait-user") is not None
+
+
+def test_busy_tenant_events_wait_locally_in_order_without_spending_delivery_attempts(pg_conn, tenant_id, monkeypatch):
+    conn, state = pg_conn
+    monkeypatch.setattr(event_consumer, "_TENANT_LOCK_WAIT_SECONDS", 0.1)
+    event_consumer._deferred.clear()
+    added = {"action": "member_added", "membership": {"role": "member", "user": {"login": "ordered-user"}}}
+    removed = {"action": "member_removed", "membership": {"user": {"login": "ordered-user"}}}
+    row_add = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-order-add", event_type="organization", payload=added)
+    row_rem = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-order-rem", event_type="organization", payload=removed)
+    redis_client = _FakeRedis()
+
+    holder = psycopg.connect(_DB_URL, autocommit=False)
+    try:
+        org_membership_store.acquire_tenant_lock(holder, tenant_id)
+        event_consumer._dispatch(conn, redis_client, "1-0", _entry_fields(row_add, "organization", tenant_id))
+        # The later removal must queue behind the busy add, not overtake it.
+        event_consumer._dispatch(conn, redis_client, "2-0", _entry_fields(row_rem, "organization", tenant_id))
+        event_consumer._retry_deferred(conn, redis_client)  # still locked: nothing happens
+        assert redis_client.acked == []
+        assert [e for e, _ in event_consumer._deferred[str(tenant_id)]] == ["1-0", "2-0"]
+
+        org_membership_store.release_tenant_lock(holder, tenant_id)
+        event_consumer._retry_deferred(conn, redis_client)
+    finally:
+        holder.close()
+        event_consumer._deferred.clear()
+
+    assert [a[2] for a in redis_client.acked] == ["1-0", "2-0"]
+    assert _org_member(conn, tenant_id, "ordered-user") is None  # added, then removed: the removal won
+
+
+def test_sweep_leaves_entries_waiting_on_a_busy_tenant_alone(pg_conn, redis_client, monkeypatch):
+    conn, _ = pg_conn
+    event_consumer._deferred.clear()
+    event_consumer._deferred["7"] = event_consumer.deque([("5-0", {"tenant_id": "7", "event_type": "organization"})])
+    seen = {}
+
+    def fake_pending(*args, **kwargs):
+        seen["called"] = True
+        return [{"message_id": "5-0", "times_delivered": 99}]
+
+    acked = []
+    monkeypatch.setattr(redis_client, "xpending_range", fake_pending)
+    monkeypatch.setattr(redis_client, "xack", lambda *a, **k: acked.append(a))
+    try:
+        event_consumer._sweep_pending(conn, redis_client)  # would otherwise drop it as a poison pill
+    finally:
+        event_consumer._deferred.clear()
+    assert seen["called"] and acked == []
