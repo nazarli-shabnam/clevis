@@ -20,16 +20,18 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
+from sqlalchemy import text as sql_text
 from sqlalchemy.orm import Session
 
 from src.core._crypto import decrypt_job_token
 from src.core.config import settings
 from src.core.db import NotificationDestination
+from src.services import email
 from src.repositories import audit_repo, notification_repo
 
 logger = logging.getLogger(__name__)
 
-KINDS = ("slack", "teams", "generic")
+KINDS = ("slack", "teams", "generic", "email")
 EVENT_SCORE_DROP = "score_drop"
 EVENT_WAIVER_EXPIRED = "waiver_expired"
 EVENTS = (EVENT_SCORE_DROP, EVENT_WAIVER_EXPIRED)
@@ -123,8 +125,74 @@ def sign(secret: str, body: bytes, timestamp: str) -> str:
     return "sha256=" + hmac.new(secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()
 
 
-def send(dest: NotificationDestination, event: str, text: str, data: dict | None = None) -> tuple[bool, str]:
-    """Deliver one message. Returns (ok, short reason); never raises and never echoes the URL."""
+_EMAIL_SUBJECTS = {
+    "score_drop": "Clevis: security score dropped for {org}",
+    "waiver_expired": "Clevis: check waivers expired for {org}",
+    "test": "Clevis: test message for {org}",
+}
+
+
+def verified_member_emails(db: Session, tenant_id: int) -> set[str]:
+    """Lower-cased emails of the org's members whose address is verified: the only people an email
+    destination may message, so the instance's SMTP can't be pointed at arbitrary addresses."""
+    rows = db.execute(
+        sql_text(
+            "SELECT u.email FROM memberships m JOIN users u ON u.id = m.user_id "
+            "WHERE m.tenant_id = :t AND u.email IS NOT NULL AND u.email_verified = true"
+        ),
+        {"t": tenant_id},
+    ).fetchall()
+    return {r[0].lower() for r in rows}
+
+
+def allowed_emails_for(db: Session, tenant_id: int, destinations: list[NotificationDestination]) -> set[str] | None:
+    """The verified-member addresses to pass to send(), or None when no destination is an email one
+    (so the member query is only paid for when it is needed)."""
+    if any(d.kind == "email" for d in destinations):
+        return verified_member_emails(db, tenant_id)
+    return None
+
+
+def _send_email(
+    dest: NotificationDestination, event: str, text: str, data: dict, allowed: set[str] | None
+) -> tuple[bool, str]:
+    if not email.is_configured():
+        return False, "SMTP is not configured"
+    try:
+        stored = json.loads(decrypt_job_token(dest.encrypted_url, settings.job_secret_key.get_secret_value()))
+    except Exception:  # decrypt/parse failure: don't let one bad destination break the caller
+        logger.exception("notification destination %s could not be decoded", dest.id)
+        return False, "internal error"
+    # Recipients are re-checked against the org's current verified members on every send, so someone who
+    # has since left (or lost verification) stops receiving alerts without anyone editing the destination.
+    recipients = [r for r in stored if allowed is None or r.lower() in allowed]
+    if not recipients:
+        return False, "no eligible recipients"
+    subject = _EMAIL_SUBJECTS.get(event, "Clevis alert").format(org=data.get("org", "your organization"))
+    sent = 0
+    for address in recipients:
+        try:
+            email.send_email(address, subject, text)
+            sent += 1
+        except Exception:
+            logger.exception("notification email to a recipient of destination %s failed", dest.id)
+    return sent == len(recipients), f"{sent}/{len(recipients)} sent"
+
+
+def send(
+    dest: NotificationDestination,
+    event: str,
+    text: str,
+    data: dict | None = None,
+    *,
+    email_allowed: set[str] | None = None,
+) -> tuple[bool, str]:
+    """Deliver one message. Returns (ok, short reason); never raises and never echoes the URL.
+
+    `email_allowed` (email destinations): the org's current verified-member addresses, from
+    verified_member_emails; recipients outside it are skipped."""
+    if dest.kind == "email":
+        return _send_email(dest, event, text, data or {}, email_allowed)
     key = settings.job_secret_key.get_secret_value()
     try:
         url = decrypt_job_token(dest.encrypted_url, key)
@@ -173,8 +241,9 @@ def notify_score_drop(
     # through the shared Session.
     for d in targets:
         db.refresh(d)
+    allowed = allowed_emails_for(db, tenant_id, targets)
     with ThreadPoolExecutor(max_workers=_MAX_PARALLEL_SENDS) as pool:
-        results = list(pool.map(lambda d: send(d, EVENT_SCORE_DROP, text, data), targets))
+        results = list(pool.map(lambda d: send(d, EVENT_SCORE_DROP, text, data, email_allowed=allowed), targets))
     for dest, (ok, detail) in zip(targets, results):
         if not ok:
             notification_repo.release_alert_claim(db, dest.id)
@@ -207,8 +276,9 @@ def notify_waiver_expired(
     ]
     if not targets:
         return
+    allowed = allowed_emails_for(db, tenant_id, targets)
     with ThreadPoolExecutor(max_workers=_MAX_PARALLEL_SENDS) as pool:
-        results = list(pool.map(lambda d: send(d, EVENT_WAIVER_EXPIRED, text, data), targets))
+        results = list(pool.map(lambda d: send(d, EVENT_WAIVER_EXPIRED, text, data, email_allowed=allowed), targets))
     for dest, (ok, detail) in zip(targets, results):
         audit_repo.write(
             db,
