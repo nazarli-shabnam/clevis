@@ -349,6 +349,28 @@ def test_sync_org_installation_bootstraps_new_org_for_live_github_admin(db):
     assert membership.role == "admin"
 
 
+def test_sync_org_installation_bootstrap_reuses_org_for_a_casing_variant(db):
+    """A new GitHub admin syncing "acme" must join the existing "Acme" org, not create a second Org + Tenant."""
+    existing = org_repo.get_or_create(db, github_login="Acme", github_org_id=4242)
+    me = _make_user(db, "newadmin@e.com", github_login="newadmin")
+    with (
+        _mock_installation("acme", "Organization"),
+        patch("src.routers.installations.github_app.get_installation_token", return_value="itok"),
+        patch("src.routers.installations.github_app.get_org_membership_role", return_value="admin"),
+    ):
+        resp = _client(db, me).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 200
+    from src.core.db import Org
+    from sqlalchemy import func
+
+    rows = db.query(Org).filter(func.lower(Org.github_login) == "acme").all()
+    assert [r.id for r in rows] == [existing.id]
+    assert org_membership_repo.get(db, existing.id, me.id).role == "admin"
+
+
 def test_bootstrap_org_admin_advisory_lock_serializes_concurrent_holders(_engine):
     # Two concurrent syncs for the same org_login could both bootstrap Org/membership rows;
     # a second connection must not acquire the hashtext(org_login) lock until the first releases it.
