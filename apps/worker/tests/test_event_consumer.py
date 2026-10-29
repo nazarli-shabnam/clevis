@@ -1266,6 +1266,8 @@ def test_a_failing_deferred_head_keeps_its_place_then_is_dropped_after_the_attem
     conn, state = pg_conn
     event_consumer._deferred.clear()
     event_consumer._deferred_failures.clear()
+    event_consumer._deferred_retry_at.clear()
+    monkeypatch.setattr(event_consumer, "_DEFERRED_FAILURE_BACKOFF_S", 0)
     payload = {"action": "member_added", "membership": {"role": "member", "user": {"login": "poison-head"}}}
     row_id = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-poison-head", event_type="organization", payload=payload)
     fields = _entry_fields(row_id, "organization", tenant_id)
@@ -1288,6 +1290,32 @@ def test_a_failing_deferred_head_keeps_its_place_then_is_dropped_after_the_attem
     finally:
         event_consumer._deferred.clear()
         event_consumer._deferred_failures.clear()
+
+
+def test_a_failed_deferred_entry_backs_off_so_a_short_outage_cannot_exhaust_its_attempts(pg_conn, monkeypatch):
+    conn, _ = pg_conn
+    event_consumer._deferred.clear()
+    event_consumer._deferred_failures.clear()
+    event_consumer._deferred_retry_at.clear()
+    calls = []
+
+    def boom(*a, **k):
+        calls.append(1)
+        raise RuntimeError("db blip")
+
+    monkeypatch.setattr(event_consumer, "_process_entry", boom)
+    event_consumer._deferred["5"] = event_consumer.deque([("1-0", {"tenant_id": "5"}), ("2-0", {"tenant_id": "5"})])
+    redis_client = _FakeRedis()
+    try:
+        for _ in range(20):  # a tight loop of retry passes, like the consumer's
+            event_consumer._retry_deferred(conn, redis_client)
+        assert len(calls) == 1  # one attempt, then it waits out the backoff
+        assert redis_client.acked == []
+        assert [e for e, _ in event_consumer._deferred["5"]] == ["1-0", "2-0"]  # order kept
+    finally:
+        event_consumer._deferred.clear()
+        event_consumer._deferred_failures.clear()
+        event_consumer._deferred_retry_at.clear()
 
 
 def test_deferred_retries_are_bounded_per_call(pg_conn, monkeypatch):

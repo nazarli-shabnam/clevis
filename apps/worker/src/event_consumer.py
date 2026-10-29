@@ -270,6 +270,11 @@ _deferred: dict[str, deque] = {}
 # Failed (not merely blocked) attempts per deferred entry id; at _MAX_DELIVERY_ATTEMPTS it is dropped like
 # any poison pill, so a permanently failing head can't hold its tenant's later events back forever.
 _deferred_failures: dict[str, int] = {}
+# A failed deferred entry is not retried before this many seconds have passed (monotonic deadline kept in
+# _deferred_retry_at). Without it the retry loop (every few seconds) would burn all the attempts on a
+# short outage and drop a member removal; with it the attempts span about as long as the pending sweep's.
+_DEFERRED_FAILURE_BACKOFF_S = _RECLAIM_IDLE_MS / 1000
+_deferred_retry_at: dict[str, float] = {}
 
 
 def _tenant_key(fields: dict) -> str:
@@ -300,6 +305,8 @@ def _retry_deferred(pg_conn: psycopg.Connection, redis_client: redis.Redis) -> N
         queue = _deferred[key]
         while queue and budget > 0:
             entry_id, fields = queue[0]
+            if time.monotonic() < _deferred_retry_at.get(entry_id, 0.0):
+                break  # backing off after a failure; later entries of this tenant wait behind it
             budget -= 1
             try:
                 _process_entry(pg_conn, redis_client, entry_id, fields, lock_wait_s=0)
@@ -311,6 +318,7 @@ def _retry_deferred(pg_conn: psycopg.Connection, redis_client: redis.Redis) -> N
                 failures = _deferred_failures.get(entry_id, 0) + 1
                 if failures < _MAX_DELIVERY_ATTEMPTS:
                     _deferred_failures[entry_id] = failures
+                    _deferred_retry_at[entry_id] = time.monotonic() + _DEFERRED_FAILURE_BACKOFF_S
                     break
                 log.error("deferred stream entry %s failed %d times, dropping", entry_id, failures)
                 row_id = fields.get("delivery_row_id")
@@ -318,6 +326,7 @@ def _retry_deferred(pg_conn: psycopg.Connection, redis_client: redis.Redis) -> N
                     _mark_dropped(pg_conn, row_id)
                 redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
             _deferred_failures.pop(entry_id, None)
+            _deferred_retry_at.pop(entry_id, None)
             queue.popleft()
         if not queue:
             _deferred.pop(key, None)
