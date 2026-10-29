@@ -90,16 +90,27 @@ def _verify_signature(raw_body: bytes, signature_header: str | None, secret: str
     return hmac.compare_digest(expected.encode(), provided.encode("utf-8", errors="replace"))
 
 
-# Generous relative to the auth-endpoint default: GitHub's webhook deliveries for many
-# installations can share the same egress IP, so a strict per-IP limit risks throttling.
-@router.post("/webhooks/github", dependencies=[Depends(rate_limit(max_requests=120, window_seconds=60))])
+# Throttles only requests that fail the signature check (junk traffic). Validly signed
+# deliveries are never limited: GitHub's egress IPs are shared across many installations and
+# a dropped delivery is not retried automatically.
+_failed_signature_limit = rate_limit(max_requests=120, window_seconds=60)
+
+
+@router.post("/webhooks/github")
 async def github_webhook(request: Request, db: Session = Depends(get_db)):
     secret = settings.github_app_webhook_secret
     if not secret:
         raise HTTPException(status_code=503, detail="GitHub webhook secret not configured")
 
+    signature = request.headers.get("X-Hub-Signature-256")
+    if not signature or not signature.startswith("sha256="):
+        # Cheap reject before streaming the body: unsigned traffic never costs a 5MB read.
+        _failed_signature_limit(request)
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
     raw_body = await _read_bounded_body(request)
-    if not _verify_signature(raw_body, request.headers.get("X-Hub-Signature-256"), secret.get_secret_value()):
+    if not _verify_signature(raw_body, signature, secret.get_secret_value()):
+        _failed_signature_limit(request)
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     try:
