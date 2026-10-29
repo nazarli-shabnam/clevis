@@ -6,7 +6,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from src.repositories import scan_results_repo
-from src.services import notifications
+from src.services import notifications, waivers
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,9 @@ def persist_scan(
     scanned_by_user_id: int | None = None,
     owner: str | None = None,
 ) -> None:
+    if tenant_id is not None:
+        # Mutates `result`, so the caller's response, the stored row and the alert comparison all agree.
+        waivers.apply_to_result(db, tenant_id, result)
     scan_results_repo.insert(
         db,
         owner=owner or result["owner"],

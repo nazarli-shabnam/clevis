@@ -120,6 +120,20 @@ def test_sweep_does_not_touch_rows_already_queued_or_abandoned(db):
     assert abandoned_row.status == "queue_abandoned"
 
 
+def test_sweep_never_requeues_a_row_the_consumer_dropped(db):
+    old = datetime.now(timezone.utc) - timedelta(hours=2)
+    tenant_id = _make_tenant(db, "dropped@example.com")
+    row = _make_row(db, status="dropped", received_at=old, tenant_id=tenant_id)
+
+    mock_client = MagicMock()
+    with patch("src.services.webhook_requeue_sweep.get_redis_client", return_value=mock_client):
+        run_webhook_requeue_sweep(db)
+
+    mock_client.xadd.assert_not_called()
+    db.refresh(row)
+    assert row.status == "dropped"
+
+
 def test_sweep_reenqueues_a_queued_row_stuck_past_the_stuck_threshold(db):
     # A row still 'queued' this long after receipt almost certainly had its stream entry
     # trimmed (MAXLEN) before the consumer group ever read it -- same recovery path as a
