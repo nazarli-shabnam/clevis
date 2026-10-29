@@ -885,7 +885,7 @@ async def personal_analytics_cockpit(
 
     scans, cache_job_success_rate = await anyio.to_thread.run_sync(_scans_and_cache_job_rate)
     latest_score = scans[0]["score"] if scans else None
-    score_trend = [s["score"] for s in reversed(scans)]
+    score_trend = [s["score"] for s in reversed(scans) if s["score"] is not None]
 
     account_type = await _get_account_type(owner, token)
     try:

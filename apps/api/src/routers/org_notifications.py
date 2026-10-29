@@ -84,7 +84,7 @@ def _score_drop_items(db: Session, org_login: str, tenant_id: int, since: dateti
     for newer, older in zip(rows, rows[1:]):
         if _aware(newer.created_at) < since:
             break
-        if newer.score >= older.score:
+        if newer.score is None or older.score is None or newer.score >= older.score:
             continue
         previous = {"checks": scan_results_repo._parse_checks(older.checks_json)}
         current = {"checks": scan_results_repo._parse_checks(newer.checks_json)}

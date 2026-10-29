@@ -58,7 +58,7 @@ def persist_scan_and_alert(db: Session, org, result: dict, tenant_id: int, *, ac
     return previous
 
 
-def notify_score_drop_best_effort(db: Session, org, previous: int, current: int, *, actor: str = "system") -> None:
+def notify_score_drop_best_effort(db: Session, org, previous: int | None, current: int | None, *, actor: str = "system") -> None:
     # A chat-webhook problem must never fail or slow-fail the scan the user actually asked for.
     try:
         notifications.notify_score_drop(db, org.tenant_id, org.github_login, previous, current, actor=actor)

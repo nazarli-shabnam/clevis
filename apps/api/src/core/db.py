@@ -448,7 +448,8 @@ class ScanResult(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     owner: Mapped[str] = mapped_column(String, nullable=False)
-    score: Mapped[int] = mapped_column(Integer, nullable=False)
+    # NULL when a scan had no scored checks (nothing was assessed).
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_checks: Mapped[int] = mapped_column(Integer, nullable=False)
     failed_checks: Mapped[int] = mapped_column(Integer, nullable=False)
     checks_json: Mapped[str] = mapped_column(Text, nullable=False)
