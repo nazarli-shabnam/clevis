@@ -170,6 +170,63 @@ class TestExhaustedRetries:
         assert mock_ctx.request.call_count == 1
 
 
+class TestSharedRetryPolicy:
+    """GitHubClient follows the checks package's retry policy (checks.github_checks.retry_delay)."""
+
+    @staticmethod
+    def _run(client, method, responses, path="/test"):
+        with (
+            patch("src.services.github_client.httpx.Client") as mock_client_cls,
+            patch("src.services.github_client.time.sleep") as mock_sleep,
+        ):
+            mock_ctx = MagicMock()
+            mock_ctx.__enter__ = MagicMock(return_value=mock_ctx)
+            mock_ctx.__exit__ = MagicMock(return_value=False)
+            mock_ctx.request.side_effect = responses
+            mock_client_cls.return_value = mock_ctx
+            try:
+                result = client.request(method, path)
+            except httpx.HTTPStatusError:
+                result = None
+        return result, mock_sleep, mock_ctx.request.call_count
+
+    def test_honours_retry_after_instead_of_a_fixed_backoff(self, client):
+        limited = _make_response(403, headers={"Retry-After": "30"})
+        limited.raise_for_status = MagicMock()
+        result, sleep, calls = self._run(client, "GET", [limited, _make_response(200, {"ok": True})])
+        assert result == {"ok": True} and calls == 2
+        sleep.assert_called_once_with(30.0)
+
+    def test_retries_a_transient_5xx_on_a_get(self, client):
+        bad_gateway = _make_response(502)
+        result, sleep, calls = self._run(client, "GET", [bad_gateway, _make_response(200, {"ok": True})])
+        assert result == {"ok": True} and calls == 2
+        sleep.assert_called_once_with(1)  # exponential backoff for a 5xx with no headers
+
+    def test_does_not_retry_a_5xx_on_a_write(self, client):
+        # The gateway may have failed after GitHub applied the write; replaying it could double-apply.
+        result, sleep, calls = self._run(client, "POST", [_make_response(502), _make_response(200, {"ok": True})])
+        assert result is None and calls == 1
+        sleep.assert_not_called()
+
+    def test_retries_a_rate_limited_write(self, client):
+        limited = _make_response(429, headers={"Retry-After": "5"})
+        limited.raise_for_status = MagicMock()
+        result, sleep, calls = self._run(client, "POST", [limited, _make_response(200, {"ok": True})])
+        assert result == {"ok": True} and calls == 2
+        sleep.assert_called_once_with(5.0)
+
+    def test_does_not_wait_for_a_primary_quota_that_resets_far_away(self, client):
+        import time as _time
+
+        spent = _make_response(
+            403, headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(int(_time.time() + 3000))}
+        )
+        result, sleep, calls = self._run(client, "GET", [spent, _make_response(200, {"ok": True})])
+        assert result is None and calls == 1
+        sleep.assert_not_called()
+
+
 class TestGithubError:
     def test_appends_github_message_body_to_detail(self):
         resp = _make_response(403, {"message": "Resource not accessible by integration"})

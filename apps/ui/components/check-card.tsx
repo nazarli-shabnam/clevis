@@ -290,6 +290,14 @@ export function CheckCard({ check, owner, token, onRemediated }: CheckCardProps)
           )}
           {/* Only while the check is excluded from the score: once hygiene scoring is on it counts like any other. */}
           {check.informational && !check.scored && !notApplicable && <span className="stat-chip">Informational</span>}
+          {check.waived && (
+            <span
+              className="stat-chip"
+              title={`${check.waived.reason} (owner: ${check.waived.owner}${check.waived.repos ? `; repos: ${check.waived.repos.join(", ")}` : ""})`}
+            >
+              Waived until {new Date(check.waived.until).toLocaleDateString()}
+            </span>
+          )}
         </div>
         <p className="text-xs text-muted-foreground leading-relaxed">{check.remediation}</p>
         <CheckValueDisplay value={check.value} />

@@ -24,4 +24,18 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=_env_file, extra="ignore")
 
 
+_CONNECT_TIMEOUT_SECONDS = 5
+
+
+def plain_db_url(url: str) -> str:
+    """Strip the SQLAlchemy dialect prefix (psycopg.connect() expects plain postgresql://) and bound
+    connect time.
+
+    Without connect_timeout, psycopg.connect() can hang indefinitely on a black-holed host; every
+    worker connection (job poll, event consumer) goes through this."""
+    stripped = url.replace("postgresql+psycopg://", "postgresql://")
+    sep = "&" if "?" in stripped else "?"
+    return f"{stripped}{sep}connect_timeout={_CONNECT_TIMEOUT_SECONDS}"
+
+
 settings = Settings()

@@ -18,8 +18,14 @@ from src.core._sanitize import sanitize_error
 from src.core.auth import UserOut, require_auth
 from src.core.db import Job, ScanResult, SecurityAlert, get_db
 from src.core.rbac import OrgContext, require_org_role
-from src.repositories import installation_repo, notification_read_repo, scan_results_repo
-from src.schemas.notification_feed import NotificationFeed, NotificationItem
+from src.repositories import (
+    installation_repo,
+    notification_preference_repo,
+    notification_read_repo,
+    scan_results_repo,
+    waiver_repo,
+)
+from src.schemas.notification_feed import NotificationFeed, NotificationItem, NotificationPreferences
 from src.services import app_permissions
 from src.services.scan_service import comparable_scans
 
@@ -147,6 +153,23 @@ def _permission_drift_items(db: Session, ctx: OrgContext, org_login: str, since:
     ]
 
 
+def _waiver_expired_items(db: Session, org_login: str, tenant_id: int, since: datetime) -> list[dict]:
+    """Waivers that lapsed inside the window: the check counts toward the score again from the next scan."""
+    now = datetime.now(timezone.utc)
+    return [
+        {
+            "id": f"waiver_expired:{w.id}",
+            "kind": "waiver_expired",
+            "at": w.expires_at,
+            "title": f"Waiver expired: {w.check_id}",
+            "detail": f"Owner {w.owner}: {w.reason}"[:140],
+            "href": "/security",
+        }
+        for w in waiver_repo.list_for_tenant(db, tenant_id)
+        if since <= _aware(w.expires_at) <= now
+    ]
+
+
 def _unread_beyond_limit(db: Session, filters: list, at_column, last_read, items: list, kind: str) -> int:
     """Unread rows of one source that the per-source LIMIT kept out of ``items``."""
     q = db.query(func.count()).select_from(at_column.class_).filter(*filters)
@@ -167,10 +190,22 @@ def get_notifications(
     tenant_id = ctx.org.tenant_id
     since = datetime.now(timezone.utc) - timedelta(days=WINDOW_DAYS)
     last_read = notification_read_repo.get_last_read(db, user.id, tenant_id)
+    # Muted kinds are left out of the list and of the unread count here, once, so the bell badge and the
+    # Overview "since last visit" card (both read this feed) always agree.
+    muted = notification_preference_repo.get_muted(db, user.id, tenant_id)
+    is_admin = ctx.membership.role == "admin"
 
-    raw = _critical_alert_items(db, tenant_id, since) + _score_drop_items(db, org_login, tenant_id, since)
-    if ctx.membership.role == "admin":
-        raw += _failed_job_items(db, org_login, tenant_id, since) + _permission_drift_items(db, ctx, org_login, since)
+    raw: list[dict] = []
+    if "critical_alert" not in muted:
+        raw += _critical_alert_items(db, tenant_id, since)
+    if "score_drop" not in muted:
+        raw += _score_drop_items(db, org_login, tenant_id, since)
+    if is_admin and "job_failed" not in muted:
+        raw += _failed_job_items(db, org_login, tenant_id, since)
+    if is_admin and "permission_drift" not in muted:
+        raw += _permission_drift_items(db, ctx, org_login, since)
+    if is_admin and "waiver_expired" not in muted:
+        raw += _waiver_expired_items(db, org_login, tenant_id, since)
 
     raw.sort(key=lambda i: _aware(i["at"]), reverse=True)
     items = [
@@ -179,8 +214,9 @@ def get_notifications(
     # Counted before the list is cut to MAX_ITEMS, and (for the sources that are cut to _PER_SOURCE
     # rows) including the unread rows that cut left out, so a long list never under-reports.
     unread_count = sum(1 for i in items if not i.read)
-    unread_count += _unread_beyond_limit(db, _critical_alert_filters(tenant_id, since), SecurityAlert.ingested_at, last_read, items, "critical_alert")
-    if ctx.membership.role == "admin":
+    if "critical_alert" not in muted:
+        unread_count += _unread_beyond_limit(db, _critical_alert_filters(tenant_id, since), SecurityAlert.ingested_at, last_read, items, "critical_alert")
+    if is_admin and "job_failed" not in muted:
         unread_count += _unread_beyond_limit(db, _failed_job_filters(tenant_id, since), Job.updated_at, last_read, items, "job_failed")
     return NotificationFeed(
         org=org_login,
@@ -188,6 +224,29 @@ def get_notifications(
         items=items[:MAX_ITEMS],
         last_read_at=last_read,
     )
+
+
+@router.get("/orgs/{org_login}/notifications/preferences", response_model=NotificationPreferences)
+def get_notification_preferences(
+    org_login: str,
+    ctx: OrgContext = Depends(require_org_role(min_role="member")),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    return NotificationPreferences(muted_kinds=sorted(notification_preference_repo.get_muted(db, user.id, ctx.org.tenant_id)))
+
+
+@router.put("/orgs/{org_login}/notifications/preferences", response_model=NotificationPreferences)
+def set_notification_preferences(
+    org_login: str,
+    body: NotificationPreferences,
+    ctx: OrgContext = Depends(require_org_role(min_role="member")),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Replace the caller's muted kinds for this org. Per user: it never changes what anyone else sees."""
+    stored = notification_preference_repo.set_muted(db, user.id, ctx.org.tenant_id, body.muted_kinds)
+    return NotificationPreferences(muted_kinds=stored)
 
 
 class MarkReadBody(BaseModel):

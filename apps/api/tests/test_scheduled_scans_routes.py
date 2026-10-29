@@ -112,6 +112,15 @@ def test_changes_classifies_checks_and_lists_affected_repos(db, world):
     assert [c["change"] for c in body["changes"]] == ["newly_failing", "still_failing", "newly_passing"]  # worst first
 
 
+def test_a_waived_failing_check_is_not_listed_as_a_change(db, world):
+    acme = world["acme"]
+    _scan(db, acme, [_check("a", "pass"), _check("b", "pass")], 100, 2)
+    waived = {**_check("a", "fail", ["legacy"]), "scored": False, "waived": {"until": "2030-01-01T00:00:00+00:00"}}
+    _scan(db, acme, [waived, _check("b", "fail", ["web"])], 50, 1)
+    body = _client(db, world["users"]["member"]).get("/orgs/acme/analytics/changes").json()
+    assert {c["id"]: c["change"] for c in body["changes"]} == {"b": "newly_failing"}
+
+
 def test_changes_flags_scans_that_are_not_comparable(db, world):
     acme = world["acme"]
     _scan(db, acme, [_check("a", "pass")], 100, 2)
