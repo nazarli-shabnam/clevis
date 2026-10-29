@@ -64,8 +64,10 @@ def set_scheduled_scans(
 
 def _classify(old: dict | None, new: dict) -> str | None:
     """How one check moved between two scans; None when it did not change in a way worth showing."""
-    was_failing = old is not None and old.get("status") in _FAILING
-    is_failing = new.get("status") in _FAILING
+    # A waived check is an accepted risk, not a regression to chase: it is left out of the change list
+    # (it keeps its "waived" badge on the Security page).
+    was_failing = old is not None and old.get("status") in _FAILING and not old.get("waived")
+    is_failing = new.get("status") in _FAILING and not new.get("waived")
     if is_failing and not was_failing:
         return "newly_failing"
     if is_failing and was_failing:

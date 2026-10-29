@@ -33,6 +33,38 @@ export interface HygieneScoringSettings {
   instance_default: boolean
 }
 
+/** An active accepted-risk exception that kept a failing check out of the score for this scan. */
+export interface CheckWaivedStamp {
+  waiver_ids: number[]
+  until: string
+  reason: string
+  owner: string
+  /** The repos it covered; null = the whole org. */
+  repos: string[] | null
+}
+
+export interface CheckWaiver {
+  id: number
+  check_id: string
+  /** null = the whole org. */
+  repos: string[] | null
+  reason: string
+  owner: string
+  expires_at: string
+  created_by: string
+  created_at: string
+  /** false once expired: kept for the record and to renew, but no longer excludes its check. */
+  active: boolean
+}
+
+export interface CheckWaiverInput {
+  check_id: string
+  repos: string[] | null
+  reason: string
+  owner: string
+  expires_at: string
+}
+
 export interface CheckResult {
   id: string
   title: string
@@ -44,6 +76,8 @@ export interface CheckResult {
   informational?: boolean
   // Whether this scan counted the check toward the score; absent on scans stored before it was recorded.
   scored?: boolean | null
+  // Present when an active waiver excluded this failing check from the score; the check stays visible.
+  waived?: CheckWaivedStamp | null
   status: "pass" | "fail" | "error" | "not_applicable"
   value: CheckValue
 }
@@ -72,7 +106,8 @@ export interface ActionsUsageResponse {
 
 export interface AnalyticsOverviewResponse {
   owner: string
-  score: number
+  // null when the scan had no scored checks (nothing was assessed).
+  score: number | null
   total_checks: number
   failed_checks: number
   repo_count: number
@@ -82,7 +117,7 @@ export interface AnalyticsOverviewResponse {
 export interface ScanHistoryEntry {
   id: number
   owner: string
-  score: number
+  score: number | null
   total_checks: number
   failed_checks: number
   created_at: string
@@ -826,9 +861,21 @@ export interface CreateIssueResponse {
   html_url: string
 }
 
+export type NotificationKind =
+  | "critical_alert"
+  | "score_drop"
+  | "job_failed"
+  | "permission_drift"
+  | "waiver_expired"
+
+export interface NotificationPreferences {
+  // Kinds this user has hidden from the org's feed and unread count; empty = show everything.
+  muted_kinds: NotificationKind[]
+}
+
 export interface NotificationItem {
   id: string
-  kind: "critical_alert" | "score_drop" | "job_failed" | "permission_drift"
+  kind: NotificationKind
   at: string
   title: string
   detail: string

@@ -228,6 +228,45 @@ def test_get_waits_the_cap_for_a_ratelimit_with_no_usable_header():
     mock_sleep.assert_called_once_with(_MAX_RETRY_AFTER_SECONDS)
 
 
+@pytest.mark.parametrize("status", [403, 429])
+def test_get_fails_fast_when_the_primary_quota_resets_far_in_the_future(status):
+    # Quota spent with the reset ~40 min away: sleeping and retrying cannot succeed, so return at once.
+    request = httpx.Request("GET", "https://x/y")
+    headers = {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(int(time.time() + 2400))}
+    calls = []
+
+    def fake_get(url, **_kw):
+        calls.append(url)
+        return httpx.Response(status, headers=headers, request=request)
+
+    with patch("time.sleep") as mock_sleep, patch("httpx.Client.get", side_effect=fake_get):
+        with pytest.raises(httpx.HTTPStatusError):
+            _get("https://x/y", "tok")
+    assert len(calls) == 1
+    mock_sleep.assert_not_called()
+
+
+def test_get_still_waits_when_the_primary_quota_resets_within_the_cap():
+    request = httpx.Request("GET", "https://x/y")
+    headers = {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(int(time.time() + 20))}
+    responses = iter([httpx.Response(403, headers=headers, request=request), httpx.Response(200, json={"ok": 1}, request=request)])
+
+    with patch("time.sleep") as mock_sleep, patch("httpx.Client.get", side_effect=lambda url, headers: next(responses)):
+        assert _get("https://x/y", "tok") == {"ok": 1}
+    assert mock_sleep.call_count == 1
+
+
+def test_get_keeps_retrying_a_secondary_limit_even_with_a_far_reset():
+    # Secondary limits send Retry-After; the quota headers alone mustn't turn them into fail-fast.
+    request = httpx.Request("GET", "https://x/y")
+    headers = {"Retry-After": "5", "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(int(time.time() + 2400))}
+    responses = iter([httpx.Response(403, headers=headers, request=request), httpx.Response(200, json={"ok": 1}, request=request)])
+
+    with patch("time.sleep") as mock_sleep, patch("httpx.Client.get", side_effect=lambda url, headers: next(responses)):
+        assert _get("https://x/y", "tok") == {"ok": 1}
+    mock_sleep.assert_called_once_with(5.0)
+
+
 def test_get_does_not_retry_a_plain_permission_denied_403():
     # A permission-denied 403 (no rate-limit headers) must surface immediately, not retry.
     request = httpx.Request("GET", "https://x/y")
@@ -585,7 +624,7 @@ def test_force_push_empty_org_is_not_applicable():
     check = DefaultBranchNoForcePushCheck()
     result = check.run(owner="acme", token="tok", repos=[])
     assert result["status"] == "not_applicable"
-    assert result["value"] == {"repos_checked": 0, "force_push_allowed": 0}
+    assert result["value"] == {"repos_checked": 0, "force_push_allowed": 0, "unknown": 0}
 
 
 def test_force_push_passes_when_disallowed():
@@ -601,7 +640,7 @@ def test_force_push_passes_when_disallowed():
         mp.setattr("checks.github_checks._get", fake_get)
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "pass"
-    assert result["value"] == {"repos_checked": 1, "force_push_allowed": 0}
+    assert result["value"] == {"repos_checked": 1, "force_push_allowed": 0, "unknown": 0}
 
 
 def test_force_push_fails_when_allowed():
@@ -617,7 +656,7 @@ def test_force_push_fails_when_allowed():
         mp.setattr("checks.github_checks._get_all_pages", lambda base, path, token: [])  # no rulesets
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "fail"
-    assert result["value"] == {"repos_checked": 1, "force_push_allowed": 1, "repos": ["api"]}
+    assert result["value"] == {"repos_checked": 1, "force_push_allowed": 1, "unknown": 0, "repos": ["api"]}
 
 
 def test_force_push_unprotected_branch_404_means_force_push_is_allowed():
@@ -636,7 +675,7 @@ def test_force_push_unprotected_branch_404_means_force_push_is_allowed():
         mp.setattr("checks.github_checks._get_all_pages", lambda base, path, token: [])  # no rulesets
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "fail"
-    assert result["value"] == {"repos_checked": 1, "force_push_allowed": 1, "repos": ["api"]}
+    assert result["value"] == {"repos_checked": 1, "force_push_allowed": 1, "unknown": 0, "repos": ["api"]}
 
 
 def test_force_push_rate_limited_branch_excluded_from_denominator():
@@ -652,7 +691,7 @@ def test_force_push_rate_limited_branch_excluded_from_denominator():
         mp.setattr("checks.github_checks._get", fake_get)
         result = check.run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "error"
-    assert result["value"] == {"repos_checked": 0, "force_push_allowed": 0}
+    assert result["value"] == {"repos_checked": 0, "force_push_allowed": 0, "unknown": 1}
 
 
 def _raise(status, url, body=None):
@@ -718,6 +757,67 @@ def test_force_push_rules_lookup_failure_is_unknown_not_allowed():
     result = _force_push_run(404, 403)
     assert result["status"] == "error"
     assert result["value"]["force_push_allowed"] == 0
+
+
+def test_branch_protection_partial_unknown_with_all_visible_protected_is_error_not_pass():
+    repos = [{"name": f"r{i}", "default_branch": "main"} for i in range(3)]
+
+    def fake_get(url, token):
+        if "/r0/" in url:
+            return {"protected": True}
+        _raise(500, url)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        result = BranchProtectionEnabled().run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "error"
+    assert result["value"] == {"checked": 3, "protected": 1, "unknown": 2}
+
+
+def test_branch_protection_visible_unprotected_repo_still_fails_despite_unknowns():
+    repos = [{"name": f"r{i}", "default_branch": "main"} for i in range(3)]
+
+    def fake_get(url, token):
+        if "/r0/" in url:
+            return {"protected": False}
+        _raise(403, url)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        result = BranchProtectionEnabled().run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "fail"
+    assert result["value"]["unknown"] == 2
+
+
+def test_force_push_partial_unknown_with_all_visible_clear_is_error_and_reports_unknown():
+    repos = [{"name": "a", "default_branch": "main"}, {"name": "b", "default_branch": "main"}]
+
+    def fake_get(url, token):
+        if "/repos/acme/b/" in url:
+            _raise(403, url)
+        return {"allow_force_pushes": {"enabled": False}}
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        result = DefaultBranchNoForcePushCheck().run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "error"
+    assert result["value"] == {"repos_checked": 1, "force_push_allowed": 0, "unknown": 1}
+
+
+def test_force_push_visible_violation_still_fails_despite_unknowns():
+    repos = [{"name": "a", "default_branch": "main"}, {"name": "b", "default_branch": "main"}]
+
+    def fake_get(url, token):
+        if "/repos/acme/b/" in url:
+            _raise(403, url)
+        return {"allow_force_pushes": {"enabled": True}}
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        mp.setattr("checks.github_checks._get_all_pages", lambda *a, **k: [])
+        result = DefaultBranchNoForcePushCheck().run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "fail"
+    assert result["value"]["unknown"] == 1
 
 
 def test_empty_repo_without_a_default_branch_is_skipped_by_branch_checks():
@@ -853,3 +953,14 @@ def test_dependabot_only_names_repos_with_critical_or_high_alerts():
         result = DependabotAlertsCheck().run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "fail"
     assert result["value"]["repos"] == ["bad"]
+
+
+def test_a_5xx_backs_off_exponentially_even_when_it_carries_a_rate_limit_reset_header():
+    # GitHub sends the rate-limit headers on every response; a 502 must not wait until the reset.
+    request = httpx.Request("GET", "https://x/y")
+    headers = {"X-RateLimit-Reset": str(int(time.time() + 50)), "X-RateLimit-Remaining": "4000"}
+    responses = iter([httpx.Response(502, headers=headers, request=request), httpx.Response(200, json={"ok": 1}, request=request)])
+
+    with patch("time.sleep") as mock_sleep, patch("httpx.Client.get", side_effect=lambda url, headers: next(responses)):
+        assert _get("https://x/y", "tok") == {"ok": 1}
+    mock_sleep.assert_called_once_with(1)  # 2**attempt, not ~50s

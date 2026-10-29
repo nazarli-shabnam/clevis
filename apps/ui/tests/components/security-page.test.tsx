@@ -198,6 +198,21 @@ describe("SecurityPage", () => {
     expect(screen.queryByText("Save token for this org")).not.toBeInTheDocument();
   });
 
+  it("shows n/a, not a perfect score, for a scan that scored no checks", async () => {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: null, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [],
+    });
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+
+    expect(await screen.findByLabelText("Security score: not available")).toBeInTheDocument();
+    expect(screen.getByText("n/a")).toBeInTheDocument();
+    expect(screen.getByText("No checks were scored")).toBeInTheDocument();
+  });
+
   it("allows running a scan with no token entered (GitHub App fallback)", async () => {
     analyticsOverviewMock.mockResolvedValue({
       owner: "acme",

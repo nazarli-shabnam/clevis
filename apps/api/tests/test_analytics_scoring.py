@@ -18,8 +18,21 @@ def test_overview_counts_error_checks_against_score():
         overview = get_overview(owner="acme", token="tok")
 
     assert overview["failed_checks"] == 2
-    assert overview["score"] == 34
+    # 2 of 3 failed is exactly 33.3: the score floors, it never rounds up to 34.
+    assert overview["score"] == 33
     assert overview["repo_count"] == 3
+
+
+def test_overview_score_floors_with_exact_integer_math():
+    def score(n_pass, n_fail):
+        report = {"checks": [{"status": "pass"}] * n_pass + [{"status": "fail"}] * n_fail, "repo_count": 1}
+        with patch("src.services.analytics_service.run_all_checks", return_value=report):
+            return get_overview(owner="acme", token="tok")["score"]
+
+    assert score(5, 1) == 83  # 1 of 6 failed: exact 83.3, was reported as 84
+    assert score(71, 29) == 71  # 0.29 * 100 is 28.999... in floats, which used to give 72
+    assert score(0, 4) == 0
+    assert score(4, 0) == 100
 
 
 def test_overview_excludes_not_applicable_checks_from_score():
@@ -39,7 +52,7 @@ def test_overview_excludes_not_applicable_checks_from_score():
     assert overview["score"] == 50
 
 
-def test_overview_all_not_applicable_checks_scores_100():
+def test_overview_all_not_applicable_checks_has_no_score():
     report = {
         "checks": [
             {"status": "not_applicable"},
@@ -51,7 +64,8 @@ def test_overview_all_not_applicable_checks_scores_100():
         overview = get_overview(owner="acme", token="tok")
 
     assert overview["failed_checks"] == 0
-    assert overview["score"] == 100
+    # Nothing was assessed, so it must not read as a perfect score.
+    assert overview["score"] is None
     # total_checks must exclude not_applicable too, or the UI's "passed = total - failed" lies.
     assert overview["total_checks"] == 0
 

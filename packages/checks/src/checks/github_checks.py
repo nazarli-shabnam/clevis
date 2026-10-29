@@ -33,6 +33,21 @@ def _is_secondary_rate_limit(r: httpx.Response) -> bool:
 _MAX_RETRY_AFTER_SECONDS = 60
 
 
+def _primary_limit_out_of_reach(r: httpx.Response) -> bool:
+    """The token's hourly quota is spent and won't reset within one retry cap.
+
+    Retrying (and sleeping) can't succeed before then, so the caller should return the 403/429 at once
+    and let the check report the repo as unknown. Secondary limits send Retry-After and are excluded."""
+    if r.status_code not in (403, 429) or "Retry-After" in r.headers:
+        return False
+    if r.headers.get("X-RateLimit-Remaining") != "0":
+        return False
+    try:
+        return float(r.headers["X-RateLimit-Reset"]) - time.time() > _MAX_RETRY_AFTER_SECONDS
+    except (KeyError, ValueError):
+        return False
+
+
 def _retry_delay_seconds(r: httpx.Response, attempt: int) -> float:
     """Delay before retrying: Retry-After, then X-RateLimit-Reset, then a fallback.
 
@@ -44,7 +59,9 @@ def _retry_delay_seconds(r: httpx.Response, attempt: int) -> float:
             return min(float(raw), _MAX_RETRY_AFTER_SECONDS)
         except ValueError:
             pass
-    reset_raw = r.headers.get("X-RateLimit-Reset")
+    # GitHub sends the rate-limit headers on every response, so a 5xx carries a reset time too; that must
+    # not pace its retry (it would wait up to the cap instead of backing off exponentially).
+    reset_raw = r.headers.get("X-RateLimit-Reset") if (r.status_code == 429 or _is_secondary_rate_limit(r)) else None
     if reset_raw is not None:
         try:
             delay = float(reset_raw) - time.time()
@@ -57,9 +74,22 @@ def _retry_delay_seconds(r: httpx.Response, attempt: int) -> float:
     return 2**attempt
 
 
+def retry_delay(r: httpx.Response, attempt: int) -> float | None:
+    """Seconds to wait before retrying `r`, or None when it should not be retried.
+
+    Retried: 429, a rate-limit 403, and 5xx. Not retried: anything else, and a primary quota that is spent
+    until well past the retry cap (waiting cannot help). The one retry policy shared by this package's
+    requests and the API's GitHubClient, so the two can't drift apart."""
+    if _primary_limit_out_of_reach(r):
+        return None
+    if r.status_code == 429 or _is_secondary_rate_limit(r) or r.status_code >= 500:
+        return _retry_delay_seconds(r, attempt)
+    return None
+
+
 def _get_with_retry(client: httpx.Client, url: str, headers: dict) -> httpx.Response:
-    # Same retry contract as GitHubClient.request: 3 attempts on connection errors, 429,
-    # rate-limit 403, or 5xx.
+    # Retry contract shared with the API's GitHubClient (see retry_delay): 3 attempts on connection
+    # errors, 429, rate-limit 403, or 5xx.
     for attempt in range(3):
         try:
             r = client.get(url, headers=headers)
@@ -68,8 +98,9 @@ def _get_with_retry(client: httpx.Client, url: str, headers: dict) -> httpx.Resp
                 time.sleep(2**attempt)
                 continue
             raise
-        if (r.status_code == 429 or _is_secondary_rate_limit(r) or r.status_code >= 500) and attempt < 2:
-            time.sleep(_retry_delay_seconds(r, attempt))
+        delay = retry_delay(r, attempt) if attempt < 2 else None
+        if delay is not None:
+            time.sleep(delay)
             continue
         return r
     raise RuntimeError("request loop exhausted without returning")
@@ -271,10 +302,11 @@ class BranchProtectionEnabled(Check):
         if evaluable == 0:
             return {"status": "error", "value": {"checked": checked, "protected": protected, "unknown": unknown}}
         compliant = protected == evaluable
-        return {
-            "status": "pass" if compliant else "fail",
-            "value": _with_repos({"checked": checked, "protected": protected, "unknown": unknown}, unprotected),
-        }
+        value = _with_repos({"checked": checked, "protected": protected, "unknown": unknown}, unprotected)
+        if compliant and unknown > 0:
+            # Same as DependabotAlertsCheck: a clean result from only the reachable repos is not a pass.
+            return {"status": "error", "value": value}
+        return {"status": "pass" if compliant else "fail", "value": value}
 
 
 class SecretScanningEnabled(Check):
@@ -456,7 +488,7 @@ class DefaultBranchNoForcePushCheck(Check):
         if repos is None:
             repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
         if len(repos) == 0:
-            return {"status": "not_applicable", "value": {"repos_checked": 0, "force_push_allowed": 0}}
+            return {"status": "not_applicable", "value": {"repos_checked": 0, "force_push_allowed": 0, "unknown": 0}}
         checked = 0
         force_push_allowed = 0
         unknown = 0
@@ -494,9 +526,11 @@ class DefaultBranchNoForcePushCheck(Check):
                     force_push_allowed += 1
                     allowing.append(name)
             checked += 1
+        value = {"repos_checked": checked, "force_push_allowed": force_push_allowed, "unknown": unknown}
         if checked == 0:
-            return {"status": "error", "value": {"repos_checked": checked, "force_push_allowed": force_push_allowed}}
-        return {
-            "status": "pass" if force_push_allowed == 0 else "fail",
-            "value": _with_repos({"repos_checked": checked, "force_push_allowed": force_push_allowed}, allowing),
-        }
+            return {"status": "error", "value": value}
+        compliant = force_push_allowed == 0
+        if compliant and unknown > 0:
+            # Same as DependabotAlertsCheck: a clean result from only the reachable repos is not a pass.
+            return {"status": "error", "value": _with_repos(value, allowing)}
+        return {"status": "pass" if compliant else "fail", "value": _with_repos(value, allowing)}

@@ -21,6 +21,7 @@ vi.mock("@/lib/api/client", () => ({
       scheduledScans: vi.fn().mockResolvedValue({ enabled: null, effective: false, cadence: null, instance_cadence: "off" }),
       badge: vi.fn().mockResolvedValue({ enabled: false }),
     },
+    waivers: { list: vi.fn().mockResolvedValue([]), create: vi.fn(), revoke: vi.fn() },
     invitations: {
       list: (...args: unknown[]) => listMock(...args),
       revoke: vi.fn(),

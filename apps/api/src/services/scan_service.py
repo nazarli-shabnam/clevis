@@ -6,7 +6,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from src.repositories import scan_results_repo
-from src.services import notifications
+from src.services import notifications, waivers
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,9 @@ def persist_scan(
     scanned_by_user_id: int | None = None,
     owner: str | None = None,
 ) -> None:
+    if tenant_id is not None:
+        # Mutates `result`, so the caller's response, the stored row and the alert comparison all agree.
+        waivers.apply_to_result(db, tenant_id, result)
     scan_results_repo.insert(
         db,
         owner=owner or result["owner"],
@@ -58,7 +61,7 @@ def persist_scan_and_alert(db: Session, org, result: dict, tenant_id: int, *, ac
     return previous
 
 
-def notify_score_drop_best_effort(db: Session, org, previous: int, current: int, *, actor: str = "system") -> None:
+def notify_score_drop_best_effort(db: Session, org, previous: int | None, current: int | None, *, actor: str = "system") -> None:
     # A chat-webhook problem must never fail or slow-fail the scan the user actually asked for.
     try:
         notifications.notify_score_drop(db, org.tenant_id, org.github_login, previous, current, actor=actor)

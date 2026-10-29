@@ -20,7 +20,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from src.core.config import settings
@@ -139,7 +139,9 @@ class WebhookDelivery(Base):
     # Exact verified raw bytes, so what HMAC was checked against is preserved for re-verification.
     payload: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     # queued | queue_failed (XADD failed, retried by webhook_requeue_sweep) | queue_abandoned
-    # (past max retry age, never retried again) | processed (handled by the worker's event consumer).
+    # (past max retry age, never retried again) | processed (handled by the worker's event consumer) |
+    # dropped (the consumer gave up on it: malformed or missing required fields, or too many failed
+    # attempts; never re-queued).
     status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -398,6 +400,19 @@ class NotificationRead(Base):
     last_read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class NotificationPreference(Base):
+    """Which in-app notification kinds a user has muted for an org (one row per user and tenant).
+
+    No row means nothing is muted. Kept apart from NotificationRead because a preference can be set
+    before the user has ever marked anything read."""
+
+    __tablename__ = "notification_preferences"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True)
+    muted_kinds: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default=text("'{}'"))
+
+
 class Membership(Base):
     __tablename__ = "memberships"
     __table_args__ = (UniqueConstraint("tenant_id", "user_id", name="uq_memberships_tenant_user"),)
@@ -448,7 +463,8 @@ class ScanResult(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     owner: Mapped[str] = mapped_column(String, nullable=False)
-    score: Mapped[int] = mapped_column(Integer, nullable=False)
+    # NULL when a scan had no scored checks (nothing was assessed).
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_checks: Mapped[int] = mapped_column(Integer, nullable=False)
     failed_checks: Mapped[int] = mapped_column(Integer, nullable=False)
     checks_json: Mapped[str] = mapped_column(Text, nullable=False)
@@ -508,6 +524,27 @@ class NotificationDestination(Base):
     # Last time an alert claimed this destination; drives the cooldown (see notifications.notify_score_drop).
     last_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class CheckWaiver(Base):
+    """An accepted-risk exception for a security check (see migration 0067). While unexpired, a failing
+    check it covers is left out of the score; it stays visible, stamped as waived, in the scan."""
+
+    __tablename__ = "check_waivers"
+    __table_args__ = (Index("ix_check_waivers_tenant_id_check_id", "tenant_id", "check_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    check_id: Mapped[str] = mapped_column(Text, nullable=False)
+    # NULL = the whole org; otherwise only these repositories.
+    repos: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    owner: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_by: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # Set once the expiry sweep has audited and alerted this waiver's lapse, so that happens once.
+    expiry_noted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ApiToken(Base):

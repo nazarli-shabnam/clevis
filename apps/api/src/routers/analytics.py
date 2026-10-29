@@ -46,6 +46,7 @@ from src.services import notifications, scan_service
 from src.services.analytics_service import (
     get_account_type,
     get_overview,
+    get_token_login,
     instance_scores_hygiene,
     org_scores_hygiene,
 )
@@ -89,6 +90,31 @@ async def _get_account_type(owner: str, token: str) -> str:
         raise HTTPException(status_code=400, detail=f"GitHub API error: {exc.response.status_code}")
     except httpx.RequestError:
         raise HTTPException(status_code=503, detail="GitHub API unreachable")
+
+
+async def _require_token_owns_login(owner: str, token: str) -> None:
+    """A user token lists its own repositories whatever `owner` was typed, so scanning another login
+    with it would mix the token holder's repos into `owner`'s namespace and report misleading results."""
+    try:
+        login = await anyio.to_thread.run_sync(lambda: get_token_login(token))
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=400, detail=f"GitHub API error: {exc.response.status_code}")
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail="GitHub API unreachable")
+    if login is None:
+        # /user refused it (an installation token has no user), so whose repositories it lists can't be
+        # established; an installation is used through the connected GitHub App, not pasted.
+        raise HTTPException(
+            status_code=403,
+            detail="Couldn't verify which account this token belongs to. Use a personal access token for "
+            f"'{owner}', or connect the GitHub App.",
+        )
+    if login.lower() != owner.lower():
+        raise HTTPException(
+            status_code=403,
+            detail=f"This token belongs to '{login}' and can only scan that account's own repositories. "
+            f"Use a token for '{owner}'.",
+        )
 
 
 def _persist_scan(
@@ -260,6 +286,8 @@ async def personal_analytics_overview(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     account_type = await _get_account_type(payload.owner, token)
+    if account_type == "User" and client_token is not None and token == client_token:
+        await _require_token_owns_login(payload.owner, token)
     score_hygiene = await anyio.to_thread.run_sync(lambda: _hygiene_setting_for_member(db, user, payload.owner))
     result = await _run_overview(payload.owner, token, account_type=account_type, score_hygiene=score_hygiene)
     # owner can be any account the user has a token for (BYO-token); where the scan is stored depends
@@ -562,7 +590,7 @@ def _cockpit_commit_activity_from_aggregate(db: Session, tenant_id: int) -> tupl
 
 
 def _week_start(weeks_ago: int) -> date:
-    today = date.today()
+    today = datetime.now(timezone.utc).date()
     start_of_this_week = today - timedelta(days=today.weekday())
     return start_of_this_week - timedelta(weeks=weeks_ago)
 
@@ -590,8 +618,10 @@ def _safe_pr_merge_rate_4w(owner: str, token: str, account_type: str = "Organiza
             futures = [
                 (
                     start,
-                    pool.submit(_search_count, client, f"{qualifier} type:pr created:{start}..{start + timedelta(days=7)}"),
-                    pool.submit(_search_count, client, f"{qualifier} type:pr merged:{start}..{start + timedelta(days=7)}"),
+                    # Search date ranges are inclusive on both ends: +6 days keeps Monday..Sunday from
+                    # sharing a day with the next week.
+                    pool.submit(_search_count, client, f"{qualifier} type:pr created:{start}..{start + timedelta(days=6)}"),
+                    pool.submit(_search_count, client, f"{qualifier} type:pr merged:{start}..{start + timedelta(days=6)}"),
                 )
                 for start in week_starts
             ]
@@ -883,7 +913,7 @@ async def personal_analytics_cockpit(
 
     scans, cache_job_success_rate = await anyio.to_thread.run_sync(_scans_and_cache_job_rate)
     latest_score = scans[0]["score"] if scans else None
-    score_trend = [s["score"] for s in reversed(scans)]
+    score_trend = [s["score"] for s in reversed(scans) if s["score"] is not None]
 
     account_type = await _get_account_type(owner, token)
     try:

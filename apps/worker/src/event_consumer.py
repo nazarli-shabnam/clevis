@@ -10,6 +10,7 @@ import logging
 import os
 import threading
 import time
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 
@@ -19,11 +20,11 @@ import redis
 import org_membership_store
 import repo_events_store
 import security_alerts_store
-from config import settings
+from config import plain_db_url, settings
 
 log = logging.getLogger(__name__)
 
-_DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg://", "postgresql://")
+_DB_URL = plain_db_url(settings.database_url.get_secret_value())
 
 # Must match apps/api/src/routers/webhooks.py's _WEBHOOK_STREAM_KEY (no shared code).
 _STREAM_KEY = "webhook_events"
@@ -42,6 +43,13 @@ _NOT_YET_NORMALIZED_EVENT_TYPES = {"membership", "team"}
 _RECLAIM_IDLE_MS = 60_000
 # A repeatedly-failing entry is dropped so a poison pill can't block reclaim forever.
 _MAX_DELIVERY_ATTEMPTS = 5
+# How long one member/organization event waits for its tenant's membership lock (held by a reconcile
+# job across its GitHub calls) before it is set aside for the pending sweep. Short, because the consumer
+# is a single thread: every other tenant's webhooks queue up behind a wait.
+_TENANT_LOCK_WAIT_SECONDS = 5.0
+# At most this many deferred entries are retried per loop iteration, so a big backlog behind one stuck
+# tenant can't delay the pending sweep and new events; the rest wait for the next iteration.
+_DEFERRED_RETRY_BUDGET = 50
 # Bounded block so the loop still wakes to touch the heartbeat and sweep pending.
 _BLOCK_MS = 5_000
 _BATCH_SIZE = 10
@@ -238,7 +246,101 @@ def _normalize_organization_event(payload: dict) -> dict | None:
     }
 
 
-def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry_id: str, fields: dict) -> None:
+def _mark_dropped(pg_conn: psycopg.Connection, delivery_row_id: str | int) -> None:
+    """Give a delivery the consumer is abandoning a terminal status. Left at 'queued' it would look stuck,
+    and webhook_requeue_sweep would re-queue it every tick forever (and crowd out genuinely stuck rows)."""
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            "UPDATE webhook_deliveries SET status = 'dropped' WHERE id = %s AND status IN ('queued', 'queue_failed')",
+            (delivery_row_id,),
+        )
+    pg_conn.commit()
+
+
+class TenantLockBusy(Exception):
+    """The tenant's membership lock is held elsewhere, so the entry can't be processed yet."""
+
+
+# Membership entries set aside because their tenant's lock was busy, per tenant in arrival order. They stay
+# unacked in Redis, so a crash still recovers them through the pending sweep. Kept locally (rather than
+# left to that sweep) so that waiting costs no delivery attempt (a removal must not be dropped for
+# waiting out a long reconcile) and so a tenant's later events can't overtake an earlier one (a stale
+# "added" processed after a newer "removed" would resurrect access). Only the consumer thread touches it.
+_deferred: dict[str, deque] = {}
+# Failed (not merely blocked) attempts per deferred entry id; at _MAX_DELIVERY_ATTEMPTS it is dropped like
+# any poison pill, so a permanently failing head can't hold its tenant's later events back forever.
+_deferred_failures: dict[str, int] = {}
+# A failed deferred entry is not retried before this many seconds have passed (monotonic deadline kept in
+# _deferred_retry_at). Without it the retry loop (every few seconds) would burn all the attempts on a
+# short outage and drop a member removal; with it the attempts span about as long as the pending sweep's.
+_DEFERRED_FAILURE_BACKOFF_S = _RECLAIM_IDLE_MS / 1000
+_deferred_retry_at: dict[str, float] = {}
+
+
+def _tenant_key(fields: dict) -> str:
+    return str(fields.get("tenant_id") or "")
+
+
+def _dispatch(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry_id: str, fields: dict) -> None:
+    """_process_entry, but a membership entry whose tenant lock is busy (or that has an earlier entry
+    waiting on it) is queued locally instead of raising."""
+    key = _tenant_key(fields)
+    if fields.get("event_type") in _ORG_MEMBERSHIP_EVENT_TYPES and key in _deferred:
+        _deferred[key].append((entry_id, fields))
+        return
+    try:
+        _process_entry(pg_conn, redis_client, entry_id, fields)
+    except TenantLockBusy:
+        log.info("stream entry %s deferred: membership lock for tenant %s is busy", entry_id, key)
+        _deferred.setdefault(key, deque()).append((entry_id, fields))
+
+
+def _retry_deferred(pg_conn: psycopg.Connection, redis_client: redis.Redis) -> None:
+    """Non-waiting attempts, oldest entry of each tenant first, at most _DEFERRED_RETRY_BUDGET per call.
+
+    A tenant stops at its first entry that is still blocked or just failed: later entries must not
+    overtake it. A failing head is retried on later calls and dropped after _MAX_DELIVERY_ATTEMPTS."""
+    budget = _DEFERRED_RETRY_BUDGET
+    for key in list(_deferred):
+        queue = _deferred[key]
+        while queue and budget > 0:
+            entry_id, fields = queue[0]
+            if time.monotonic() < _deferred_retry_at.get(entry_id, 0.0):
+                break  # backing off after a failure; later entries of this tenant wait behind it
+            budget -= 1
+            try:
+                _process_entry(pg_conn, redis_client, entry_id, fields, lock_wait_s=0)
+            except TenantLockBusy:
+                break
+            except Exception:
+                log.exception("failed to process deferred stream entry %s", entry_id)
+                _rollback_quietly(pg_conn)
+                failures = _deferred_failures.get(entry_id, 0) + 1
+                if failures < _MAX_DELIVERY_ATTEMPTS:
+                    _deferred_failures[entry_id] = failures
+                    _deferred_retry_at[entry_id] = time.monotonic() + _DEFERRED_FAILURE_BACKOFF_S
+                    break
+                log.error("deferred stream entry %s failed %d times, dropping", entry_id, failures)
+                row_id = fields.get("delivery_row_id")
+                if row_id is not None:
+                    _mark_dropped(pg_conn, row_id)
+                redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
+            _deferred_failures.pop(entry_id, None)
+            _deferred_retry_at.pop(entry_id, None)
+            queue.popleft()
+        if not queue:
+            _deferred.pop(key, None)
+        if budget <= 0:
+            break
+
+
+def _process_entry(
+    pg_conn: psycopg.Connection,
+    redis_client: redis.Redis,
+    entry_id: str,
+    fields: dict,
+    lock_wait_s: float | None = None,
+) -> None:
     delivery_row_id = fields.get("delivery_row_id")
     if delivery_row_id is None:
         log.error("stream entry %s missing delivery_row_id, dropping: %r", entry_id, fields)
@@ -276,13 +378,20 @@ def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry
         payload = json.loads(payload_bytes)
     except json.JSONDecodeError:
         log.error("webhook_deliveries row %s has malformed JSON payload, dropping", delivery_row_id)
+        _mark_dropped(pg_conn, delivery_row_id)
         redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
         return
 
     if event_type in _ORG_MEMBERSHIP_EVENT_TYPES:
         # Held for the whole write so it can't land between the reconciliation job's roster
         # fetch and snapshot apply.
-        org_membership_store.acquire_tenant_lock(pg_conn, tenant_id)
+        if org_membership_store.try_acquire_tenant_lock(
+            pg_conn,
+            tenant_id,
+            timeout_s=_TENANT_LOCK_WAIT_SECONDS if lock_wait_s is None else lock_wait_s,
+            on_wait=_touch_heartbeat,
+        ) is None:
+            raise TenantLockBusy(tenant_id)
         try:
             with pg_conn.cursor() as cur:
                 cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
@@ -291,6 +400,7 @@ def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry
                     action = payload.get("action")
                     if member_normalized is None:
                         log.error("webhook_deliveries row %s has no repository.full_name or member.login, dropping", delivery_row_id)
+                        _mark_dropped(pg_conn, delivery_row_id)
                         redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
                         return
                     if action == "removed":
@@ -306,6 +416,7 @@ def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry
                         login = ((payload.get("membership") or {}).get("user") or {}).get("login")
                         if not login:
                             log.error("webhook_deliveries row %s has no membership.user.login, dropping", delivery_row_id)
+                            _mark_dropped(pg_conn, delivery_row_id)
                             redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
                             return
                         org_membership_store.remove_org_member(cur, tenant_id=tenant_id, login=login, event_received_at=received_at)
@@ -320,6 +431,7 @@ def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry
                         org_normalized = _normalize_organization_event(payload)
                         if org_normalized is None:
                             log.error("webhook_deliveries row %s has no membership.user.login, dropping", delivery_row_id)
+                            _mark_dropped(pg_conn, delivery_row_id)
                             redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
                             return
                         org_membership_store.upsert_org_member(cur, tenant_id=tenant_id, added_at=received_at, **org_normalized)
@@ -344,6 +456,7 @@ def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry
         alert_normalized = _normalize_security_alert(event_type, payload, received_at)
         if alert_normalized is None:
             log.error("webhook_deliveries row %s has no repository.full_name or alert.number, dropping", delivery_row_id)
+            _mark_dropped(pg_conn, delivery_row_id)
             redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
             return
 
@@ -359,6 +472,7 @@ def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry
     normalized = _normalize(event_type, payload, received_at)
     if normalized is None:
         log.error("webhook_deliveries row %s has no repository.full_name, dropping", delivery_row_id)
+        _mark_dropped(pg_conn, delivery_row_id)
         redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
         return
 
@@ -383,9 +497,20 @@ def _rollback_quietly(pg_conn: psycopg.Connection) -> None:
 
 def _sweep_pending(pg_conn: psycopg.Connection, redis_client: redis.Redis) -> None:
     """Reclaim entries idle past _RECLAIM_IDLE_MS, or drop ones that failed too many times."""
-    pending = redis_client.xpending_range(
-        _STREAM_KEY, _GROUP_NAME, min="-", max="+", count=100, idle=_RECLAIM_IDLE_MS
-    )
+    # Entries waiting locally on a busy tenant lock are being handled; reclaiming them would re-run them
+    # out of order and spend delivery attempts on a wait. They are filtered out, and the listing is paged
+    # past them, so a first page made up entirely of waiting entries can't hide the ones behind it.
+    waiting = {entry_id for queue in _deferred.values() for entry_id, _ in queue}
+    pending: list = []
+    cursor = "-"
+    while True:
+        page = redis_client.xpending_range(
+            _STREAM_KEY, _GROUP_NAME, min=cursor, max="+", count=100, idle=_RECLAIM_IDLE_MS
+        )
+        pending = [p for p in page if p["message_id"] not in waiting]
+        if pending or len(page) < 100:
+            break
+        cursor = f"({page[-1]['message_id']}"  # exclusive: continue after the last entry seen
     if not pending:
         return
 
@@ -396,6 +521,10 @@ def _sweep_pending(pg_conn: psycopg.Connection, redis_client: redis.Redis) -> No
 
     for message_id in to_drop:
         log.error("stream entry %s exceeded %d delivery attempts, dropping", message_id, _MAX_DELIVERY_ATTEMPTS)
+        for _entry_id, entry_fields in redis_client.xrange(_STREAM_KEY, min=message_id, max=message_id):
+            row_id = entry_fields.get("delivery_row_id")
+            if row_id is not None:
+                _mark_dropped(pg_conn, row_id)
         redis_client.xack(_STREAM_KEY, _GROUP_NAME, message_id)
 
     if not to_claim:
@@ -403,7 +532,7 @@ def _sweep_pending(pg_conn: psycopg.Connection, redis_client: redis.Redis) -> No
     claimed = redis_client.xclaim(_STREAM_KEY, _GROUP_NAME, _CONSUMER_NAME, min_idle_time=_RECLAIM_IDLE_MS, message_ids=to_claim)
     for entry_id, fields in claimed:
         try:
-            _process_entry(pg_conn, redis_client, entry_id, fields)
+            _dispatch(pg_conn, redis_client, entry_id, fields)
         except Exception:
             log.exception("failed to process reclaimed stream entry %s", entry_id)
             _rollback_quietly(pg_conn)
@@ -427,6 +556,7 @@ def run() -> None:
         _touch_heartbeat()
         try:
             with psycopg.connect(_DB_URL) as pg_conn:
+                _retry_deferred(pg_conn, redis_client)
                 _sweep_pending(pg_conn, redis_client)
 
                 response = redis_client.xreadgroup(
@@ -435,7 +565,7 @@ def run() -> None:
                 for _stream_key, entries in response or []:
                     for entry_id, fields in entries:
                         try:
-                            _process_entry(pg_conn, redis_client, entry_id, fields)
+                            _dispatch(pg_conn, redis_client, entry_id, fields)
                         except Exception:
                             # Left unacked on purpose; _sweep_pending reclaims it later. Roll back first so
                             # an aborted transaction doesn't poison the rest of the batch.

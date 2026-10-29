@@ -1131,3 +1131,96 @@ describe("handleResponse 422", () => {
     await expect(api.tokens.delete("acme")).rejects.toThrow("bad email");
   });
 });
+
+describe("waivers, notification preferences and evidence endpoints", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  function stub(body: unknown, status = 200, headers: Record<string, string> = {}) {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        status === 204 ? new Response(null, { status }) : new Response(typeof body === "string" ? body : JSON.stringify(body), { status, headers }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return () => [String((fetchMock.mock.calls[0] as unknown[])[0]), (fetchMock.mock.calls[0] as unknown[])[1] as RequestInit] as const;
+  }
+
+  it("waivers list, create and revoke hit the org-scoped routes", async () => {
+    const list = stub([]);
+    await api.waivers.list("a/b");
+    expect(list()[0]).toMatch(/\/orgs\/a%2Fb\/waivers$/);
+
+    const create = stub({ id: 1 }, 201);
+    const body = { check_id: "c", repos: null, reason: "r", owner: "o", expires_at: "2030-01-01T00:00:00Z" };
+    await api.waivers.create("acme", body);
+    const [url, init] = create();
+    expect(url).toMatch(/\/orgs\/acme\/waivers$/);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual(body);
+
+    const revoke = stub(null, 204);
+    await api.waivers.revoke("acme", 7);
+    expect(revoke()[0]).toMatch(/\/orgs\/acme\/waivers\/7$/);
+    expect(revoke()[1].method).toBe("DELETE");
+  });
+
+  it("notification preferences are read and replaced per org", async () => {
+    const get = stub({ muted_kinds: [] });
+    await api.notifications.preferences("acme");
+    expect(get()[0]).toMatch(/\/orgs\/acme\/notifications\/preferences$/);
+
+    const put = stub({ muted_kinds: ["score_drop"] });
+    await api.notifications.setPreferences("acme", ["score_drop"]);
+    const [url, init] = put();
+    expect(url).toMatch(/\/notifications\/preferences$/);
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(String(init.body))).toEqual({ muted_kinds: ["score_drop"] });
+  });
+
+  it("evidence.download sends the range and reads the filename and truncation header", async () => {
+    localStorage.setItem(TOKEN_KEY, "tok");
+    const call = stub("zip-bytes", 200, {
+      "Content-Disposition": 'attachment; filename="clevis-evidence-acme-1.zip"',
+      "X-Evidence-Truncated": "true",
+    });
+    const out = await api.evidence.download("acme", { since: "2026-01-01", until: "2026-03-31" });
+    const [url, init] = call();
+    expect(url).toMatch(/\/orgs\/acme\/evidence\?since=2026-01-01&until=2026-03-31$/);
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer tok");
+    expect(out.filename).toBe("clevis-evidence-acme-1.zip");
+    expect(out.truncated).toBe(true);
+    expect(await out.blob.text()).toBe("zip-bytes");
+  });
+
+  it("evidence.download falls back to a default filename and no query without a range", async () => {
+    const call = stub("z");
+    const out = await api.evidence.download("acme");
+    expect(call()[0]).toMatch(/\/orgs\/acme\/evidence$/);
+    expect(out.filename).toBe("clevis-evidence-acme.zip");
+    expect(out.truncated).toBe(false);
+  });
+
+  it("evidence.download surfaces the server's error and signs out on a 401", async () => {
+    localStorage.setItem(TOKEN_KEY, "stale");
+    stub({ detail: "Too many requests" }, 429);
+    await expect(api.evidence.download("acme")).rejects.toThrow("Too many requests");
+
+    const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+    stub({ detail: "nope" }, 401);
+    await expect(api.evidence.download("acme")).rejects.toThrow("nope");
+    expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
+    expect(dispatchSpy).toHaveBeenCalledWith(expect.objectContaining({ type: "clevis:unauthorized" }));
+  });
+
+  it("evidence.download reports a timeout as advice, not an AbortError", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new DOMException("aborted", "AbortError"))),
+    );
+    await expect(api.evidence.download("acme")).rejects.toThrow(/timed out/);
+  });
+});
