@@ -141,7 +141,10 @@ def build_bundle(
     files["outside_collaborators.csv"] = {"rows": len(outside), "truncated": outside_truncated}
 
     # list_for_tenant treats `until` as exclusive, so step past the inclusive end-of-day instant.
-    audit_until = until + timedelta(microseconds=1) if until else None
+    try:
+        audit_until = until + timedelta(microseconds=1) if until else None
+    except OverflowError:  # until is the largest representable instant: effectively no upper bound
+        audit_until = None
     audit = audit_repo.list_for_tenant(db, tenant_id, since=since, until=audit_until, limit=AUDIT_LIMIT + 1)
     audit_truncated = len(audit) > AUDIT_LIMIT
     audit = audit[:AUDIT_LIMIT]

@@ -148,3 +148,19 @@ def test_score_drop_and_waiver_alerts_reach_email_destinations(db, acme):
     sent = db.query(AuditLog).filter(AuditLog.action == "notification.sent").all()
     assert len(sent) == 2 and all(json.loads(a.payload)["kind"] == "email" for a in sent)
     assert settings is not None  # (settings import keeps the module's encryption key resolvable)
+
+
+def test_a_partly_delivered_alert_counts_as_sent_so_it_is_not_repeated_to_those_who_got_it(db, acme):
+    client = _client(db, acme["admin"])
+    dest_id = _create(client, ["mail-admin@e.com", "mail-member@e.com"]).json()["id"]
+    dest = db.get(NotificationDestination, dest_id)
+    allowed = {"mail-admin@e.com", "mail-member@e.com"}
+
+    def flaky(address, subject, body):
+        if address == "mail-member@e.com":
+            raise OSError("mailbox full")
+
+    with SMTP_ON, patch("src.services.email.send_email", side_effect=flaky):
+        assert notifications.send(dest, "test", "t", {"org": "acme-mail"}, email_allowed=allowed) == (True, "1/2 sent")
+    with SMTP_ON, patch("src.services.email.send_email", side_effect=OSError("down")):
+        assert notifications.send(dest, "test", "t", {"org": "acme-mail"}, email_allowed=allowed) == (False, "0/2 sent")

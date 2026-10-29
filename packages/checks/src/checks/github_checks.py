@@ -59,7 +59,9 @@ def _retry_delay_seconds(r: httpx.Response, attempt: int) -> float:
             return min(float(raw), _MAX_RETRY_AFTER_SECONDS)
         except ValueError:
             pass
-    reset_raw = r.headers.get("X-RateLimit-Reset")
+    # GitHub sends the rate-limit headers on every response, so a 5xx carries a reset time too; that must
+    # not pace its retry (it would wait up to the cap instead of backing off exponentially).
+    reset_raw = r.headers.get("X-RateLimit-Reset") if (r.status_code == 429 or _is_secondary_rate_limit(r)) else None
     if reset_raw is not None:
         try:
             delay = float(reset_raw) - time.time()

@@ -10,7 +10,9 @@
 Privilege changes only: no data, schema or API-role change. A column-level grant does not stack on a
 table-level one, so the table-level SELECT on ``users`` is revoked first. The statements are guarded on the
 role existing, so a deployment without ``WORKER_DB_PASSWORD`` (no ``clevis_worker``) is unaffected.
-Downgrade restores the two earlier grants exactly.
+Downgrade deliberately does not re-widen anything: it only makes sure the column-level grant is present,
+because the worker needs nothing more and re-granting whole-table access to ``users`` (secrets) or the
+unused ``automation_repo_settings`` table on a rollback would undo the point of this migration.
 
 Revision ID: 0065
 Revises: 0064
@@ -47,9 +49,7 @@ def downgrade() -> None:
         DO $$
         BEGIN
             IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'clevis_worker') THEN
-                REVOKE SELECT (id, github_user_id) ON users FROM clevis_worker;
-                GRANT SELECT ON users TO clevis_worker;
-                GRANT SELECT, INSERT, UPDATE, DELETE ON automation_repo_settings TO clevis_worker;
+                GRANT SELECT (id, github_user_id) ON users TO clevis_worker;
             END IF;
         END
         $$;

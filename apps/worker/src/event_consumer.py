@@ -47,6 +47,9 @@ _MAX_DELIVERY_ATTEMPTS = 5
 # job across its GitHub calls) before it is set aside for the pending sweep. Short, because the consumer
 # is a single thread: every other tenant's webhooks queue up behind a wait.
 _TENANT_LOCK_WAIT_SECONDS = 5.0
+# At most this many deferred entries are retried per loop iteration, so a big backlog behind one stuck
+# tenant can't delay the pending sweep and new events; the rest wait for the next iteration.
+_DEFERRED_RETRY_BUDGET = 50
 # Bounded block so the loop still wakes to touch the heartbeat and sweep pending.
 _BLOCK_MS = 5_000
 _BATCH_SIZE = 10
@@ -248,7 +251,7 @@ def _mark_dropped(pg_conn: psycopg.Connection, delivery_row_id: str | int) -> No
     and webhook_requeue_sweep would re-queue it every tick forever (and crowd out genuinely stuck rows)."""
     with pg_conn.cursor() as cur:
         cur.execute(
-            "UPDATE webhook_deliveries SET status = 'dropped' WHERE id = %s AND status = 'queued'",
+            "UPDATE webhook_deliveries SET status = 'dropped' WHERE id = %s AND status IN ('queued', 'queue_failed')",
             (delivery_row_id,),
         )
     pg_conn.commit()
@@ -264,6 +267,9 @@ class TenantLockBusy(Exception):
 # waiting out a long reconcile) and so a tenant's later events can't overtake an earlier one (a stale
 # "added" processed after a newer "removed" would resurrect access). Only the consumer thread touches it.
 _deferred: dict[str, deque] = {}
+# Failed (not merely blocked) attempts per deferred entry id; at _MAX_DELIVERY_ATTEMPTS it is dropped like
+# any poison pill, so a permanently failing head can't hold its tenant's later events back forever.
+_deferred_failures: dict[str, int] = {}
 
 
 def _tenant_key(fields: dict) -> str:
@@ -285,22 +291,38 @@ def _dispatch(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry_id: 
 
 
 def _retry_deferred(pg_conn: psycopg.Connection, redis_client: redis.Redis) -> None:
-    """One non-waiting attempt per tenant, oldest entry first; stops at the first one still blocked."""
+    """Non-waiting attempts, oldest entry of each tenant first, at most _DEFERRED_RETRY_BUDGET per call.
+
+    A tenant stops at its first entry that is still blocked or just failed: later entries must not
+    overtake it. A failing head is retried on later calls and dropped after _MAX_DELIVERY_ATTEMPTS."""
+    budget = _DEFERRED_RETRY_BUDGET
     for key in list(_deferred):
         queue = _deferred[key]
-        while queue:
+        while queue and budget > 0:
             entry_id, fields = queue[0]
+            budget -= 1
             try:
                 _process_entry(pg_conn, redis_client, entry_id, fields, lock_wait_s=0)
             except TenantLockBusy:
                 break
             except Exception:
-                # Unacked, so the pending sweep reclaims it like any other failure.
                 log.exception("failed to process deferred stream entry %s", entry_id)
                 _rollback_quietly(pg_conn)
+                failures = _deferred_failures.get(entry_id, 0) + 1
+                if failures < _MAX_DELIVERY_ATTEMPTS:
+                    _deferred_failures[entry_id] = failures
+                    break
+                log.error("deferred stream entry %s failed %d times, dropping", entry_id, failures)
+                row_id = fields.get("delivery_row_id")
+                if row_id is not None:
+                    _mark_dropped(pg_conn, row_id)
+                redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
+            _deferred_failures.pop(entry_id, None)
             queue.popleft()
         if not queue:
-            del _deferred[key]
+            _deferred.pop(key, None)
+        if budget <= 0:
+            break
 
 
 def _process_entry(
@@ -466,13 +488,20 @@ def _rollback_quietly(pg_conn: psycopg.Connection) -> None:
 
 def _sweep_pending(pg_conn: psycopg.Connection, redis_client: redis.Redis) -> None:
     """Reclaim entries idle past _RECLAIM_IDLE_MS, or drop ones that failed too many times."""
-    pending = redis_client.xpending_range(
-        _STREAM_KEY, _GROUP_NAME, min="-", max="+", count=100, idle=_RECLAIM_IDLE_MS
-    )
     # Entries waiting locally on a busy tenant lock are being handled; reclaiming them would re-run them
-    # out of order and spend delivery attempts on a wait.
+    # out of order and spend delivery attempts on a wait. They are filtered out, and the listing is paged
+    # past them, so a first page made up entirely of waiting entries can't hide the ones behind it.
     waiting = {entry_id for queue in _deferred.values() for entry_id, _ in queue}
-    pending = [p for p in pending if p["message_id"] not in waiting]
+    pending: list = []
+    cursor = "-"
+    while True:
+        page = redis_client.xpending_range(
+            _STREAM_KEY, _GROUP_NAME, min=cursor, max="+", count=100, idle=_RECLAIM_IDLE_MS
+        )
+        pending = [p for p in page if p["message_id"] not in waiting]
+        if pending or len(page) < 100:
+            break
+        cursor = f"({page[-1]['message_id']}"  # exclusive: continue after the last entry seen
     if not pending:
         return
 

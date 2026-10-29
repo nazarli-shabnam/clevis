@@ -58,7 +58,8 @@ describe("NotificationBell", () => {
   });
 
   it("mutes a kind from the settings panel and refetches the feed", async () => {
-    feedMock.mockResolvedValue(feed([item("a", "score_drop")]));
+    // Once the kind is muted the server drops it: the first load has the item, every later one is empty.
+    feedMock.mockResolvedValueOnce(feed([item("a", "score_drop")])).mockResolvedValue(feed([]));
     setPrefsMock.mockResolvedValue({ muted_kinds: ["score_drop"] });
     wrap(<NotificationBell />);
     fireEvent.click(await screen.findByRole("button", { name: /Notifications, 1 unread/ }));
@@ -71,6 +72,8 @@ describe("NotificationBell", () => {
     await waitFor(() => expect(setPrefsMock).toHaveBeenCalledWith("acme", ["score_drop"]));
     await waitFor(() => expect(feedMock.mock.calls.length).toBeGreaterThan(1)); // badge and list reload
     await waitFor(() => expect(screen.getByRole("checkbox", { name: "Security score drops" })).not.toBeChecked());
+    await waitFor(() => expect(screen.queryByText("title a")).not.toBeInTheDocument());
+    expect(screen.getByText(/Nothing new in the last 14 days/)).toBeInTheDocument();
   });
 
   it("closes the popover when an item is followed", async () => {

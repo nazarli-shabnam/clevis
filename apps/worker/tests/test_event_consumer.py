@@ -977,16 +977,17 @@ def test_organization_event_non_db_error_after_a_write_rolls_back_instead_of_com
     assert _tenant_lock_is_free(tenant_id)
 
 
-def test_process_entry_drops_malformed_json_payload(pg_conn, tenant_id):
+@pytest.mark.parametrize("initial_status", ["queued", "queue_failed"])
+def test_process_entry_drops_malformed_json_payload(pg_conn, tenant_id, initial_status):
     conn, state = pg_conn
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO webhook_deliveries (tenant_id, delivery_id, event_type, payload, status)
-            VALUES (%s, 'd-malformed-1', 'push', %s, 'queued')
+            VALUES (%s, 'd-malformed-1', 'push', %s, %s)
             RETURNING id
             """,
-            (tenant_id, b"not json"),
+            (tenant_id, b"not json", initial_status),
         )
         row_id = cur.fetchone()[0]
     conn.commit()
@@ -1259,3 +1260,70 @@ def test_sweep_leaves_entries_waiting_on_a_busy_tenant_alone(pg_conn, redis_clie
     finally:
         event_consumer._deferred.clear()
     assert seen["called"] and acked == []
+
+
+def test_a_failing_deferred_head_keeps_its_place_then_is_dropped_after_the_attempt_limit(pg_conn, tenant_id, monkeypatch):
+    conn, state = pg_conn
+    event_consumer._deferred.clear()
+    event_consumer._deferred_failures.clear()
+    payload = {"action": "member_added", "membership": {"role": "member", "user": {"login": "poison-head"}}}
+    row_id = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-poison-head", event_type="organization", payload=payload)
+    fields = _entry_fields(row_id, "organization", tenant_id)
+    event_consumer._deferred[str(tenant_id)] = event_consumer.deque([("1-0", fields), ("2-0", fields)])
+    redis_client = _FakeRedis()
+
+    def boom(*a, **k):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(event_consumer, "_process_entry", boom)
+    try:
+        for attempt in range(1, event_consumer._MAX_DELIVERY_ATTEMPTS):
+            event_consumer._retry_deferred(conn, redis_client)
+            # Still at the head, so the entry behind it has not overtaken it.
+            assert [e for e, _ in event_consumer._deferred[str(tenant_id)]] == ["1-0", "2-0"]
+            assert redis_client.acked == []
+        event_consumer._retry_deferred(conn, redis_client)  # the attempt that reaches the limit
+        assert [a[2] for a in redis_client.acked] == ["1-0"]
+        assert [e for e, _ in event_consumer._deferred[str(tenant_id)]] == ["2-0"]
+    finally:
+        event_consumer._deferred.clear()
+        event_consumer._deferred_failures.clear()
+
+
+def test_deferred_retries_are_bounded_per_call(pg_conn, monkeypatch):
+    conn, _ = pg_conn
+    event_consumer._deferred.clear()
+    monkeypatch.setattr(event_consumer, "_DEFERRED_RETRY_BUDGET", 3)
+    seen = []
+    monkeypatch.setattr(event_consumer, "_process_entry", lambda c, r, entry_id, f, lock_wait_s=None: seen.append(entry_id))
+    event_consumer._deferred["9"] = event_consumer.deque((f"{i}-0", {"tenant_id": "9"}) for i in range(10))
+    try:
+        event_consumer._retry_deferred(conn, _FakeRedis())
+        assert len(seen) == 3 and len(event_consumer._deferred["9"]) == 7  # the rest wait for the next call
+    finally:
+        event_consumer._deferred.clear()
+
+
+def test_sweep_pages_past_a_first_page_made_only_of_waiting_entries(pg_conn, redis_client, monkeypatch):
+    conn, _ = pg_conn
+    event_consumer._deferred.clear()
+    waiting_ids = [f"{i}-0" for i in range(1, 101)]
+    event_consumer._deferred["7"] = event_consumer.deque((i, {"tenant_id": "7", "event_type": "organization"}) for i in waiting_ids)
+    first = [{"message_id": i, "times_delivered": 1} for i in waiting_ids]
+    second = [{"message_id": "500-0", "times_delivered": 99}]  # a poison pill hiding behind them
+    mins = []
+
+    def fake_pending(stream, group, min, max, count, idle):
+        mins.append(min)
+        return first if min == "-" else second
+
+    dropped = []
+    monkeypatch.setattr(redis_client, "xpending_range", fake_pending)
+    monkeypatch.setattr(redis_client, "xack", lambda *a, **k: dropped.append(a))
+    monkeypatch.setattr(redis_client, "xrange", lambda *a, **k: [])
+    try:
+        event_consumer._sweep_pending(conn, redis_client)
+    finally:
+        event_consumer._deferred.clear()
+    assert mins == ["-", "(100-0"]
+    assert [d[2] for d in dropped] == ["500-0"]

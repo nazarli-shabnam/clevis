@@ -228,7 +228,8 @@ def test_get_waits_the_cap_for_a_ratelimit_with_no_usable_header():
     mock_sleep.assert_called_once_with(_MAX_RETRY_AFTER_SECONDS)
 
 
-def test_get_fails_fast_when_the_primary_quota_resets_far_in_the_future():
+@pytest.mark.parametrize("status", [403, 429])
+def test_get_fails_fast_when_the_primary_quota_resets_far_in_the_future(status):
     # Quota spent with the reset ~40 min away: sleeping and retrying cannot succeed, so return at once.
     request = httpx.Request("GET", "https://x/y")
     headers = {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(int(time.time() + 2400))}
@@ -236,7 +237,7 @@ def test_get_fails_fast_when_the_primary_quota_resets_far_in_the_future():
 
     def fake_get(url, **_kw):
         calls.append(url)
-        return httpx.Response(403, headers=headers, request=request)
+        return httpx.Response(status, headers=headers, request=request)
 
     with patch("time.sleep") as mock_sleep, patch("httpx.Client.get", side_effect=fake_get):
         with pytest.raises(httpx.HTTPStatusError):
@@ -952,3 +953,14 @@ def test_dependabot_only_names_repos_with_critical_or_high_alerts():
         result = DependabotAlertsCheck().run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "fail"
     assert result["value"]["repos"] == ["bad"]
+
+
+def test_a_5xx_backs_off_exponentially_even_when_it_carries_a_rate_limit_reset_header():
+    # GitHub sends the rate-limit headers on every response; a 502 must not wait until the reset.
+    request = httpx.Request("GET", "https://x/y")
+    headers = {"X-RateLimit-Reset": str(int(time.time() + 50)), "X-RateLimit-Remaining": "4000"}
+    responses = iter([httpx.Response(502, headers=headers, request=request), httpx.Response(200, json={"ok": 1}, request=request)])
+
+    with patch("time.sleep") as mock_sleep, patch("httpx.Client.get", side_effect=lambda url, headers: next(responses)):
+        assert _get("https://x/y", "tok") == {"ok": 1}
+    mock_sleep.assert_called_once_with(1)  # 2**attempt, not ~50s

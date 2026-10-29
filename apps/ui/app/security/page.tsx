@@ -261,10 +261,17 @@ export default function SecurityPage() {
   const remediationTrendData = (historyQuery.data ?? [])
     .slice(0, 10)
     .reverse()
-    .map((h) => ({
-      week: new Date(h.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
-      value: h.total_checks - h.failed_checks,
-    }))
+    .flatMap((h) =>
+      // A scan that scored nothing assessed nothing: a "0 passing" point would read as a collapse.
+      h.score === null
+        ? []
+        : [
+            {
+              week: new Date(h.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+              value: h.total_checks - h.failed_checks,
+            },
+          ]
+    )
 
   const vulnByRepoData = (matrixMutation.data?.repos ?? []).map((r) => ({
     name: r.repo,

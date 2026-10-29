@@ -101,7 +101,15 @@ async def _require_token_owns_login(owner: str, token: str) -> None:
         raise HTTPException(status_code=400, detail=f"GitHub API error: {exc.response.status_code}")
     except httpx.RequestError:
         raise HTTPException(status_code=503, detail="GitHub API unreachable")
-    if login is not None and login.lower() != owner.lower():
+    if login is None:
+        # /user refused it (an installation token has no user), so whose repositories it lists can't be
+        # established; an installation is used through the connected GitHub App, not pasted.
+        raise HTTPException(
+            status_code=403,
+            detail="Couldn't verify which account this token belongs to. Use a personal access token for "
+            f"'{owner}', or connect the GitHub App.",
+        )
+    if login.lower() != owner.lower():
         raise HTTPException(
             status_code=403,
             detail=f"This token belongs to '{login}' and can only scan that account's own repositories. "

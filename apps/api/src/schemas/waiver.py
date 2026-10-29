@@ -26,7 +26,9 @@ class WaiverIn(BaseModel):
             return None
         cleaned = []
         for name in v:
-            name = name.strip().split("/")[-1]
+            name = name.strip()
+            if "/" in name:
+                raise ValueError("use plain repository names, without the owner prefix")
             if not name or len(name) > 100:
                 raise ValueError("repository names must be 1-100 characters")
             if name.lower() not in {c.lower() for c in cleaned}:

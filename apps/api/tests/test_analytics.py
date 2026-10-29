@@ -145,6 +145,7 @@ def test_personal_overview_runs_checks_for_user_account(http):
     get_overview so org-only checks come back not_applicable."""
     with (
         patch("src.routers.analytics.get_account_type", return_value="User") as mock_account_type,
+        patch("src.routers.analytics.get_token_login", return_value="octocat"),
         patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW) as mock_overview,
     ):
         resp = http.post(
@@ -275,20 +276,23 @@ def test_personal_overview_refuses_a_user_token_scanning_another_login(http, db)
     assert db.query(ScanResult).filter(ScanResult.owner == "bob").count() == 0
 
 
-def test_personal_overview_login_match_is_case_insensitive_and_skipped_for_non_user_tokens(http, db):
+def test_personal_overview_login_match_is_case_insensitive_and_unverifiable_tokens_are_refused(http, db):
     with (
         patch("src.routers.analytics.get_account_type", return_value="User"),
         patch("src.routers.analytics.get_token_login", return_value="OctoCat"),
         patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW),
     ):
         assert http.post("/me/analytics/overview", json={"owner": "octocat", "token": "ghp_mine"}).status_code == 200
-    # An installation token has no /user login (None): the owner is whatever the installation covers.
+    # A pasted token /user refuses (e.g. an installation token) can't be tied to the owner: refused, and
+    # nothing is scanned or stored.
     with (
         patch("src.routers.analytics.get_account_type", return_value="User"),
         patch("src.routers.analytics.get_token_login", return_value=None),
-        patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW),
+        patch("src.routers.analytics.get_overview") as overview,
     ):
-        assert http.post("/me/analytics/overview", json={"owner": "octocat", "token": "ghp_mine"}).status_code == 200
+        resp = http.post("/me/analytics/overview", json={"owner": "octocat", "token": "ghp_mine"})
+    assert resp.status_code == 403 and "verify which account" in resp.json()["detail"]
+    overview.assert_not_called()
 
 
 def test_org_overview_owner_mismatch_forbidden(http, db, mock_user):

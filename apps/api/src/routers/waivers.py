@@ -6,6 +6,7 @@ scan, and the stored scan keeps the waivers that applied when it ran."""
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
@@ -69,6 +70,9 @@ def create_waiver(
 ):
     now = datetime.now(timezone.utc)
     _validate(body, now)
+    # Serialize creations per tenant for this transaction, so two concurrent requests can't both read a
+    # count under the cap and both insert past it.
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext('check_waivers'), :t)"), {"t": ctx.org.tenant_id})
     if waiver_repo.count_for_tenant(db, ctx.org.tenant_id) >= waiver_service.MAX_WAIVERS_PER_TENANT:
         raise HTTPException(
             status_code=409, detail=f"At most {waiver_service.MAX_WAIVERS_PER_TENANT} waivers per organization; revoke some first"
@@ -80,7 +84,7 @@ def create_waiver(
         repos=body.repos,
         reason=body.reason,
         owner=body.owner,
-        expires_at=body.expires_at,
+        expires_at=_aware(body.expires_at),
         created_by=user.email,
     )
     audit_repo.write(
@@ -112,7 +116,7 @@ def update_waiver(
     waiver = _get_or_404(db, ctx, waiver_id)
     before = _payload(waiver)
     waiver.check_id, waiver.repos, waiver.reason = body.check_id, body.repos, body.reason
-    waiver.owner, waiver.expires_at = body.owner, body.expires_at
+    waiver.owner, waiver.expires_at = body.owner, _aware(body.expires_at)
     # A renewed waiver can lapse (and be announced) again.
     waiver.expiry_noted_at = None
     audit_repo.write(

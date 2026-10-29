@@ -42,10 +42,16 @@ describe("EvidenceExportCard", () => {
   })
 
   it("warns when a list was capped", async () => {
-    downloadMock.mockResolvedValue({ blob: new Blob(["z"]), filename: "e.zip", truncated: true })
+    const blob = new Blob(["z"])
+    downloadMock.mockResolvedValue({ blob, filename: "e.zip", truncated: true })
     renderCard()
     fireEvent.click(screen.getByRole("button", { name: "Export evidence" }))
-    expect(await screen.findByRole("status")).toHaveTextContent(/hit their size cap/)
+    const notice = await screen.findByRole("status")
+    expect(notice).toHaveTextContent(/hit their size cap/)
+    // The date range only shortens the scan history and audit log, and the notice says so.
+    expect(notice).toHaveTextContent(/ignore the range/)
+    // A capped export is still saved: the user gets the (incomplete) zip plus the warning.
+    await waitFor(() => expect(saveMock).toHaveBeenCalledWith("e.zip", blob))
   })
 
   it("shows the server's error and saves nothing", async () => {

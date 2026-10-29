@@ -74,6 +74,15 @@ def test_org_rename_moves_installation_and_scan_history_to_the_new_login(db):
         db, account_login="old-name", account_type="Organization", auth_mode="app", installation_id=5, org_id=org.id
     )
     db.add(ScanResult(owner="old-name", score=80, total_checks=5, failed_checks=1, checks_json="[]", tenant_id=org.tenant_id))
+    from src.core.db import User
+    from src.repositories import tenant_repo
+
+    user = User(email="renamer@e.com", name=None, password_hash=None, is_workspace_admin=False)
+    db.add(user)
+    db.commit()
+    personal = tenant_repo.ensure_personal_tenant(db, user.id)
+    personal_tenant_id = personal.id
+    db.add(ScanResult(owner="old-name", score=70, total_checks=5, failed_checks=2, checks_json="[]", tenant_id=personal_tenant_id))
     db.commit()
 
     org_repo.get_or_create(db, github_login="new-name", github_org_id=98)
@@ -82,6 +91,8 @@ def test_org_rename_moves_installation_and_scan_history_to_the_new_login(db):
     assert installation is not None and installation.token_ref == "tok_new-name"
     assert installation_repo.get_for_org(db, org.id, "old-name") is None
     assert db.query(ScanResult).filter(ScanResult.tenant_id == org.tenant_id).one().owner == "new-name"
+    # A scan an org member ran from their personal tenant is deliberately left alone (documented).
+    assert db.query(ScanResult).filter(ScanResult.tenant_id == personal_tenant_id).one().owner == "old-name"
 
 
 def test_get_or_create_falls_back_to_org_id_lookup_on_concurrent_insert_race(db):

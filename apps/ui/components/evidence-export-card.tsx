@@ -50,8 +50,9 @@ export function EvidenceExportCard({ orgLogin }: { orgLogin: string }) {
         )}
         {exportEvidence.isSuccess && exportEvidence.data.truncated && (
           <p role="status" className="text-xs text-amber-500">
-            Some lists hit their size cap and are incomplete. The manifest in the zip says which; narrow the date
-            range and export again.
+            Some lists hit their size cap and are incomplete. The manifest in the zip says which. A narrower date
+            range shortens the scan history and audit log; the member and outside-collaborator lists always show
+            the current roster and ignore the range.
           </p>
         )}
         {exportEvidence.isSuccess && !exportEvidence.data.truncated && (

@@ -111,11 +111,33 @@ def test_range_limits_scans_and_audit_rows(db, world):
     _scan(db, acme, 90, age_days=30)
     _scan(db, acme, 50, age_days=2)
     since = (NOW - timedelta(days=5)).date().isoformat()
-    resp = _client(db, world["users"]["admin"]).get(f"/orgs/acme-ev/evidence?since={since}")
+    until = (NOW - timedelta(days=1)).date()
+    acme_tenant = acme.tenant_id
+
+    def audit_at(action, when):
+        audit_repo.write(db, actor="x@e.com", action=action, target="acme-ev", payload={}, tenant_id=acme_tenant)
+        row = db.query(AuditLog).filter(AuditLog.action == action).one()
+        row.created_at = when
+        db.commit()
+
+    start = datetime.combine(until, datetime.min.time(), tzinfo=timezone.utc)
+    audit_at("t.before_since", NOW - timedelta(days=10))
+    audit_at("t.inside", NOW - timedelta(days=3))
+    audit_at("t.last_instant_of_until_day", start + timedelta(hours=23, minutes=59, seconds=59, microseconds=999999))
+    audit_at("t.after_until", start + timedelta(days=1))
+
+    resp = _client(db, world["users"]["admin"]).get(f"/orgs/acme-ev/evidence?since={since}&until={until.isoformat()}")
     z, manifest = _bundle(resp)
     assert [r["score"] for r in _rows(z, "scan_history.csv")] == ["50"]
     assert manifest["range"]["since"].startswith(since)
+    in_range = {r["action"] for r in _rows(z, "audit_log.csv") if r["action"].startswith("t.")}
+    assert in_range == {"t.inside", "t.last_instant_of_until_day"}  # the upper bound is inclusive
     assert _client(db, world["users"]["admin"]).get("/orgs/acme-ev/evidence?since=2026-02-01&until=2026-01-01").status_code == 422
+
+
+def test_an_until_at_the_largest_date_does_not_overflow(db, world):
+    resp = _client(db, world["users"]["admin"]).get("/orgs/acme-ev/evidence?until=9999-12-31")
+    assert resp.status_code == 200
 
 
 def test_it_contains_only_this_orgs_data(db, world):

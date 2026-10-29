@@ -63,11 +63,12 @@ def try_acquire_tenant_lock(
         conn.commit()
         if got:
             return locked_at
-        if time.monotonic() >= deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             return None
         if on_wait is not None:
             on_wait()
-        time.sleep(poll_s)
+        time.sleep(min(poll_s, remaining))
 
 
 def release_tenant_lock(conn: psycopg.Connection, tenant_id: int) -> None:

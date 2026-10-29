@@ -62,9 +62,9 @@ def _body(check_id=BP, days=30, repos=None, **over):
 
 
 def _waiver(db, org, check_id=BP, repos=None, days=30, **over):
+    fields = {"reason": "r", "owner": "o", "created_by": "t@e.com", **over}
     w = CheckWaiver(
-        tenant_id=org.tenant_id, check_id=check_id, repos=repos, reason="r", owner="o",
-        expires_at=NOW + timedelta(days=days), created_by="t@e.com", **over,
+        tenant_id=org.tenant_id, check_id=check_id, repos=repos, expires_at=NOW + timedelta(days=days), **fields
     )
     db.add(w)
     db.commit()
@@ -159,7 +159,7 @@ def test_a_scan_with_a_waiver_is_not_compared_with_one_without(db, world):
 
 def test_admin_creates_edits_and_revokes_a_waiver_with_audit_rows(db, world):
     admin = _client(db, world["users"]["admin"])
-    created = admin.post("/orgs/acme-w/waivers", json=_body(repos=["acme-w/legacy", "legacy"]))
+    created = admin.post("/orgs/acme-w/waivers", json=_body(repos=["legacy", "LEGACY"]))
     assert created.status_code == 201
     w = created.json()
     assert w["repos"] == ["legacy"] and w["active"] is True and w["created_by"] == "admin@w.com"
@@ -183,8 +183,57 @@ def test_members_can_read_waivers_but_not_change_them(db, world):
     assert _client(db, world["users"]["outsider"]).get("/orgs/acme-w/waivers").status_code in (403, 404)
 
 
+def test_an_errored_check_is_never_waived_it_stays_scored(db, world):
+    _waiver(db, world["org"], BP)  # org-wide
+    result = _result({"id": BP, "status": "error"}, {"id": MFA, "status": "pass"})
+    waiver_service.apply_to_result(db, world["org"].tenant_id, result)
+    assert "waived" not in result["checks"][0] and result["checks"][0]["scored"] is True
+    assert (result["total_checks"], result["failed_checks"]) == (0, 0)  # untouched: nothing was recomputed
+    from src.services.analytics_service import tally
+
+    assert tally(result["checks"]) == (2, 1, 50)  # the error still counts against the score
+
+
+def test_the_stamp_names_every_contributing_waiver(db, world):
+    _waiver(db, world["org"], BP, repos=["a"], owner="team-a", reason="legacy a")
+    _waiver(db, world["org"], BP, repos=["b"], owner="team-b", reason="legacy b")
+    result = _result({"id": BP, "status": "fail", "value": {"repos": ["a", "b"]}})
+    waiver_service.apply_to_result(db, world["org"].tenant_id, result)
+    stamp = result["checks"][0]["waived"]
+    assert stamp["owner"] == "team-a; team-b" and stamp["reason"] == "legacy a; legacy b"
+    assert len(stamp["waiver_ids"]) == 2
+
+
+def test_a_naive_expiry_is_read_as_utc_not_the_database_timezone(db, world):
+    admin = _client(db, world["users"]["admin"])
+    naive = (datetime.now(timezone.utc) + timedelta(days=10)).replace(tzinfo=None).isoformat()
+    resp = admin.post("/orgs/acme-w/waivers", json=_body(expires_at=naive))
+    assert resp.status_code == 201
+    stored = db.query(CheckWaiver).one().expires_at
+    assert stored.tzinfo is not None and stored.utcoffset() == timedelta(0)
+
+
+def test_creating_waivers_takes_the_per_tenant_lock_before_counting(db, world):
+    admin = _client(db, world["users"]["admin"])
+    statements = []
+    from sqlalchemy import event
+
+    def spy(conn, cursor, statement, *a):
+        statements.append(statement)
+
+    event.listen(db.get_bind(), "before_cursor_execute", spy)
+    try:
+        assert admin.post("/orgs/acme-w/waivers", json=_body()).status_code == 201
+    finally:
+        event.remove(db.get_bind(), "before_cursor_execute", spy)
+    lock = next(i for i, s in enumerate(statements) if "pg_advisory_xact_lock" in s and "check_waivers" in s)
+    count = next(i for i, s in enumerate(statements) if "FROM check_waivers" in s and "SELECT" in s)
+    assert lock < count
+
+
 def test_waiver_validation(db, world):
     admin = _client(db, world["users"]["admin"])
+    assert admin.post("/orgs/acme-w/waivers", json=_body(repos=["acme-w/legacy"])).status_code == 422
     assert admin.post("/orgs/acme-w/waivers", json=_body(check_id="made_up")).status_code == 422
     assert admin.post("/orgs/acme-w/waivers", json=_body(days=-1)).status_code == 422
     too_long = admin.post("/orgs/acme-w/waivers", json=_body(days=91))
@@ -195,10 +244,19 @@ def test_waiver_validation(db, world):
 
 def test_waivers_are_tenant_scoped(db, world):
     other = org_repo.get_or_create(db, github_login="globex-w")
-    foreign = _waiver(db, other, BP)
+    # Read the id before committing: the commit expires the instance, and a reload would run outside
+    # the other tenant's context.
+    foreign = CheckWaiver(
+        tenant_id=other.tenant_id, check_id=BP, repos=None, reason="r", owner="o",
+        expires_at=NOW + timedelta(days=30), created_by="t@e.com",
+    )
+    db.add(foreign)
+    db.flush()
+    foreign_id = foreign.id
+    db.commit()
     admin = _client(db, world["users"]["admin"])
     assert admin.get("/orgs/acme-w/waivers").json() == []
-    assert admin.delete(f"/orgs/acme-w/waivers/{foreign.id}").status_code == 404
+    assert admin.delete(f"/orgs/acme-w/waivers/{foreign_id}").status_code == 404
 
 
 # --- expiry -------------------------------------------------------------------------------------

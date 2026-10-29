@@ -83,3 +83,18 @@ def test_try_acquire_tenant_lock_returns_none_while_held_elsewhere_then_succeeds
         release_tenant_lock(conn_a, tenant_id)
     assert try_acquire_tenant_lock(second_conn, tenant_id, timeout_s=0.3) is not None
     release_tenant_lock(second_conn, tenant_id)
+
+
+def test_try_acquire_tenant_lock_never_sleeps_past_its_timeout(worker_db, second_conn):
+    import time
+
+    conn_a, _ = worker_db
+    tenant_id = 999_000_004
+    acquire_tenant_lock(conn_a, tenant_id)
+    try:
+        started = time.monotonic()
+        # A poll interval far longer than the timeout must not stretch the call to a whole interval.
+        assert try_acquire_tenant_lock(second_conn, tenant_id, timeout_s=0.2, poll_s=5.0) is None
+        assert time.monotonic() - started < 1.0
+    finally:
+        release_tenant_lock(conn_a, tenant_id)

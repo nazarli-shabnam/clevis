@@ -26,7 +26,19 @@ export const WAIVABLE_CHECKS: Record<string, string> = {
 }
 
 const MAX_DAYS = 90
-const dayInput = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10)
+
+/** A local calendar day as the YYYY-MM-DD an <input type="date"> uses (not the UTC day toISOString gives). */
+const localDay = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+const dayInput = (days: number) => localDay(new Date(Date.now() + days * 86_400_000))
+
+/** The latest day an admin can pick: the waiver expires at 23:59:59 local on the chosen day and the API
+ * allows at most MAX_DAYS from now, so take the limit's local day, or the day before if its end is past it. */
+function latestExpiryDay(): string {
+  const limit = new Date(Date.now() + MAX_DAYS * 86_400_000)
+  const endOfLimitDay = new Date(limit.getFullYear(), limit.getMonth(), limit.getDate(), 23, 59, 59)
+  return endOfLimitDay.getTime() <= limit.getTime() ? localDay(limit) : localDay(new Date(limit.getTime() - 86_400_000))
+}
 
 /** Org admins record accepted risks: a failing check is kept out of the score until the waiver expires. */
 export function WaiversCard({ orgLogin }: { orgLogin: string }) {
@@ -151,7 +163,7 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
         </div>
         <div>
           <label htmlFor="waiver-until" className="text-xs font-medium block mb-1.5">Expires</label>
-          <Input id="waiver-until" type="date" min={dayInput(1)} max={dayInput(MAX_DAYS - 1)} value={until} onChange={(e) => setUntil(e.target.value)} />
+          <Input id="waiver-until" type="date" min={dayInput(1)} max={latestExpiryDay()} value={until} onChange={(e) => setUntil(e.target.value)} />
         </div>
         <div className="flex items-end">
           <Button type="submit" disabled={!canSubmit}>

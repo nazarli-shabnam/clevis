@@ -54,12 +54,14 @@ def max_expiry(now: datetime) -> datetime:
 
 
 def _stamp(waivers: list[CheckWaiver], until: datetime, repos: list[str] | None) -> dict:
-    first = waivers[0]
+    def distinct(values: list[str]) -> str:
+        return "; ".join(dict.fromkeys(values))
+
     return {
         "waiver_ids": [w.id for w in waivers],
         "until": _aware(until).isoformat(),
-        "reason": first.reason,
-        "owner": first.owner,
+        "reason": distinct([w.reason for w in waivers]),
+        "owner": distinct([w.owner for w in waivers]),
         "repos": repos,
     }
 
@@ -67,19 +69,18 @@ def _stamp(waivers: list[CheckWaiver], until: datetime, repos: list[str] | None)
 def _waiver_for(check: dict, waivers: list[CheckWaiver]) -> dict | None:
     """The ``waived`` stamp for `check`, or None when no waiver covers what is failing.
 
-    Only a check that is failing (or erroring) is waived: waiving a passing one would shrink the
-    denominator and make the score worse. A repo-scoped waiver needs the check's own list of failing
-    repos, which is capped; if that list may be truncated, or the check failed without naming repos
-    (an unknown/errored repo), the waiver does not apply rather than guess."""
-    if check.get("status") not in ("fail", "error"):
+    Only a check that is *failing* is waived. A passing one would shrink the denominator and make the
+    score worse; an errored one means Clevis could not evaluate it (missing scope, rate limit), which an
+    accepted-risk waiver must not hide, so it stays scored. A repo-scoped waiver needs the check's own
+    list of failing repos, which is capped; if that list may be truncated, or the check failed without
+    naming repos, the waiver does not apply rather than guess."""
+    if check.get("status") != "fail":
         return None
     mine = [w for w in waivers if w.check_id == check.get("id")]
     org_wide = [w for w in mine if w.repos is None]
     if org_wide:
         best = max(org_wide, key=lambda w: _aware(w.expires_at))
         return _stamp([best], best.expires_at, None)
-    if check["status"] != "fail":
-        return None
     failing = (check.get("value") or {}).get("repos") if isinstance(check.get("value"), dict) else None
     if not failing or len(failing) >= MAX_AFFECTED_REPOS:
         return None

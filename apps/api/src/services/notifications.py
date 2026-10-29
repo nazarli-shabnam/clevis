@@ -176,7 +176,10 @@ def _send_email(
             sent += 1
         except Exception:
             logger.exception("notification email to a recipient of destination %s failed", dest.id)
-    return sent == len(recipients), f"{sent}/{len(recipients)} sent"
+    # Delivered to anyone counts as sent: a False here releases the alert claim and the next scan would
+    # message everyone again, repeating it to the recipients who already got it. The detail still says
+    # how many of them did (and the failures are logged).
+    return sent > 0, f"{sent}/{len(recipients)} sent"
 
 
 def send(
