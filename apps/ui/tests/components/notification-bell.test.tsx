@@ -94,6 +94,7 @@ describe("NotificationBell", () => {
     await waitFor(() => expect(box).toBeEnabled());
     fireEvent.click(box);
     expect(await screen.findByText(/Couldn't save: save down/)).toBeInTheDocument();
+    expect(box).toBeChecked();
   });
 
   it("closes the popover when an item is followed", async () => {

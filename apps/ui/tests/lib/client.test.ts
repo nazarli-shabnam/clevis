@@ -1176,7 +1176,7 @@ describe("waivers, notification preferences and evidence endpoints", () => {
     const put = stub({ muted_kinds: ["score_drop"] });
     await api.notifications.setPreferences("acme", ["score_drop"]);
     const [url, init] = put();
-    expect(url).toMatch(/\/notifications\/preferences$/);
+    expect(url).toMatch(/\/orgs\/acme\/notifications\/preferences$/);
     expect(init.method).toBe("PUT");
     expect(JSON.parse(String(init.body))).toEqual({ muted_kinds: ["score_drop"] });
   });

@@ -49,6 +49,7 @@ describe("EvidenceExportCard", () => {
     expect(await screen.findByRole("button", { name: "Preparing…" })).toBeDisabled()
     finish({ blob: new Blob(["z"]), filename: "e.zip", truncated: false })
     await waitFor(() => expect(saveMock).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByRole("button", { name: "Export evidence" })).toBeEnabled())
   })
 
   it("warns when a list was capped", async () => {

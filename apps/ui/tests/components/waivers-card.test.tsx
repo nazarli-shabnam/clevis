@@ -46,7 +46,10 @@ beforeEach(() => {
   createMock.mockReset()
   revokeMock.mockReset()
 })
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+})
 
 describe("WaiversCard", () => {
   it("lists waivers with scope, owner and expiry, flagging an expired one", async () => {
@@ -112,6 +115,9 @@ describe("WaiversCard", () => {
   })
 
   it("sends the chosen check, shows the pending label, and bounds the expiry date", async () => {
+    // Fix the clock at local noon; only Date is faked so waitFor/findBy keep working.
+    vi.useFakeTimers({ toFake: ["Date"] })
+    vi.setSystemTime(new Date(2026, 5, 15, 12, 0, 0))
     listMock.mockResolvedValue([])
     let finish: (v: unknown) => void = () => {}
     createMock.mockReturnValue(new Promise((resolve) => { finish = resolve }))
@@ -121,7 +127,9 @@ describe("WaiversCard", () => {
     fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "r" } })
     fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "o" } })
     const until = screen.getByLabelText("Expires") as HTMLInputElement
-    expect(until.max >= until.value && until.value >= until.min).toBe(true)
+    expect(until.min).toBe("2026-06-16") // the next day
+    expect(until.value).toBe("2026-07-15") // 30 days out
+    expect(until.max).toBe("2026-09-12") // day 89: the 90-day limit falls before the end of day 90
     fireEvent.click(screen.getByRole("button", { name: "Add waiver" }))
     expect(await screen.findByRole("button", { name: "Adding…" })).toBeDisabled()
     expect(createMock.mock.calls[0][1]).toMatchObject({ check_id: "repository_license_present" })
