@@ -37,17 +37,17 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"]
 
-function ScoreGauge({ score, failed, total }: { score: number; failed: number; total: number }) {
+function ScoreGauge({ score, failed, total }: { score: number | null; failed: number; total: number }) {
   const r = 38
   const circumference = 2 * Math.PI * r
-  const progress = (score / 100) * circumference
+  const progress = ((score ?? 0) / 100) * circumference
   // Use CSS custom property so it respects the theme's primary blue
-  const color = score >= 80 ? "#4ade80" : score >= 50 ? "#facc15" : "#f87171"
+  const color = score === null ? "var(--muted-foreground)" : score >= 80 ? "#4ade80" : score >= 50 ? "#facc15" : "#f87171"
 
   return (
     <div className="flex items-center gap-5 px-4 py-4 border-b border-border">
       <div className="relative shrink-0">
-        <svg width="96" height="96" className="-rotate-90" aria-label={`Security score: ${score} out of 100`}>
+        <svg width="96" height="96" className="-rotate-90" aria-label={score === null ? "Security score: not available" : `Security score: ${score} out of 100`}>
           <circle cx="48" cy="48" r={r} fill="none" stroke="var(--border)" strokeWidth="7" />
           <circle
             cx="48" cy="48" r={r} fill="none"
@@ -58,12 +58,13 @@ function ScoreGauge({ score, failed, total }: { score: number; failed: number; t
           />
         </svg>
         <div className="absolute inset-0 flex items-center justify-center">
-          <span className="text-xl font-bold tabular-nums" style={{ color }}>{score}</span>
+          <span className="text-xl font-bold tabular-nums" style={{ color }}>{score ?? "n/a"}</span>
         </div>
       </div>
       <div>
         <p className="text-sm font-semibold text-foreground">Security Score</p>
         <div className="flex items-center gap-2 mt-2">
+          {total === 0 && <span className="stat-chip">No checks were scored</span>}
           <span className="stat-chip">{total - failed} passed</span>
           {failed > 0 && <span className="stat-chip text-red-400 border-red-500/30">{failed} failed</span>}
         </div>
@@ -194,7 +195,7 @@ export default function SecurityPage() {
       const csv = toCsv(flat, [
         { header: "scanned_at", value: ({ scanRow }) => scanRow.created_at },
         { header: "owner", value: ({ scanRow }) => scanRow.owner },
-        { header: "score", value: ({ scanRow }) => scanRow.score },
+        { header: "score", value: ({ scanRow }) => scanRow.score ?? "" },
         { header: "total_checks", value: ({ scanRow }) => scanRow.total_checks },
         { header: "failed_checks", value: ({ scanRow }) => scanRow.failed_checks },
         { header: "check_id", value: ({ check }) => check?.id ?? "" },
@@ -249,10 +250,11 @@ export default function SecurityPage() {
   const trendData = (historyQuery.data ?? [])
     .slice(0, 10)
     .reverse()
-    .map((h) => ({
-      week: new Date(h.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
-      value: h.score,
-    }))
+    .flatMap((h) =>
+      h.score === null
+        ? []
+        : [{ week: new Date(h.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }), value: h.score }]
+    )
 
   // Passing checks per scan over the last N scans: an approximation of remediation progress,
   // since this endpoint doesn't expose the full checks_json breakdown.

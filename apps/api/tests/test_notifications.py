@@ -370,6 +370,18 @@ def test_baseline_matches_owner_case_insensitively(db, acme):
     assert _run_persist(db, org, _result(70, checks)).call_count == 1
 
 
+def test_scan_with_no_score_is_stored_and_never_alerts(db, acme):
+    org = acme["org"]
+    _dest(db, org)
+    checks = [_chk("a")]
+    _seed(db, org, 90, checks)
+    # An unscored scan (score None) follows a scored one: stored, but nothing to compare, so no alert.
+    assert _run_persist(db, org, _result(None, checks)).call_count == 0
+    assert scan_results_repo.latest_with_checks(db, "acme", org.tenant_id)["score"] is None
+    # And the next scored scan has no numeric baseline either.
+    assert _run_persist(db, org, _result(40, checks)).call_count == 0
+
+
 def test_no_alert_when_either_scan_has_errored_checks(db, acme):
     org = acme["org"]
     _dest(db, org)

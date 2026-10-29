@@ -46,7 +46,10 @@ def get_overview(
         c["scored"] = c["status"] != "not_applicable" and (score_hygiene or not c.get("informational"))
     scored = [c for c in checks if c["scored"]]
     failed = [c for c in scored if c["status"] in ("fail", "error")]
-    score = 100 - int((len(failed) / max(1, len(scored))) * 100)
+    # No scored checks (e.g. a personal account with no repos) means nothing was assessed: report no
+    # score rather than a perfect one. Integer arithmetic floors the score, so 1 of 6 failed is 83
+    # (exact 83.3) and float noise (0.29 * 100 = 28.999...) can't shift it.
+    score = 100 - -(-len(failed) * 100 // len(scored)) if scored else None  # ceil-divide the penalty
     return {
         "owner": owner,
         "score": score,

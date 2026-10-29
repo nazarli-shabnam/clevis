@@ -259,10 +259,10 @@ def _bootstrap_org_admin_from_installation(
     just-installed App's own installation token, then get-or-create the Org/OrgMembership
     rows. Raises HTTPException on any verification failure.
 
-    Serialized per org_login via pg_advisory_xact_lock -- without it, two concurrent syncs
+    Serialized per lower-cased org_login (logins are case-insensitive) via pg_advisory_xact_lock -- without it, two concurrent syncs
     for the same org_login could both pass the live-admin check before either commits, then
     race to attach to (or duplicate) the same Org row."""
-    db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:org_login))"), {"org_login": org_login})
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:org_login))"), {"org_login": org_login.lower()})
     role = _live_org_role(org_login, installation_id, db_user.github_login)
     if role != "admin":
         raise HTTPException(
@@ -295,7 +295,7 @@ def sync_org_installation(
     # what require_org_role considers a valid org admin.
     ctx: OrgContext | None = resolve_org_role(db, org_login, user.id, "admin")
     is_known_admin = ctx is not None
-    org: Org | None = ctx.org if ctx is not None else org_repo.get_by_login(db, org_login)
+    org: Org | None = ctx.org if ctx is not None else org_repo.get_by_login_ci(db, org_login)
 
     # Only a caller who ISN'T already a confirmed local admin needs the extra checks below
     # -- resolved before any GitHub call so an unauthorized request fails fast.
