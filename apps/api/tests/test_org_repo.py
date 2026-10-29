@@ -82,8 +82,12 @@ def test_org_rename_moves_installation_and_scan_history_to_the_new_login(db):
     db.commit()
     personal = tenant_repo.ensure_personal_tenant(db, user.id)
     personal_tenant_id = personal.id
-    db.add(ScanResult(owner="old-name", score=70, total_checks=5, failed_checks=2, checks_json="[]", tenant_id=personal_tenant_id))
-    db.commit()
+    # Through the repo so the tenant context is set for the row-level-security insert check.
+    from src.repositories import scan_results_repo
+
+    scan_results_repo.insert(
+        db, owner="old-name", score=70, total_checks=5, failed_checks=2, checks=[], tenant_id=personal_tenant_id
+    )
 
     org_repo.get_or_create(db, github_login="new-name", github_org_id=98)
 
