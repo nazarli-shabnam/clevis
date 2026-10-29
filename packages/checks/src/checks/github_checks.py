@@ -271,10 +271,11 @@ class BranchProtectionEnabled(Check):
         if evaluable == 0:
             return {"status": "error", "value": {"checked": checked, "protected": protected, "unknown": unknown}}
         compliant = protected == evaluable
-        return {
-            "status": "pass" if compliant else "fail",
-            "value": _with_repos({"checked": checked, "protected": protected, "unknown": unknown}, unprotected),
-        }
+        value = _with_repos({"checked": checked, "protected": protected, "unknown": unknown}, unprotected)
+        if compliant and unknown > 0:
+            # Same as DependabotAlertsCheck: a clean result from only the reachable repos is not a pass.
+            return {"status": "error", "value": value}
+        return {"status": "pass" if compliant else "fail", "value": value}
 
 
 class SecretScanningEnabled(Check):
@@ -456,7 +457,7 @@ class DefaultBranchNoForcePushCheck(Check):
         if repos is None:
             repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
         if len(repos) == 0:
-            return {"status": "not_applicable", "value": {"repos_checked": 0, "force_push_allowed": 0}}
+            return {"status": "not_applicable", "value": {"repos_checked": 0, "force_push_allowed": 0, "unknown": 0}}
         checked = 0
         force_push_allowed = 0
         unknown = 0
@@ -494,9 +495,11 @@ class DefaultBranchNoForcePushCheck(Check):
                     force_push_allowed += 1
                     allowing.append(name)
             checked += 1
+        value = {"repos_checked": checked, "force_push_allowed": force_push_allowed, "unknown": unknown}
         if checked == 0:
-            return {"status": "error", "value": {"repos_checked": checked, "force_push_allowed": force_push_allowed}}
-        return {
-            "status": "pass" if force_push_allowed == 0 else "fail",
-            "value": _with_repos({"repos_checked": checked, "force_push_allowed": force_push_allowed}, allowing),
-        }
+            return {"status": "error", "value": value}
+        compliant = force_push_allowed == 0
+        if compliant and unknown > 0:
+            # Same as DependabotAlertsCheck: a clean result from only the reachable repos is not a pass.
+            return {"status": "error", "value": _with_repos(value, allowing)}
+        return {"status": "pass" if compliant else "fail", "value": _with_repos(value, allowing)}
