@@ -18,7 +18,13 @@ from src.core._sanitize import sanitize_error
 from src.core.auth import UserOut, require_auth
 from src.core.db import Job, ScanResult, SecurityAlert, get_db
 from src.core.rbac import OrgContext, require_org_role
-from src.repositories import installation_repo, notification_preference_repo, notification_read_repo, scan_results_repo
+from src.repositories import (
+    installation_repo,
+    notification_preference_repo,
+    notification_read_repo,
+    scan_results_repo,
+    waiver_repo,
+)
 from src.schemas.notification_feed import NotificationFeed, NotificationItem, NotificationPreferences
 from src.services import app_permissions
 from src.services.scan_service import comparable_scans
@@ -147,6 +153,23 @@ def _permission_drift_items(db: Session, ctx: OrgContext, org_login: str, since:
     ]
 
 
+def _waiver_expired_items(db: Session, org_login: str, tenant_id: int, since: datetime) -> list[dict]:
+    """Waivers that lapsed inside the window: the check counts toward the score again from the next scan."""
+    now = datetime.now(timezone.utc)
+    return [
+        {
+            "id": f"waiver_expired:{w.id}",
+            "kind": "waiver_expired",
+            "at": w.expires_at,
+            "title": f"Waiver expired: {w.check_id}",
+            "detail": f"Owner {w.owner}: {w.reason}"[:140],
+            "href": "/security",
+        }
+        for w in waiver_repo.list_for_tenant(db, tenant_id)
+        if since <= _aware(w.expires_at) <= now
+    ]
+
+
 def _unread_beyond_limit(db: Session, filters: list, at_column, last_read, items: list, kind: str) -> int:
     """Unread rows of one source that the per-source LIMIT kept out of ``items``."""
     q = db.query(func.count()).select_from(at_column.class_).filter(*filters)
@@ -181,6 +204,8 @@ def get_notifications(
         raw += _failed_job_items(db, org_login, tenant_id, since)
     if is_admin and "permission_drift" not in muted:
         raw += _permission_drift_items(db, ctx, org_login, since)
+    if is_admin and "waiver_expired" not in muted:
+        raw += _waiver_expired_items(db, org_login, tenant_id, since)
 
     raw.sort(key=lambda i: _aware(i["at"]), reverse=True)
     items = [

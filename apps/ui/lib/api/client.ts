@@ -2,6 +2,8 @@ import type {
   ScanChanges,
   ScheduledScanSettings,
   MemberAccess,
+  CheckWaiver,
+  CheckWaiverInput,
   NotificationFeed,
   NotificationPreferences,
   ActionsUsageResponse,
@@ -551,6 +553,50 @@ export const api = {
       target.scope === "me"
         ? del(`/me/installations/${installationId}`)
         : del(`/orgs/${encodeURIComponent(target.orgLogin)}/installations/${installationId}`),
+  },
+  evidence: {
+    // The compliance evidence zip (admin only). Built server-side, so it can take longer than the
+    // default request timeout; `truncated` is true when any list hit its cap (the zip's manifest says which).
+    download: async (
+      org: string,
+      range: { since?: string; until?: string } = {},
+    ): Promise<{ blob: Blob; filename: string; truncated: boolean }> => {
+      const qs = new URLSearchParams()
+      if (range.since) qs.set("since", range.since)
+      if (range.until) qs.set("until", range.until)
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 120_000)
+      try {
+        const res = await fetch(
+          `${BASE}/orgs/${encodeURIComponent(org)}/evidence${qs.size ? `?${qs}` : ""}`,
+          { credentials: "include", headers: { ...getAuthHeaders() }, signal: controller.signal },
+        )
+        if (!res.ok) {
+          const json = await res.json().catch(() => null)
+          if (res.status === 401 && typeof window !== "undefined") {
+            localStorage.removeItem(_TOKEN_KEY)
+            window.dispatchEvent(new Event("clevis:unauthorized"))
+          }
+          throw new ApiError(errorDetail(json, `Request failed: ${res.status}`), res.status)
+        }
+        const filename =
+          /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? `clevis-evidence-${org}.zip`
+        return { blob: await res.blob(), filename, truncated: res.headers.get("X-Evidence-Truncated") === "true" }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          throw new Error("The evidence export timed out — try a shorter date range.")
+        }
+        throw err
+      } finally {
+        clearTimeout(timer)
+      }
+    },
+  },
+  waivers: {
+    list: (orgLogin: string) => get<CheckWaiver[]>(`/orgs/${encodeURIComponent(orgLogin)}/waivers`),
+    create: (orgLogin: string, body: CheckWaiverInput) =>
+      post<CheckWaiver>(`/orgs/${encodeURIComponent(orgLogin)}/waivers`, body),
+    revoke: (orgLogin: string, id: number) => del(`/orgs/${encodeURIComponent(orgLogin)}/waivers/${id}`),
   },
   orgs: {
     mine: () => get<MyOrgMembership[]>("/me/orgs"),

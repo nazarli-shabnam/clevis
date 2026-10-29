@@ -184,6 +184,17 @@ BEGIN
 END
 $do$;
 
+-- check_waivers (migration 0067): accepted-risk exceptions, read and written by the API. Serial id, so
+-- the sequence grant too; same existence guard and CI reasoning as above.
+DO $do$
+BEGIN
+  IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'check_waivers') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON check_waivers TO clevis_api;
+    GRANT USAGE, SELECT ON check_waivers_id_seq TO clevis_api;
+  END IF;
+END
+$do$;
+
 -- notification_preferences (migration 0066): per-user muted notification kinds, read and upserted by
 -- the API. Composite primary key, so no sequence; same reasoning as notification_reads above.
 DO $do$
