@@ -3,9 +3,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
-import type { NotificationFeed } from "@/lib/api/types"
+import type { NotificationFeed, NotificationKind, NotificationPreferences } from "@/lib/api/types"
 
 export const notificationsKey = (org: string) => ["notifications", org] as const
+export const notificationPrefsKey = (org: string) => ["notification-preferences", org] as const
 
 const REFRESH_MS = 60_000
 
@@ -31,4 +32,24 @@ export function useNotifications() {
   })
 
   return { org, query, markRead, items: query.data?.items ?? [], unread: query.data?.unread_count ?? 0 }
+}
+
+/** The caller's muted notification kinds for `org`. Loaded only while `enabled` (the settings panel is
+ * open), and changing them refreshes the feed so the list and the unread badge drop or regain the kind. */
+export function useNotificationPreferences(org: string, enabled: boolean) {
+  const queryClient = useQueryClient()
+  const query = useQuery<NotificationPreferences>({
+    queryKey: notificationPrefsKey(org),
+    queryFn: () => api.notifications.preferences(org),
+    enabled: enabled && org !== "",
+    retry: false,
+  })
+  const save = useMutation({
+    mutationFn: (muted: NotificationKind[]) => api.notifications.setPreferences(org, muted),
+    onSuccess: (data) => {
+      queryClient.setQueryData(notificationPrefsKey(org), data)
+      return queryClient.invalidateQueries({ queryKey: notificationsKey(org) })
+    },
+  })
+  return { query, save, muted: query.data?.muted_kinds ?? [] }
 }

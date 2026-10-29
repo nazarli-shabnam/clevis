@@ -242,6 +242,46 @@ def test_the_read_marker_only_moves_forward(db, world):
     assert repo.get_last_read(db, uid, t) == NOW
 
 
+def test_muted_kinds_leave_the_feed_and_the_unread_count_for_that_user_only(db, world):
+    t = world["acme"].tenant_id
+    for n in range(45):  # past the per-source limit, so the beyond-limit count is exercised too
+        _alert(db, t, number=n)
+    _scan(db, t, 90, age_days=2)
+    _scan(db, t, 70, age_days=1)
+    for _ in range(3):
+        _failed_job(db, t)
+    admin, member = _client(db, world["users"]["admin"]), _client(db, world["users"]["member"])
+    assert admin.get("/orgs/acme/notifications").json()["unread_count"] == 45 + 1 + 3
+
+    resp = admin.put("/orgs/acme/notifications/preferences", json={"muted_kinds": ["critical_alert", "job_failed"]})
+    assert resp.status_code == 200 and resp.json() == {"muted_kinds": ["critical_alert", "job_failed"]}
+
+    feed = admin.get("/orgs/acme/notifications").json()
+    assert {i["kind"] for i in feed["items"]} == {"score_drop"}
+    assert feed["unread_count"] == 1  # the badge agrees with the list, including the rows past the limit
+    # Another user's view is untouched.
+    assert member.get("/orgs/acme/notifications").json()["unread_count"] == 45 + 1
+
+
+def test_preferences_default_to_nothing_muted_and_can_be_cleared(db, world):
+    admin = _client(db, world["users"]["admin"])
+    assert admin.get("/orgs/acme/notifications/preferences").json() == {"muted_kinds": []}
+    admin.put("/orgs/acme/notifications/preferences", json={"muted_kinds": ["score_drop", "score_drop"]})
+    assert admin.get("/orgs/acme/notifications/preferences").json() == {"muted_kinds": ["score_drop"]}
+    admin.put("/orgs/acme/notifications/preferences", json={"muted_kinds": []})
+    assert admin.get("/orgs/acme/notifications/preferences").json() == {"muted_kinds": []}
+
+
+def test_preferences_are_per_org_and_reject_unknown_kinds_and_outsiders(db, world):
+    admin = _client(db, world["users"]["admin"])
+    assert admin.put("/orgs/acme/notifications/preferences", json={"muted_kinds": ["nope"]}).status_code == 422
+    admin.put("/orgs/acme/notifications/preferences", json={"muted_kinds": ["score_drop"]})
+    other = _client(db, world["users"]["other_admin"])
+    assert other.get("/orgs/globex/notifications/preferences").json() == {"muted_kinds": []}
+    assert other.get("/orgs/acme/notifications/preferences").status_code in (403, 404)
+    assert other.put("/orgs/acme/notifications/preferences", json={"muted_kinds": []}).status_code in (403, 404)
+
+
 def test_access_is_limited_to_org_members(db, world):
     assert _client(db, world["users"]["other_admin"]).get("/orgs/acme/notifications").status_code == 403
     assert _client(db, world["users"]["other_admin"]).post("/orgs/acme/notifications/read").status_code == 403

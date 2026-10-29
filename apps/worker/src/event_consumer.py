@@ -20,11 +20,11 @@ import redis
 import org_membership_store
 import repo_events_store
 import security_alerts_store
-from config import settings
+from config import plain_db_url, settings
 
 log = logging.getLogger(__name__)
 
-_DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg://", "postgresql://")
+_DB_URL = plain_db_url(settings.database_url.get_secret_value())
 
 # Must match apps/api/src/routers/webhooks.py's _WEBHOOK_STREAM_KEY (no shared code).
 _STREAM_KEY = "webhook_events"
