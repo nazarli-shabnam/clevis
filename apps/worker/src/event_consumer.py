@@ -10,6 +10,7 @@ import logging
 import os
 import threading
 import time
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 
@@ -243,10 +244,61 @@ def _normalize_organization_event(payload: dict) -> dict | None:
 
 
 class TenantLockBusy(Exception):
-    """The tenant's membership lock is held elsewhere; the entry stays unacked and the pending sweep retries."""
+    """The tenant's membership lock is held elsewhere, so the entry can't be processed yet."""
 
 
-def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry_id: str, fields: dict) -> None:
+# Membership entries set aside because their tenant's lock was busy, per tenant in arrival order. They stay
+# unacked in Redis, so a crash still recovers them through the pending sweep. Kept locally (rather than
+# left to that sweep) so that waiting costs no delivery attempt (a removal must not be dropped for
+# waiting out a long reconcile) and so a tenant's later events can't overtake an earlier one (a stale
+# "added" processed after a newer "removed" would resurrect access). Only the consumer thread touches it.
+_deferred: dict[str, deque] = {}
+
+
+def _tenant_key(fields: dict) -> str:
+    return str(fields.get("tenant_id") or "")
+
+
+def _dispatch(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry_id: str, fields: dict) -> None:
+    """_process_entry, but a membership entry whose tenant lock is busy (or that has an earlier entry
+    waiting on it) is queued locally instead of raising."""
+    key = _tenant_key(fields)
+    if fields.get("event_type") in _ORG_MEMBERSHIP_EVENT_TYPES and key in _deferred:
+        _deferred[key].append((entry_id, fields))
+        return
+    try:
+        _process_entry(pg_conn, redis_client, entry_id, fields)
+    except TenantLockBusy:
+        log.info("stream entry %s deferred: membership lock for tenant %s is busy", entry_id, key)
+        _deferred.setdefault(key, deque()).append((entry_id, fields))
+
+
+def _retry_deferred(pg_conn: psycopg.Connection, redis_client: redis.Redis) -> None:
+    """One non-waiting attempt per tenant, oldest entry first; stops at the first one still blocked."""
+    for key in list(_deferred):
+        queue = _deferred[key]
+        while queue:
+            entry_id, fields = queue[0]
+            try:
+                _process_entry(pg_conn, redis_client, entry_id, fields, lock_wait_s=0)
+            except TenantLockBusy:
+                break
+            except Exception:
+                # Unacked, so the pending sweep reclaims it like any other failure.
+                log.exception("failed to process deferred stream entry %s", entry_id)
+                _rollback_quietly(pg_conn)
+            queue.popleft()
+        if not queue:
+            del _deferred[key]
+
+
+def _process_entry(
+    pg_conn: psycopg.Connection,
+    redis_client: redis.Redis,
+    entry_id: str,
+    fields: dict,
+    lock_wait_s: float | None = None,
+) -> None:
     delivery_row_id = fields.get("delivery_row_id")
     if delivery_row_id is None:
         log.error("stream entry %s missing delivery_row_id, dropping: %r", entry_id, fields)
@@ -291,7 +343,10 @@ def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry
         # Held for the whole write so it can't land between the reconciliation job's roster
         # fetch and snapshot apply.
         if org_membership_store.try_acquire_tenant_lock(
-            pg_conn, tenant_id, timeout_s=_TENANT_LOCK_WAIT_SECONDS, on_wait=_touch_heartbeat
+            pg_conn,
+            tenant_id,
+            timeout_s=_TENANT_LOCK_WAIT_SECONDS if lock_wait_s is None else lock_wait_s,
+            on_wait=_touch_heartbeat,
         ) is None:
             raise TenantLockBusy(tenant_id)
         try:
@@ -397,6 +452,10 @@ def _sweep_pending(pg_conn: psycopg.Connection, redis_client: redis.Redis) -> No
     pending = redis_client.xpending_range(
         _STREAM_KEY, _GROUP_NAME, min="-", max="+", count=100, idle=_RECLAIM_IDLE_MS
     )
+    # Entries waiting locally on a busy tenant lock are being handled; reclaiming them would re-run them
+    # out of order and spend delivery attempts on a wait.
+    waiting = {entry_id for queue in _deferred.values() for entry_id, _ in queue}
+    pending = [p for p in pending if p["message_id"] not in waiting]
     if not pending:
         return
 
@@ -414,9 +473,7 @@ def _sweep_pending(pg_conn: psycopg.Connection, redis_client: redis.Redis) -> No
     claimed = redis_client.xclaim(_STREAM_KEY, _GROUP_NAME, _CONSUMER_NAME, min_idle_time=_RECLAIM_IDLE_MS, message_ids=to_claim)
     for entry_id, fields in claimed:
         try:
-            _process_entry(pg_conn, redis_client, entry_id, fields)
-        except TenantLockBusy as exc:
-            log.info("stream entry %s deferred: membership lock for tenant %s is busy", entry_id, exc)
+            _dispatch(pg_conn, redis_client, entry_id, fields)
         except Exception:
             log.exception("failed to process reclaimed stream entry %s", entry_id)
             _rollback_quietly(pg_conn)
@@ -440,6 +497,7 @@ def run() -> None:
         _touch_heartbeat()
         try:
             with psycopg.connect(_DB_URL) as pg_conn:
+                _retry_deferred(pg_conn, redis_client)
                 _sweep_pending(pg_conn, redis_client)
 
                 response = redis_client.xreadgroup(
@@ -448,10 +506,7 @@ def run() -> None:
                 for _stream_key, entries in response or []:
                     for entry_id, fields in entries:
                         try:
-                            _process_entry(pg_conn, redis_client, entry_id, fields)
-                        except TenantLockBusy as exc:
-                            # Left unacked; the sweep retries once it has idled long enough.
-                            log.info("stream entry %s deferred: membership lock for tenant %s is busy", entry_id, exc)
+                            _dispatch(pg_conn, redis_client, entry_id, fields)
                         except Exception:
                             # Left unacked on purpose; _sweep_pending reclaims it later. Roll back first so
                             # an aborted transaction doesn't poison the rest of the batch.
