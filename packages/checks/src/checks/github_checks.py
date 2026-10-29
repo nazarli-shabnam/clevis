@@ -72,9 +72,22 @@ def _retry_delay_seconds(r: httpx.Response, attempt: int) -> float:
     return 2**attempt
 
 
+def retry_delay(r: httpx.Response, attempt: int) -> float | None:
+    """Seconds to wait before retrying `r`, or None when it should not be retried.
+
+    Retried: 429, a rate-limit 403, and 5xx. Not retried: anything else, and a primary quota that is spent
+    until well past the retry cap (waiting cannot help). The one retry policy shared by this package's
+    requests and the API's GitHubClient, so the two can't drift apart."""
+    if _primary_limit_out_of_reach(r):
+        return None
+    if r.status_code == 429 or _is_secondary_rate_limit(r) or r.status_code >= 500:
+        return _retry_delay_seconds(r, attempt)
+    return None
+
+
 def _get_with_retry(client: httpx.Client, url: str, headers: dict) -> httpx.Response:
-    # Same retry contract as GitHubClient.request: 3 attempts on connection errors, 429,
-    # rate-limit 403, or 5xx.
+    # Retry contract shared with the API's GitHubClient (see retry_delay): 3 attempts on connection
+    # errors, 429, rate-limit 403, or 5xx.
     for attempt in range(3):
         try:
             r = client.get(url, headers=headers)
@@ -83,10 +96,9 @@ def _get_with_retry(client: httpx.Client, url: str, headers: dict) -> httpx.Resp
                 time.sleep(2**attempt)
                 continue
             raise
-        if _primary_limit_out_of_reach(r):
-            return r
-        if (r.status_code == 429 or _is_secondary_rate_limit(r) or r.status_code >= 500) and attempt < 2:
-            time.sleep(_retry_delay_seconds(r, attempt))
+        delay = retry_delay(r, attempt) if attempt < 2 else None
+        if delay is not None:
+            time.sleep(delay)
             continue
         return r
     raise RuntimeError("request loop exhausted without returning")
