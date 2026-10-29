@@ -18,6 +18,24 @@ def get_account_type(owner: str, token: str, base_url: str | None = None) -> str
     return r.json().get("type", "User")
 
 
+def get_token_login(token: str, base_url: str | None = None) -> str | None:
+    """The login a user token belongs to, or None when it has none (a GitHub App installation token
+    is refused by /user with 401/403). Other failures propagate."""
+    base_url = base_url or settings.github_api_base
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    with httpx.Client(timeout=20) as client:
+        r = client.get(f"{base_url}/user", headers=headers)
+    if r.status_code in (401, 403):
+        return None
+    r.raise_for_status()
+    login = r.json().get("login")
+    return login if isinstance(login, str) else None
+
+
 def instance_scores_hygiene() -> bool:
     return get_config("score_hygiene_checks", "false") == "true"
 
@@ -26,6 +44,18 @@ def org_scores_hygiene(org) -> bool:
     """An org's own setting wins; NULL (never set) follows the instance-wide one."""
     override = getattr(org, "score_hygiene_checks", None)
     return override if override is not None else instance_scores_hygiene()
+
+
+def tally(checks: list[dict]) -> tuple[int, int, int | None]:
+    """(scored checks, failed checks, score) for checks already stamped with ``scored``.
+
+    No scored checks (e.g. a personal account with no repos) means nothing was assessed: report no score
+    rather than a perfect one. Integer arithmetic floors the score, so 1 of 6 failed is 83 (exact 83.3)
+    and float noise (0.29 * 100 = 28.999...) can't shift it."""
+    scored = [c for c in checks if c["scored"]]
+    failed = [c for c in scored if c["status"] in ("fail", "error")]
+    score = 100 - -(-len(failed) * 100 // len(scored)) if scored else None  # ceil-divide the penalty
+    return len(scored), len(failed), score
 
 
 def get_overview(
@@ -44,17 +74,12 @@ def get_overview(
     # explain a stored score with the policy it was computed under, not whatever the config says now.
     for c in checks:
         c["scored"] = c["status"] != "not_applicable" and (score_hygiene or not c.get("informational"))
-    scored = [c for c in checks if c["scored"]]
-    failed = [c for c in scored if c["status"] in ("fail", "error")]
-    # No scored checks (e.g. a personal account with no repos) means nothing was assessed: report no
-    # score rather than a perfect one. Integer arithmetic floors the score, so 1 of 6 failed is 83
-    # (exact 83.3) and float noise (0.29 * 100 = 28.999...) can't shift it.
-    score = 100 - -(-len(failed) * 100 // len(scored)) if scored else None  # ceil-divide the penalty
+    total, failed, score = tally(checks)
     return {
         "owner": owner,
         "score": score,
-        "total_checks": len(scored),
-        "failed_checks": len(failed),
+        "total_checks": total,
+        "failed_checks": failed,
         "repo_count": report["repo_count"],
         "checks": checks,
     }
