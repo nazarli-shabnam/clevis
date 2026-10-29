@@ -498,7 +498,7 @@ def test_security_alert_with_missing_alert_number_is_dropped_not_crashed(pg_conn
     assert len(redis_client.acked) == 1
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM webhook_deliveries WHERE id = %s", (row_id,))
-        assert cur.fetchone()[0] == "queued"  # left as-is, not marked processed
+        assert cur.fetchone()[0] == "dropped"
 
 
 def test_unknown_stream_entry_missing_delivery_row_id_is_dropped_not_crashed(pg_conn):
@@ -850,7 +850,7 @@ def test_member_event_with_missing_login_is_dropped_not_crashed(pg_conn, tenant_
     assert len(redis_client.acked) == 1
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM webhook_deliveries WHERE id = %s", (row_id,))
-        assert cur.fetchone()[0] == "queued"
+        assert cur.fetchone()[0] == "dropped"
 
 
 def test_organization_member_added_with_missing_login_is_dropped_not_crashed(pg_conn, tenant_id):
@@ -864,7 +864,7 @@ def test_organization_member_added_with_missing_login_is_dropped_not_crashed(pg_
     assert len(redis_client.acked) == 1
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM webhook_deliveries WHERE id = %s", (row_id,))
-        assert cur.fetchone()[0] == "queued"
+        assert cur.fetchone()[0] == "dropped"
 
 
 def test_organization_event_db_error_still_releases_the_tenant_lock(pg_conn, tenant_id, monkeypatch):
@@ -998,7 +998,7 @@ def test_process_entry_drops_malformed_json_payload(pg_conn, tenant_id):
     assert len(redis_client.acked) == 1
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM webhook_deliveries WHERE id = %s", (row_id,))
-        assert cur.fetchone()[0] == "queued"
+        assert cur.fetchone()[0] == "dropped"
 
 
 def test_process_entry_drops_payload_missing_repository(pg_conn, tenant_id):
@@ -1014,7 +1014,7 @@ def test_process_entry_drops_payload_missing_repository(pg_conn, tenant_id):
     assert len(redis_client.acked) == 1
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM webhook_deliveries WHERE id = %s", (row_id,))
-        assert cur.fetchone()[0] == "queued"
+        assert cur.fetchone()[0] == "dropped"
 
 
 def test_ensure_group_is_idempotent_when_group_already_exists(redis_client):
@@ -1071,7 +1071,7 @@ def test_sweep_pending_drops_entries_past_max_delivery_attempts(pg_conn, tenant_
     assert pending == []  # dropped (acked), not reclaimed/reprocessed
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM webhook_deliveries WHERE id = %s", (row_id,))
-        assert cur.fetchone()[0] == "queued"  # never actually processed
+        assert cur.fetchone()[0] == "dropped"
 
 
 def test_sweep_pending_logs_and_continues_when_claimed_entry_processing_raises(pg_conn, tenant_id, redis_client, monkeypatch):

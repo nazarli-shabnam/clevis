@@ -20,11 +20,11 @@ import redis
 import org_membership_store
 import repo_events_store
 import security_alerts_store
-from config import settings
+from config import plain_db_url, settings
 
 log = logging.getLogger(__name__)
 
-_DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg://", "postgresql://")
+_DB_URL = plain_db_url(settings.database_url.get_secret_value())
 
 # Must match apps/api/src/routers/webhooks.py's _WEBHOOK_STREAM_KEY (no shared code).
 _STREAM_KEY = "webhook_events"
@@ -243,6 +243,17 @@ def _normalize_organization_event(payload: dict) -> dict | None:
     }
 
 
+def _mark_dropped(pg_conn: psycopg.Connection, delivery_row_id: str | int) -> None:
+    """Give a delivery the consumer is abandoning a terminal status. Left at 'queued' it would look stuck,
+    and webhook_requeue_sweep would re-queue it every tick forever (and crowd out genuinely stuck rows)."""
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            "UPDATE webhook_deliveries SET status = 'dropped' WHERE id = %s AND status = 'queued'",
+            (delivery_row_id,),
+        )
+    pg_conn.commit()
+
+
 class TenantLockBusy(Exception):
     """The tenant's membership lock is held elsewhere, so the entry can't be processed yet."""
 
@@ -336,6 +347,7 @@ def _process_entry(
         payload = json.loads(payload_bytes)
     except json.JSONDecodeError:
         log.error("webhook_deliveries row %s has malformed JSON payload, dropping", delivery_row_id)
+        _mark_dropped(pg_conn, delivery_row_id)
         redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
         return
 
@@ -357,6 +369,7 @@ def _process_entry(
                     action = payload.get("action")
                     if member_normalized is None:
                         log.error("webhook_deliveries row %s has no repository.full_name or member.login, dropping", delivery_row_id)
+                        _mark_dropped(pg_conn, delivery_row_id)
                         redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
                         return
                     if action == "removed":
@@ -372,6 +385,7 @@ def _process_entry(
                         login = ((payload.get("membership") or {}).get("user") or {}).get("login")
                         if not login:
                             log.error("webhook_deliveries row %s has no membership.user.login, dropping", delivery_row_id)
+                            _mark_dropped(pg_conn, delivery_row_id)
                             redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
                             return
                         org_membership_store.remove_org_member(cur, tenant_id=tenant_id, login=login, event_received_at=received_at)
@@ -386,6 +400,7 @@ def _process_entry(
                         org_normalized = _normalize_organization_event(payload)
                         if org_normalized is None:
                             log.error("webhook_deliveries row %s has no membership.user.login, dropping", delivery_row_id)
+                            _mark_dropped(pg_conn, delivery_row_id)
                             redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
                             return
                         org_membership_store.upsert_org_member(cur, tenant_id=tenant_id, added_at=received_at, **org_normalized)
@@ -410,6 +425,7 @@ def _process_entry(
         alert_normalized = _normalize_security_alert(event_type, payload, received_at)
         if alert_normalized is None:
             log.error("webhook_deliveries row %s has no repository.full_name or alert.number, dropping", delivery_row_id)
+            _mark_dropped(pg_conn, delivery_row_id)
             redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
             return
 
@@ -425,6 +441,7 @@ def _process_entry(
     normalized = _normalize(event_type, payload, received_at)
     if normalized is None:
         log.error("webhook_deliveries row %s has no repository.full_name, dropping", delivery_row_id)
+        _mark_dropped(pg_conn, delivery_row_id)
         redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
         return
 
@@ -466,6 +483,10 @@ def _sweep_pending(pg_conn: psycopg.Connection, redis_client: redis.Redis) -> No
 
     for message_id in to_drop:
         log.error("stream entry %s exceeded %d delivery attempts, dropping", message_id, _MAX_DELIVERY_ATTEMPTS)
+        for _entry_id, entry_fields in redis_client.xrange(_STREAM_KEY, min=message_id, max=message_id):
+            row_id = entry_fields.get("delivery_row_id")
+            if row_id is not None:
+                _mark_dropped(pg_conn, row_id)
         redis_client.xack(_STREAM_KEY, _GROUP_NAME, message_id)
 
     if not to_claim:

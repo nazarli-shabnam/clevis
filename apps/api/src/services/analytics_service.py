@@ -46,6 +46,18 @@ def org_scores_hygiene(org) -> bool:
     return override if override is not None else instance_scores_hygiene()
 
 
+def tally(checks: list[dict]) -> tuple[int, int, int | None]:
+    """(scored checks, failed checks, score) for checks already stamped with ``scored``.
+
+    No scored checks (e.g. a personal account with no repos) means nothing was assessed: report no score
+    rather than a perfect one. Integer arithmetic floors the score, so 1 of 6 failed is 83 (exact 83.3)
+    and float noise (0.29 * 100 = 28.999...) can't shift it."""
+    scored = [c for c in checks if c["scored"]]
+    failed = [c for c in scored if c["status"] in ("fail", "error")]
+    score = 100 - -(-len(failed) * 100 // len(scored)) if scored else None  # ceil-divide the penalty
+    return len(scored), len(failed), score
+
+
 def get_overview(
     owner: str, token: str, account_type: str = "Organization", score_hygiene: bool | None = None
 ) -> dict:
@@ -62,17 +74,12 @@ def get_overview(
     # explain a stored score with the policy it was computed under, not whatever the config says now.
     for c in checks:
         c["scored"] = c["status"] != "not_applicable" and (score_hygiene or not c.get("informational"))
-    scored = [c for c in checks if c["scored"]]
-    failed = [c for c in scored if c["status"] in ("fail", "error")]
-    # No scored checks (e.g. a personal account with no repos) means nothing was assessed: report no
-    # score rather than a perfect one. Integer arithmetic floors the score, so 1 of 6 failed is 83
-    # (exact 83.3) and float noise (0.29 * 100 = 28.999...) can't shift it.
-    score = 100 - -(-len(failed) * 100 // len(scored)) if scored else None  # ceil-divide the penalty
+    total, failed, score = tally(checks)
     return {
         "owner": owner,
         "score": score,
-        "total_checks": len(scored),
-        "failed_checks": len(failed),
+        "total_checks": total,
+        "failed_checks": failed,
         "repo_count": report["repo_count"],
         "checks": checks,
     }
