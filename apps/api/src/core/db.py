@@ -526,6 +526,27 @@ class NotificationDestination(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class CheckWaiver(Base):
+    """An accepted-risk exception for a security check (see migration 0067). While unexpired, a failing
+    check it covers is left out of the score; it stays visible, stamped as waived, in the scan."""
+
+    __tablename__ = "check_waivers"
+    __table_args__ = (Index("ix_check_waivers_tenant_id_check_id", "tenant_id", "check_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    check_id: Mapped[str] = mapped_column(Text, nullable=False)
+    # NULL = the whole org; otherwise only these repositories.
+    repos: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    owner: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_by: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # Set once the expiry sweep has audited and alerted this waiver's lapse, so that happens once.
+    expiry_noted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ApiToken(Base):
     """Scoped, revocable machine token. Only a SHA-256 hash is stored; the plaintext is shown once."""
 

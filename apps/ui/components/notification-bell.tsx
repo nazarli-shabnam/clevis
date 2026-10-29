@@ -13,14 +13,16 @@ const KIND_LABEL = {
   score_drop: "Score drop",
   job_failed: "Job failed",
   permission_drift: "Permissions",
+  waiver_expired: "Waiver expired",
 } as const
 
-const KIND_ORDER: NotificationKind[] = ["critical_alert", "score_drop", "job_failed", "permission_drift"]
+const KIND_ORDER: NotificationKind[] = ["critical_alert", "score_drop", "job_failed", "permission_drift", "waiver_expired"]
 const KIND_HINT: Record<NotificationKind, string> = {
   critical_alert: "New critical Dependabot alerts",
   score_drop: "Security score drops",
   job_failed: "Failed background jobs (admins)",
   permission_drift: "GitHub App permission changes (admins)",
+  waiver_expired: "Check waivers that expired (admins)",
 }
 
 /** Per-user switches for which kinds appear in the bell. Loads (and saves) only while shown. */

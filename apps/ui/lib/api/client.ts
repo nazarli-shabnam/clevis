@@ -2,6 +2,8 @@ import type {
   ScanChanges,
   ScheduledScanSettings,
   MemberAccess,
+  CheckWaiver,
+  CheckWaiverInput,
   NotificationFeed,
   NotificationPreferences,
   ActionsUsageResponse,
@@ -551,6 +553,12 @@ export const api = {
       target.scope === "me"
         ? del(`/me/installations/${installationId}`)
         : del(`/orgs/${encodeURIComponent(target.orgLogin)}/installations/${installationId}`),
+  },
+  waivers: {
+    list: (orgLogin: string) => get<CheckWaiver[]>(`/orgs/${encodeURIComponent(orgLogin)}/waivers`),
+    create: (orgLogin: string, body: CheckWaiverInput) =>
+      post<CheckWaiver>(`/orgs/${encodeURIComponent(orgLogin)}/waivers`, body),
+    revoke: (orgLogin: string, id: number) => del(`/orgs/${encodeURIComponent(orgLogin)}/waivers/${id}`),
   },
   orgs: {
     mine: () => get<MyOrgMembership[]>("/me/orgs"),

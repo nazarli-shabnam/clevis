@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 
 KINDS = ("slack", "teams", "generic")
 EVENT_SCORE_DROP = "score_drop"
-EVENTS = (EVENT_SCORE_DROP,)
+EVENT_WAIVER_EXPIRED = "waiver_expired"
+EVENTS = (EVENT_SCORE_DROP, EVENT_WAIVER_EXPIRED)
 _TIMEOUT_SECONDS = 5
 # Destinations are messaged in parallel so one slow endpoint can't stall a scan request for
 # (destinations x timeout).
@@ -183,5 +184,37 @@ def notify_score_drop(
             action="notification.sent",
             target=org_login,
             payload={"destination_id": dest.id, "kind": dest.kind, "event": EVENT_SCORE_DROP, "ok": ok, "detail": detail},
+            tenant_id=tenant_id,
+        )
+
+
+def notify_waiver_expired(
+    db: Session, tenant_id: int, org_login: str, expired: list[dict], *, actor: str = "system"
+) -> None:
+    """Message every enabled destination subscribed to waiver expiries. ``expired`` is a list of
+    ``{"check_id", "repos", "owner", "reason"}`` dicts. Best-effort, like notify_score_drop: a delivery
+    problem is audit-logged and swallowed. No cooldown claim: expiries are rare and each is reported once."""
+    if not expired:
+        return
+    names = ", ".join(sorted({e["check_id"] for e in expired}))
+    text = (
+        f"Clevis: {len(expired)} check waiver{'s' if len(expired) != 1 else ''} for {org_login} expired "
+        f"({names}). The check{'s' if len(expired) != 1 else ''} count toward the score again on the next scan."
+    )
+    data = {"org": org_login, "waivers": expired}
+    targets = [
+        d for d in notification_repo.list_for_tenant(db, tenant_id) if d.enabled and EVENT_WAIVER_EXPIRED in d.events
+    ]
+    if not targets:
+        return
+    with ThreadPoolExecutor(max_workers=_MAX_PARALLEL_SENDS) as pool:
+        results = list(pool.map(lambda d: send(d, EVENT_WAIVER_EXPIRED, text, data), targets))
+    for dest, (ok, detail) in zip(targets, results):
+        audit_repo.write(
+            db,
+            actor=actor,
+            action="notification.sent",
+            target=org_login,
+            payload={"destination_id": dest.id, "kind": dest.kind, "event": EVENT_WAIVER_EXPIRED, "ok": ok, "detail": detail},
             tenant_id=tenant_id,
         )

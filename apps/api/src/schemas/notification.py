@@ -10,7 +10,7 @@ class DestinationCreate(BaseModel):
     url: SecretStr
     # HMAC-SHA256 signing secret; only meaningful for `generic`.
     secret: SecretStr | None = None
-    events: list[Literal["score_drop"]] = ["score_drop"]
+    events: list[Literal["score_drop", "waiver_expired"]] = ["score_drop"]
     min_score_drop: int = Field(default=10, ge=1, le=100)
 
 
