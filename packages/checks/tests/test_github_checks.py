@@ -228,6 +228,44 @@ def test_get_waits_the_cap_for_a_ratelimit_with_no_usable_header():
     mock_sleep.assert_called_once_with(_MAX_RETRY_AFTER_SECONDS)
 
 
+def test_get_fails_fast_when_the_primary_quota_resets_far_in_the_future():
+    # Quota spent with the reset ~40 min away: sleeping and retrying cannot succeed, so return at once.
+    request = httpx.Request("GET", "https://x/y")
+    headers = {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(int(time.time() + 2400))}
+    calls = []
+
+    def fake_get(url, **_kw):
+        calls.append(url)
+        return httpx.Response(403, headers=headers, request=request)
+
+    with patch("time.sleep") as mock_sleep, patch("httpx.Client.get", side_effect=fake_get):
+        with pytest.raises(httpx.HTTPStatusError):
+            _get("https://x/y", "tok")
+    assert len(calls) == 1
+    mock_sleep.assert_not_called()
+
+
+def test_get_still_waits_when_the_primary_quota_resets_within_the_cap():
+    request = httpx.Request("GET", "https://x/y")
+    headers = {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(int(time.time() + 20))}
+    responses = iter([httpx.Response(403, headers=headers, request=request), httpx.Response(200, json={"ok": 1}, request=request)])
+
+    with patch("time.sleep") as mock_sleep, patch("httpx.Client.get", side_effect=lambda url, headers: next(responses)):
+        assert _get("https://x/y", "tok") == {"ok": 1}
+    assert mock_sleep.call_count == 1
+
+
+def test_get_keeps_retrying_a_secondary_limit_even_with_a_far_reset():
+    # Secondary limits send Retry-After; the quota headers alone mustn't turn them into fail-fast.
+    request = httpx.Request("GET", "https://x/y")
+    headers = {"Retry-After": "5", "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(int(time.time() + 2400))}
+    responses = iter([httpx.Response(403, headers=headers, request=request), httpx.Response(200, json={"ok": 1}, request=request)])
+
+    with patch("time.sleep") as mock_sleep, patch("httpx.Client.get", side_effect=lambda url, headers: next(responses)):
+        assert _get("https://x/y", "tok") == {"ok": 1}
+    mock_sleep.assert_called_once_with(5.0)
+
+
 def test_get_does_not_retry_a_plain_permission_denied_403():
     # A permission-denied 403 (no rate-limit headers) must surface immediately, not retry.
     request = httpx.Request("GET", "https://x/y")
