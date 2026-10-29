@@ -200,7 +200,11 @@ describe("SecurityPage", () => {
 
   it("shows n/a, not a perfect score, for a scan that scored no checks", async () => {
     analyticsOverviewMock.mockResolvedValue({
-      owner: "acme", score: null, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [],
+      owner: "acme", score: null, total_checks: 0, failed_checks: 0, repo_count: 0,
+      checks: [{
+        id: "repository_license_present", title: "License present", severity: "low", remediation: "",
+        status: "pass", scored: false, informational: true, value: null,
+      }],
     });
     renderPage();
     fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
