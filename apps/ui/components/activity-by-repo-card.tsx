@@ -41,7 +41,9 @@ const STATUS_LABEL: Record<StreamStatus, string> = {
   offline: "Reconnecting…",
 }
 
-export function ActivityByRepoCard({ org }: { org: string }) {
+/** `quiet` is for pages that already have their own fallback (Overview): the card then renders only
+ * once the org has webhook data, instead of explaining how to get it. */
+export function ActivityByRepoCard({ org, quiet = false }: { org: string; quiet?: boolean }) {
   const query = useQuery({
     queryKey: activitySummaryKey(org, DAYS),
     queryFn: () => api.github.activitySummary(org, DAYS),
@@ -61,6 +63,8 @@ export function ActivityByRepoCard({ org }: { org: string }) {
   }, [connected, org])
   const status = useActivityStream(org, DAYS, connected || streamingOrg === org)
   const rows = useMemo(() => (query.data ? topRepos(query.data) : []), [query.data])
+
+  if (quiet && !connected) return null
 
   return (
     <div className="card">
