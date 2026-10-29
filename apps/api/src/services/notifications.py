@@ -146,12 +146,14 @@ def send(dest: NotificationDestination, event: str, text: str, data: dict | None
 
 
 def notify_score_drop(
-    db: Session, tenant_id: int, org_login: str, previous: int, current: int, *, actor: str = "system"
+    db: Session, tenant_id: int, org_login: str, previous: int | None, current: int | None, *, actor: str = "system"
 ) -> None:
     """Message every enabled destination subscribed to score drops whose threshold is met.
 
     Best-effort by contract: a delivery problem is audit-logged and swallowed, never raised into
     the scan request that triggered it."""
+    if previous is None or current is None:
+        return  # a scan with no scored checks has no score to compare
     drop = previous - current
     if drop <= 0:
         return

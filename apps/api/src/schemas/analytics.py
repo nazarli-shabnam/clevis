@@ -38,7 +38,7 @@ class CheckResult(BaseModel):
 
 class AnalyticsResponse(BaseModel):
     owner: str
-    score: int
+    score: int | None
     total_checks: int
     failed_checks: int
     repo_count: int
@@ -97,7 +97,7 @@ class ScanChangesResponse(BaseModel):
 class ScanHistoryEntry(BaseModel):
     id: int
     owner: str
-    score: int
+    score: int | None
     total_checks: int
     failed_checks: int
     created_at: datetime

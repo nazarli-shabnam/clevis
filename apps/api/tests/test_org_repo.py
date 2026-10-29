@@ -65,6 +65,25 @@ def test_org_rename_resolves_by_github_org_id_instead_of_crashing(db):
     assert org_repo.get_by_login(db, "new-name").id == original.id
 
 
+def test_org_rename_moves_installation_and_scan_history_to_the_new_login(db):
+    from src.core.db import ScanResult
+    from src.repositories import installation_repo
+
+    org = org_repo.get_or_create(db, github_login="old-name", github_org_id=98)
+    installation_repo.upsert(
+        db, account_login="old-name", account_type="Organization", auth_mode="app", installation_id=5, org_id=org.id
+    )
+    db.add(ScanResult(owner="old-name", score=80, total_checks=5, failed_checks=1, checks_json="[]", tenant_id=org.tenant_id))
+    db.commit()
+
+    org_repo.get_or_create(db, github_login="new-name", github_org_id=98)
+
+    installation = installation_repo.get_for_org(db, org.id, "new-name")
+    assert installation is not None and installation.token_ref == "tok_new-name"
+    assert installation_repo.get_for_org(db, org.id, "old-name") is None
+    assert db.query(ScanResult).filter(ScanResult.tenant_id == org.tenant_id).one().owner == "new-name"
+
+
 def test_get_or_create_falls_back_to_org_id_lookup_on_concurrent_insert_race(db):
     # Simulates a concurrent get_or_create: the insert collides on github_org_id, get_by_login
     # misses (different login), so recovery must fall back to get_by_org_id.

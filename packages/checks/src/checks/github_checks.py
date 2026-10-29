@@ -33,6 +33,21 @@ def _is_secondary_rate_limit(r: httpx.Response) -> bool:
 _MAX_RETRY_AFTER_SECONDS = 60
 
 
+def _primary_limit_out_of_reach(r: httpx.Response) -> bool:
+    """The token's hourly quota is spent and won't reset within one retry cap.
+
+    Retrying (and sleeping) can't succeed before then, so the caller should return the 403/429 at once
+    and let the check report the repo as unknown. Secondary limits send Retry-After and are excluded."""
+    if r.status_code not in (403, 429) or "Retry-After" in r.headers:
+        return False
+    if r.headers.get("X-RateLimit-Remaining") != "0":
+        return False
+    try:
+        return float(r.headers["X-RateLimit-Reset"]) - time.time() > _MAX_RETRY_AFTER_SECONDS
+    except (KeyError, ValueError):
+        return False
+
+
 def _retry_delay_seconds(r: httpx.Response, attempt: int) -> float:
     """Delay before retrying: Retry-After, then X-RateLimit-Reset, then a fallback.
 
@@ -68,6 +83,8 @@ def _get_with_retry(client: httpx.Client, url: str, headers: dict) -> httpx.Resp
                 time.sleep(2**attempt)
                 continue
             raise
+        if _primary_limit_out_of_reach(r):
+            return r
         if (r.status_code == 429 or _is_secondary_rate_limit(r) or r.status_code >= 500) and attempt < 2:
             time.sleep(_retry_delay_seconds(r, attempt))
             continue
@@ -271,10 +288,11 @@ class BranchProtectionEnabled(Check):
         if evaluable == 0:
             return {"status": "error", "value": {"checked": checked, "protected": protected, "unknown": unknown}}
         compliant = protected == evaluable
-        return {
-            "status": "pass" if compliant else "fail",
-            "value": _with_repos({"checked": checked, "protected": protected, "unknown": unknown}, unprotected),
-        }
+        value = _with_repos({"checked": checked, "protected": protected, "unknown": unknown}, unprotected)
+        if compliant and unknown > 0:
+            # Same as DependabotAlertsCheck: a clean result from only the reachable repos is not a pass.
+            return {"status": "error", "value": value}
+        return {"status": "pass" if compliant else "fail", "value": value}
 
 
 class SecretScanningEnabled(Check):
@@ -456,7 +474,7 @@ class DefaultBranchNoForcePushCheck(Check):
         if repos is None:
             repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
         if len(repos) == 0:
-            return {"status": "not_applicable", "value": {"repos_checked": 0, "force_push_allowed": 0}}
+            return {"status": "not_applicable", "value": {"repos_checked": 0, "force_push_allowed": 0, "unknown": 0}}
         checked = 0
         force_push_allowed = 0
         unknown = 0
@@ -494,9 +512,11 @@ class DefaultBranchNoForcePushCheck(Check):
                     force_push_allowed += 1
                     allowing.append(name)
             checked += 1
+        value = {"repos_checked": checked, "force_push_allowed": force_push_allowed, "unknown": unknown}
         if checked == 0:
-            return {"status": "error", "value": {"repos_checked": checked, "force_push_allowed": force_push_allowed}}
-        return {
-            "status": "pass" if force_push_allowed == 0 else "fail",
-            "value": _with_repos({"repos_checked": checked, "force_push_allowed": force_push_allowed}, allowing),
-        }
+            return {"status": "error", "value": value}
+        compliant = force_push_allowed == 0
+        if compliant and unknown > 0:
+            # Same as DependabotAlertsCheck: a clean result from only the reachable repos is not a pass.
+            return {"status": "error", "value": _with_repos(value, allowing)}
+        return {"status": "pass" if compliant else "fail", "value": _with_repos(value, allowing)}

@@ -4,7 +4,7 @@ from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from src.core.db import Org
+from src.core.db import GitHubInstallation, Org, ScanResult
 from src.repositories import tenant_repo
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,29 @@ def _refuse_other_orgs_row(org: Org, github_login: str, github_org_id: int | Non
         raise OrgIdentityMismatch(github_login)
 
 
+def _apply_rename(db: Session, org: Org, new_login: str) -> None:
+    """Move everything keyed by the org's login string over to its new GitHub login, atomically.
+
+    Installation lookups (token resolution) match ``account_login`` and scan history, export, digest
+    and the public badge match ``scan_results.owner``, so leaving either on the old login orphans
+    them after a rename. Scans an org member ran from their personal tenant keep the old owner."""
+    old_login = org.github_login
+    org.github_login = new_login
+    if org.tenant_id is not None:
+        # Both tables' RLS WITH CHECK needs app.tenant_id = the org's tenant. SET LOCAL so the
+        # context ends with this commit (same pattern as ensure_tenant_linked).
+        db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
+        db.query(GitHubInstallation).filter(GitHubInstallation.org_id == org.id).update(
+            {GitHubInstallation.account_login: new_login, GitHubInstallation.token_ref: f"tok_{new_login}"},
+            synchronize_session=False,
+        )
+        db.query(ScanResult).filter(
+            ScanResult.tenant_id == org.tenant_id, func.lower(ScanResult.owner) == old_login.lower()
+        ).update({ScanResult.owner: new_login}, synchronize_session=False)
+    db.commit()
+    db.refresh(org)
+
+
 def get_or_create(db: Session, github_login: str, github_org_id: int | None = None) -> Org:
     # Case-insensitive: GitHub logins are, and an exact-case lookup would miss a casing variant of a
     # connected org and insert a duplicate instead of reaching the identity check below.
@@ -75,9 +98,8 @@ def get_or_create(db: Session, github_login: str, github_org_id: int | None = No
         org = get_by_org_id(db, github_org_id)
         if org is not None:
             if org.github_login != github_login:
-                org.github_login = github_login
-                db.commit()
-                db.refresh(org)
+                org = ensure_tenant_linked(db, org)
+                _apply_rename(db, org, github_login)
             return ensure_tenant_linked(db, org)
 
     org = Org(github_login=github_login, github_org_id=github_org_id)

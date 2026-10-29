@@ -72,7 +72,8 @@ export interface ActionsUsageResponse {
 
 export interface AnalyticsOverviewResponse {
   owner: string
-  score: number
+  // null when the scan had no scored checks (nothing was assessed).
+  score: number | null
   total_checks: number
   failed_checks: number
   repo_count: number
@@ -82,7 +83,7 @@ export interface AnalyticsOverviewResponse {
 export interface ScanHistoryEntry {
   id: number
   owner: string
-  score: number
+  score: number | null
   total_checks: number
   failed_checks: number
   created_at: string
