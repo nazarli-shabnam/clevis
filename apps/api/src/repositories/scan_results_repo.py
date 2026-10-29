@@ -10,7 +10,7 @@ from src.core.db import Membership, ScanResult
 def insert(
     db: Session,
     owner: str,
-    score: int,
+    score: int | None,
     total_checks: int,
     failed_checks: int,
     checks: list[dict],

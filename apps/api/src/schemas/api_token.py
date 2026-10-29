@@ -44,7 +44,7 @@ class ScoreOut(BaseModel):
     """Machine-readable score: no per-check detail values, only id/title/status."""
 
     org: str
-    score: int
+    score: int | None
     total_checks: int
     failed_checks: int
     scanned_at: str | None = None
