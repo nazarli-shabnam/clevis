@@ -3,17 +3,25 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+NotificationKind = Literal["critical_alert", "score_drop", "job_failed", "permission_drift", "waiver_expired"]
+
 
 class NotificationItem(BaseModel):
     # Stable across requests (kind plus the source row), so the UI can key on it.
     id: str
-    kind: Literal["critical_alert", "score_drop", "job_failed", "permission_drift"]
+    kind: NotificationKind
     at: datetime
     title: str
     detail: str = ""
     # App route to open for this item.
     href: str
     read: bool
+
+
+class NotificationPreferences(BaseModel):
+    """Kinds this user has hidden from the org's feed and unread count (empty = show everything)."""
+
+    muted_kinds: list[NotificationKind] = []
 
 
 class NotificationFeed(BaseModel):

@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const feedMock = vi.fn();
 const markReadMock = vi.fn();
+const prefsMock = vi.fn();
+const setPrefsMock = vi.fn();
 let scope: { kind: "org" | "personal"; login: string } | null = { kind: "org", login: "acme" };
 
 vi.mock("@/lib/active-scope", () => ({ useActiveScope: () => ({ scope }) }));
@@ -12,6 +14,8 @@ vi.mock("@/lib/api/client", () => ({
     notifications: {
       feed: (...a: unknown[]) => feedMock(...a),
       markRead: (...a: unknown[]) => markReadMock(...a),
+      preferences: (...a: unknown[]) => prefsMock(...a),
+      setPreferences: (...a: unknown[]) => setPrefsMock(...a),
     },
   },
 }));
@@ -36,6 +40,9 @@ describe("NotificationBell", () => {
     feedMock.mockReset();
     markReadMock.mockReset();
     markReadMock.mockResolvedValue(null);
+    prefsMock.mockReset();
+    setPrefsMock.mockReset();
+    prefsMock.mockResolvedValue({ muted_kinds: [] });
     scope = { kind: "org", login: "acme" };
   });
   afterEach(cleanup);
@@ -48,6 +55,22 @@ describe("NotificationBell", () => {
     await waitFor(() => expect(screen.getByText("title a")).toBeInTheDocument());
     expect(screen.getByText("title b")).toBeInTheDocument();
     expect(screen.getByText(/Critical alert ·/)).toBeInTheDocument();
+  });
+
+  it("mutes a kind from the settings panel and refetches the feed", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "score_drop")]));
+    setPrefsMock.mockResolvedValue({ muted_kinds: ["score_drop"] });
+    wrap(<NotificationBell />);
+    fireEvent.click(await screen.findByRole("button", { name: /Notifications, 1 unread/ }));
+    expect(prefsMock).not.toHaveBeenCalled(); // preferences load only once the panel is opened
+    fireEvent.click(await screen.findByRole("button", { name: "Notification settings" }));
+    const box = await screen.findByRole("checkbox", { name: "Security score drops" });
+    await waitFor(() => expect(box).toBeEnabled());
+    expect(box).toBeChecked();
+    fireEvent.click(box);
+    await waitFor(() => expect(setPrefsMock).toHaveBeenCalledWith("acme", ["score_drop"]));
+    await waitFor(() => expect(feedMock.mock.calls.length).toBeGreaterThan(1)); // badge and list reload
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Security score drops" })).not.toBeChecked());
   });
 
   it("closes the popover when an item is followed", async () => {
