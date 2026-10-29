@@ -9,6 +9,7 @@ from src.core.db import engine
 from src.core.logging import setup_logging
 from src.core.middleware import RequestIdMiddleware
 from src.core.rls_posture import warn_if_rls_bypassed
+from src.core.version import VERSION
 from src.routers import (
     actions_cache,
     analytics,
@@ -20,6 +21,7 @@ from src.routers import (
     collab,
     config,
     dependabot_triage,
+    evidence,
     github,
     github_auth,
     health,
@@ -86,7 +88,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="clevis API",
-    version="0.1.0",
+    version=VERSION,
     lifespan=lifespan,
     # Docs intentionally disabled in all environments so the API surface is never published.
     openapi_url=None,
@@ -102,6 +104,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # So the UI can read these on the evidence download (cross-origin responses hide other headers).
+    expose_headers=["Content-Disposition", "X-Evidence-Truncated"],
 )
 
 app.include_router(health.router)
@@ -132,6 +136,7 @@ app.include_router(org_activity.router, tags=["audit", "jobs"])
 app.include_router(org_notifications.router, tags=["notifications"])
 app.include_router(scheduled_scans.router, tags=["analytics"])
 app.include_router(waivers.router, tags=["waivers"])
+app.include_router(evidence.router, tags=["audit"])
 app.include_router(tokens.router, prefix="/tokens", tags=["tokens"])
 app.include_router(config.router, prefix="/config", tags=["config"])
 app.include_router(webhooks.router, tags=["webhooks"])
