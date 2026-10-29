@@ -87,6 +87,47 @@ describe("WaiversCard", () => {
     await waitFor(() => expect(listMock.mock.calls.length).toBeGreaterThan(1)) // refreshed
   })
 
+  it("shows a load error with a retry that refetches", async () => {
+    listMock.mockRejectedValueOnce(new Error("boom")).mockResolvedValue([])
+    renderCard()
+    expect(await screen.findByText(/Couldn't load waivers: boom/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }))
+    expect(await screen.findByText("No waivers.")).toBeInTheDocument()
+    expect(listMock).toHaveBeenCalledTimes(2)
+  })
+
+  it("labels a waiver for a check this UI doesn't know by its id", async () => {
+    listMock.mockResolvedValue([waiver({ check_id: "some_future_check" })])
+    renderCard()
+    expect(await screen.findByText("some_future_check")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Revoke waiver for some_future_check" })).toBeInTheDocument()
+  })
+
+  it("shows why a revoke failed", async () => {
+    listMock.mockResolvedValue([waiver()])
+    revokeMock.mockRejectedValue(new Error("already gone"))
+    renderCard()
+    fireEvent.click(await screen.findByRole("button", { name: /Revoke waiver for/ }))
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't revoke: already gone")
+  })
+
+  it("sends the chosen check, shows the pending label, and bounds the expiry date", async () => {
+    listMock.mockResolvedValue([])
+    let finish: (v: unknown) => void = () => {}
+    createMock.mockReturnValue(new Promise((resolve) => { finish = resolve }))
+    renderCard()
+    await screen.findByText("No waivers.")
+    fireEvent.change(screen.getByLabelText("Check"), { target: { value: "repository_license_present" } })
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "r" } })
+    fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "o" } })
+    const until = screen.getByLabelText("Expires") as HTMLInputElement
+    expect(until.max >= until.value && until.value >= until.min).toBe(true)
+    fireEvent.click(screen.getByRole("button", { name: "Add waiver" }))
+    expect(await screen.findByRole("button", { name: "Adding…" })).toBeDisabled()
+    expect(createMock.mock.calls[0][1]).toMatchObject({ check_id: "repository_license_present" })
+    finish(waiver())
+  })
+
   it("revokes a waiver", async () => {
     listMock.mockResolvedValue([waiver()])
     revokeMock.mockResolvedValue(undefined)
@@ -125,5 +166,23 @@ describe("CheckCard waived badge", () => {
     )
     const chip = screen.getByText(/^Waived until/)
     expect(chip).toHaveAttribute("title", expect.stringContaining("legacy repo (owner: platform"))
+  })
+
+  it("names the repos a repo-scoped waiver covered", () => {
+    render(
+      <CheckCard
+        check={{
+          id: "repository_default_branch_protection_enabled",
+          title: "Default branch has protection rules",
+          severity: "high",
+          remediation: "Enable it.",
+          status: "fail",
+          scored: false,
+          value: null,
+          waived: { waiver_ids: [1], until: "2030-01-15T00:00:00Z", reason: "legacy", owner: "platform", repos: ["api", "web"] },
+        }}
+      />,
+    )
+    expect(screen.getByText(/^Waived until/)).toHaveAttribute("title", expect.stringContaining("repos: api, web"))
   })
 })

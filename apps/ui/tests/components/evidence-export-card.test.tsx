@@ -41,6 +41,16 @@ describe("EvidenceExportCard", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("Downloaded clevis-evidence-acme-1.zip")
   })
 
+  it("shows a preparing state while the zip is built", async () => {
+    let finish: (v: unknown) => void = () => {}
+    downloadMock.mockReturnValue(new Promise((resolve) => { finish = resolve }))
+    renderCard()
+    fireEvent.click(screen.getByRole("button", { name: "Export evidence" }))
+    expect(await screen.findByRole("button", { name: "Preparing…" })).toBeDisabled()
+    finish({ blob: new Blob(["z"]), filename: "e.zip", truncated: false })
+    await waitFor(() => expect(saveMock).toHaveBeenCalled())
+  })
+
   it("warns when a list was capped", async () => {
     const blob = new Blob(["z"])
     downloadMock.mockResolvedValue({ blob, filename: "e.zip", truncated: true })

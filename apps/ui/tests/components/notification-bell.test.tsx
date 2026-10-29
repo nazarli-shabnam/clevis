@@ -76,6 +76,26 @@ describe("NotificationBell", () => {
     expect(screen.getByText(/Nothing new in the last 14 days/)).toBeInTheDocument();
   });
 
+  it("says so when the preferences can't be loaded, and when saving them fails", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "score_drop")]));
+    prefsMock.mockRejectedValueOnce(new Error("prefs down"));
+    wrap(<NotificationBell />);
+    fireEvent.click(await screen.findByRole("button", { name: /Notifications, 1 unread/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Notification settings" }));
+    expect(await screen.findByText(/Couldn't load your settings: prefs down/)).toBeInTheDocument();
+    cleanup();
+
+    prefsMock.mockResolvedValue({ muted_kinds: [] });
+    setPrefsMock.mockRejectedValue(new Error("save down"));
+    wrap(<NotificationBell />);
+    fireEvent.click(await screen.findByRole("button", { name: /Notifications, 1 unread/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Notification settings" }));
+    const box = await screen.findByRole("checkbox", { name: "Security score drops" });
+    await waitFor(() => expect(box).toBeEnabled());
+    fireEvent.click(box);
+    expect(await screen.findByText(/Couldn't save: save down/)).toBeInTheDocument();
+  });
+
   it("closes the popover when an item is followed", async () => {
     feedMock.mockResolvedValue(feed([item("a", "critical_alert")]));
     wrap(<NotificationBell />);
