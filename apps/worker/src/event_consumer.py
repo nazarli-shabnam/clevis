@@ -42,6 +42,10 @@ _NOT_YET_NORMALIZED_EVENT_TYPES = {"membership", "team"}
 _RECLAIM_IDLE_MS = 60_000
 # A repeatedly-failing entry is dropped so a poison pill can't block reclaim forever.
 _MAX_DELIVERY_ATTEMPTS = 5
+# How long one member/organization event waits for its tenant's membership lock (held by a reconcile
+# job across its GitHub calls) before it is set aside for the pending sweep. Short, because the consumer
+# is a single thread: every other tenant's webhooks queue up behind a wait.
+_TENANT_LOCK_WAIT_SECONDS = 5.0
 # Bounded block so the loop still wakes to touch the heartbeat and sweep pending.
 _BLOCK_MS = 5_000
 _BATCH_SIZE = 10
@@ -238,6 +242,10 @@ def _normalize_organization_event(payload: dict) -> dict | None:
     }
 
 
+class TenantLockBusy(Exception):
+    """The tenant's membership lock is held elsewhere; the entry stays unacked and the pending sweep retries."""
+
+
 def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry_id: str, fields: dict) -> None:
     delivery_row_id = fields.get("delivery_row_id")
     if delivery_row_id is None:
@@ -282,7 +290,10 @@ def _process_entry(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry
     if event_type in _ORG_MEMBERSHIP_EVENT_TYPES:
         # Held for the whole write so it can't land between the reconciliation job's roster
         # fetch and snapshot apply.
-        org_membership_store.acquire_tenant_lock(pg_conn, tenant_id)
+        if org_membership_store.try_acquire_tenant_lock(
+            pg_conn, tenant_id, timeout_s=_TENANT_LOCK_WAIT_SECONDS, on_wait=_touch_heartbeat
+        ) is None:
+            raise TenantLockBusy(tenant_id)
         try:
             with pg_conn.cursor() as cur:
                 cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
@@ -404,6 +415,8 @@ def _sweep_pending(pg_conn: psycopg.Connection, redis_client: redis.Redis) -> No
     for entry_id, fields in claimed:
         try:
             _process_entry(pg_conn, redis_client, entry_id, fields)
+        except TenantLockBusy as exc:
+            log.info("stream entry %s deferred: membership lock for tenant %s is busy", entry_id, exc)
         except Exception:
             log.exception("failed to process reclaimed stream entry %s", entry_id)
             _rollback_quietly(pg_conn)
@@ -436,6 +449,9 @@ def run() -> None:
                     for entry_id, fields in entries:
                         try:
                             _process_entry(pg_conn, redis_client, entry_id, fields)
+                        except TenantLockBusy as exc:
+                            # Left unacked; the sweep retries once it has idled long enough.
+                            log.info("stream entry %s deferred: membership lock for tenant %s is busy", entry_id, exc)
                         except Exception:
                             # Left unacked on purpose; _sweep_pending reclaims it later. Roll back first so
                             # an aborted transaction doesn't poison the rest of the batch.

@@ -9,6 +9,7 @@ import pytest
 import redis
 
 import event_consumer
+import org_membership_store
 from config import settings
 
 _DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg://", "postgresql://")
@@ -1184,3 +1185,27 @@ def test_start_background_thread_runs_in_the_background(monkeypatch):
 
     assert ran == [True]
     assert not thread.is_alive()
+
+
+def test_membership_event_is_deferred_not_blocked_while_the_tenant_lock_is_held(pg_conn, tenant_id, monkeypatch):
+    conn, state = pg_conn
+    monkeypatch.setattr(event_consumer, "_TENANT_LOCK_WAIT_SECONDS", 0.3)
+    payload = {"action": "member_added", "membership": {"role": "member", "user": {"login": "lockwait-user"}}}
+    row_id = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-org-lock-busy-1", event_type="organization", payload=payload)
+    redis_client = _FakeRedis()
+
+    holder = psycopg.connect(_DB_URL, autocommit=False)  # stands in for a long-running reconcile job
+    try:
+        org_membership_store.acquire_tenant_lock(holder, tenant_id)
+        with pytest.raises(event_consumer.TenantLockBusy):
+            event_consumer._process_entry(conn, redis_client, "1-0", _entry_fields(row_id, "organization", tenant_id))
+        # Left unacked and unprocessed so the pending sweep retries it.
+        assert redis_client.acked == []
+        assert _org_member(conn, tenant_id, "lockwait-user") is None
+        org_membership_store.release_tenant_lock(holder, tenant_id)
+    finally:
+        holder.close()
+
+    event_consumer._process_entry(conn, redis_client, "1-0", _entry_fields(row_id, "organization", tenant_id))
+    assert redis_client.acked == [(event_consumer._STREAM_KEY, event_consumer._GROUP_NAME, "1-0")]
+    assert _org_member(conn, tenant_id, "lockwait-user") is not None
