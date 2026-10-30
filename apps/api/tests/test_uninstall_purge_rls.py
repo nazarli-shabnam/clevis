@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
-from src.core.db import User
+from src.core.db import GitHubInstallation, User
 from src.core.rbac import set_tenant_session_context
 from src.repositories import installation_repo, org_repo, tenant_repo
 
@@ -40,7 +40,7 @@ def seeded_tenant(clevis_api_engine):
             session.execute(text(sql), {"t": tenant.id})
         session.commit()
         try:
-            yield session, tenant.id
+            yield session, tenant.id, org.id
         finally:
             session.rollback()
             set_tenant_session_context(session, tenant.id, user.id)
@@ -66,7 +66,7 @@ def _counts(session: Session, tenant_id: int) -> dict[str, int]:
 
 
 def test_purge_removes_rows_from_tables_clevis_api_cannot_delete(seeded_tenant):
-    session, tenant_id = seeded_tenant
+    session, tenant_id, _org_id = seeded_tenant
     assert all(n == 1 for n in _counts(session, tenant_id).values())
 
     installation_repo.purge_tenant_github_data_if_disconnected(session, tenant_id)
@@ -75,10 +75,29 @@ def test_purge_removes_rows_from_tables_clevis_api_cannot_delete(seeded_tenant):
 
 
 def test_purge_function_refuses_a_tenant_other_than_the_session_tenant(seeded_tenant):
-    session, tenant_id = seeded_tenant
+    session, tenant_id, _org_id = seeded_tenant
 
     with pytest.raises(DBAPIError, match="session tenant does not match"):
         session.execute(text("SELECT purge_tenant_github_data(:t)"), {"t": tenant_id + 1_000_000})
     session.rollback()
 
     assert all(n == 1 for n in _counts(session, tenant_id).values())
+
+
+def test_failed_purge_rolls_back_the_installation_delete_so_redelivery_can_retry(seeded_tenant, monkeypatch):
+    session, tenant_id, org_id = seeded_tenant
+    installation_repo.create(
+        session, account_login="purge-rls-org", account_type="Organization", auth_mode="app",
+        installation_id=424242, org_id=org_id,
+    )
+
+    def boom(db, tenant):
+        raise RuntimeError("purge failed")
+
+    monkeypatch.setattr(installation_repo, "purge_tenant_github_data_if_disconnected", boom)
+    with pytest.raises(RuntimeError):
+        installation_repo.delete_by_installation_id(session, 424242)
+    session.rollback()
+
+    # The row is still there, so the redelivered webhook resolves the tenant and runs the purge again.
+    assert session.query(GitHubInstallation).filter(GitHubInstallation.installation_id == 424242).count() == 1

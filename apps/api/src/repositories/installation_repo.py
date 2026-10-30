@@ -186,13 +186,18 @@ def delete_by_installation_id(db: Session, installation_id: int) -> tuple[int, i
     ).scalar()
     if tenant_id is not None:
         set_session_tenant(db, tenant_id)
+        # Lock first (same order as upsert()), then delete and purge in ONE transaction: if the purge
+        # fails the row delete rolls back with it, so GitHub's redelivery re-resolves the tenant and
+        # retries instead of finding nothing left to purge.
+        _lock_tenant_installs(db, tenant_id)
 
     rows = db.query(GitHubInstallation).filter(GitHubInstallation.installation_id == installation_id).all()
     resolved_tenant_id = rows[0].tenant_id if rows else tenant_id
     count = db.query(GitHubInstallation).filter(GitHubInstallation.installation_id == installation_id).delete()
-    db.commit()
-    if resolved_tenant_id is not None:
-        purge_tenant_github_data_if_disconnected(db, resolved_tenant_id)
+    if resolved_tenant_id is None:
+        db.commit()
+    else:
+        purge_tenant_github_data_if_disconnected(db, resolved_tenant_id)  # commits
     return count, resolved_tenant_id
 
 
