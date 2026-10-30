@@ -74,3 +74,19 @@ def test_audit_log_reads_are_instance_wide_with_no_tenant_context(tenant_session
     rows = audit_router.list_audit_logs(action="rls.reads.test", limit=10, db=session, _user=None)
     assert [r.action for r in rows] == ["rls.reads.test"]
     assert "rls.reads.test" in audit_router.list_audit_actions(db=session, _user=None)
+
+
+def test_pending_invitations_judge_expiry_by_wall_clock_not_transaction_start(tenant_session):
+    session, user, org, _tenant = tenant_session
+    # A transaction opened now; the invitation then lapses *inside* it. now() would still call it live.
+    session.execute(text("SELECT 1"))
+    inv = invitation_repo.create(session, org_id=org.id, email="late@test.local", invited_by_user_id=user.id)
+    session.execute(text("SELECT now()"))  # pins the transaction timestamp before the expiry below
+    session.execute(
+        text("UPDATE invitations SET expires_at = clock_timestamp() + interval '50 milliseconds' WHERE id = :i"),
+        {"i": inv.id},
+    )
+    _clear_context(session)
+    session.execute(text("SELECT pg_sleep(0.2)"))
+
+    assert invitation_repo.list_pending_for_email(session, "late@test.local") == []
