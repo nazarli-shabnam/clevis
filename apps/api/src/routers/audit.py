@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_workspace_admin
@@ -15,7 +16,8 @@ def list_audit_actions(
 ):
     """Every distinct action ever written, so the UI's filter can't drift from what the API records."""
     # ponytail: a DISTINCT scan of audit_logs.action; cache or index it if the table grows very large.
-    return [row[0] for row in db.query(AuditLog.action).distinct().order_by(AuditLog.action).all()]
+    # SECURITY DEFINER (migration 0068): the instance-wide view has no tenant to set under clevis_api RLS.
+    return list(db.execute(text("SELECT * FROM audit_log_actions()")).scalars())
 
 
 @router.get("", response_model=list[AuditLogOut])
@@ -25,7 +27,11 @@ def list_audit_logs(
     db: Session = Depends(get_db),
     _user: UserOut = Depends(require_workspace_admin),
 ):
-    q = db.query(AuditLog).order_by(AuditLog.id.desc())
-    if action:
-        q = q.filter(AuditLog.action == action)
-    return q.limit(limit).all()
+    # SECURITY DEFINER (migration 0068): this is the instance-wide view, and there is no tenant
+    # context to set, so under clevis_api RLS a plain query would always return [].
+    return (
+        db.query(AuditLog)
+        .from_statement(text("SELECT * FROM audit_logs_for_admin(:action, :limit)"))
+        .params(action=action or None, limit=limit)
+        .all()
+    )

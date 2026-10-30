@@ -230,6 +230,16 @@ BEGIN
   IF EXISTS (SELECT FROM pg_proc WHERE proname = 'invitation_tenant_by_token') THEN
     GRANT EXECUTE ON FUNCTION invitation_tenant_by_token(text) TO clevis_api;
   END IF;
+  -- Migration 0068's RLS-safe reads: pending invites by email, workspace-admin audit log.
+  IF EXISTS (SELECT FROM pg_proc WHERE proname = 'pending_invitations_for_email') THEN
+    GRANT EXECUTE ON FUNCTION pending_invitations_for_email(text) TO clevis_api;
+    GRANT EXECUTE ON FUNCTION audit_logs_for_admin(text, integer) TO clevis_api;
+    GRANT EXECUTE ON FUNCTION audit_log_actions() TO clevis_api;
+  END IF;
+  -- Migration 0069's uninstall purge (clevis_api has no DELETE on several of the tables it clears).
+  IF EXISTS (SELECT FROM pg_proc WHERE proname = 'purge_tenant_github_data') THEN
+    GRANT EXECUTE ON FUNCTION purge_tenant_github_data(integer) TO clevis_api;
+  END IF;
 END
 $do$;
 

@@ -1,15 +1,11 @@
-import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import func, text
-from sqlalchemy.exc import IntegrityError, ProgrammingError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.db import GitHubInstallation, set_session_tenant
 from src.repositories import tenant_repo
-
-logger = logging.getLogger(__name__)
-
 
 # pg_advisory_xact_lock(namespace, tenant_id): serializes installation writes for a tenant
 # with the uninstall purge, so a new installation can't commit between the purge's
@@ -190,47 +186,33 @@ def delete_by_installation_id(db: Session, installation_id: int) -> tuple[int, i
     ).scalar()
     if tenant_id is not None:
         set_session_tenant(db, tenant_id)
+        # Lock first (same order as upsert()), then delete and purge in ONE transaction: if the purge
+        # fails the row delete rolls back with it, so GitHub's redelivery re-resolves the tenant and
+        # retries instead of finding nothing left to purge.
+        _lock_tenant_installs(db, tenant_id)
 
     rows = db.query(GitHubInstallation).filter(GitHubInstallation.installation_id == installation_id).all()
     resolved_tenant_id = rows[0].tenant_id if rows else tenant_id
     count = db.query(GitHubInstallation).filter(GitHubInstallation.installation_id == installation_id).delete()
-    db.commit()
-    if resolved_tenant_id is not None:
-        purge_tenant_github_data_if_disconnected(db, resolved_tenant_id)
+    if resolved_tenant_id is None:
+        db.commit()
+    else:
+        purge_tenant_github_data_if_disconnected(db, resolved_tenant_id)  # commits
     return count, resolved_tenant_id
-
-
-# GitHub-derived, per-tenant data that's meaningless once no installation covers the tenant.
-_TENANT_GITHUB_TABLES = (
-    "security_alerts",
-    "org_members",
-    "repo_collaborators",
-    "activity_sync_cursors",
-    "org_membership_sync_cursors",
-    "automation_repo_settings",
-    "repo_event_daily_counts",
-    "repo_events",
-)
 
 
 def purge_tenant_github_data_if_disconnected(db: Session, tenant_id: int) -> None:
     """Delete a tenant's GitHub-derived rows once its last installation is gone.
 
-    Each table runs in its own savepoint: under the restricted clevis_api role some tables
-    grant no DELETE, and a missing privilege there must not fail the uninstall itself."""
+    The deletes run in the SECURITY DEFINER purge_tenant_github_data() (migration 0069): under the
+    restricted clevis_api role several of these tables grant no DELETE. A failure there is not
+    swallowed, so a purge that cannot run fails the webhook and GitHub redelivers it."""
     set_session_tenant(db, tenant_id)
     # Check-then-delete runs under the tenant lock upsert() also takes, in one transaction.
     _lock_tenant_installs(db, tenant_id)
-    if db.query(GitHubInstallation).filter(GitHubInstallation.tenant_id == tenant_id).first() is not None:
-        db.commit()  # release the lock
-        return
-    for table in _TENANT_GITHUB_TABLES:
-        try:
-            with db.begin_nested():
-                db.execute(text(f"DELETE FROM {table} WHERE tenant_id = :t"), {"t": tenant_id})
-        except ProgrammingError:
-            logger.warning("could not purge %s for tenant %s after uninstall (no DELETE privilege)", table, tenant_id)
-    db.commit()
+    if db.query(GitHubInstallation).filter(GitHubInstallation.tenant_id == tenant_id).first() is None:
+        db.execute(text("SELECT purge_tenant_github_data(:t)"), {"t": tenant_id})
+    db.commit()  # also releases the lock
 
 
 def update_permissions(
