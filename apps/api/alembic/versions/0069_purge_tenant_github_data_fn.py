@@ -12,6 +12,11 @@ through one narrow SECURITY DEFINER function instead (pattern of 0035/0047/0068)
 the caller's session tenant is the tenant being purged and that tenant has no installation left, so
 it cannot be pointed at another tenant's data. REVOKEd from PUBLIC, granted only to clevis_api.
 
+Trust boundary: "the caller's session tenant" is the `app.tenant_id` setting, which clevis_api can
+set itself, so the guard stops a bug in trusted API code from purging the wrong tenant; it does not
+stop a compromised clevis_api session, which could equally set any tenant context and read that
+tenant's rows. The same holds for every tenant-scoped RLS policy in this schema.
+
 Revision ID: 0069
 Revises: 0068
 Create Date: 2026-10-30
