@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/page-header"
 import { SinceLastVisitCard } from "@/components/since-last-visit-card"
 import { StatCard } from "@/components/stat-card"
 import { EventActivityList } from "@/components/event-activity-list"
+import { ActivityByRepoCard } from "@/components/activity-by-repo-card"
 import { AreaTimeChart } from "@/components/charts/area-time-chart"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
 import { ArrowRight, Warning } from "@phosphor-icons/react"
@@ -376,6 +377,13 @@ export default function OverviewPage() {
           </Link>
         </div>
       </div>
+
+      {/* Webhook-backed, token-free; hidden for orgs without webhook data, which keep the cards above. */}
+      {isOrgScope && (
+        <div className="mb-6">
+          <ActivityByRepoCard org={org} quiet />
+        </div>
+      )}
 
       {atRiskRepos.length > 0 && (
         <div className="card mb-6">

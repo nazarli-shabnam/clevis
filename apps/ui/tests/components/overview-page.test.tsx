@@ -9,6 +9,7 @@ const actionsUsageMock = vi.fn();
 const orgsMineMock = vi.fn();
 const installationsListForOrgMock = vi.fn();
 const installationsListMock = vi.fn();
+const activitySummaryMock = vi.fn();
 
 let authUser: { id: number } | null = { id: 1 };
 vi.mock("@/lib/auth-context", () => ({
@@ -33,7 +34,9 @@ vi.mock("@/lib/api/client", () => ({
       listForOrg: (...args: unknown[]) => installationsListForOrgMock(...args),
     },
     invitations: { list: vi.fn().mockResolvedValue([]) },
+    github: { activitySummary: (...args: unknown[]) => activitySummaryMock(...args) },
   },
+  openActivityStream: () => new Promise(() => {}),
 }));
 
 import OverviewPage from "@/app/page";
@@ -81,6 +84,8 @@ const EMPTY_MY_VIEW = {
 describe("OverviewPage cockpit", () => {
   beforeEach(() => {
     tokensResolveMock.mockReset();
+    activitySummaryMock.mockReset();
+    activitySummaryMock.mockResolvedValue({ org: "acme", days: 7, connected: false, generated_at: "2026-01-01T00:00:00Z", totals: [] });
     cockpitMock.mockReset();
     myViewMock.mockReset();
     actionsUsageMock.mockReset();
@@ -288,6 +293,36 @@ describe("OverviewPage cockpit", () => {
     expect(screen.getByText("No commit activity yet")).toBeInTheDocument();
     expect(screen.getByText("Run more scans to see a trend")).toBeInTheDocument();
     expect(screen.getByText("No pull request activity yet")).toBeInTheDocument();
+  });
+
+  it("shows webhook-backed activity by repo only when the org has webhook data", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+    cockpitMock.mockResolvedValue(EMPTY_COCKPIT);
+    activitySummaryMock.mockResolvedValue({
+      org: "acme",
+      days: 7,
+      connected: true,
+      generated_at: "2026-01-01T00:00:00Z",
+      totals: [{ repo: "api", event_type: "push", count: 4 }],
+    });
+
+    renderPage();
+
+    expect(await screen.findByText(/Activity by repo/)).toBeInTheDocument();
+    expect(screen.getByText("api")).toBeInTheDocument();
+  });
+
+  it("omits the activity-by-repo card when the org has no webhook data", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+    cockpitMock.mockResolvedValue(EMPTY_COCKPIT);
+
+    renderPage();
+
+    await waitFor(() => expect(activitySummaryMock).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByText(/Live activity needs/)).toBeNull());
+    expect(screen.queryByText(/Activity by repo/)).toBeNull();
   });
 
   it("renders recent events in the activity panel", async () => {
