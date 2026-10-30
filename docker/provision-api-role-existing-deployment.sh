@@ -236,6 +236,10 @@ BEGIN
     GRANT EXECUTE ON FUNCTION audit_logs_for_admin(text, integer) TO clevis_api;
     GRANT EXECUTE ON FUNCTION audit_log_actions() TO clevis_api;
   END IF;
+  -- Migration 0069's uninstall purge (clevis_api has no DELETE on several of the tables it clears).
+  IF EXISTS (SELECT FROM pg_proc WHERE proname = 'purge_tenant_github_data') THEN
+    GRANT EXECUTE ON FUNCTION purge_tenant_github_data(integer) TO clevis_api;
+  END IF;
 END
 $do$;
 
