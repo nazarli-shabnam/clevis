@@ -1,5 +1,6 @@
 import logging
-from urllib.parse import urlsplit
+import os
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -14,6 +15,25 @@ logger = logging.getLogger(__name__)
 # Disposable local/CI Postgres hosts. Fail-closed allowlist for the truncate below, so an
 # unrecognized (possibly real) host is refused by default.
 _DISPOSABLE_DB_HOSTS = {"localhost", "127.0.0.1", "db"}
+
+
+@pytest.fixture
+def clevis_api_engine():
+    """An engine connected as the restricted clevis_api role, so RLS actually applies.
+
+    Skips unless DATABASE_URL already is clevis_api or API_DB_PASSWORD is set."""
+    url = urlsplit(settings.database_url.get_secret_value())
+    if url.username == "clevis_api":
+        engine = create_engine(settings.database_url.get_secret_value())
+    else:
+        password = os.environ.get("API_DB_PASSWORD")
+        if not password:
+            pytest.skip("neither DATABASE_URL nor API_DB_PASSWORD point at clevis_api")
+        port = f":{url.port}" if url.port is not None else ""
+        netloc = f"clevis_api:{quote(password, safe='')}@{url.hostname}{port}"
+        engine = create_engine(urlunsplit((url.scheme, netloc, url.path, url.query, url.fragment)))
+    yield engine
+    engine.dispose()
 
 
 @pytest.fixture(scope="session")

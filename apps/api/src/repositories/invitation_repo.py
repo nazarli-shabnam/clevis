@@ -98,13 +98,13 @@ def get_pending_for_org_and_email(db: Session, org_id: int, email: str) -> Invit
 
 
 def list_pending_for_email(db: Session, email: str) -> list[Invitation]:
+    """Pending, unexpired invitations for an address, across every org.
+
+    Goes through a SECURITY DEFINER function (migration 0068): the lookup is cross-tenant by
+    nature, and under the clevis_api role RLS on `invitations` would otherwise hide every row."""
     return (
         db.query(Invitation)
-        .filter(
-            # Exact, case-insensitive -- see get_pending_for_org_and_email.
-            func.lower(Invitation.email) == email.lower(),
-            Invitation.status == "pending",
-            Invitation.expires_at > datetime.now(timezone.utc),
-        )
+        .from_statement(text("SELECT * FROM pending_invitations_for_email(:email)"))
+        .params(email=email)
         .all()
     )
