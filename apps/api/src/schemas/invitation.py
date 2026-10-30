@@ -1,13 +1,22 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 InvitationStatus = Literal["pending", "accepted", "revoked", "expired"]
 
 
 class InvitationCreate(BaseModel):
     email: EmailStr
+
+
+MAX_BULK_INVITES = 50
+
+
+class InvitationBulkCreate(BaseModel):
+    # Plain strings, not EmailStr: one malformed address must come back as an "invalid" result for
+    # that address instead of failing the whole request with a 422.
+    emails: list[str] = Field(min_length=1, max_length=MAX_BULK_INVITES)
 
 
 class InvitationOut(BaseModel):
@@ -25,6 +34,17 @@ class InvitationOut(BaseModel):
 class InvitationCreateResponse(BaseModel):
     invitation: InvitationOut
     invite_link: str
+
+
+class InvitationBulkItem(BaseModel):
+    email: str
+    status: Literal["created", "already_pending", "invalid"]
+    invitation: InvitationOut | None = None
+    invite_link: str | None = None
+
+
+class InvitationBulkResponse(BaseModel):
+    results: list[InvitationBulkItem]
 
 
 class InvitationPreview(BaseModel):

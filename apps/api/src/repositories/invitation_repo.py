@@ -60,6 +60,24 @@ def create(db: Session, org_id: int, email: str, invited_by_user_id: int) -> Inv
     return invitation
 
 
+def reissue(db: Session, invitation: Invitation) -> Invitation:
+    """Give an existing invitation a fresh token and a fresh lifetime, making it pending again.
+
+    The old link stops working. An expired invitation coming back to life can collide with a newer
+    pending invite for the same address (partial unique index), which surfaces as
+    DuplicatePendingInvitation."""
+    invitation.token = secrets.token_urlsafe(32)
+    invitation.expires_at = datetime.now(timezone.utc) + INVITATION_LIFETIME
+    invitation.status = "pending"
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise DuplicatePendingInvitation(invitation.email) from exc
+    db.refresh(invitation)
+    return invitation
+
+
 def get_by_token(db: Session, token: str) -> Invitation | None:
     # Token holders (preview/accept) have no tenant context yet; under the non-owner clevis_api
     # role RLS would hide the row. Resolve its tenant via the narrow SECURITY DEFINER lookup

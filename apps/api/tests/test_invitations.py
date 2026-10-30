@@ -3,6 +3,8 @@
 import secrets
 from datetime import datetime, timedelta, timezone
 
+from unittest.mock import patch
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -314,3 +316,156 @@ def test_invitation_lifecycle_is_audited(db, acme_org):
 
     actions = {r.action for r in db.query(AuditLog).filter(AuditLog.target == "acme")}
     assert {"invitation.create", "invitation.accept", "invitation.revoke"} <= actions
+
+
+def _token(created: dict) -> str:
+    return created["invite_link"].rsplit("/", 1)[-1]
+
+
+def test_regenerate_gives_a_new_link_and_kills_the_old_one(db, acme_org):
+    admin = _client(db, acme_org["admin"])
+    created = admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+    inv_id = created["invitation"]["id"]
+
+    resp = admin.post(f"/orgs/acme/invitations/{inv_id}/regenerate")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["invitation"]["id"] == inv_id and body["invitation"]["status"] == "pending"
+    assert _token(body) != _token(created)
+    assert _client(db, acme_org["invitee"]).get(f"/invitations/{_token(created)}").status_code == 404
+    assert _client(db, acme_org["invitee"]).post(f"/invitations/{_token(body)}/accept").status_code == 200
+
+
+def test_regenerate_revives_an_expired_invitation(db, acme_org):
+    admin = _client(db, acme_org["admin"])
+    created = admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+    inv_id = created["invitation"]["id"]
+    _expire_invitation(db, inv_id)
+
+    body = admin.post(f"/orgs/acme/invitations/{inv_id}/regenerate").json()
+
+    assert body["invitation"]["status"] == "pending"
+    assert datetime.fromisoformat(body["invitation"]["expires_at"]) > datetime.now(timezone.utc) + timedelta(days=6)
+
+
+def test_regenerate_an_expired_invitation_conflicts_with_a_newer_pending_one(db, acme_org):
+    admin = _client(db, acme_org["admin"])
+    old = admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+    _expire_invitation(db, old["invitation"]["id"])
+    assert admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).status_code == 200
+
+    resp = admin.post(f"/orgs/acme/invitations/{old['invitation']['id']}/regenerate")
+
+    assert resp.status_code == 409
+
+
+@pytest.mark.parametrize("final", ["revoke", "accept"])
+def test_regenerate_refuses_revoked_and_accepted_invitations(db, acme_org, final):
+    admin = _client(db, acme_org["admin"])
+    created = admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+    inv_id = created["invitation"]["id"]
+    if final == "revoke":
+        admin.post(f"/orgs/acme/invitations/{inv_id}/revoke")
+    else:
+        _client(db, acme_org["invitee"]).post(f"/invitations/{_token(created)}/accept")
+
+    assert admin.post(f"/orgs/acme/invitations/{inv_id}/regenerate").status_code == 409
+
+
+def test_regenerate_and_resend_require_org_admin_and_the_right_org(db, acme_org):
+    admin = _client(db, acme_org["admin"])
+    inv_id = admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()["invitation"]["id"]
+    member = _client(db, acme_org["member"])
+
+    assert member.post(f"/orgs/acme/invitations/{inv_id}/regenerate").status_code == 403
+    assert member.post(f"/orgs/acme/invitations/{inv_id}/resend").status_code == 403
+    assert admin.post("/orgs/acme/invitations/999999/regenerate").status_code == 404
+    other = org_repo.get_or_create(db, github_login="other")
+    org_membership_repo.get_or_create(db, org_id=other.id, user_id=acme_org["admin"].id, role="admin")
+    # An invitation id from another org must not be reachable through this org's URL.
+    assert admin.post(f"/orgs/other/invitations/{inv_id}/regenerate").status_code == 404
+
+
+def test_resend_without_smtp_is_a_clear_409_and_keeps_the_link(db, acme_org):
+    admin = _client(db, acme_org["admin"])
+    created = admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+
+    with patch("src.services.email.is_configured", return_value=False):
+        resp = admin.post(f"/orgs/acme/invitations/{created['invitation']['id']}/resend")
+
+    assert resp.status_code == 409 and "SMTP" in resp.json()["detail"]
+    assert _client(db, acme_org["invitee"]).get(f"/invitations/{_token(created)}").status_code == 200
+
+
+def test_resend_emails_a_fresh_link(db, acme_org):
+    admin = _client(db, acme_org["admin"])
+    created = admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+
+    with patch("src.services.email.is_configured", return_value=True), patch(
+        "src.services.email.send_email"
+    ) as send:
+        resp = admin.post(f"/orgs/acme/invitations/{created['invitation']['id']}/resend")
+
+    assert resp.status_code == 200 and resp.json()["status"] == "pending"
+    to, subject, text = send.call_args.args[:3]
+    assert to == "bob@acme.com" and "acme" in subject
+    new_link = next(line for line in text.splitlines() if "/invite/" in line)
+    assert _token({"invite_link": new_link}) != _token(created)
+    assert _client(db, acme_org["invitee"]).get(f"/invitations/{_token(created)}").status_code == 404
+
+
+def test_resend_reports_a_failed_send_as_502(db, acme_org):
+    admin = _client(db, acme_org["admin"])
+    created = admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+
+    with patch("src.services.email.is_configured", return_value=True), patch(
+        "src.services.email.send_email", side_effect=OSError("smtp down")
+    ):
+        resp = admin.post(f"/orgs/acme/invitations/{created['invitation']['id']}/resend")
+
+    assert resp.status_code == 502 and "Regenerate" in resp.json()["detail"]
+
+
+def test_bulk_invite_reports_each_address(db, acme_org):
+    admin = _client(db, acme_org["admin"])
+    admin.post("/orgs/acme/invitations", json={"email": "taken@acme.com"})
+
+    resp = admin.post(
+        "/orgs/acme/invitations/bulk",
+        json={"emails": ["a@acme.com", "A@ACME.com", "not-an-email", "taken@acme.com", " b@acme.com "]},
+    )
+
+    assert resp.status_code == 200
+    results = {r["email"]: r for r in resp.json()["results"]}
+    assert [r["email"] for r in resp.json()["results"]] == ["a@acme.com", "not-an-email", "taken@acme.com", "b@acme.com"]
+    assert results["a@acme.com"]["status"] == "created" and "/invite/" in results["a@acme.com"]["invite_link"]
+    assert results["b@acme.com"]["status"] == "created"
+    assert results["not-an-email"]["status"] == "invalid" and results["not-an-email"]["invite_link"] is None
+    assert results["taken@acme.com"]["status"] == "already_pending"
+    assert len(admin.get("/orgs/acme/invitations").json()) == 3  # taken + a + b
+
+
+def test_bulk_invite_is_admin_only_and_capped(db, acme_org):
+    member = _client(db, acme_org["member"])
+    assert member.post("/orgs/acme/invitations/bulk", json={"emails": ["a@acme.com"]}).status_code == 403
+    admin = _client(db, acme_org["admin"])
+    assert admin.post("/orgs/acme/invitations/bulk", json={"emails": []}).status_code == 422
+    too_many = [f"u{i}@acme.com" for i in range(51)]
+    assert admin.post("/orgs/acme/invitations/bulk", json={"emails": too_many}).status_code == 422
+
+
+def test_reissue_and_bulk_are_audited(db, acme_org):
+    from src.core.db import AuditLog
+
+    admin = _client(db, acme_org["admin"])
+    inv_id = admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()["invitation"]["id"]
+    admin.post(f"/orgs/acme/invitations/{inv_id}/regenerate")
+    with patch("src.services.email.is_configured", return_value=True), patch("src.services.email.send_email"):
+        admin.post(f"/orgs/acme/invitations/{inv_id}/resend")
+    admin.post("/orgs/acme/invitations/bulk", json={"emails": ["x@acme.com"]})
+
+    rows = db.query(AuditLog).filter(AuditLog.target == "acme").all()
+    assert {"invitation.regenerate", "invitation.resend"} <= {r.action for r in rows}
+    assert sum(r.action == "invitation.create" for r in rows) == 2  # bob + x
+    assert all("token" not in str(r.payload) for r in rows)

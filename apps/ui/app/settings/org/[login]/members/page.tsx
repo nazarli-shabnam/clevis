@@ -7,7 +7,7 @@ import { PageHeader } from "@/components/page-header"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table"
-import { CircleNotch, EnvelopeSimple, Warning, X } from "@phosphor-icons/react"
+import { ArrowsClockwise, CircleNotch, EnvelopeSimple, PaperPlaneTilt, Warning, X } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { addRevokingId, isRevoking, removeRevokingId } from "@/lib/revoke-pending"
 import { exactTime, relativeTime } from "@/lib/format"
@@ -21,7 +21,7 @@ import { WaiversCard } from "@/components/waivers-card"
 import { EvidenceExportCard } from "@/components/evidence-export-card"
 import { MemberAccessSheet } from "@/components/member-access-sheet"
 import { BadgeSettingsCard } from "@/components/badge-settings-card"
-import type { GithubOrgMember, InvitationOut, MyOrgMembership } from "@/lib/api/types"
+import type { GithubOrgMember, InvitationBulkItem, InvitationOut, MyOrgMembership } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
 
 function memberColumns(onReview: ((login: string) => void) | null): DataTableColumn<GithubOrgMember>[] {
@@ -468,12 +468,22 @@ function ExpiryCell({ inv, now }: { inv: InvitationOut; now: number }) {
   )
 }
 
+// Addresses may be pasted separated by commas, semicolons, spaces or newlines.
+const splitEmails = (text: string) => text.split(/[\s,;]+/).filter(Boolean)
+
+const BULK_STATUS_LABEL: Record<InvitationBulkItem["status"], string> = {
+  created: "invited",
+  already_pending: "already has a pending invitation",
+  invalid: "not a valid email address",
+}
+
 export default function OrgMembersPage() {
   const params = useParams<{ login: string }>()
   const orgLogin = params.login
   const queryClient = useQueryClient()
   const [email, setEmail] = useState("")
   const [lastLink, setLastLink] = useState<string | null>(null)
+  const [bulkResults, setBulkResults] = useState<InvitationBulkItem[] | null>(null)
   // Re-evaluate expiry labels as time passes, so a page left open doesn't keep showing "in 5 minutes".
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -502,11 +512,45 @@ export default function OrgMembersPage() {
 
   const [revokingIds, setRevokingIds] = useState<Set<number>>(() => new Set())
 
+  const addresses = splitEmails(email)
   const invite = useMutation({
-    mutationFn: () => api.invitations.create(orgLogin, email.trim()),
+    // One address goes through the single endpoint (so a duplicate is an error); several go through
+    // the bulk one, which reports each address on its own.
+    mutationFn: async () => {
+      if (addresses.length > 1) return { many: await api.invitations.createMany(orgLogin, addresses) }
+      return { one: await api.invitations.create(orgLogin, addresses[0]) }
+    },
     onSuccess: (data) => {
-      setLastLink(data.invite_link)
+      setLastLink(data.one?.invite_link ?? null)
+      setBulkResults(data.many?.results ?? null)
       setEmail("")
+      queryClient.invalidateQueries({ queryKey: ["invitations", orgLogin] })
+    },
+  })
+
+  // Regenerate / resend, tracked per invitation like revoke so concurrent rows don't clobber each other.
+  const [rowNotes, setRowNotes] = useState<Record<number, { ok: boolean; text: string }>>({})
+  const [reissuingIds, setReissuingIds] = useState<Set<number>>(() => new Set())
+  const reissue = useMutation({
+    mutationFn: async ({ id, kind }: { id: number; kind: "regenerate" | "resend" }) => {
+      if (kind === "regenerate") return { link: (await api.invitations.regenerate(orgLogin, id)).invite_link }
+      await api.invitations.resend(orgLogin, id)
+      return { link: null }
+    },
+    onMutate: ({ id }) => {
+      setRowNotes(({ [id]: _cleared, ...rest }) => rest)
+      setReissuingIds((prev) => addRevokingId(prev, id))
+    },
+    onError: (error, { id }) => setRowNotes((prev) => ({ ...prev, [id]: { ok: false, text: error.message } })),
+    onSettled: (_data, _error, { id }) => setReissuingIds((prev) => removeRevokingId(prev, id)),
+    onSuccess: (data, { id, kind }) => {
+      if (kind === "regenerate" && data.link) {
+        setLastLink(data.link)
+        setBulkResults(null)
+        setRowNotes((prev) => ({ ...prev, [id]: { ok: true, text: "New link ready above. The old one no longer works." } }))
+      } else {
+        setRowNotes((prev) => ({ ...prev, [id]: { ok: true, text: "Email sent with a new link. The old one no longer works." } }))
+      }
       queryClient.invalidateQueries({ queryKey: ["invitations", orgLogin] })
     },
   })
@@ -557,20 +601,53 @@ export default function OrgMembersPage() {
             <div className="p-4 flex flex-col gap-3">
               <div>
                 <label htmlFor="invite-email" className="text-xs font-medium text-foreground block mb-1.5">Email</label>
-                <Input
+                <textarea
                   id="invite-email"
+                  rows={addresses.length > 1 ? 4 : 1}
                   placeholder="teammate@example.com"
-                  type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && email && !invite.isPending && invite.mutate()}
+                  // Enter sends a single address; with several, Enter adds a line and Ctrl/Cmd+Enter sends.
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter" || (addresses.length > 1 && !e.ctrlKey && !e.metaKey)) return
+                    e.preventDefault()
+                    if (addresses.length > 0 && !invite.isPending) invite.mutate()
+                  }}
+                  className="w-full min-w-0 resize-none rounded-md border border-input bg-transparent px-2.5 py-1.5 text-base outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm dark:bg-input/30"
                 />
+                <p className="text-[0.6875rem] text-muted-foreground mt-1">
+                  Paste several addresses (comma or one per line) to invite them all at once.
+                </p>
               </div>
-              <Button onClick={() => invite.mutate()} disabled={invite.isPending || !email}>
+              <Button onClick={() => invite.mutate()} disabled={invite.isPending || addresses.length === 0}>
                 <EnvelopeSimple className="size-3.5" />
-                {invite.isPending ? "Inviting…" : "Send invite"}
+                {invite.isPending ? "Inviting…" : addresses.length > 1 ? `Send ${addresses.length} invites` : "Send invite"}
               </Button>
               {invite.isError && <p className="text-xs text-destructive">{invite.error.message}</p>}
+              {bulkResults && (
+                <div className="text-xs bg-muted/30 border border-border/50 rounded-md p-2">
+                  <p className="text-muted-foreground">
+                    No email is sent automatically. Links are shown only now, so copy the ones you need before you leave this page.
+                  </p>
+                  <ul className="mt-2 flex flex-col gap-1.5">
+                    {bulkResults.map((r) => (
+                      <li key={r.email} className="flex items-center justify-between gap-2">
+                        <span className="min-w-0 break-all">
+                          <span className="text-foreground/80">{r.email}</span>{" "}
+                          <span className={r.status === "created" ? "text-muted-foreground" : "text-yellow-400"}>
+                            {BULK_STATUS_LABEL[r.status]}
+                          </span>
+                        </span>
+                        {r.invite_link && (
+                          <span className="shrink-0">
+                            <CopyButton key={r.invite_link} value={r.invite_link} ariaLabel={`Copy invitation link for ${r.email}`} />
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {lastLink && (
                 <div className="text-xs text-muted-foreground break-all bg-muted/30 border border-border/50 rounded-md p-2">
                   <div className="flex items-center justify-between gap-2">
@@ -624,20 +701,50 @@ export default function OrgMembersPage() {
                           {revokeErrors[inv.id] && (
                             <p role="alert" className="mt-1 text-xs text-destructive">{revokeErrors[inv.id]}</p>
                           )}
+                          {rowNotes[inv.id] && (
+                            <p
+                              role={rowNotes[inv.id].ok ? "status" : "alert"}
+                              className={`mt-1 text-xs ${rowNotes[inv.id].ok ? "text-muted-foreground" : "text-destructive"}`}
+                            >
+                              {rowNotes[inv.id].text}
+                            </p>
+                          )}
                         </td>
                         <td className="px-4 py-2.5 text-muted-foreground">{effectiveInvitationStatus(inv, now)}</td>
                         <ExpiryCell inv={inv} now={now} />
                         <td className="px-4 py-2.5 text-right">
-                          {effectiveInvitationStatus(inv, now) === "pending" && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => revoke.mutate(inv.id)}
-                              disabled={isRevoking(revokingIds, inv.id)}
-                            >
-                              <X className="size-3" />
-                              Revoke
-                            </Button>
+                          {["pending", "expired"].includes(effectiveInvitationStatus(inv, now)) && (
+                            <div className="flex justify-end gap-1.5">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => reissue.mutate({ id: inv.id, kind: "regenerate" })}
+                                disabled={isRevoking(reissuingIds, inv.id)}
+                              >
+                                <ArrowsClockwise className="size-3" />
+                                Regenerate link
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => reissue.mutate({ id: inv.id, kind: "resend" })}
+                                disabled={isRevoking(reissuingIds, inv.id)}
+                              >
+                                <PaperPlaneTilt className="size-3" />
+                                Resend
+                              </Button>
+                              {effectiveInvitationStatus(inv, now) === "pending" && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => revoke.mutate(inv.id)}
+                                  disabled={isRevoking(revokingIds, inv.id)}
+                                >
+                                  <X className="size-3" />
+                                  Revoke
+                                </Button>
+                              )}
+                            </div>
                           )}
                         </td>
                       </tr>

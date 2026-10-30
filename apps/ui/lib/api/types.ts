@@ -425,6 +425,17 @@ export interface InvitationCreateResponse {
   invite_link: string
 }
 
+export interface InvitationBulkItem {
+  email: string
+  status: "created" | "already_pending" | "invalid"
+  invitation: InvitationOut | null
+  invite_link: string | null
+}
+
+export interface InvitationBulkResponse {
+  results: InvitationBulkItem[]
+}
+
 export interface InvitationPreview {
   org_login: string
   status: "pending" | "accepted" | "revoked"

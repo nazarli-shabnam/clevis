@@ -55,3 +55,16 @@ def send_verification_email(to_email: str, verify_url: str) -> None:
             "If you didn't create this account, you can ignore this email."
         ),
     )
+
+
+def send_invitation_email(to_email: str, org_login: str, inviter: str, invite_link: str) -> None:
+    send_email(
+        to_email,
+        f"{inviter} invited you to {org_login} on Clevis",
+        (
+            f"{inviter} invited you to join {org_login} on Clevis.\n\n"
+            "Accept the invitation (sign in with this email address):\n"
+            f"{invite_link}\n\n"
+            "The link expires in 7 days. If you weren't expecting this, you can ignore this email."
+        ),
+    )
