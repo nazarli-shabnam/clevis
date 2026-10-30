@@ -495,11 +495,13 @@ def test_register_never_surfaces_pending_invitation(auth_client, db):
     assert resp.json()["pending_invitations"] == []
 
 
-def test_login_surfaces_pending_invitation(auth_client, db):
+def test_login_surfaces_pending_invitation_for_verified_account(auth_client, db):
     owner = _setup_owner(auth_client, email="owner@example.com")
     auth_client.post(
         "/auth/register", json={"email": "member@example.com", "password": "supersecret1234"}
     )
+    db.query(User).filter(User.email == "member@example.com").update({"email_verified": True})
+    db.flush()
     org = org_repo.get_or_create(db, github_login="acme")
     invitation_repo.create(db, org_id=org.id, email="member@example.com", invited_by_user_id=owner["user"]["id"])
 
@@ -511,6 +513,25 @@ def test_login_surfaces_pending_invitation(auth_client, db):
     pending = resp.json()["pending_invitations"]
     assert len(pending) == 1
     assert pending[0]["org_login"] == "acme"
+
+
+def test_login_never_surfaces_pending_invitation_for_unverified_account(auth_client, db):
+    """Anyone can self-register with a victim's email; login must not then list that
+    address's pending invites (the same rule register() applies)."""
+    owner = _setup_owner(auth_client, email="owner@example.com")
+    auth_client.post(
+        "/auth/register", json={"email": "member@example.com", "password": "supersecret1234"}
+    )
+    org = org_repo.get_or_create(db, github_login="acme")
+    invitation_repo.create(db, org_id=org.id, email="member@example.com", invited_by_user_id=owner["user"]["id"])
+    assert len(invitation_repo.list_pending_for_email(db, "member@example.com")) == 1
+
+    resp = auth_client.post(
+        "/auth/login", json={"email": "member@example.com", "password": "supersecret1234"}
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["pending_invitations"] == []
 
 
 def test_pending_invitations_for_batches_org_lookup_across_multiple_orgs():
