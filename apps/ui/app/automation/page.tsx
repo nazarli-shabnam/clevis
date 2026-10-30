@@ -57,8 +57,12 @@ export default function AutomationPage() {
   const [dispatchAllArmed, setDispatchAllArmed] = useState(false)
 
   const { scope } = useActiveScope()
-  // Repos picked on the Repositories page arrive as ?repos=a,b.
-  const preselected = useSearchParams().get("repos")?.split(",").filter(Boolean) ?? []
+  // Repos picked on the Repositories page arrive as ?owner=x&repos=a,b; they only apply to that owner.
+  const params = useSearchParams()
+  const preselected =
+    params.get("owner")?.toLowerCase() === owner.trim().toLowerCase()
+      ? (params.get("repos")?.split(",").filter(Boolean) ?? [])
+      : []
   const scopeLogin = scope?.login ?? ""
   useEffect(() => {
     if (scopeLogin) setOwner(scopeLogin)

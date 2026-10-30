@@ -163,6 +163,22 @@ describe("ReposPage filters", () => {
     expect(screen.getByLabelText("Filter by branch protection")).toHaveValue("all");
   });
 
+  it("retries repos whose protection check failed on the next click", async () => {
+    securityMock.mockReset();
+    securityMock.mockRejectedValue(new Error("boom"));
+    renderPage();
+    await loadReposByHand();
+
+    const button = screen.getByRole("button", { name: "Check protection" });
+    fireEvent.click(button);
+    await waitFor(() => expect(securityMock).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(button).not.toBeDisabled());
+
+    securityMock.mockResolvedValue({ repository: "x", branch_protection: "protected", secret_scanning: "unknown" });
+    fireEvent.click(button);
+    await waitFor(() => expect(securityMock).toHaveBeenCalledTimes(6));
+  });
+
   it("selects repos (individually or all visible)", async () => {
     renderPage();
     await loadReposByHand();

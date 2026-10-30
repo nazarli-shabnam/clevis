@@ -368,7 +368,7 @@ export default function ReposPage() {
       { ...effectiveFilters, protection: "all" },
     )
       .map((r) => r.name)
-      .filter((name) => !protection.has(name))
+      .filter((name) => (protection.get(name) ?? "unknown") === "unknown")
     setProtectionProgress({ done: 0, total: targets.length })
     const found = new Map(protection)
     for (let i = 0; i < targets.length; i += PROTECTION_BATCH_SIZE) {
@@ -580,7 +580,7 @@ export default function ReposPage() {
                     <span className="stat-chip">{selected.size} selected</span>
                     {loadedOrg === scopeOrgLogin && (
                       <Link
-                        href={`/automation?repos=${[...selected].map(encodeURIComponent).join(",")}`}
+                        href={`/automation?owner=${encodeURIComponent(loadedOrg)}&repos=${[...selected].map(encodeURIComponent).join(",")}`}
                         className="text-primary underline"
                       >
                         Open in Automation
