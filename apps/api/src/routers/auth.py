@@ -360,7 +360,9 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     return {
         "access_token": token,
         "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin),
-        "pending_invitations": _pending_invitations_for(db, user.email),
+        # Same rule as register(): an unverified address isn't proof of inbox control, and
+        # anyone can self-register with a victim's email, so don't list that email's invites.
+        "pending_invitations": _pending_invitations_for(db, user.email) if user.email_verified else [],
     }
 
 
