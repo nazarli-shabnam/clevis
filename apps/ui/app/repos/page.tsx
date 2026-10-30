@@ -23,11 +23,14 @@ import {
   filterRepos,
   hasActiveRepoFilters,
   repoLanguages,
+  type ProtectionMap,
   type RepoFilters,
 } from "@/lib/repo-filters"
-import type { InstallationMeta, RepoSummary } from "@/lib/api/types"
+import type { InstallationMeta, RepoSecurityResponse, RepoSummary } from "@/lib/api/types"
 
 type SortKey = "pushed" | "stars" | "name"
+
+const PROTECTION_BATCH_SIZE = 10
 
 function sortRepos(repos: RepoSummary[], sort: SortKey): RepoSummary[] {
   const sorted = [...repos]
@@ -135,9 +138,26 @@ function RepoPullsCell({ org, repo, token }: { org: string; repo: string; token:
   )
 }
 
-function RepoRow({ org, repo, token }: { org: string; repo: RepoSummary; token: string }) {
+function RepoRow({
+  org,
+  repo,
+  token,
+  selected,
+  onToggle,
+  protection,
+}: {
+  org: string
+  repo: RepoSummary
+  token: string
+  selected: boolean
+  onToggle: () => void
+  protection?: RepoSecurityResponse["branch_protection"]
+}) {
   return (
     <tr className="hover:bg-muted/40 transition-colors">
+      <td className="pl-4 py-2.5 w-6">
+        <input type="checkbox" aria-label={`Select ${repo.name}`} checked={selected} onChange={onToggle} />
+      </td>
       <td className="px-4 py-2.5 max-w-[16rem]">
         <div className="flex items-center gap-1.5">
           {repo.private && <Lock className="size-3 text-muted-foreground shrink-0" />}
@@ -148,6 +168,7 @@ function RepoRow({ org, repo, token }: { org: string; repo: RepoSummary; token: 
             {repo.name}
           </Link>
           {repo.archived && <span className="stat-chip shrink-0">archived</span>}
+          {protection === "unprotected" && <span className="stat-chip shrink-0">unprotected</span>}
           <a
             href={repo.html_url}
             target="_blank"
@@ -203,6 +224,9 @@ export default function ReposPage() {
   const [search, setSearch] = useState("")
   const [sort, setSort] = useState<SortKey>("pushed")
   const [filters, setFilters] = useState<RepoFilters>(NO_REPO_FILTERS)
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
+  const [protection, setProtection] = useState<ProtectionMap>(new Map())
+  const [protectionProgress, setProtectionProgress] = useState<{ done: number; total: number } | null>(null)
 
   const { scope } = useActiveScope()
   const scopeOrgLogin = scope?.kind === "org" ? scope.login : ""
@@ -279,6 +303,11 @@ export default function ReposPage() {
       onSuccess: () => {
         setLoadedOrg(requestedOrg)
         setLoadedToken(requestedToken)
+        // Both describe a specific org's repos, so they must not outlive a reload.
+        setSelected(new Set())
+        setProtection(new Map())
+        // The protection select is disabled without results, so a leftover choice would hide every repo.
+        setFilters((f) => ({ ...f, protection: "all" }))
       },
     })
   }
@@ -320,10 +349,61 @@ export default function ReposPage() {
     filterRepos(
       allRepos.filter((r) => r.name.toLowerCase().includes(search.toLowerCase())),
       effectiveFilters,
+      Date.now(),
+      protection,
     ),
     sort,
   )
   const filtersActive = hasActiveRepoFilters(effectiveFilters)
+
+  // Protection is one GitHub call per repo, so it is fetched only on request, for the repos the
+  // other filters currently leave, in batches of PROTECTION_BATCH_SIZE.
+  const checkingProtection = protectionProgress !== null
+  const loadedOrgRef = useRef(loadedOrg)
+  loadedOrgRef.current = loadedOrg
+  async function checkProtection() {
+    const org = loadedOrg
+    const targets = filterRepos(
+      allRepos.filter((r) => r.name.toLowerCase().includes(search.toLowerCase())),
+      { ...effectiveFilters, protection: "all" },
+    )
+      .map((r) => r.name)
+      .filter((name) => (protection.get(name) ?? "unknown") === "unknown")
+    setProtectionProgress({ done: 0, total: targets.length })
+    const found = new Map(protection)
+    for (let i = 0; i < targets.length; i += PROTECTION_BATCH_SIZE) {
+      const batch = targets.slice(i, i + PROTECTION_BATCH_SIZE)
+      const results = await Promise.all(
+        batch.map((name) =>
+          api.repos.security(org, org, name, loadedToken).then(
+            (r) => r.branch_protection,
+            () => "unknown" as const,
+          ),
+        ),
+      )
+      // A reload for another org mid-check must not receive this org's results.
+      if (loadedOrgRef.current !== org) break
+      batch.forEach((name, j) => found.set(name, results[j]))
+      setProtection(new Map(found))
+      setProtectionProgress({ done: Math.min(i + PROTECTION_BATCH_SIZE, targets.length), total: targets.length })
+    }
+    setProtectionProgress(null)
+  }
+  const protectionChecked = protection.size > 0
+
+  const toggleRepo = (name: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(name)) next.add(name)
+      return next
+    })
+  const allVisibleSelected = repos.length > 0 && repos.every((r) => selected.has(r.name))
+  const toggleAllVisible = () =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      repos.forEach((r) => (allVisibleSelected ? next.delete(r.name) : next.add(r.name)))
+      return next
+    })
 
   return (
     <>
@@ -470,6 +550,23 @@ export default function ReposPage() {
                   <option value="active">Active only</option>
                   <option value="archived">Archived only</option>
                 </select>
+                <select
+                  aria-label="Filter by branch protection"
+                  value={effectiveFilters.protection}
+                  disabled={!protectionChecked}
+                  title={protectionChecked ? undefined : "Check protection first"}
+                  onChange={(e) => setFilters((f) => ({ ...f, protection: e.target.value as RepoFilters["protection"] }))}
+                  className="card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+                >
+                  <option value="all">Any protection</option>
+                  <option value="unprotected">Unprotected only</option>
+                  <option value="protected">Protected only</option>
+                </select>
+                <Button size="sm" variant="outline" disabled={checkingProtection} onClick={checkProtection}>
+                  {protectionProgress
+                    ? `Checking ${protectionProgress.done}/${protectionProgress.total}…`
+                    : "Check protection"}
+                </Button>
                 <label className="inline-flex items-center gap-1.5 text-muted-foreground">
                   <input
                     type="checkbox"
@@ -478,6 +575,19 @@ export default function ReposPage() {
                   />
                   No push in {STALE_DAYS}+ days
                 </label>
+                {selected.size > 0 && (
+                  <>
+                    <span className="stat-chip">{selected.size} selected</span>
+                    {loadedOrg === scopeOrgLogin && (
+                      <Link
+                        href={`/automation?owner=${encodeURIComponent(loadedOrg)}&repos=${[...selected].map(encodeURIComponent).join(",")}`}
+                        className="text-primary underline"
+                      >
+                        Open in Automation
+                      </Link>
+                    )}
+                  </>
+                )}
                 {filtersActive && (
                   <button
                     type="button"
@@ -496,6 +606,7 @@ export default function ReposPage() {
                   <tbody className="divide-y divide-border">
                     {Array.from({ length: 5 }).map((_, i) => (
                       <tr key={i}>
+                        <td className="pl-4 py-3 w-6" />
                         <td className="px-4 py-3"><Skeleton className="h-3 w-32" /></td>
                         <td className="px-4 py-3"><Skeleton className="h-3 w-16" /></td>
                         <td className="px-4 py-3"><Skeleton className="h-3 w-10 ml-auto" /></td>
@@ -520,6 +631,14 @@ export default function ReposPage() {
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-border">
+                      <th className="pl-4 py-2 w-6">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all visible repositories"
+                          checked={allVisibleSelected}
+                          onChange={toggleAllVisible}
+                        />
+                      </th>
                       <th className="text-left text-muted-foreground font-medium px-4 py-2">Repository</th>
                       <th className="text-left text-muted-foreground font-medium px-4 py-2">Language</th>
                       <th className="text-right text-muted-foreground font-medium px-4 py-2">Stars</th>
@@ -532,7 +651,15 @@ export default function ReposPage() {
                   </thead>
                   <tbody className="divide-y divide-border">
                     {repos.map((r) => (
-                      <RepoRow key={r.full_name} org={loadedOrg} repo={r} token={loadedToken} />
+                      <RepoRow
+                        key={r.full_name}
+                        org={loadedOrg}
+                        repo={r}
+                        token={loadedToken}
+                        selected={selected.has(r.name)}
+                        onToggle={() => toggleRepo(r.name)}
+                        protection={protection.get(r.name)}
+                      />
                     ))}
                   </tbody>
                 </table>

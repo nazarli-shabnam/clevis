@@ -18,10 +18,12 @@ interface Props {
   org: string
   token: string
   repos: RepoSummary[]
+  /** Repo names to start selected (e.g. handed over from the Repositories page). */
+  initialSelected?: readonly string[]
 }
 
-export function BranchProtectionCard({ org, token, repos }: Props) {
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+export function BranchProtectionCard({ org, token, repos, initialSelected = [] }: Props) {
+  const [selected, setSelected] = useState<Set<string>>(new Set(initialSelected))
   const [reviewCount, setReviewCount] = useState(1)
   const [enforceAdmins, setEnforceAdmins] = useState(false)
   const [blockForcePush, setBlockForcePush] = useState(true)
@@ -49,6 +51,8 @@ export function BranchProtectionCard({ org, token, repos }: Props) {
 
   // Selected repos that no longer exist in the list (owner switched) shouldn't linger.
   useEffect(() => {
+    // The list loads after mount; pruning against it while empty would drop an initial selection.
+    if (repos.length === 0) return
     const names = new Set(repos.map((r) => r.name))
     setSelected((prev) => new Set([...prev].filter((n) => names.has(n))))
   }, [repos])

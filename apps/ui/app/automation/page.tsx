@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
+import { useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -56,6 +57,12 @@ export default function AutomationPage() {
   const [dispatchAllArmed, setDispatchAllArmed] = useState(false)
 
   const { scope } = useActiveScope()
+  // Repos picked on the Repositories page arrive as ?owner=x&repos=a,b; they only apply to that owner.
+  const params = useSearchParams()
+  const preselected =
+    params.get("owner")?.toLowerCase() === owner.trim().toLowerCase()
+      ? (params.get("repos")?.split(",").filter(Boolean) ?? [])
+      : []
   const scopeLogin = scope?.login ?? ""
   useEffect(() => {
     if (scopeLogin) setOwner(scopeLogin)
@@ -579,7 +586,7 @@ export default function AutomationPage() {
       {/* key each card by its target identity so switching owner/repo remounts it with
           fresh selection / preview / mutation state instead of showing the old target's. */}
       <div className="mt-4">
-        <BranchProtectionCard key={owner.trim()} org={owner.trim()} token={token} repos={repoOptions} />
+        <BranchProtectionCard key={owner.trim()} org={owner.trim()} token={token} repos={repoOptions} initialSelected={preselected} />
       </div>
 
       <div className="mt-4">

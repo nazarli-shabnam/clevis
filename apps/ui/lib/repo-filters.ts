@@ -1,7 +1,10 @@
-import type { RepoSummary } from "@/lib/api/types"
+import type { RepoSecurityResponse, RepoSummary } from "@/lib/api/types"
 
 export type VisibilityFilter = "all" | "public" | "private"
 export type StatusFilter = "all" | "active" | "archived"
+export type ProtectionFilter = "all" | "protected" | "unprotected"
+/** Default-branch protection per repo name, as fetched on demand (never inferred). */
+export type ProtectionMap = ReadonlyMap<string, RepoSecurityResponse["branch_protection"]>
 
 export interface RepoFilters {
   /** "" = any language */
@@ -10,9 +13,11 @@ export interface RepoFilters {
   status: StatusFilter
   /** Only repos with no push in the last STALE_DAYS days (or never pushed). */
   stale: boolean
+  /** Only meaningful once protection has been checked; repos not checked (or "unknown") never match. */
+  protection: ProtectionFilter
 }
 
-export const NO_REPO_FILTERS: RepoFilters = { language: "", visibility: "all", status: "all", stale: false }
+export const NO_REPO_FILTERS: RepoFilters = { language: "", visibility: "all", status: "all", stale: false, protection: "all" }
 
 export const STALE_DAYS = 90
 
@@ -20,7 +25,7 @@ const DAY_MS = 24 * 60 * 60 * 1000
 
 export function hasActiveRepoFilters(filters: RepoFilters): boolean {
   return (
-    filters.language !== "" || filters.visibility !== "all" || filters.status !== "all" || filters.stale
+    filters.language !== "" || filters.visibility !== "all" || filters.status !== "all" || filters.stale || filters.protection !== "all"
   )
 }
 
@@ -37,7 +42,12 @@ function isStale(repo: RepoSummary, now: number): boolean {
 }
 
 /** Applies every active filter; all conditions must hold. */
-export function filterRepos(repos: readonly RepoSummary[], filters: RepoFilters, now: number = Date.now()): RepoSummary[] {
+export function filterRepos(
+  repos: readonly RepoSummary[],
+  filters: RepoFilters,
+  now: number = Date.now(),
+  protection: ProtectionMap = new Map(),
+): RepoSummary[] {
   return repos.filter((r) => {
     if (filters.language && r.language !== filters.language) return false
     if (filters.visibility === "private" && !r.private) return false
@@ -46,6 +56,7 @@ export function filterRepos(repos: readonly RepoSummary[], filters: RepoFilters,
     if (filters.status === "archived" && !r.archived) return false
     if (filters.status === "active" && r.archived) return false
     if (filters.stale && !isStale(r, now)) return false
+    if (filters.protection !== "all" && protection.get(r.name) !== filters.protection) return false
     return true
   })
 }

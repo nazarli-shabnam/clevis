@@ -6,6 +6,7 @@ const tokensResolveMock = vi.fn();
 const reposListMock = vi.fn();
 const installationsListMock = vi.fn();
 const installationsListForOrgMock = vi.fn();
+const securityMock = vi.fn();
 
 vi.mock("next/navigation", () => ({ useParams: () => ({}) }));
 
@@ -22,6 +23,7 @@ vi.mock("@/lib/api/client", () => ({
       list: (...args: unknown[]) => reposListMock(...args),
       stats: vi.fn().mockResolvedValue({ commit_activity: [], latest_release: null }),
       pulls: vi.fn().mockResolvedValue({ total: 0, pulls: [] }),
+      security: (...args: unknown[]) => securityMock(...args),
     },
     installations: {
       list: (...args: unknown[]) => installationsListMock(...args),
@@ -124,6 +126,70 @@ describe("ReposPage filters", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
     await waitFor(() => expect(visibleNames().sort()).toEqual(["api", "legacy", "web"]));
+  });
+
+  it("checks protection on request, then filters to unprotected repos", async () => {
+    securityMock.mockReset();
+    securityMock.mockImplementation((_o: string, _w: string, name: string) =>
+      Promise.resolve({ repository: name, branch_protection: name === "web" ? "unprotected" : "protected", secret_scanning: "unknown" }),
+    );
+    renderPage();
+    await loadReposByHand();
+
+    const select = screen.getByLabelText("Filter by branch protection");
+    expect(select).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Check protection" }));
+    await waitFor(() => expect(select).not.toBeDisabled());
+    expect(securityMock).toHaveBeenCalledTimes(3);
+
+    fireEvent.change(select, { target: { value: "unprotected" } });
+    await waitFor(() => expect(visibleNames()).toEqual(["web"]));
+  });
+
+  it("drops the protection filter when repos are reloaded, so the list is not left empty", async () => {
+    securityMock.mockReset();
+    securityMock.mockResolvedValue({ repository: "x", branch_protection: "protected", secret_scanning: "unknown" });
+    renderPage();
+    await loadReposByHand();
+
+    fireEvent.click(screen.getByRole("button", { name: "Check protection" }));
+    const select = screen.getByLabelText("Filter by branch protection");
+    await waitFor(() => expect(select).not.toBeDisabled());
+    fireEvent.change(select, { target: { value: "unprotected" } });
+    await waitFor(() => expect(visibleNames()).toEqual([]));
+
+    fireEvent.click(screen.getByRole("button", { name: /load repositories/i }));
+    await waitFor(() => expect(visibleNames().sort()).toEqual(["api", "legacy", "web"]));
+    expect(screen.getByLabelText("Filter by branch protection")).toHaveValue("all");
+  });
+
+  it("retries repos whose protection check failed on the next click", async () => {
+    securityMock.mockReset();
+    securityMock.mockRejectedValue(new Error("boom"));
+    renderPage();
+    await loadReposByHand();
+
+    const button = screen.getByRole("button", { name: "Check protection" });
+    fireEvent.click(button);
+    await waitFor(() => expect(securityMock).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(button).not.toBeDisabled());
+
+    securityMock.mockResolvedValue({ repository: "x", branch_protection: "protected", secret_scanning: "unknown" });
+    fireEvent.click(button);
+    await waitFor(() => expect(securityMock).toHaveBeenCalledTimes(6));
+  });
+
+  it("selects repos (individually or all visible)", async () => {
+    renderPage();
+    await loadReposByHand();
+
+    fireEvent.click(screen.getByLabelText("Select api"));
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Filter by visibility"), { target: { value: "public" } });
+    await waitFor(() => expect(visibleNames().sort()).toEqual(["legacy", "web"]));
+    fireEvent.click(screen.getByLabelText("Select all visible repositories"));
+    expect(screen.getByText("3 selected")).toBeInTheDocument();
   });
 
   it("explains an empty result caused by the filters and counts matches against the total", async () => {
