@@ -1,31 +1,46 @@
-"""Org invitation router: admin create/list/revoke pending invites (shareable link, no
-email sent), unauthenticated preview by token, and accept -- which requires the caller's
-account email to case-insensitively match the invite AND be verified.
+"""Org invitation router: admin create (single or bulk) / list / revoke / regenerate pending invites
+(shareable link; an email goes out only on an explicit resend), unauthenticated preview by token,
+and accept -- which requires the caller's account email to case-insensitively match the invite
+AND be verified.
 """
 
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import EmailStr, TypeAdapter, ValidationError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
 from src.core.config import settings
 from src.core.db import Org, User, get_db
+from src.core.rate_limit import rate_limit
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import audit_repo, invitation_repo, org_membership_repo
 from src.schemas.invitation import (
     InvitationAcceptResponse,
+    InvitationBulkCreate,
+    InvitationBulkItem,
+    InvitationBulkResponse,
     InvitationCreate,
     InvitationCreateResponse,
     InvitationOut,
     InvitationPreview,
 )
+from src.services import email
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+_EMAIL = TypeAdapter(EmailStr)
 
 
 def _ui_base() -> str:
     return settings.cors_origins[0] if settings.cors_origins else ""
+
+
+def _invite_link(invitation) -> str:
+    return f"{_ui_base()}/invite/{invitation.token}"
 
 
 def _is_expired(invitation) -> bool:
@@ -67,8 +82,69 @@ def create_invitation(
     )
     return {
         "invitation": invitation,
-        "invite_link": f"{_ui_base()}/invite/{invitation.token}",
+        "invite_link": _invite_link(invitation),
     }
+
+
+@router.post(
+    "/orgs/{org_login}/invitations/bulk",
+    response_model=InvitationBulkResponse,
+    dependencies=[Depends(rate_limit())],
+)
+def create_invitations_bulk(
+    body: InvitationBulkCreate,
+    ctx: OrgContext = Depends(require_org_role(min_role="admin")),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Invite several addresses at once. Each distinct address gets its own result, so one bad or
+    duplicate address never blocks the rest; an address repeated in the request (compared
+    case-insensitively) is reported once, for its first occurrence."""
+    results: list[InvitationBulkItem] = []
+    seen: set[str] = set()
+    for raw in body.emails:
+        raw = raw.strip()
+        try:
+            address = _EMAIL.validate_python(raw)
+            valid = True
+        except ValidationError:
+            address, valid = raw, False
+        # Valid addresses are keyed by their normalised form, invalid ones by what was typed.
+        if address.lower() in seen:
+            continue
+        seen.add(address.lower())
+        if not valid:
+            results.append(InvitationBulkItem(email=raw, status="invalid"))
+            continue
+        # One transaction per address: the invitation and its audit row land together or not at all,
+        # so a failure never leaves an invitation whose link and audit trail are both missing.
+        try:
+            if invitation_repo.get_pending_for_org_and_email(db, org_id=ctx.org.id, email=address) is not None:
+                results.append(InvitationBulkItem(email=address, status="already_pending"))
+                continue
+            invitation = invitation_repo.create(
+                db, org_id=ctx.org.id, email=address, invited_by_user_id=user.id, commit=False
+            )
+            audit_repo.write(
+                db, user.email, "invitation.create", ctx.org.github_login, {"email": address},
+                tenant_id=ctx.org.tenant_id, commit=False,
+            )
+            # Built before the commit: commit expires the row, and a read after it could fail
+            # outside this try and lose the links of every address already committed.
+            item = InvitationBulkItem(
+                email=address, status="created", invitation=invitation, invite_link=_invite_link(invitation)
+            )
+            db.commit()
+        except invitation_repo.DuplicatePendingInvitation:
+            results.append(InvitationBulkItem(email=address, status="already_pending"))
+            continue
+        except SQLAlchemyError:
+            logger.warning("Bulk invitation for org %s failed", ctx.org.github_login, exc_info=True)
+            db.rollback()
+            results.append(InvitationBulkItem(email=address, status="failed"))
+            continue
+        results.append(item)
+    return {"results": results}
 
 
 @router.get("/orgs/{org_login}/invitations", response_model=list[InvitationOut])
@@ -110,6 +186,82 @@ def revoke_invitation(
         db, user.email, "invitation.revoke", ctx.org.github_login, {"email": invitation.email},
         tenant_id=ctx.org.tenant_id,
     )
+    return invitation
+
+
+def _reissue(db: Session, ctx: OrgContext, invitation_id: int):
+    """Rotate the token of a pending or expired invitation of this org (accepted and revoked ones
+    are final). Returns the invitation, now pending with a new link.
+
+    The rotation is flushed, not committed: the caller's audit_repo.write (default commit=True)
+    commits it together with its audit row. The row is locked from the status check on, so a
+    concurrent create() can't expire it between the check and the write."""
+    invitation = invitation_repo.get_by_id_and_org(
+        db, invitation_id=invitation_id, org_id=ctx.org.id, for_update=True
+    )
+    if invitation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
+    if _effective_status(invitation) not in ("pending", "expired"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Only pending or expired invitations can be reissued"
+        )
+    try:
+        return invitation_repo.reissue(db, invitation)
+    except invitation_repo.DuplicatePendingInvitation as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post(
+    "/orgs/{org_login}/invitations/{invitation_id}/regenerate",
+    response_model=InvitationCreateResponse,
+    dependencies=[Depends(rate_limit())],
+)
+def regenerate_invitation(
+    invitation_id: int,
+    ctx: OrgContext = Depends(require_org_role(min_role="admin")),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """New link and a fresh 7 days for an existing invitation; the previous link stops working."""
+    invitation = _reissue(db, ctx, invitation_id)
+    audit_repo.write(
+        db, user.email, "invitation.regenerate", ctx.org.github_login, {"email": invitation.email},
+        tenant_id=ctx.org.tenant_id,
+    )
+    return {"invitation": invitation, "invite_link": _invite_link(invitation)}
+
+
+@router.post(
+    "/orgs/{org_login}/invitations/{invitation_id}/resend",
+    response_model=InvitationOut,
+    dependencies=[Depends(rate_limit())],
+)
+def resend_invitation(
+    invitation_id: int,
+    ctx: OrgContext = Depends(require_org_role(min_role="admin")),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Email a fresh link to the invitee. Needs SMTP; the previous link stops working."""
+    # Checked first so an instance without SMTP doesn't rotate (and so lose) a link for nothing.
+    if not email.is_configured():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email isn't set up on this instance (SMTP_HOST and SMTP_FROM). Use Regenerate link and share it yourself.",
+        )
+    invitation = _reissue(db, ctx, invitation_id)
+    audit_repo.write(
+        db, user.email, "invitation.resend", ctx.org.github_login, {"email": invitation.email},
+        tenant_id=ctx.org.tenant_id,
+    )
+    try:
+        email.send_invitation_email(invitation.email, ctx.org.github_login, user.email, _invite_link(invitation))
+    except OSError:  # smtplib.SMTPException and ssl.SSLError are OSErrors
+        logger.warning("Failed to email invitation %s", invitation.id, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The email couldn't be sent. The previous link no longer works; use Regenerate link to get a new one.",
+        )
     return invitation
 
 

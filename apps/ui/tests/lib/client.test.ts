@@ -1069,6 +1069,40 @@ describe("api.auth email verification (issue #217)", () => {
   });
 });
 
+describe("api.invitations (bulk / regenerate / resend)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function stubOkJson(body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))),
+    );
+  }
+
+  it("POSTs the addresses to /orgs/{org}/invitations/bulk", async () => {
+    stubOkJson({ results: [] });
+    const result = await api.invitations.createMany("ac me", ["a@x.com", "b@x.com"]);
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/orgs/ac%20me/invitations/bulk");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ emails: ["a@x.com", "b@x.com"] });
+    expect(result).toEqual({ results: [] });
+  });
+
+  it("POSTs to the regenerate and resend routes of one invitation", async () => {
+    stubOkJson({});
+    await api.invitations.regenerate("acme", 7);
+    await api.invitations.resend("acme", 7);
+    const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls;
+    expect(String(calls[0][0])).toContain("/orgs/acme/invitations/7/regenerate");
+    expect(String(calls[1][0])).toContain("/orgs/acme/invitations/7/resend");
+    expect(calls.map((c) => c[1].method)).toEqual(["POST", "POST"]);
+  });
+});
+
 describe("analytics.history", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

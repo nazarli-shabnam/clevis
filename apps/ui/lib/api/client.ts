@@ -32,6 +32,7 @@ import type {
   InactiveMembersResponse,
   InstallationLookup,
   InstallationMeta,
+  InvitationBulkResponse,
   InvitationCreateResponse,
   InvitationOut,
   InvitationPreview,
@@ -617,7 +618,13 @@ export const api = {
   invitations: {
     create: (orgLogin: string, email: string) =>
       post<InvitationCreateResponse>(`/orgs/${encodeURIComponent(orgLogin)}/invitations`, { email }),
+    createMany: (orgLogin: string, emails: string[]) =>
+      post<InvitationBulkResponse>(`/orgs/${encodeURIComponent(orgLogin)}/invitations/bulk`, { emails }),
     list: (orgLogin: string) => get<InvitationOut[]>(`/orgs/${encodeURIComponent(orgLogin)}/invitations`),
+    regenerate: (orgLogin: string, invitationId: number) =>
+      post<InvitationCreateResponse>(`/orgs/${encodeURIComponent(orgLogin)}/invitations/${invitationId}/regenerate`, {}),
+    resend: (orgLogin: string, invitationId: number) =>
+      post<InvitationOut>(`/orgs/${encodeURIComponent(orgLogin)}/invitations/${invitationId}/resend`, {}),
     revoke: (orgLogin: string, invitationId: number) =>
       post<InvitationOut>(`/orgs/${encodeURIComponent(orgLogin)}/invitations/${invitationId}/revoke`, {}),
     preview: (token: string) => get<InvitationPreview>(`/invitations/${encodeURIComponent(token)}`),

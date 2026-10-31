@@ -22,21 +22,30 @@ class DuplicatePendingInvitation(Exception):
         super().__init__(f"A pending invitation already exists for {email} in this organization")
 
 
-def _expire_lapsed(db: Session, org_id: int, email: str) -> None:
+def _expire_lapsed(db: Session, org_id: int, email: str, exclude_id: int | None = None) -> None:
     """Expire lapsed 'pending' rows for this (org, email) so a re-invite isn't blocked.
 
-    The partial unique index keys on status='pending', not on expiry."""
-    db.query(Invitation).filter(
+    The partial unique index keys on status='pending', not on expiry. ``exclude_id`` spares the row
+    being reissued: the bulk UPDATE doesn't sync the ORM object, so expiring it here would leave
+    the session believing it is still 'pending' and the flush would skip writing its status."""
+    query = db.query(Invitation).filter(
         Invitation.org_id == org_id,
         func.lower(Invitation.email) == email.lower(),
         Invitation.status == "pending",
         Invitation.expires_at <= datetime.now(timezone.utc),
-    ).update({Invitation.status: "expired"}, synchronize_session=False)
+    )
+    if exclude_id is not None:
+        query = query.filter(Invitation.id != exclude_id)
+    query.update({Invitation.status: "expired"}, synchronize_session=False)
 
 
-def create(db: Session, org_id: int, email: str, invited_by_user_id: int) -> Invitation:
+def create(
+    db: Session, org_id: int, email: str, invited_by_user_id: int, *, commit: bool = True
+) -> Invitation:
+    """commit=False flushes into the caller's transaction, so the invitation and its audit row
+    commit (or roll back) together."""
     _expire_lapsed(db, org_id, email)
-    tenant = tenant_repo.get_or_create_org_tenant(db, org_id)
+    tenant = tenant_repo.get_or_create_org_tenant(db, org_id, commit=commit)
     invitation = Invitation(
         org_id=org_id,
         email=email,
@@ -48,7 +57,9 @@ def create(db: Session, org_id: int, email: str, invited_by_user_id: int) -> Inv
     )
     db.add(invitation)
     try:
-        db.commit()
+        db.flush()
+        if commit:
+            db.commit()
     except IntegrityError as exc:
         db.rollback()
         # Only a duplicate pending invite (the concurrent-insert race) becomes a 409; any other
@@ -56,6 +67,26 @@ def create(db: Session, org_id: int, email: str, invited_by_user_id: int) -> Inv
         if get_pending_for_org_and_email(db, org_id=org_id, email=email) is None:
             raise
         raise DuplicatePendingInvitation(email) from exc
+    db.refresh(invitation)
+    return invitation
+
+
+def reissue(db: Session, invitation: Invitation) -> Invitation:
+    """Give an existing invitation a fresh token and a fresh lifetime, making it pending again.
+
+    The old link stops working. An expired invitation coming back to life can collide with a live
+    pending invite for the same address (partial unique index), which surfaces as
+    DuplicatePendingInvitation; a lapsed one is expired first, as create() does. Flushes without
+    committing: the caller commits the rotation together with its audit row."""
+    _expire_lapsed(db, invitation.org_id, invitation.email, exclude_id=invitation.id)
+    invitation.token = secrets.token_urlsafe(32)
+    invitation.expires_at = datetime.now(timezone.utc) + INVITATION_LIFETIME
+    invitation.status = "pending"
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise DuplicatePendingInvitation(invitation.email) from exc
     db.refresh(invitation)
     return invitation
 
@@ -71,12 +102,13 @@ def get_by_token(db: Session, token: str) -> Invitation | None:
     return db.query(Invitation).filter(Invitation.token == token).first()
 
 
-def get_by_id_and_org(db: Session, invitation_id: int, org_id: int) -> Invitation | None:
-    return (
-        db.query(Invitation)
-        .filter(Invitation.id == invitation_id, Invitation.org_id == org_id)
-        .first()
-    )
+def get_by_id_and_org(
+    db: Session, invitation_id: int, org_id: int, *, for_update: bool = False
+) -> Invitation | None:
+    query = db.query(Invitation).filter(Invitation.id == invitation_id, Invitation.org_id == org_id)
+    if for_update:
+        query = query.with_for_update()
+    return query.first()
 
 
 def list_for_org(db: Session, org_id: int) -> list[Invitation]:
