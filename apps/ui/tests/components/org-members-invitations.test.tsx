@@ -149,6 +149,24 @@ describe("OrgMembersPage invitations", () => {
     expect(await within(row).findByText(/old one no longer works/i)).toBeInTheDocument();
   });
 
+  it("drops a row's regenerate note once that invitation is revoked", async () => {
+    listMock.mockResolvedValue([invitation(1, "bob@example.com", "pending", inFuture(2 * DAY))]);
+    regenerateMock.mockResolvedValue({
+      invitation: invitation(1, "bob@example.com", "pending", inFuture(7 * DAY)),
+      invite_link: "https://clevis.example/invite/tok_new",
+    });
+    revokeMock.mockResolvedValue(invitation(1, "bob@example.com", "revoked", inFuture(7 * DAY)));
+    renderPage();
+
+    const row = (await screen.findByText("bob@example.com")).closest("tr")!;
+    fireEvent.click(within(row).getByRole("button", { name: /regenerate link/i }));
+    expect(await within(row).findByText(/old one no longer works/i)).toBeInTheDocument();
+
+    fireEvent.click(within(row).getByRole("button", { name: /revoke/i }));
+
+    await waitFor(() => expect(within(row).queryByText(/old one no longer works/i)).toBeNull());
+  });
+
   it("offers regenerate and resend on an expired invitation, but not revoke", async () => {
     listMock.mockResolvedValue([invitation(2, "late@example.com", "expired", inFuture(-DAY))]);
     renderPage();

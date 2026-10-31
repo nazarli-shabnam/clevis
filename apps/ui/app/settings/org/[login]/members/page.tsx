@@ -597,6 +597,7 @@ export default function OrgMembersPage() {
     onSettled: (_data, _error, id) => setRevokingIds((prev) => removeRevokingId(prev, id)),
     onSuccess: (_data, id) => {
       clearDisplayedLink(id)
+      setRowNotes(({ [id]: _cleared, ...rest }) => rest)
       queryClient.invalidateQueries({ queryKey: ["invitations", orgLogin] })
     },
   })
