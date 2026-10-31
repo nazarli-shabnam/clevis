@@ -256,6 +256,17 @@ describe("OrgMembersPage invitations", () => {
     await waitFor(() => expect(createManyMock).toHaveBeenCalledWith("acme", ["a@example.com", "b@example.com"]));
   });
 
+  it("does not send more than 50 addresses on Ctrl+Enter", async () => {
+    listMock.mockResolvedValue([]);
+    renderPage();
+    const field = await screen.findByPlaceholderText("teammate@example.com");
+
+    fireEvent.change(field, { target: { value: Array.from({ length: 51 }, (_, i) => `u${i}@example.com`).join("\n") } });
+    fireEvent.keyDown(field, { key: "Enter", ctrlKey: true });
+
+    expect(createManyMock).not.toHaveBeenCalled();
+  });
+
   it("refuses more than 50 addresses before sending, and says why", async () => {
     listMock.mockResolvedValue([]);
     const emails = (n: number) => Array.from({ length: n }, (_, i) => `u${i}@example.com`).join("\n");
@@ -285,6 +296,8 @@ describe("OrgMembersPage invitations", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send 2 invites" }));
 
     expect(await screen.findByText("couldn't be invited, try again")).toBeInTheDocument();
+    // Only the failed address stays in the box, ready to resubmit.
+    expect(screen.getByPlaceholderText("teammate@example.com")).toHaveValue("a@example.com");
   });
 
   describe("links on screen that an action kills", () => {

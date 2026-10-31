@@ -455,7 +455,7 @@ def test_bulk_invite_reports_each_address(db, acme_org):
 
     resp = admin.post(
         "/orgs/acme/invitations/bulk",
-        json={"emails": ["a@acme.com", "A@ACME.com", "not-an-email", "taken@acme.com", " b@acme.com "]},
+        json={"emails": ["a@acme.com", "A@ACME.com", "not-an-email", " NOT-AN-EMAIL", "taken@acme.com", " b@acme.com "]},
     )
 
     assert resp.status_code == 200
@@ -481,8 +481,9 @@ def test_bulk_invite_caps_each_address_length(db, acme_org):
     admin = _client(db, acme_org["admin"])
 
     assert admin.post("/orgs/acme/invitations/bulk", json={"emails": ["a" * 255]}).status_code == 422
-    # 254 is the longest a real address can be: it is judged (invalid), not rejected outright.
-    at_limit = admin.post("/orgs/acme/invitations/bulk", json={"emails": ["a" * 254]})
+    # 254 is the longest a real address can be: it is judged (invalid), not rejected outright, and
+    # padding around it doesn't count towards the cap.
+    at_limit = admin.post("/orgs/acme/invitations/bulk", json={"emails": [" " + "a" * 254]})
     assert at_limit.status_code == 200 and at_limit.json()["results"][0]["status"] == "invalid"
 
 

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, StringConstraints
+from pydantic import BaseModel, BeforeValidator, ConfigDict, EmailStr, Field, StringConstraints
 
 InvitationStatus = Literal["pending", "accepted", "revoked", "expired"]
 
@@ -19,7 +19,14 @@ MAX_EMAIL_LENGTH = 254
 class InvitationBulkCreate(BaseModel):
     # Plain strings, not EmailStr: one malformed address must come back as an "invalid" result for
     # that address instead of failing the whole request with a 422.
-    emails: list[Annotated[str, StringConstraints(max_length=MAX_EMAIL_LENGTH)]] = Field(
+    # Stripped before the length check, so padding around a valid address can't 422 the request.
+    emails: list[
+        Annotated[
+            str,
+            BeforeValidator(lambda v: v.strip() if isinstance(v, str) else v),
+            StringConstraints(max_length=MAX_EMAIL_LENGTH),
+        ]
+    ] = Field(
         min_length=1, max_length=MAX_BULK_INVITES
     )
 

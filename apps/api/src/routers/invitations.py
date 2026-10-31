@@ -103,26 +103,36 @@ def create_invitations_bulk(
     results: list[InvitationBulkItem] = []
     seen: set[str] = set()
     for raw in body.emails:
+        raw = raw.strip()
         try:
-            address = _EMAIL.validate_python(raw.strip())
+            address = _EMAIL.validate_python(raw)
+            valid = True
         except ValidationError:
-            results.append(InvitationBulkItem(email=raw.strip(), status="invalid"))
-            continue
+            address, valid = raw, False
+        # Valid addresses are keyed by their normalised form, invalid ones by what was typed.
         if address.lower() in seen:
             continue
         seen.add(address.lower())
-        if invitation_repo.get_pending_for_org_and_email(db, org_id=ctx.org.id, email=address) is not None:
-            results.append(InvitationBulkItem(email=address, status="already_pending"))
+        if not valid:
+            results.append(InvitationBulkItem(email=raw, status="invalid"))
             continue
         # One transaction per address: the invitation and its audit row land together or not at all,
         # so a failure never leaves an invitation whose link and audit trail are both missing.
         try:
+            if invitation_repo.get_pending_for_org_and_email(db, org_id=ctx.org.id, email=address) is not None:
+                results.append(InvitationBulkItem(email=address, status="already_pending"))
+                continue
             invitation = invitation_repo.create(
                 db, org_id=ctx.org.id, email=address, invited_by_user_id=user.id, commit=False
             )
             audit_repo.write(
                 db, user.email, "invitation.create", ctx.org.github_login, {"email": address},
                 tenant_id=ctx.org.tenant_id, commit=False,
+            )
+            # Built before the commit: commit expires the row, and a read after it could fail
+            # outside this try and lose the links of every address already committed.
+            item = InvitationBulkItem(
+                email=address, status="created", invitation=invitation, invite_link=_invite_link(invitation)
             )
             db.commit()
         except invitation_repo.DuplicatePendingInvitation:
@@ -133,12 +143,7 @@ def create_invitations_bulk(
             db.rollback()
             results.append(InvitationBulkItem(email=address, status="failed"))
             continue
-        db.refresh(invitation)
-        results.append(
-            InvitationBulkItem(
-                email=address, status="created", invitation=invitation, invite_link=_invite_link(invitation)
-            )
-        )
+        results.append(item)
     return {"results": results}
 
 

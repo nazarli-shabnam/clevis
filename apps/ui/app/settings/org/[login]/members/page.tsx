@@ -542,7 +542,8 @@ export default function OrgMembersPage() {
     onSuccess: (data) => {
       setLastLink(data.one ? { id: data.one.invitation.id, link: data.one.invite_link } : null)
       setBulkResults(data.many?.results ?? null)
-      setEmail("")
+      // Keep any address that failed in the box so it can be resubmitted as is.
+      setEmail((data.many?.results ?? []).filter((r) => r.status === "failed").map((r) => r.email).join("\n"))
       queryClient.invalidateQueries({ queryKey: ["invitations", orgLogin] })
     },
   })
@@ -561,9 +562,12 @@ export default function OrgMembersPage() {
       setReissuingIds((prev) => addRevokingId(prev, id))
     },
     onError: (error, { id, kind }) => {
-      // A failed send (502) comes after the token was rotated, so the link on screen is dead too.
-      // A 404/409 is refused before any rotation: that link still works.
-      if (kind === "resend" && (error as { status?: number }).status === 502) clearDisplayedLink(id)
+      // A failed send (502) comes after the token was rotated (and committed), so the link on screen
+      // is dead too and the cached row is stale. No status at all (timeout, lost response) means we
+      // can't tell whether it rotated. A 404/409 is refused before any rotation: that link still works.
+      const status = (error as { status?: number }).status
+      if (status === undefined || (kind === "resend" && status === 502)) clearDisplayedLink(id)
+      if (status === undefined || status === 502) queryClient.invalidateQueries({ queryKey: ["invitations", orgLogin] })
       setRowNotes((prev) => ({ ...prev, [id]: { ok: false, text: error.message } }))
     },
     onSettled: (_data, _error, { id }) => setReissuingIds((prev) => removeRevokingId(prev, id)),
@@ -596,6 +600,10 @@ export default function OrgMembersPage() {
       queryClient.invalidateQueries({ queryKey: ["invitations", orgLogin] })
     },
   })
+
+  // Revoke and reissue race on the same row (a late regenerate would restore a revoked link), so any
+  // pending action on an invitation locks all of its buttons.
+  const busy = (id: number) => isRevoking(reissuingIds, id) || isRevoking(revokingIds, id)
 
   return (
     <>
@@ -638,7 +646,7 @@ export default function OrgMembersPage() {
                   onKeyDown={(e) => {
                     if (e.key !== "Enter" || (addresses.length > 1 && !e.ctrlKey && !e.metaKey)) return
                     e.preventDefault()
-                    if (addresses.length > 0 && !invite.isPending) invite.mutate()
+                    if (addresses.length > 0 && addresses.length <= MAX_BULK_INVITES && !invite.isPending) invite.mutate()
                   }}
                   className="w-full min-w-0 resize-none rounded-md border border-input bg-transparent px-2.5 py-1.5 text-base outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm dark:bg-input/30"
                 />
@@ -754,7 +762,7 @@ export default function OrgMembersPage() {
                                 size="sm"
                                 variant="outline"
                                 onClick={() => reissue.mutate({ id: inv.id, kind: "regenerate" })}
-                                disabled={isRevoking(reissuingIds, inv.id)}
+                                disabled={busy(inv.id)}
                               >
                                 <ArrowsClockwise className="size-3" />
                                 Regenerate link
@@ -763,7 +771,7 @@ export default function OrgMembersPage() {
                                 size="sm"
                                 variant="outline"
                                 onClick={() => reissue.mutate({ id: inv.id, kind: "resend" })}
-                                disabled={isRevoking(reissuingIds, inv.id)}
+                                disabled={busy(inv.id)}
                               >
                                 <PaperPlaneTilt className="size-3" />
                                 Resend
@@ -773,7 +781,7 @@ export default function OrgMembersPage() {
                                   size="sm"
                                   variant="outline"
                                   onClick={() => revoke.mutate(inv.id)}
-                                  disabled={isRevoking(revokingIds, inv.id)}
+                                  disabled={busy(inv.id)}
                                 >
                                   <X className="size-3" />
                                   Revoke
