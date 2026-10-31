@@ -468,13 +468,26 @@ function ExpiryCell({ inv, now }: { inv: InvitationOut; now: number }) {
   )
 }
 
-// Addresses may be pasted separated by commas, semicolons, spaces or newlines.
-const splitEmails = (text: string) => text.split(/[\s,;]+/).filter(Boolean)
+// Mirrors MAX_BULK_INVITES in apps/api/src/schemas/invitation.py; the API 422s a longer list.
+const MAX_BULK_INVITES = 50
+
+// Addresses may be pasted separated by commas, semicolons, spaces or newlines. A repeat (compared
+// case-insensitively, as the API does) is dropped so the count shown matches the rows reported.
+const splitEmails = (text: string) => {
+  const seen = new Set<string>()
+  return text.split(/[\s,;]+/).filter((address) => {
+    const key = address.toLowerCase()
+    if (!address || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
 
 const BULK_STATUS_LABEL: Record<InvitationBulkItem["status"], string> = {
   created: "invited",
   already_pending: "already has a pending invitation",
   invalid: "not a valid email address",
+  failed: "couldn't be invited, try again",
 }
 
 export default function OrgMembersPage() {
@@ -482,8 +495,14 @@ export default function OrgMembersPage() {
   const orgLogin = params.login
   const queryClient = useQueryClient()
   const [email, setEmail] = useState("")
-  const [lastLink, setLastLink] = useState<string | null>(null)
+  const [lastLink, setLastLink] = useState<{ id: number; link: string } | null>(null)
   const [bulkResults, setBulkResults] = useState<InvitationBulkItem[] | null>(null)
+  // Regenerating, resending and revoking all kill an invitation's current link, so drop it from
+  // the page. Only that invitation's: the other links of a bulk result may not be copied yet.
+  const clearDisplayedLink = (id: number) => {
+    setLastLink((prev) => (prev?.id === id ? null : prev))
+    setBulkResults((prev) => prev?.map((r) => (r.invitation?.id === id ? { ...r, invite_link: null } : r)) ?? null)
+  }
   // Re-evaluate expiry labels as time passes, so a page left open doesn't keep showing "in 5 minutes".
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -521,7 +540,7 @@ export default function OrgMembersPage() {
       return { one: await api.invitations.create(orgLogin, addresses[0]) }
     },
     onSuccess: (data) => {
-      setLastLink(data.one?.invite_link ?? null)
+      setLastLink(data.one ? { id: data.one.invitation.id, link: data.one.invite_link } : null)
       setBulkResults(data.many?.results ?? null)
       setEmail("")
       queryClient.invalidateQueries({ queryKey: ["invitations", orgLogin] })
@@ -541,12 +560,17 @@ export default function OrgMembersPage() {
       setRowNotes(({ [id]: _cleared, ...rest }) => rest)
       setReissuingIds((prev) => addRevokingId(prev, id))
     },
-    onError: (error, { id }) => setRowNotes((prev) => ({ ...prev, [id]: { ok: false, text: error.message } })),
+    onError: (error, { id, kind }) => {
+      // A failed send (502) comes after the token was rotated, so the link on screen is dead too.
+      // A 404/409 is refused before any rotation: that link still works.
+      if (kind === "resend" && (error as { status?: number }).status === 502) clearDisplayedLink(id)
+      setRowNotes((prev) => ({ ...prev, [id]: { ok: false, text: error.message } }))
+    },
     onSettled: (_data, _error, { id }) => setReissuingIds((prev) => removeRevokingId(prev, id)),
     onSuccess: (data, { id, kind }) => {
+      clearDisplayedLink(id)
       if (kind === "regenerate" && data.link) {
-        setLastLink(data.link)
-        setBulkResults(null)
+        setLastLink({ id, link: data.link })
         setRowNotes((prev) => ({ ...prev, [id]: { ok: true, text: "New link ready above. The old one no longer works." } }))
       } else {
         setRowNotes((prev) => ({ ...prev, [id]: { ok: true, text: "Email sent with a new link. The old one no longer works." } }))
@@ -567,7 +591,10 @@ export default function OrgMembersPage() {
     },
     onError: (error, id) => setRevokeErrors((prev) => ({ ...prev, [id]: error.message })),
     onSettled: (_data, _error, id) => setRevokingIds((prev) => removeRevokingId(prev, id)),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["invitations", orgLogin] }),
+    onSuccess: (_data, id) => {
+      clearDisplayedLink(id)
+      queryClient.invalidateQueries({ queryKey: ["invitations", orgLogin] })
+    },
   })
 
   return (
@@ -618,8 +645,16 @@ export default function OrgMembersPage() {
                 <p className="text-[0.6875rem] text-muted-foreground mt-1">
                   Paste several addresses (comma or one per line) to invite them all at once.
                 </p>
+                {addresses.length > MAX_BULK_INVITES && (
+                  <p role="alert" className="text-xs text-destructive mt-1">
+                    Invite up to {MAX_BULK_INVITES} addresses at a time ({addresses.length} entered).
+                  </p>
+                )}
               </div>
-              <Button onClick={() => invite.mutate()} disabled={invite.isPending || addresses.length === 0}>
+              <Button
+                onClick={() => invite.mutate()}
+                disabled={invite.isPending || addresses.length === 0 || addresses.length > MAX_BULK_INVITES}
+              >
                 <EnvelopeSimple className="size-3.5" />
                 {invite.isPending ? "Inviting…" : addresses.length > 1 ? `Send ${addresses.length} invites` : "Send invite"}
               </Button>
@@ -654,10 +689,10 @@ export default function OrgMembersPage() {
                     <span>Share this link — no email is sent automatically. It is shown only now, so copy it before you leave this page.</span>
                     {/* keyed by the link so a new invitation never inherits "Copied" from the previous one */}
                     <span className="shrink-0">
-                      <CopyButton key={lastLink} value={lastLink} ariaLabel="Copy invitation link" />
+                      <CopyButton key={lastLink.link} value={lastLink.link} ariaLabel="Copy invitation link" />
                     </span>
                   </div>
-                  <div className="font-mono text-foreground/80 mt-1">{lastLink}</div>
+                  <div className="font-mono text-foreground/80 mt-1">{lastLink.link}</div>
                 </div>
               )}
             </div>

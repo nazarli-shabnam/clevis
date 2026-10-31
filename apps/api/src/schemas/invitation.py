@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, StringConstraints
 
 InvitationStatus = Literal["pending", "accepted", "revoked", "expired"]
 
@@ -11,12 +11,17 @@ class InvitationCreate(BaseModel):
 
 
 MAX_BULK_INVITES = 50
+# RFC 5321 caps an address at 254 characters, so a longer string can't be one. Rejecting it up front
+# (the whole request 422s) keeps each rejected string we echo back in the response bounded.
+MAX_EMAIL_LENGTH = 254
 
 
 class InvitationBulkCreate(BaseModel):
     # Plain strings, not EmailStr: one malformed address must come back as an "invalid" result for
     # that address instead of failing the whole request with a 422.
-    emails: list[str] = Field(min_length=1, max_length=MAX_BULK_INVITES)
+    emails: list[Annotated[str, StringConstraints(max_length=MAX_EMAIL_LENGTH)]] = Field(
+        min_length=1, max_length=MAX_BULK_INVITES
+    )
 
 
 class InvitationOut(BaseModel):
@@ -38,7 +43,7 @@ class InvitationCreateResponse(BaseModel):
 
 class InvitationBulkItem(BaseModel):
     email: str
-    status: Literal["created", "already_pending", "invalid"]
+    status: Literal["created", "already_pending", "invalid", "failed"]
     invitation: InvitationOut | None = None
     invite_link: str | None = None
 

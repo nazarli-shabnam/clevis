@@ -411,7 +411,10 @@ def test_resend_emails_a_fresh_link(db, acme_org):
     to, subject, text = send.call_args.args[:3]
     assert to == "bob@acme.com" and "acme" in subject
     new_link = next(line for line in text.splitlines() if "/invite/" in line)
-    assert _token({"invite_link": new_link}) != _token(created)
+    new_token = _token({"invite_link": new_link})
+    assert new_token != _token(created)
+    # The emailed token must be the one saved on the invitation, and the old one must be dead.
+    assert _client(db, acme_org["invitee"]).get(f"/invitations/{new_token}").status_code == 200
     assert _client(db, acme_org["invitee"]).get(f"/invitations/{_token(created)}").status_code == 404
 
 
@@ -425,6 +428,25 @@ def test_resend_reports_a_failed_send_as_502(db, acme_org):
         resp = admin.post(f"/orgs/acme/invitations/{created['invitation']['id']}/resend")
 
     assert resp.status_code == 502 and "Regenerate" in resp.json()["detail"]
+    # The token was rotated before the send, so the old link is already dead (the 502 says so).
+    assert _client(db, acme_org["invitee"]).get(f"/invitations/{_token(created)}").status_code == 404
+
+
+def test_regenerate_ignores_a_newer_pending_invitation_that_has_lapsed(db, acme_org):
+    from src.core.db import Invitation
+
+    admin = _client(db, acme_org["admin"])
+    old = admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+    _expire_invitation(db, old["invitation"]["id"])
+    newer = admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()  # stores `old` as expired
+    # `newer` has lapsed too but is still stored as 'pending', which the unique index counts.
+    _expire_invitation(db, newer["invitation"]["id"])
+
+    resp = admin.post(f"/orgs/acme/invitations/{old['invitation']['id']}/regenerate")
+
+    assert resp.status_code == 200 and resp.json()["invitation"]["status"] == "pending"
+    db.expire_all()
+    assert db.get(Invitation, newer["invitation"]["id"]).status == "expired"
 
 
 def test_bulk_invite_reports_each_address(db, acme_org):
@@ -453,6 +475,53 @@ def test_bulk_invite_is_admin_only_and_capped(db, acme_org):
     assert admin.post("/orgs/acme/invitations/bulk", json={"emails": []}).status_code == 422
     too_many = [f"u{i}@acme.com" for i in range(51)]
     assert admin.post("/orgs/acme/invitations/bulk", json={"emails": too_many}).status_code == 422
+
+
+def test_bulk_invite_caps_each_address_length(db, acme_org):
+    admin = _client(db, acme_org["admin"])
+
+    assert admin.post("/orgs/acme/invitations/bulk", json={"emails": ["a" * 255]}).status_code == 422
+    # 254 is the longest a real address can be: it is judged (invalid), not rejected outright.
+    at_limit = admin.post("/orgs/acme/invitations/bulk", json={"emails": ["a" * 254]})
+    assert at_limit.status_code == 200 and at_limit.json()["results"][0]["status"] == "invalid"
+
+
+def test_bulk_invite_reports_an_address_that_lost_a_race_as_already_pending(db, acme_org):
+    admin = _client(db, acme_org["admin"])
+
+    # The pre-check saw nothing pending, then a concurrent request's insert won (partial unique index).
+    with patch(
+        "src.routers.invitations.invitation_repo.create",
+        side_effect=invitation_repo.DuplicatePendingInvitation("a@acme.com"),
+    ):
+        resp = admin.post("/orgs/acme/invitations/bulk", json={"emails": ["a@acme.com"]})
+
+    assert resp.status_code == 200
+    assert [(r["email"], r["status"]) for r in resp.json()["results"]] == [("a@acme.com", "already_pending")]
+
+
+def test_bulk_invite_commits_each_address_with_its_audit_row(db, acme_org):
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from src.repositories import audit_repo
+
+    admin = _client(db, acme_org["admin"])
+    real_write = audit_repo.write
+
+    def flaky_write(db_, actor, action, target, payload, *args, **kwargs):
+        if payload.get("email") == "b@acme.com":
+            raise SQLAlchemyError("audit down")
+        return real_write(db_, actor, action, target, payload, *args, **kwargs)
+
+    with patch("src.routers.invitations.audit_repo.write", side_effect=flaky_write):
+        resp = admin.post("/orgs/acme/invitations/bulk", json={"emails": ["a@acme.com", "b@acme.com", "c@acme.com"]})
+
+    assert resp.status_code == 200
+    assert {r["email"]: r["status"] for r in resp.json()["results"]} == {
+        "a@acme.com": "created", "b@acme.com": "failed", "c@acme.com": "created",
+    }
+    # b's invitation went down with its audit row: nothing was left behind without a link.
+    assert sorted(i["email"] for i in admin.get("/orgs/acme/invitations").json()) == ["a@acme.com", "c@acme.com"]
 
 
 def test_reissue_and_bulk_are_audited(db, acme_org):

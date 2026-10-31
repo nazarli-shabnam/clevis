@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import EmailStr, TypeAdapter, ValidationError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
@@ -96,8 +97,9 @@ def create_invitations_bulk(
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
-    """Invite several addresses at once. Each gets its own result, so one bad or duplicate address
-    never blocks the rest."""
+    """Invite several addresses at once. Each distinct address gets its own result, so one bad or
+    duplicate address never blocks the rest; an address repeated in the request (compared
+    case-insensitively) is reported once, for its first occurrence."""
     results: list[InvitationBulkItem] = []
     seen: set[str] = set()
     for raw in body.emails:
@@ -112,15 +114,26 @@ def create_invitations_bulk(
         if invitation_repo.get_pending_for_org_and_email(db, org_id=ctx.org.id, email=address) is not None:
             results.append(InvitationBulkItem(email=address, status="already_pending"))
             continue
+        # One transaction per address: the invitation and its audit row land together or not at all,
+        # so a failure never leaves an invitation whose link and audit trail are both missing.
         try:
-            invitation = invitation_repo.create(db, org_id=ctx.org.id, email=address, invited_by_user_id=user.id)
+            invitation = invitation_repo.create(
+                db, org_id=ctx.org.id, email=address, invited_by_user_id=user.id, commit=False
+            )
+            audit_repo.write(
+                db, user.email, "invitation.create", ctx.org.github_login, {"email": address},
+                tenant_id=ctx.org.tenant_id, commit=False,
+            )
+            db.commit()
         except invitation_repo.DuplicatePendingInvitation:
             results.append(InvitationBulkItem(email=address, status="already_pending"))
             continue
-        audit_repo.write(
-            db, user.email, "invitation.create", ctx.org.github_login, {"email": address},
-            tenant_id=ctx.org.tenant_id,
-        )
+        except SQLAlchemyError:
+            logger.warning("Bulk invitation for org %s failed", ctx.org.github_login, exc_info=True)
+            db.rollback()
+            results.append(InvitationBulkItem(email=address, status="failed"))
+            continue
+        db.refresh(invitation)
         results.append(
             InvitationBulkItem(
                 email=address, status="created", invitation=invitation, invite_link=_invite_link(invitation)
@@ -173,8 +186,14 @@ def revoke_invitation(
 
 def _reissue(db: Session, ctx: OrgContext, invitation_id: int):
     """Rotate the token of a pending or expired invitation of this org (accepted and revoked ones
-    are final). Returns the invitation, now pending with a new link."""
-    invitation = invitation_repo.get_by_id_and_org(db, invitation_id=invitation_id, org_id=ctx.org.id)
+    are final). Returns the invitation, now pending with a new link.
+
+    The rotation is flushed, not committed: the caller's audit_repo.write (default commit=True)
+    commits it together with its audit row. The row is locked from the status check on, so a
+    concurrent create() can't expire it between the check and the write."""
+    invitation = invitation_repo.get_by_id_and_org(
+        db, invitation_id=invitation_id, org_id=ctx.org.id, for_update=True
+    )
     if invitation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
     if _effective_status(invitation) not in ("pending", "expired"):

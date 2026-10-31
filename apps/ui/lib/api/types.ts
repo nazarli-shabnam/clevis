@@ -427,7 +427,7 @@ export interface InvitationCreateResponse {
 
 export interface InvitationBulkItem {
   email: string
-  status: "created" | "already_pending" | "invalid"
+  status: "created" | "already_pending" | "invalid" | "failed"
   invitation: InvitationOut | null
   invite_link: string | null
 }
