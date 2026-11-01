@@ -1,13 +1,13 @@
 from datetime import datetime
 
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, Field, SecretStr
 
 
 class OrgEventsInput(BaseModel):
     # Optional: falls back to a GitHub App installation token when one is connected
     # for this org (see src.services.token_resolution).
     token: SecretStr | None = None
-    per_page: int = 30
+    per_page: int = Field(default=30, ge=1, le=100)
 
 
 class OrgEvent(BaseModel):
@@ -27,7 +27,7 @@ class OrgEventsResponse(BaseModel):
 
 class FailedRunsInput(BaseModel):
     token: SecretStr | None = None
-    limit: int = 20
+    limit: int = Field(default=20, ge=1, le=100)
 
 
 class FailedRunSummary(BaseModel):
@@ -49,7 +49,7 @@ class FailedRunsResponse(BaseModel):
 
 class ReleaseTimelineInput(BaseModel):
     token: SecretStr | None = None
-    days: int = 90
+    days: int = Field(default=90, ge=1, le=365)
 
 
 class ReleaseSummary(BaseModel):
