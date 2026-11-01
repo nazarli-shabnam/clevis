@@ -19,7 +19,7 @@ jobs:
 
 ## Getting a token
 
-An org admin creates one with `POST /orgs/{org}/api-tokens` (the plaintext is returned once). Tokens
+An org admin creates one under **Settings → the org → API tokens** (or with `POST /orgs/{org}/api-tokens`); the plaintext is shown once. Tokens
 cannot change configuration, are bound to a single org, revocable (`DELETE /orgs/{org}/api-tokens/{id}`), and every create/revoke is
 audit-logged. Pass `expires_in_days` (1-3650) to create a token that expires on its own; omit it for one that
 lasts until revoked. Scans a token triggers are audit-logged under `api_token:<id>`. A token can read the latest score (`GET /api/v1/orgs/{org}/score`) and trigger a fresh scan
