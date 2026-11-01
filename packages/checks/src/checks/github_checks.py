@@ -166,11 +166,7 @@ def _get_all_pages(base_url: str, path: str, token: str, items_key: str | None =
             body = r.json()
             results.extend(body[items_key] if items_key else body)
             pages_fetched += 1
-            url = None
-            for part in r.headers.get("Link", "").split(","):
-                part = part.strip()
-                if 'rel="next"' in part:
-                    url = part.split(";")[0].strip().strip("<>")
+            url = r.links.get("next", {}).get("url")
             if url and pages_fetched >= _MAX_PAGES:
                 raise PaginationTruncatedError(path, results)
     return results
