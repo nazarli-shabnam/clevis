@@ -48,6 +48,7 @@ from src.services.digest_loop import digest_loop
 from src.services.gap_heal_loop import gap_heal_loop
 from src.services.membership_reconcile_loop import membership_reconcile_loop
 from src.services.scheduled_scan_loop import scheduled_scan_loop
+from src.services.security_alert_loop import security_alert_loop
 from src.services.waiver_expiry_loop import waiver_expiry_loop
 from src.services.webhook_requeue_loop import webhook_requeue_loop
 
@@ -73,6 +74,8 @@ async def lifespan(_: FastAPI):
         asyncio.create_task(webhook_requeue_loop()),
         # Announces lapsed check waivers once (audit row + alert destinations).
         asyncio.create_task(waiver_expiry_loop()),
+        # Announces newly ingested critical/high security alerts once to alert destinations.
+        asyncio.create_task(security_alert_loop()),
     ]
     try:
         yield

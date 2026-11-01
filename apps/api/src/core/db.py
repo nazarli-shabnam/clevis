@@ -213,6 +213,8 @@ class SecurityAlert(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # When Clevis first stored the row (GitHub's created_at can predate it); never changed by the upsert.
     ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    # When a new critical/high alert was announced to alert destinations (migration 0071); NULL = not yet.
+    alert_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class OrgMember(Base):
