@@ -1,6 +1,9 @@
 import asyncio
+import hashlib
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from datetime import date, datetime, timedelta, timezone
 from typing import Literal, NamedTuple
 
@@ -65,6 +68,17 @@ router = APIRouter()
 # Caps the per-repo fan-out (one GitHub call per repo) for large orgs.
 _MAX_REPOS_FOR_AGGREGATES = 30
 _CACHE_JOB_TYPE = "github.clear_actions_cache"
+
+# One bounded pool for every cockpit GitHub fan-out. Per-helper pools multiplied per request and competed with
+# the anyio threadpool that serves every sync endpoint; tasks submitted here are leaf GitHub calls that never
+# wait on this pool, so sharing it cannot deadlock.
+_GITHUB_FANOUT_POOL = ThreadPoolExecutor(max_workers=16, thread_name_prefix="cockpit-github")
+
+# Short-TTL cache of the assembled cockpit. Keyed per user as well as owner/token because the response embeds
+# the caller's own scan history and cache-job rate. Degraded responses are not cached, so a transient GitHub
+# error does not stick for the whole TTL.
+_COCKPIT_CACHE_TTL_SECONDS = 60
+_cockpit_cache: dict[tuple[int, str, str], tuple[float, CockpitResponse]] = {}
 
 
 async def _run_overview(
@@ -614,7 +628,7 @@ def _safe_pr_merge_rate_4w(owner: str, token: str, account_type: str = "Organiza
         client = GitHubClient(token)
         qualifier = _owner_search_qualifier(owner, account_type)
         week_starts = [_week_start(weeks_ago) for weeks_ago in range(3, -1, -1)]
-        with ThreadPoolExecutor(max_workers=8) as pool:
+        with nullcontext(_GITHUB_FANOUT_POOL) as pool:
             futures = [
                 (
                     start,
@@ -653,7 +667,7 @@ def _safe_commit_activity_4w_and_heatmap_52w(
     totals_4w = [0, 0, 0, 0]
     totals_52w = [0] * 52
     ok = True
-    with ThreadPoolExecutor(max_workers=10) as pool:
+    with nullcontext(_GITHUB_FANOUT_POOL) as pool:
         futures = [
             pool.submit(client.request, "GET", f"/repos/{owner}/{repo}/stats/commit_activity")
             for repo in repo_names[:_MAX_REPOS_FOR_AGGREGATES]
@@ -695,7 +709,7 @@ def _safe_total_cache_bytes(owner: str, token: str, repo_names: list[str]) -> tu
     client = GitHubClient(token)
     total = 0
     ok = True
-    with ThreadPoolExecutor(max_workers=10) as pool:
+    with nullcontext(_GITHUB_FANOUT_POOL) as pool:
         futures = [
             pool.submit(client.request, "GET", f"/repos/{owner}/{repo}/actions/caches")
             for repo in repo_names[:_MAX_REPOS_FOR_AGGREGATES]
@@ -743,7 +757,7 @@ def _safe_milestones(owner: str, token: str, repo_names: list[str]) -> tuple[lis
         except (httpx.HTTPStatusError, httpx.RequestError):
             return []
 
-    with ThreadPoolExecutor(max_workers=10) as pool:
+    with nullcontext(_GITHUB_FANOUT_POOL) as pool:
         futures = {pool.submit(_fetch, repo): repo for repo in repo_names[:_MAX_REPOS_FOR_AGGREGATES]}
         for future, repo in futures.items():
             for m in future.result():
@@ -814,7 +828,7 @@ def _safe_pr_cycle_time_8w(owner: str, token: str, account_type: str = "Organiza
     try:
         client = GitHubClient(token)
         week_starts = [_week_start(weeks_ago) for weeks_ago in range(7, -1, -1)]
-        with ThreadPoolExecutor(max_workers=8) as pool:
+        with nullcontext(_GITHUB_FANOUT_POOL) as pool:
             futures = [
                 pool.submit(_week_pr_cycle_time, client, owner, start, account_type) for start in week_starts
             ]
@@ -835,7 +849,7 @@ def _safe_release_cadence_4w(owner: str, token: str, repo_names: list[str]) -> l
         except (httpx.HTTPStatusError, httpx.RequestError):
             return []
 
-    with ThreadPoolExecutor(max_workers=10) as pool:
+    with nullcontext(_GITHUB_FANOUT_POOL) as pool:
         futures = [pool.submit(_fetch, repo) for repo in repo_names[:_MAX_REPOS_FOR_AGGREGATES]]
         for future in futures:
             releases = future.result()
@@ -888,6 +902,22 @@ async def personal_analytics_cockpit(
         )
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+    key = (user.id, owner, hashlib.sha256(token.encode()).hexdigest())
+    now = time.monotonic()
+    cached = _cockpit_cache.get(key)
+    if cached and now - cached[0] < _COCKPIT_CACHE_TTL_SECONDS:
+        return cached[1]
+    response = await _build_cockpit(owner, user, db, token)
+    if not response.degraded:
+        _cockpit_cache[key] = (now, response)
+    # Rotating installation tokens add a key each hour; sweep so the dict can't grow without bound.
+    for stale in [k for k, (at, _) in list(_cockpit_cache.items()) if now - at >= _COCKPIT_CACHE_TTL_SECONDS]:
+        _cockpit_cache.pop(stale, None)
+    return response
+
+
+async def _build_cockpit(owner: str, user: UserOut, db: Session, token: str) -> CockpitResponse:
 
     # Establish tenant context BEFORE any tenant-scoped read: scan_results is FORCE RLS, so reading it
     # first returns nothing under enforced RLS.

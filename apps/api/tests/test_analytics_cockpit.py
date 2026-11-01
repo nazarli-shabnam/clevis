@@ -30,6 +30,17 @@ def _make_user(db, email: str) -> UserOut:
     return UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_cockpit_cache(monkeypatch):
+    """Most tests re-query the cockpit after changing state, so they run with the response cache off."""
+    from src.routers import analytics
+
+    analytics._cockpit_cache.clear()
+    monkeypatch.setattr(analytics, "_COCKPIT_CACHE_TTL_SECONDS", 0)
+    yield
+    analytics._cockpit_cache.clear()
+
+
 @pytest.fixture()
 def mock_user(db):
     return _make_user(db, "cockpit@example.com")
@@ -1264,3 +1275,66 @@ def test_safe_release_cadence_4w_skips_non_list_response_and_missing_or_bad_date
         totals = _safe_release_cadence_4w("acme", "ghp_test", ["repo-not-a-list", "repo-b"])
 
     assert totals == [0, 0, 0, 0]
+
+
+def _cached_cockpit(http, token="ghp_test", overrides=None):
+    patchers = _patch_all(overrides)
+    _start_all(patchers)
+    try:
+        with patch("src.routers.analytics.resolve_owner_token", return_value=token):
+            return http.get("/me/analytics/cockpit/acme")
+    finally:
+        _stop_all(patchers)
+
+
+def test_cockpit_second_call_within_ttl_is_served_from_cache(http, monkeypatch):
+    from src.routers import analytics
+
+    monkeypatch.setattr(analytics, "_COCKPIT_CACHE_TTL_SECONDS", 60)
+    first = _cached_cockpit(http)
+    # Every GitHub-backed helper now fails loudly: a cache hit must not call any of them.
+    boom = {t: {"side_effect": AssertionError("GitHub was called")} for t in _DEFAULT_SAFE_MOCKS}
+    second = _cached_cockpit(http, overrides=boom)
+
+    assert first.status_code == second.status_code == 200
+    assert second.json() == first.json()
+
+
+def test_cockpit_cache_is_not_shared_across_tokens(http, monkeypatch):
+    from src.routers import analytics
+
+    monkeypatch.setattr(analytics, "_COCKPIT_CACHE_TTL_SECONDS", 60)
+    _cached_cockpit(http, token="ghp_one")
+    other = _cached_cockpit(http, token="ghp_two", overrides={"src.routers.analytics._safe_member_count": {"return_value": (99, True)}})
+
+    assert other.json()["member_count"] == 99
+
+
+def test_cockpit_cache_is_not_shared_across_users(db, monkeypatch):
+    from src.routers import analytics
+
+    monkeypatch.setattr(analytics, "_COCKPIT_CACHE_TTL_SECONDS", 60)
+    clients = []
+    for email in ("a@example.com", "b@example.com"):
+        user = _make_user(db, email)
+        a = FastAPI()
+        a.dependency_overrides[require_auth] = lambda user=user: user
+        a.dependency_overrides[get_db] = lambda: db
+        a.include_router(router)
+        clients.append(TestClient(a))
+
+    _cached_cockpit(clients[0])
+    second = _cached_cockpit(clients[1], overrides={"src.routers.analytics._safe_member_count": {"return_value": (5, True)}})
+
+    assert second.json()["member_count"] == 5
+
+
+def test_cockpit_degraded_response_is_not_cached(http, monkeypatch):
+    from src.routers import analytics
+
+    monkeypatch.setattr(analytics, "_COCKPIT_CACHE_TTL_SECONDS", 60)
+    degraded = _cached_cockpit(http, overrides={"src.routers.analytics._safe_member_count": {"return_value": (None, False)}})
+    healthy = _cached_cockpit(http)
+
+    assert degraded.json()["degraded"] is True
+    assert healthy.json()["degraded"] is False
