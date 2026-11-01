@@ -57,6 +57,41 @@ export interface CheckWaiver {
   active: boolean
 }
 
+export type DestinationKind = "slack" | "teams" | "generic" | "email"
+
+export type AlertEvent = "score_drop" | "waiver_expired" | "new_critical_alert" | "stale_pr_summary" | "automation_failed"
+
+export interface NotificationDestination {
+  id: number
+  kind: DestinationKind
+  name: string
+  events: AlertEvent[]
+  min_score_drop: number
+  enabled: boolean
+  created_at: string
+  /** generic webhooks only: a signing secret is set. The URL and secret are never returned. */
+  signed: boolean
+  /** email destinations only. */
+  recipients: string[] | null
+}
+
+export interface NotificationDestinationInput {
+  kind: DestinationKind
+  name: string
+  /** slack / teams / generic */
+  url?: string
+  /** email */
+  recipients?: string[]
+  /** generic only */
+  secret?: string
+  events: AlertEvent[]
+  min_score_drop: number
+}
+
+export type NotificationDestinationPatch = Partial<
+  Pick<NotificationDestinationInput, "name" | "events" | "min_score_drop" | "url" | "secret" | "recipients">
+> & { enabled?: boolean }
+
 export interface CheckWaiverInput {
   check_id: string
   repos: string[] | null

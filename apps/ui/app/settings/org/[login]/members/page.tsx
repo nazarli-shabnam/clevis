@@ -20,6 +20,7 @@ import { ScheduledScansCard } from "@/components/scheduled-scans-card"
 import { WaiversCard } from "@/components/waivers-card"
 import { EvidenceExportCard } from "@/components/evidence-export-card"
 import { MemberAccessSheet } from "@/components/member-access-sheet"
+import { NotificationDestinationsCard } from "@/components/notification-destinations-card"
 import { BadgeSettingsCard } from "@/components/badge-settings-card"
 import type { GithubOrgMember, InvitationBulkItem, InvitationOut, MyOrgMembership } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
@@ -805,6 +806,7 @@ export default function OrgMembersPage() {
         </>
       )}
 
+      {!rolePending && !notAdmin && <NotificationDestinationsCard orgLogin={orgLogin} />}
       {!rolePending && !notAdmin && <BadgeSettingsCard orgLogin={orgLogin} />}
 
       <div className="mt-4">
