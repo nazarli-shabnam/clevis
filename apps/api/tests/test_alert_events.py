@@ -194,3 +194,22 @@ def test_a_failing_alert_delivery_does_not_stop_the_sweep_or_repeat(db, acme):
         run_security_alert_sweep(db)
         run_security_alert_sweep(db)
     assert notify.call_count == 1
+
+
+def test_github_derived_names_cannot_inject_chat_markup(db, acme):
+    org = acme["org"]
+    _dest(db, org, events=("automation_failed", "new_critical_alert"))
+    nasty = "<!channel> <https://evil.example|click> [x](https://evil.example) *bold*\nnewline"
+    with patch("src.services.notifications.send", return_value=(True, "HTTP 200")) as send:
+        notifications.notify_automation_failed(db, org.tenant_id, "acme", "api", [{"workflow": nasty, "message": "m"}])
+        notifications.notify_new_critical_alerts(
+            db, org.tenant_id, "acme", [{"repo": nasty, "kind": "secret_scanning", "number": 1, "severity": None}]
+        )
+    for call in send.call_args_list:
+        text_sent = call.args[2]
+        assert "<" not in text_sent and ">" not in text_sent and "[" not in text_sent and "\n" not in text_sent
+        assert "&lt;!channel&gt;" in text_sent
+    # the structured data for generic webhooks keeps the raw value
+    assert send.call_args_list[0].args[3]["failures"][0]["workflow"] == nasty
+    assert "secret scanning #1" in send.call_args_list[1].args[2]
+

@@ -13,6 +13,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import re
 import socket
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -269,6 +270,19 @@ def notify_score_drop(
         )
 
 
+def _chat_safe(value: object, limit: int = 80) -> str:
+    """Make a GitHub-derived name safe to embed in the chat ``text`` of Slack/Teams messages.
+
+    Workflow names (and similar) are written by anyone with repo write access, so they could carry Slack
+    control sequences (``<!channel>``, ``<https://evil|label>``) or Teams markdown links. Escape ``& < >``
+    as Slack requires, drop the markdown characters that build links/emphasis, flatten whitespace and cap
+    the length. The raw value still travels, untouched, in the structured ``data`` of generic webhooks."""
+    cleaned = str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    cleaned = re.sub(r"[\[\]*`]", "", cleaned)
+    cleaned = " ".join(cleaned.split())
+    return cleaned[: limit - 1] + "…" if len(cleaned) > limit else cleaned
+
+
 def _notify_event(
     db: Session, tenant_id: int, org_login: str, event: str, text: str, data: dict, *, actor: str
 ) -> None:
@@ -314,7 +328,7 @@ def notify_new_critical_alerts(
     critical/high alerts (secret-scanning alerts carry no severity and always count)."""
     if not alerts:
         return
-    shown = "; ".join(f"{a['repo']} ({a['kind'].replace('_', ' ')} #{a['number']})" for a in alerts[:5])
+    shown = "; ".join(f"{_chat_safe(a['repo'])} ({_chat_safe(a['kind'].replace('_', ' '))} #{int(a['number'])})" for a in alerts[:5])
     more = f" and {len(alerts) - 5} more" if len(alerts) > 5 else ""
     text = f"Clevis: {len(alerts)} new critical/high security alert{'s' if len(alerts) != 1 else ''} in {org_login}: {shown}{more}."
     _notify_event(db, tenant_id, org_login, EVENT_NEW_CRITICAL_ALERT, text, {"org": org_login, "alerts": alerts}, actor=actor)
@@ -328,8 +342,8 @@ def notify_stale_prs(
     if not prs:
         return
     text = (
-        f"Clevis: {len(prs)} stale pull request{'s' if len(prs) != 1 else ''} in {org_login}/{repo} "
-        f"{'were' if len(prs) != 1 else 'was'} nudged: " + ", ".join(f"#{p['number']}" for p in prs[:10]) + "."
+        f"Clevis: {len(prs)} stale pull request{'s' if len(prs) != 1 else ''} in {_chat_safe(org_login)}/{_chat_safe(repo)} "
+        f"{'were' if len(prs) != 1 else 'was'} nudged: " + ", ".join(f"#{int(p['number'])}" for p in prs[:10]) + "."
     )
     _notify_event(db, tenant_id, org_login, EVENT_STALE_PR_SUMMARY, text, {"org": org_login, "repo": repo, "prs": prs}, actor=actor)
 
@@ -342,6 +356,6 @@ def notify_automation_failed(
         return
     text = (
         f"Clevis: {len(failures)} workflow dispatch{'es' if len(failures) != 1 else ''} failed in "
-        f"{org_login}/{repo}: " + ", ".join(str(f["workflow"]) for f in failures[:5]) + "."
+        f"{_chat_safe(org_login)}/{_chat_safe(repo)}: " + ", ".join(_chat_safe(f["workflow"]) for f in failures[:5]) + "."
     )
     _notify_event(db, tenant_id, org_login, EVENT_AUTOMATION_FAILED, text, {"org": org_login, "repo": repo, "failures": failures}, actor=actor)
