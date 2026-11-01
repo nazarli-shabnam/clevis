@@ -6,6 +6,7 @@ from pydantic import SecretStr
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
+from src.core.rate_limit import _buckets as _rate_limit_buckets
 from src.main import app
 from src.routers.branch_protection import BulkRequest
 from src.routers.dependabot_triage import TriageRequest
@@ -18,6 +19,14 @@ from src.services.token_resolution import pick_client_token
 
 _USER = UserOut(id=1, email="u@example.com", name=None, is_workspace_admin=False)
 _TOKEN = "ghp_sEcReTtOkEn1234567890"
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    # /auth/register is rate limited per IP; start from an empty bucket so the 422 is what we see.
+    _rate_limit_buckets.clear()
+    yield
+    _rate_limit_buckets.clear()
 
 
 @pytest.fixture()
