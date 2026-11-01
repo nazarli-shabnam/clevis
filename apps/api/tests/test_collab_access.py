@@ -154,8 +154,11 @@ def test_permission_audit_one_bad_repo_does_not_blank_others(client):
         resp = client.get("/github/orgs/acme/permission-audit", headers={"X-GitHub-Token": "ghp_test"})
 
     assert resp.status_code == 200
-    repos_by_name = {r["repo"]: r for r in resp.json()["repos"]}
-    assert repos_by_name["repo-bad"]["collaborators"] == []
+    body = resp.json()
+    repos_by_name = {r["repo"]: r for r in body["repos"]}
+    # A failed fetch is unknown access, not "no collaborators": it is reported, not listed as empty.
+    assert "repo-bad" not in repos_by_name
+    assert body["repos_failed"] == ["repo-bad"]
     assert len(repos_by_name["repo-good"]["collaborators"]) == 1
 
 

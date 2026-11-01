@@ -534,6 +534,7 @@ export interface PermissionAuditResponse {
   repos_scanned: number
   repos_total: number
   repos: RepoPermissions[]
+  repos_failed: string[]
   risk_summary: PermissionRiskSummary
 }
 

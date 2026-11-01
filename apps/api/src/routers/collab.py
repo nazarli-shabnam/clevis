@@ -374,11 +374,12 @@ def permission_audit(
     repos_total = len(repos_raw)
     scanned_repos = repos_raw[:_MAX_REPOS_FOR_PERMISSION_AUDIT]
 
-    def _fetch_repo_collaborators(repo_name: str) -> list[dict]:
+    def _fetch_repo_collaborators(repo_name: str) -> list[dict] | None:
+        # None = the fetch failed, which is not the same as "this repo has no collaborators".
         try:
             return client.request_paginated(f"/repos/{org_login}/{repo_name}/collaborators")
         except (httpx.HTTPStatusError, httpx.RequestError):
-            return []
+            return None
 
     with ThreadPoolExecutor(max_workers=10) as pool:
         raw_by_repo = dict(
@@ -393,7 +394,11 @@ def permission_audit(
     members_with_admin: set[str] = set()
     all_outside_seen: set[str] = set()
 
+    repos_failed = [name for name, raw in raw_by_repo.items() if raw is None]
+
     for repo_name, raw_collabs in raw_by_repo.items():
+        if raw_collabs is None:
+            continue
         collaborators = []
         for c in raw_collabs:
             # A malformed collaborator entry missing `login` shouldn't 500 the whole row.
@@ -424,6 +429,7 @@ def permission_audit(
         repos_scanned=len(scanned_repos),
         repos_total=repos_total,
         repos=repos,
+        repos_failed=repos_failed,
         risk_summary=PermissionRiskSummary(
             outside_with_write_or_admin=len(outside_with_elevated),
             members_with_admin=len(members_with_admin),

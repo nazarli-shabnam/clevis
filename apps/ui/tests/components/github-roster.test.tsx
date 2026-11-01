@@ -76,7 +76,7 @@ describe("GithubRoster (Collaborators page)", () => {
     outsideMock.mockResolvedValue({ org: "acme", collaborators: [], repos_scanned: 0, repos_total: 0 });
     pendingInvitationsMock.mockResolvedValue({ org: "acme", invitations: [] });
     permissionAuditMock.mockResolvedValue({
-      generated_at: new Date().toISOString(), repos_scanned: 0, repos_total: 0, repos: [],
+      generated_at: new Date().toISOString(), repos_scanned: 0, repos_total: 0, repos: [], repos_failed: [],
       risk_summary: { outside_with_write_or_admin: 0, members_with_admin: 0, total_outside_collaborators: 0 },
     });
     inactiveMembersMock.mockResolvedValue({ org: "acme", sampled_repos: [], members: [] });
@@ -315,6 +315,7 @@ describe("GithubRoster (Collaborators page)", () => {
       generated_at: new Date().toISOString(),
       repos_scanned: 1,
       repos_total: 1,
+      repos_failed: [],
       repos: [
         {
           repo: "acme/api",
@@ -374,6 +375,23 @@ describe("GithubRoster (Collaborators page)", () => {
     expect(await screen.findByText(/Checked 100 of 250 members/)).toBeInTheDocument();
   });
 
+  it("tells the user which repos the permission audit could not scan", async () => {
+    membersMock.mockResolvedValue({ org: "acme", members: [], two_factor_overlay_available: true });
+    permissionAuditMock.mockResolvedValue({
+      generated_at: new Date().toISOString(),
+      repos_scanned: 3,
+      repos_total: 3,
+      repos: [],
+      repos_failed: ["secret-repo", "locked-repo"],
+      risk_summary: { outside_with_write_or_admin: 0, members_with_admin: 0, total_outside_collaborators: 0 },
+    });
+
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Audit" }));
+
+    expect(await screen.findByText(/2 repos could not be scanned \(secret-repo, locked-repo\)/)).toBeInTheDocument();
+  });
+
   it("shows the partial-scan note when the permission audit didn't scan every repo", async () => {
     membersMock.mockResolvedValue({ org: "acme", members: [], two_factor_overlay_available: true });
     permissionAuditMock.mockResolvedValue({
@@ -381,6 +399,7 @@ describe("GithubRoster (Collaborators page)", () => {
       repos_scanned: 5,
       repos_total: 12,
       repos: [],
+      repos_failed: [],
       risk_summary: { outside_with_write_or_admin: 0, members_with_admin: 0, total_outside_collaborators: 0 },
     });
 
