@@ -878,3 +878,33 @@ def test_require_auth_trusts_db_admin_flag_over_token_claim(db):
 
     assert out.is_workspace_admin is False
     assert out.email == "plain@example.com"
+
+
+# ── retention windows (days; 0 switches the purge off) ───────────────────────
+
+_RETENTION_KEYS = ("retention_webhook_deliveries_days", "retention_jobs_days", "retention_repo_events_days")
+
+
+@pytest.mark.parametrize("key", _RETENTION_KEYS)
+@pytest.mark.parametrize("value", ["0", "30", "3650"])
+def test_update_config_accepts_retention_windows_including_zero(config_client_owner, key, value):
+    with patch("src.routers.config.set_config") as set_config, patch("src.routers.config.read_all", return_value={}):
+        resp = config_client_owner.put(f"/config/{key}", json={"value": value})
+    assert resp.status_code == 200
+    assert set_config.call_args.args[:2] == (key, value)
+
+
+@pytest.mark.parametrize("key", _RETENTION_KEYS)
+@pytest.mark.parametrize("value, fragment", [("-1", "at least 0"), ("3651", "at most 3650"), ("soon", "integer")])
+def test_update_config_rejects_invalid_retention_windows(config_client_owner, key, value, fragment):
+    with patch("src.routers.config.set_config") as set_config:
+        resp = config_client_owner.put(f"/config/{key}", json={"value": value})
+    assert resp.status_code == 422
+    assert fragment in resp.json()["detail"]
+    set_config.assert_not_called()
+
+
+def test_update_config_still_rejects_zero_for_other_integer_keys(config_client_owner):
+    resp = config_client_owner.put("/config/worker_poll_seconds", json={"value": "0"})
+    assert resp.status_code == 422
+    assert "at least 1" in resp.json()["detail"]

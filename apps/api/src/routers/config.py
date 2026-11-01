@@ -31,7 +31,13 @@ _INT_KEYS = {
     "dependabot_sla_critical_days",
     "dependabot_sla_high_days",
     "scheduled_scan_poll_seconds",
+    "retention_webhook_deliveries_days",
+    "retention_jobs_days",
+    "retention_repo_events_days",
 }
+# Retention windows in days: 0 switches that purge off, and nothing is kept longer than ten years.
+_RETENTION_KEYS = {"retention_webhook_deliveries_days", "retention_jobs_days", "retention_repo_events_days"}
+_MAX_RETENTION_DAYS = 3650
 _BOOL_KEYS = {"registration_enabled", "score_hygiene_checks"}
 # key -> allowed values, for small closed-vocabulary settings.
 _ENUM_KEYS = {
@@ -67,8 +73,11 @@ def update_config(
             parsed_int = int(body.value)
         except ValueError:
             raise HTTPException(status_code=422, detail=f"{key} must be an integer")
-        if parsed_int < 1:
-            raise HTTPException(status_code=422, detail=f"{key} must be at least 1")
+        minimum = 0 if key in _RETENTION_KEYS else 1
+        if parsed_int < minimum:
+            raise HTTPException(status_code=422, detail=f"{key} must be at least {minimum}")
+        if key in _RETENTION_KEYS and parsed_int > _MAX_RETENTION_DAYS:
+            raise HTTPException(status_code=422, detail=f"{key} must be at most {_MAX_RETENTION_DAYS}")
 
     if key in _BOOL_KEYS and body.value not in ("true", "false"):
         raise HTTPException(status_code=422, detail=f"{key} must be 'true' or 'false'")

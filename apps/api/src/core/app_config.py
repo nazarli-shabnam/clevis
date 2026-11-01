@@ -27,6 +27,9 @@ _ACCEPTED_KEYS = {
     "score_hygiene_checks",
     "scheduled_scan_cadence",
     "scheduled_scan_poll_seconds",
+    "retention_webhook_deliveries_days",
+    "retention_jobs_days",
+    "retention_repo_events_days",
 }
 _TTL = 60.0
 _cache: dict[str, tuple[str, float]] = {}
