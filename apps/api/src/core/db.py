@@ -54,6 +54,9 @@ class GitHubInstallation(Base):
             unique=True,
             postgresql_where="owner_user_id IS NOT NULL",
         ),
+        # Webhooks and the permission/uninstall paths look a row up by GitHub's installation id alone.
+        # Not unique: existing data may hold duplicates, and a failed unique build would block startup.
+        Index("ix_github_installations_installation_id", "installation_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -80,6 +83,9 @@ class AuditLog(Base):
     __table_args__ = (
         # The org activity log reads "this tenant's newest rows" with a before_id cursor.
         Index("ix_audit_logs_tenant_id_id", "tenant_id", "id"),
+        # "This tenant's newest row for action X": the digest sweep's MAX(created_at) for
+        # 'digest.sent' on every tick, and the first-run checklist's has-any-action probe.
+        Index("ix_audit_logs_tenant_id_action_created_at", "tenant_id", "action", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -154,6 +160,10 @@ class RepoEvent(Base):
     __tablename__ = "repo_events"
     __table_args__ = (
         Index("ix_repo_events_tenant_id", "tenant_id"),
+        # Activity feed: a tenant's newest events (ORDER BY occurred_at DESC LIMIT n).
+        Index("ix_repo_events_tenant_id_occurred_at", "tenant_id", "occurred_at"),
+        # Inactive members: each login's newest push (DISTINCT ON (actor) ... ORDER BY actor, occurred_at DESC).
+        Index("ix_repo_events_tenant_id_event_type_actor_occurred_at", "tenant_id", "event_type", "actor", "occurred_at"),
         UniqueConstraint("delivery_id", name="uq_repo_events_delivery_id"),
     )
 
@@ -339,6 +349,9 @@ class Org(Base):
         # Composite FK: tenant_id must name a tenant whose org_id is this org (not a personal tenant,
         # another org's, or one shared across orgs).
         ForeignKeyConstraint(["tenant_id", "id"], ["tenants.id", "tenants.org_id"], name="fk_orgs_tenant_id_reciprocal"),
+        # org_repo.get_by_login_ci filters lower(github_login) on every org-scoped request, which the
+        # plain unique index on github_login cannot serve. Not unique (see ix_github_installations_*).
+        Index("ix_orgs_github_login_lower", text("lower(github_login)")),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -459,6 +472,8 @@ class ScanResult(Base):
         Index("ix_scan_results_owner_created_at", "owner", "created_at"),
         # Serves the tenant-scoped "latest scan" reads (public badge, /orgs/{org}/score).
         Index("ix_scan_results_tenant_id_created_at", "tenant_id", text("created_at DESC")),
+        # Owner reads compare lower(owner) (a caller can type any casing), which the plain owner index can't serve.
+        Index("ix_scan_results_lower_owner_created_at", text("lower(owner)"), text("created_at DESC")),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
