@@ -1235,8 +1235,27 @@ def test_run_survives_redis_still_being_down_when_it_tries_to_recreate_the_group
         event_consumer.run()
 
     assert ensure.call_count == 3  # start-up, the failed recreate, the successful one
-    sleep.assert_called_once_with(5)
+    # One 5 s wait after the failed recreate, one after the second consecutive NOGROUP.
+    assert [c.args for c in sleep.call_args_list] == [(5,), (5,)]
     assert any("still down" in r.exc_text for r in caplog.records if r.exc_info)
+
+
+def test_run_backs_off_when_the_group_is_still_missing_right_after_recreating_it(monkeypatch):
+    """Recreate succeeds but XREADGROUP keeps saying NOGROUP: don't spin on it."""
+    nogroup = redis.ResponseError("NOGROUP No such key")
+    _stub_cycle_collaborators(monkeypatch, [nogroup, nogroup, nogroup, None])
+    ensure = MagicMock()
+    monkeypatch.setattr(event_consumer, "_ensure_group", ensure)
+    sleep = MagicMock()
+    monkeypatch.setattr(event_consumer.time, "sleep", sleep)
+    monkeypatch.setattr(event_consumer, "_touch_heartbeat", MagicMock(side_effect=[None, _StopLoop]))
+
+    with pytest.raises(_StopLoop):
+        event_consumer.run()
+
+    assert ensure.call_count == 4  # start-up plus one recreate per NOGROUP
+    # The first NOGROUP is retried at once; each consecutive one after it waits.
+    assert [c.args for c in sleep.call_args_list] == [(5,), (5,)]
 
 
 def test_run_does_not_recreate_the_group_for_an_unrelated_redis_response_error(monkeypatch):

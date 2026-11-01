@@ -568,8 +568,10 @@ def run() -> None:
     log.info("event consumer started, group=%s consumer=%s", _GROUP_NAME, _CONSUMER_NAME)
     _touch_heartbeat()  # initialised and connected: healthy until the first cycle completes
 
+    group_was_missing = False  # the previous cycle also found the group gone
     while True:
         cycle_completed = False
+        group_missing = False
         try:
             with psycopg.connect(_DB_URL) as pg_conn:
                 _retry_deferred(pg_conn, redis_client)
@@ -590,7 +592,11 @@ def run() -> None:
             cycle_completed = True
         except redis.ResponseError as error:
             if "NOGROUP" in str(error):
+                group_missing = True
                 _recreate_group(redis_client)
+                if group_was_missing:
+                    # Recreated last pass and it is gone again (or never took): don't spin on it.
+                    time.sleep(5)
             else:
                 log.exception("event consumer connection error")
                 time.sleep(5)
@@ -600,6 +606,7 @@ def run() -> None:
         except Exception:
             log.exception("event consumer loop error")
             time.sleep(5)
+        group_was_missing = group_missing
         if cycle_completed:
             # Only a cycle that reached Redis and Postgres counts as alive, so the container healthcheck
             # goes unhealthy when the consumer is stuck in an error loop instead of being refreshed by it.
