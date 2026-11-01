@@ -65,7 +65,8 @@ def fetch_workflows(client: GitHubClient, owner: str, repo: str) -> list[Workflo
         name = entry.get("name", "")
         if not name.endswith((".yml", ".yaml")):
             continue
-        blob = client.request("GET", entry["url"])
+        # The listing's `url` is absolute (GitHubClient prepends the API base), so fetch by `path`.
+        blob = client.request("GET", f"/repos/{owner}/{repo}/contents/{entry['path']}")
         try:
             text = base64.b64decode(blob.get("content", "")).decode("utf-8")
         except (binascii.Error, UnicodeDecodeError):
