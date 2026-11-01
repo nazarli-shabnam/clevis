@@ -160,3 +160,37 @@ def test_run_still_backs_off_after_a_poll_error(worker_db, monkeypatch):
     assert [c.args[1] for c in process.call_args_list] == [first]  # the loop slept instead of spinning on
     sleep.assert_called_once_with(5)
     assert _fetch(conn, second)[0] == "queued"
+
+
+def test_run_backs_off_when_the_database_is_unreachable(monkeypatch, caplog):
+    sleep = MagicMock(side_effect=_StopLoop)
+    monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 7)
+    monkeypatch.setattr(worker.time, "sleep", sleep)
+    monkeypatch.setattr(worker.psycopg, "connect", MagicMock(side_effect=worker.psycopg.OperationalError("down")))
+
+    with caplog.at_level("ERROR", logger="worker"):
+        try:
+            worker.run()
+        except _StopLoop:
+            pass
+
+    sleep.assert_called_once_with(7)
+    assert "database connection failed" in caplog.text
+
+
+def test_run_reads_the_poll_interval_only_when_it_is_about_to_sleep(worker_db, monkeypatch):
+    conn, created_ids = worker_db
+    for _ in range(3):
+        _insert_queued_job(conn, created_ids)
+    read = MagicMock(return_value=5)
+    monkeypatch.setattr(worker, "_read_poll_seconds", read)
+    monkeypatch.setattr(worker.time, "sleep", MagicMock(side_effect=_StopLoop))
+    monkeypatch.setattr(worker, "process_job", MagicMock())
+
+    try:
+        worker.run()
+    except _StopLoop:
+        pass
+
+    # Once at start-up for the log line, once for the single sleep: not once per job.
+    assert read.call_count == 2
