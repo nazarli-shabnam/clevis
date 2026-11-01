@@ -417,3 +417,21 @@ def test_events_falls_back_to_live_github_when_no_installation_is_connected(even
     assert resp.status_code == 200
     mock_client.assert_called_once()
     assert resp.json()["events"][0]["actor"] == "alice"
+
+
+@pytest.mark.parametrize(
+    "path,field,bad",
+    [
+        ("events", "per_page", 0),
+        ("events", "per_page", -1),
+        ("events", "per_page", 101),
+        ("failed-runs", "limit", 0),
+        ("failed-runs", "limit", 101),
+        ("release-timeline", "days", 0),
+        ("release-timeline", "days", 366),
+        ("release-timeline", "days", 10**12),
+    ],
+)
+def test_org_feed_inputs_out_of_range_are_rejected_with_422(events_client, path, field, bad):
+    resp = events_client.post(f"/github/orgs/acme/{path}", json={field: bad})
+    assert resp.status_code == 422
