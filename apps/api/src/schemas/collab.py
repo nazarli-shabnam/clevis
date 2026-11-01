@@ -75,6 +75,9 @@ class PermissionAuditResponse(BaseModel):
     repos_scanned: int
     repos_total: int
     repos: list[RepoPermissions]
+    # Repos whose collaborator fetch failed (403, rate limit, network): their access is unknown, so they
+    # are not in `repos` and the risk_summary counts do not include them.
+    repos_failed: list[str] = []
     risk_summary: PermissionRiskSummary
 
 

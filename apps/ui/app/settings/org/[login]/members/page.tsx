@@ -356,6 +356,9 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
               {permissionAuditQuery.data && permissionAuditQuery.data.repos_scanned < permissionAuditQuery.data.repos_total && (
                 <> · scanned {permissionAuditQuery.data.repos_scanned} of {permissionAuditQuery.data.repos_total} repos</>
               )}
+              {permissionAuditQuery.data && permissionAuditQuery.data.repos_failed.length > 0 && (
+                <> · {permissionAuditQuery.data.repos_failed.length} repos could not be scanned ({permissionAuditQuery.data.repos_failed.join(", ")})</>
+              )}
             </span>
           </div>
           {permissionAuditQuery.isLoading ? (
