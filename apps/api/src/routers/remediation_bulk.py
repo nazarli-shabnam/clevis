@@ -12,7 +12,7 @@ calls per repo, with their own retry back-off, must stay well inside a proxy's t
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
@@ -21,7 +21,7 @@ from src.core.rbac import OrgContext, require_org_role
 from src.repositories import audit_repo
 from src.services import check_remediation, check_remediation_bulk
 from src.services.github_client import GitHubClient
-from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token
+from src.services.token_resolution import NoGitHubTokenAvailable, pick_client_token, resolve_org_token
 
 router = APIRouter()
 
@@ -39,7 +39,7 @@ class BulkRemediateRequest(BaseModel):
     check_id: str
     repos: list[str] = Field(min_length=1, max_length=MAX_REPOS)
     dry_run: bool = True
-    token: str | None = None
+    token: SecretStr | None = None
 
 
 class BulkRemediateItem(BaseModel):
@@ -82,7 +82,7 @@ def bulk_remediate(
             db,
             org_id=ctx.org.id,
             account_login=ctx.org.github_login,
-            client_token=body.token or x_github_token,
+            client_token=pick_client_token(body.token, x_github_token),
         )
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

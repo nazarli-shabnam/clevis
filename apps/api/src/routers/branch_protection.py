@@ -6,7 +6,7 @@ GitHub's ``Administration: Read and write`` permission.
 """
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
@@ -15,7 +15,7 @@ from src.core.rbac import OrgContext, require_org_role
 from src.repositories import audit_repo, automation_settings_repo
 from src.services import branch_protection_bulk
 from src.services.github_client import GitHubClient
-from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token
+from src.services.token_resolution import NoGitHubTokenAvailable, pick_client_token, resolve_org_token
 
 router = APIRouter()
 
@@ -33,7 +33,7 @@ class BulkRequest(BaseModel):
     preset: dict | None = None
     dry_run: bool = True
     save_preset: bool = False
-    token: str | None = None
+    token: SecretStr | None = None
 
 
 class RepoDiffOut(BaseModel):
@@ -94,7 +94,7 @@ def bulk_branch_protection(
             db,
             org_id=ctx.org.id,
             account_login=ctx.org.github_login,
-            client_token=body.token or x_github_token,
+            client_token=pick_client_token(body.token, x_github_token),
         )
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

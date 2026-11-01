@@ -5,7 +5,7 @@ before the GitHub call. Requires ``pull_requests: write`` on the App / PAT.
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 from sqlalchemy.orm import Session
 
 from src.core.app_config import get_config
@@ -23,6 +23,7 @@ from src.services.github_client import GitHubClient, github_error as _github_err
 from src.services.token_resolution import (
     InsufficientOrgRole,
     NoGitHubTokenAvailable,
+    pick_client_token,
     resolve_org_token,
     resolve_owner_token,
 )
@@ -31,7 +32,7 @@ router = APIRouter()
 
 
 class NudgeRequest(BaseModel):
-    token: str | None = None
+    token: SecretStr | None = None
 
 
 class NudgeItem(BaseModel):
@@ -117,7 +118,7 @@ def nudge_stale_prs(
     try:
         token = resolve_owner_token(
             db, user_id=user.id, owner=owner,
-            client_token=body.token or x_github_token, min_role="admin",
+            client_token=pick_client_token(body.token, x_github_token), min_role="admin",
         )
     except InsufficientOrgRole as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -144,7 +145,7 @@ def nudge_stale_prs_for_org(
     try:
         token = resolve_org_token(
             db, org_id=ctx.org.id, account_login=owner,
-            client_token=body.token or x_github_token,
+            client_token=pick_client_token(body.token, x_github_token),
         )
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
