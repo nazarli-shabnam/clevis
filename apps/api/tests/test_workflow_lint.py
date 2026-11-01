@@ -206,11 +206,18 @@ def _github(mock, *, workflows: dict[str, str], existing_pr_url: str | None = No
     def request(method, path, params=None, json=None):
         if path.endswith("/contents/.github/workflows"):
             return [
-                {"name": n, "path": f".github/workflows/{n}", "url": f"blob:{n}"}
+                {
+                    "name": n,
+                    "path": f".github/workflows/{n}",
+                    # GitHub's real listing carries absolute URLs, which GitHubClient must never be handed.
+                    "url": f"https://api.github.com/repos/acme/api/contents/.github/workflows/{n}?ref=main",
+                }
                 for n in workflows
             ]
-        if path.startswith("blob:"):
-            return _blob(workflows[path[len("blob:") :]])
+        assert path.startswith("/"), f"absolute URL passed to GitHubClient: {path}"
+        prefix = "/repos/acme/api/contents/.github/workflows/"
+        if method == "GET" and path.startswith(prefix):
+            return _blob(workflows[path[len(prefix) :]])
         if path == "/repos/acme/api" or path.endswith("/repos/acme/api"):
             return {"default_branch": "main"}
         if "/git/ref/heads/" in path:
@@ -387,8 +394,8 @@ def test_a_blob_that_is_not_valid_utf8_base64_is_skipped(client, db, user):
 
     def request(method, path, params=None, json=None):
         if path.endswith("/contents/.github/workflows"):
-            return [{"name": "bad.yml", "path": ".github/workflows/bad.yml", "url": "blob:bad"}]
-        if path == "blob:bad":
+            return [{"name": "bad.yml", "path": ".github/workflows/bad.yml", "url": "https://api.github.com/repos/acme/api/contents/.github/workflows/bad.yml?ref=main"}]
+        if method == "GET" and path == "/repos/acme/api/contents/.github/workflows/bad.yml":
             return {"content": "!!!not base64!!!", "sha": "s"}
         return {}
 
@@ -404,8 +411,8 @@ def test_open_pr_resets_an_existing_fix_branch(client, db, user):
 
     def request(method, path, params=None, json=None):
         if path.endswith("/contents/.github/workflows"):
-            return [{"name": "bad.yml", "path": ".github/workflows/bad.yml", "url": "blob:bad"}]
-        if path == "blob:bad":
+            return [{"name": "bad.yml", "path": ".github/workflows/bad.yml", "url": "https://api.github.com/repos/acme/api/contents/.github/workflows/bad.yml?ref=main"}]
+        if method == "GET" and path == "/repos/acme/api/contents/.github/workflows/bad.yml":
             return _blob(_BAD_PRT)
         if path.endswith("/repos/acme/api"):
             return {"default_branch": "main"}
@@ -438,8 +445,8 @@ def test_open_pr_surfaces_a_non_422_branch_create_error(client, db, user):
 
     def request(method, path, params=None, json=None):
         if path.endswith("/contents/.github/workflows"):
-            return [{"name": "bad.yml", "path": ".github/workflows/bad.yml", "url": "blob:bad"}]
-        if path == "blob:bad":
+            return [{"name": "bad.yml", "path": ".github/workflows/bad.yml", "url": "https://api.github.com/repos/acme/api/contents/.github/workflows/bad.yml?ref=main"}]
+        if method == "GET" and path == "/repos/acme/api/contents/.github/workflows/bad.yml":
             return _blob(_BAD_PRT)
         if path.endswith("/repos/acme/api"):
             return {"default_branch": "main"}
