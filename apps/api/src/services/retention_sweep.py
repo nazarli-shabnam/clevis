@@ -29,6 +29,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from psycopg.errors import InsufficientPrivilege
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -57,18 +58,19 @@ REPO_EVENTS = RetentionPolicy("retention_repo_events_days", default_days=180, mi
 _TERMINAL_DELIVERY_STATUSES = ("processed", "dropped", "queue_abandoned")
 _TERMINAL_JOB_STATUSES = ("done", "failed")
 
+# No ORDER BY in the subqueries: which rows go first is irrelevant, and sorting would make Postgres find and
+# order every expired row for each batch instead of stopping after the first BATCH_SIZE.
 _DELETE_DELIVERIES = (
     "DELETE FROM webhook_deliveries WHERE id IN ("
-    "SELECT id FROM webhook_deliveries WHERE status = ANY(:statuses) AND received_at < :cutoff "
-    "ORDER BY id LIMIT :limit)"
+    "SELECT id FROM webhook_deliveries WHERE status = ANY(:statuses) AND received_at < :cutoff LIMIT :limit)"
 )
 _DELETE_JOBS = (
     "DELETE FROM jobs WHERE id IN ("
-    "SELECT id FROM jobs WHERE status = ANY(:statuses) AND updated_at < :cutoff ORDER BY id LIMIT :limit)"
+    "SELECT id FROM jobs WHERE status = ANY(:statuses) AND updated_at < :cutoff LIMIT :limit)"
 )
 _DELETE_REPO_EVENTS = (
     "DELETE FROM repo_events WHERE id IN ("
-    "SELECT id FROM repo_events WHERE tenant_id = :tenant_id AND occurred_at < :cutoff ORDER BY id LIMIT :limit)"
+    "SELECT id FROM repo_events WHERE tenant_id = :tenant_id AND occurred_at < :cutoff LIMIT :limit)"
 )
 
 
@@ -97,6 +99,8 @@ def _delete_in_batches(db: Session, sql: str, params: dict) -> int:
         total += deleted
         if deleted < BATCH_SIZE:
             break
+    else:
+        logger.info("retention batch cap reached after %d rows; the rest is purged on the next tick", total)
     return total
 
 
@@ -133,9 +137,17 @@ def run_retention_sweep(db: Session) -> None:
             continue
         try:
             purged[policy.key] = purge(db, now - timedelta(days=days))
-        except Exception:
+        except Exception as exc:
             # One table failing (a lock timeout, a transient error) must not stop the others.
             db.rollback()
-            logger.exception("retention purge failed for %s", policy.key)
+            if isinstance(getattr(exc, "orig", None), InsufficientPrivilege):
+                # The API's database role lacks DELETE on the table: a grant is missing, not a transient fault.
+                logger.error(
+                    "retention purge for %s skipped: the database role may not DELETE from that table (%s)",
+                    policy.key,
+                    exc.orig,
+                )
+            else:
+                logger.exception("retention purge failed for %s", policy.key)
     if any(purged.values()):
         logger.info("retention sweep purged rows: %s", purged)

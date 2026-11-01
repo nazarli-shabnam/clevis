@@ -189,6 +189,23 @@ def test_an_invalid_value_falls_back_to_the_default_window(db, bad, caplog):
         _run(db, retention_webhook_deliveries_days=bad)
 
     assert _left(db, WebhookDelivery, WebhookDelivery.delivery_id, ["bad-old", "bad-recent"]) == {"bad-recent"}
+    assert any("retention_webhook_deliveries_days" in r.message for r in caplog.records)
+
+
+def test_a_missing_delete_privilege_is_reported_clearly_and_does_not_stop_the_others(db, caplog):
+    from psycopg.errors import InsufficientPrivilege
+    from sqlalchemy.exc import ProgrammingError
+
+    _job(db, status="done", age_days=45, name="ret-priv-job")
+    denied = ProgrammingError("DELETE ...", {}, InsufficientPrivilege("permission denied for table repo_events"))
+
+    with patch.object(retention_sweep, "_purge_repo_events", side_effect=denied):
+        with caplog.at_level(logging.ERROR):
+            _run(db)
+
+    assert _left(db, Job, Job.job_type, ["ret-priv-job"]) == set()
+    messages = [r.message for r in caplog.records]
+    assert any("retention_repo_events_days skipped" in m and "permission denied for table repo_events" in m for m in messages)
 
 
 def test_the_window_is_capped_at_ten_years():
@@ -198,12 +215,14 @@ def test_the_window_is_capped_at_ten_years():
 
 # ── bounded work ─────────────────────────────────────────────────────────────
 
-def test_a_tick_stops_after_the_batch_cap_and_the_next_tick_continues(db):
+def test_a_tick_stops_after_the_batch_cap_and_the_next_tick_continues(db, caplog):
     for i in range(5):
         _delivery(db, status="processed", age_days=45, name=f"batch-{i}")
 
     with patch.object(retention_sweep, "BATCH_SIZE", 2), patch.object(retention_sweep, "MAX_BATCHES", 2):
-        _run(db)
+        with caplog.at_level(logging.INFO):
+            _run(db)
+        assert any("batch cap reached" in r.message for r in caplog.records)
         after_first = len(_left(db, WebhookDelivery, WebhookDelivery.delivery_id, [f"batch-{i}" for i in range(5)]))
         _run(db)
         after_second = len(_left(db, WebhookDelivery, WebhookDelivery.delivery_id, [f"batch-{i}" for i in range(5)]))
