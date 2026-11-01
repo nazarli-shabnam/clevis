@@ -211,6 +211,76 @@ def test_security_matrix_404_on_dependabot_is_genuinely_disabled(client):
     assert row["score"] == 100
 
 
+def _branch_error(status_code: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("GET", "https://api.github.com/x")
+    return httpx.HTTPStatusError("boom", request=request, response=httpx.Response(status_code, request=request))
+
+
+def _matrix_row_for_branch_response(client, branch_result):
+    """Run the matrix for one repo whose only varying call is the branch lookup."""
+
+    def _request_side_effect(method, path, params=None):
+        if path.endswith("/branches/main"):
+            if isinstance(branch_result, Exception):
+                raise branch_result
+            return branch_result
+        if path.endswith("/code-scanning/alerts"):
+            return []
+        if path.endswith("/dependabot/alerts"):
+            return []
+        return {}
+
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.return_value = [
+            {"name": "api", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
+        ]
+        mock_client.return_value.request.side_effect = _request_side_effect
+        resp = client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
+    assert resp.status_code == 200
+    return resp.json()["repos"][0]
+
+
+@pytest.mark.parametrize("status_code", [401, 403, 429, 500, 502, 503])
+def test_security_matrix_non_404_branch_error_is_unknown_not_unprotected(client, status_code):
+    """Only a 404 is a real 'unprotected' answer; a 401 or a GitHub 5xx says nothing about the repo."""
+    row = _matrix_row_for_branch_response(client, _branch_error(status_code))
+
+    assert sorted(row["unknown_dimensions"]) == ["branch_protection", "force_push"]
+    # Unknown dimensions are left out of the score instead of counting against the repo.
+    assert row["score"] == 100
+
+
+def test_security_matrix_404_branch_is_genuinely_unprotected(client):
+    row = _matrix_row_for_branch_response(client, _branch_error(404))
+
+    assert row["branch_protection"] is False
+    assert row["unknown_dimensions"] == []
+    assert row["score"] == 80  # branch_protection is the one failing evaluable dimension
+
+
+@pytest.mark.parametrize("default_branch", [None, ""])
+def test_security_matrix_repo_without_default_branch_skips_branch_lookup(client, default_branch):
+    """No default branch means nothing to look up: never request /branches/None."""
+    requested_paths: list[str] = []
+
+    def _request_side_effect(method, path, params=None):
+        requested_paths.append(path)
+        return []
+
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.return_value = [
+            {"name": "empty", "default_branch": default_branch, "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
+        ]
+        mock_client.return_value.request.side_effect = _request_side_effect
+        resp = client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
+
+    assert resp.status_code == 200
+    row = resp.json()["repos"][0]
+    assert not any("/branches/" in path for path in requested_paths)
+    assert sorted(row["unknown_dimensions"]) == ["branch_protection", "force_push"]
+    assert row["score"] == 100
+
+
 def test_secret_scanning_no_token_returns_400(client):
     resp = client.get("/me/repos/acme/demo/secret-scanning")
     assert resp.status_code == 400
