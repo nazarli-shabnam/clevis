@@ -295,15 +295,9 @@ def _handle_backfill_repo_events(conn: psycopg.Connection, job_id: int, payload_
         with httpx.Client(timeout=20) as client:
             raw_events = backfill.fetch_events(client, base, headers, payload.account_login, payload.account_type)
     except httpx.HTTPStatusError as error:
-        resp = error.response
-        if _is_transient_github_error(resp):
-            # Still failing after fetch_events' own retries: a 5xx or a rate limit is worth a later attempt
-            # (with the job backoff), unlike a genuine 4xx.
-            log.warning("job %d got a %d from GitHub (attempt %d)", job_id, resp.status_code, retry_count + 1)
-            _requeue_for_retry(conn, job_id, retry_count, sanitize_error(_github_error_message(resp)))
-        else:
-            log.error("job %d failed: GitHub API error %d", job_id, resp.status_code)
-            _mark_failed(conn, job_id, sanitize_error(_github_error_message(resp)), retry_count)
+        # Still failing after fetch_events' own retries: a 5xx or a rate limit is requeued with the job
+        # backoff, a genuine 4xx fails the job.
+        _github_response_is_error(conn, job_id, retry_count, error.response)
         return
     except httpx.RequestError as error:
         log.warning("job %d hit a network error (attempt %d): %s", job_id, retry_count + 1, error)
@@ -413,15 +407,9 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
             with httpx.Client(timeout=20) as client:
                 roster = membership_reconcile.fetch_org_roster(client, base, headers, payload.org_login)
         except httpx.HTTPStatusError as error:
-            resp = error.response
-            # Rate limit still in effect after _get_with_retry's backoff: requeue for a later
+            # A rate limit still in effect after _get_with_retry's backoff is requeued for a later
             # attempt rather than failing like a genuine 4xx.
-            if _is_transient_github_error(resp):
-                log.warning("job %d got a %d from GitHub (attempt %d)", job_id, resp.status_code, retry_count + 1)
-                _requeue_for_retry(conn, job_id, retry_count, sanitize_error(_github_error_message(resp)))
-            else:
-                log.error("job %d failed: GitHub API error %d", job_id, resp.status_code)
-                _mark_failed(conn, job_id, sanitize_error(_github_error_message(resp)), retry_count)
+            _github_response_is_error(conn, job_id, retry_count, error.response)
             return
         except httpx.RequestError as error:
             log.warning("job %d hit a network error (attempt %d): %s", job_id, retry_count + 1, error)
