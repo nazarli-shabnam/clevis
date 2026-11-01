@@ -11,6 +11,7 @@ therefore cannot grow memory without bound. The trade-off is that a flood of mor
 """
 
 import time
+from collections import OrderedDict
 from threading import Lock
 
 from fastapi import HTTPException, Request, status
@@ -18,7 +19,8 @@ from fastapi import HTTPException, Request, status
 _DEFAULT_MAX_REQUESTS = 10
 _DEFAULT_WINDOW_SECONDS = 60
 
-# Hard ceiling on live counters per store (a few MB at most), and how often expired ones are swept.
+# Hard ceiling on live counters per store (roughly 10-15 MB at most), and how often expired ones are
+# swept.
 _MAX_BUCKETS = 50_000
 _PRUNE_INTERVAL_SECONDS = 30.0
 
@@ -32,21 +34,22 @@ class _Buckets:
 
     def __init__(self, max_size: int = _MAX_BUCKETS) -> None:
         self._max_size = max_size
-        # Insertion order doubles as recency: a key is re-inserted on every hit, so the first
-        # key is the least recently used one.
-        self._data: dict[str, tuple[int, float, int]] = {}
+        # Ordered by recency: a key moves to the end on every hit, so the first key is the least
+        # recently used one. OrderedDict (not dict) keeps both moves and evictions O(1).
+        self._data: OrderedDict[str, tuple[int, float, int]] = OrderedDict()
         self._last_prune = 0.0
 
     def hit(self, key: str, window_seconds: int, now: float) -> int:
         """Count one request for ``key`` and return how many it has made in its current window."""
         self._prune_expired(now)
-        count, window_start, _ = self._data.pop(key, (0, now, window_seconds))
+        count, window_start, _ = self._data.get(key, (0, now, window_seconds))
         if now - window_start >= window_seconds:
             count, window_start = 0, now
         count += 1
         self._data[key] = (count, window_start, window_seconds)
+        self._data.move_to_end(key)
         while len(self._data) > self._max_size:
-            del self._data[next(iter(self._data))]
+            self._data.popitem(last=False)
         return count
 
     def _prune_expired(self, now: float) -> None:
