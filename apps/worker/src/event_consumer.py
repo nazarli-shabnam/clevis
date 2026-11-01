@@ -89,6 +89,21 @@ def _ensure_group(client: redis.Redis) -> None:
             raise
 
 
+def _recreate_group(client: redis.Redis) -> None:
+    """Re-create the consumer group after Redis lost it (a restart without persistence, FLUSHALL, a deleted
+    key). Created from the start of the stream: replaying retained entries is safe because every ingested
+    event type's write is an idempotent upsert (see webhook_requeue_sweep.py), and entries that were
+    delivered but never acknowledged are not lost either way -- their webhook_deliveries rows are still
+    'queued' and the API's requeue sweep puts them back on the stream. Never raises: a failure here (Redis
+    still down) is logged and retried on the next pass of the run loop."""
+    log.warning("consumer group %s is missing from stream %s (Redis restarted or lost it); recreating it", _GROUP_NAME, _STREAM_KEY)
+    try:
+        _ensure_group(client)
+    except (redis.RedisError, OSError):
+        log.exception("could not recreate consumer group %s", _GROUP_NAME)
+        time.sleep(5)
+
+
 def _summarize(event_type: str, payload: dict) -> str:
     """Per-event-type summary text from the raw webhook body."""
     if event_type == "push":
@@ -551,9 +566,10 @@ def run() -> None:
             redis_client = None
             time.sleep(5)
     log.info("event consumer started, group=%s consumer=%s", _GROUP_NAME, _CONSUMER_NAME)
+    _touch_heartbeat()  # initialised and connected: healthy until the first cycle completes
 
     while True:
-        _touch_heartbeat()
+        cycle_completed = False
         try:
             with psycopg.connect(_DB_URL) as pg_conn:
                 _retry_deferred(pg_conn, redis_client)
@@ -571,12 +587,23 @@ def run() -> None:
                             # an aborted transaction doesn't poison the rest of the batch.
                             log.exception("failed to process stream entry %s", entry_id)
                             _rollback_quietly(pg_conn)
+            cycle_completed = True
+        except redis.ResponseError as error:
+            if "NOGROUP" in str(error):
+                _recreate_group(redis_client)
+            else:
+                log.exception("event consumer connection error")
+                time.sleep(5)
         except (psycopg.OperationalError, redis.RedisError):
             log.exception("event consumer connection error")
             time.sleep(5)
         except Exception:
             log.exception("event consumer loop error")
             time.sleep(5)
+        if cycle_completed:
+            # Only a cycle that reached Redis and Postgres counts as alive, so the container healthcheck
+            # goes unhealthy when the consumer is stuck in an error loop instead of being refreshed by it.
+            _touch_heartbeat()
 
 
 def start_background_thread() -> threading.Thread:
