@@ -21,8 +21,40 @@ import { WaiversCard } from "@/components/waivers-card"
 import { EvidenceExportCard } from "@/components/evidence-export-card"
 import { MemberAccessSheet } from "@/components/member-access-sheet"
 import { BadgeSettingsCard } from "@/components/badge-settings-card"
-import type { GithubOrgMember, InvitationBulkItem, InvitationOut, MyOrgMembership } from "@/lib/api/types"
+import type { GithubOrgMember, GithubOutsideCollaborator, InvitationBulkItem, InvitationOut, MyOrgMembership } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
+
+const OUTSIDE_COLUMNS: DataTableColumn<GithubOutsideCollaborator>[] = [
+  {
+    key: "login",
+    header: "Collaborator",
+    sortValue: (c) => c.login.toLowerCase(),
+    render: (c) => (
+      <div className="flex items-center gap-2">
+        {/* Decorative: the login is the adjacent text, so empty alt avoids a duplicate announcement. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={c.avatar_url} alt="" className="size-5 rounded-full" />
+        <span className="text-foreground/80">{c.login}</span>
+      </div>
+    ),
+    csvValue: (c) => c.login,
+  },
+  {
+    key: "repos",
+    header: "Repos",
+    sortValue: (c) => c.repos.length,
+    cellClassName: "text-muted-foreground",
+    render: (c) => (
+      <div className="flex flex-wrap gap-1">
+        {c.repos.map((r) => (
+          <span key={r} className="stat-chip">{r}</span>
+        ))}
+      </div>
+    ),
+    csvValue: (c) => c.repos.join("; "),
+  },
+  { key: "repo_count", header: "Repo count", align: "right", sortValue: (c) => c.repos.length, render: (c) => c.repos.length, csvValue: (c) => c.repos.length },
+]
 
 function memberColumns(onReview: ((login: string) => void) | null): DataTableColumn<GithubOrgMember>[] {
   return [
@@ -273,37 +305,18 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
           </div>
         ) : (
           <>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="text-left text-muted-foreground font-medium px-4 py-2">Collaborator</th>
-                    <th className="text-left text-muted-foreground font-medium px-4 py-2">Repos</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {outsideQuery.data!.collaborators.map((c) => (
-                    <tr key={c.login}>
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-2">
-                          {/* Decorative: the login is the adjacent text, so empty alt avoids a duplicate announcement. */}
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={c.avatar_url} alt="" className="size-5 rounded-full" />
-                          <span className="text-foreground/80">{c.login}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-2.5 text-muted-foreground">
-                        <div className="flex flex-wrap gap-1">
-                          {c.repos.map((r) => (
-                            <span key={r} className="stat-chip">{r}</span>
-                          ))}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              columns={OUTSIDE_COLUMNS}
+              data={outsideQuery.data!.collaborators}
+              getRowKey={(c) => c.login}
+              exportCsv={{
+                name: `outside-collaborators-${orgLogin}`,
+                note:
+                  outsideQuery.data!.repos_scanned < outsideQuery.data!.repos_total
+                    ? `Covers ${outsideQuery.data!.repos_scanned} of ${outsideQuery.data!.repos_total} repos`
+                    : undefined,
+              }}
+            />
             {outsideQuery.data && outsideQuery.data.repos_scanned < outsideQuery.data.repos_total && (
               <div className="px-4 py-2.5 border-t border-border">
                 <span className="text-xs text-muted-foreground">

@@ -1,3 +1,4 @@
+import type { CsvColumn } from "@/lib/csv"
 import type { RepoSecurityResponse, RepoSummary } from "@/lib/api/types"
 
 export type VisibilityFilter = "all" | "public" | "private"
@@ -34,7 +35,7 @@ export function repoLanguages(repos: readonly RepoSummary[]): string[] {
   return [...new Set(repos.flatMap((r) => (r.language ? [r.language] : [])))].sort((a, b) => a.localeCompare(b))
 }
 
-function isStale(repo: RepoSummary, now: number): boolean {
+export function isStale(repo: RepoSummary, now: number): boolean {
   if (!repo.pushed_at) return true // never pushed
   const pushed = Date.parse(repo.pushed_at)
   if (Number.isNaN(pushed)) return false // unparsable: don't claim it's stale
@@ -59,4 +60,22 @@ export function filterRepos(
     if (filters.protection !== "all" && protection.get(r.name) !== filters.protection) return false
     return true
   })
+}
+
+/** CSV columns for the repository export. Protection is only known for repos that were checked, so an
+ * unchecked repo reads "unknown" rather than being reported as protected or unprotected. */
+export function repoCsvColumns(protection: ProtectionMap, now: number = Date.now()): CsvColumn<RepoSummary>[] {
+  return [
+    { header: "Repository", value: (r) => r.full_name },
+    { header: "Visibility", value: (r) => (r.private ? "private" : "public") },
+    { header: "Archived", value: (r) => (r.archived ? "yes" : "no") },
+    { header: "Language", value: (r) => r.language ?? "" },
+    { header: "Stars", value: (r) => r.stargazers_count },
+    { header: "Open issues and PRs", value: (r) => r.open_issues_count },
+    { header: "Default branch", value: (r) => r.default_branch },
+    { header: "Branch protection", value: (r) => protection.get(r.name) ?? "unknown" },
+    { header: "Last push", value: (r) => r.pushed_at ?? "" },
+    { header: `No push in ${STALE_DAYS}+ days`, value: (r) => (isStale(r, now) ? "yes" : "no") },
+    { header: "URL", value: (r) => r.html_url },
+  ]
 }
