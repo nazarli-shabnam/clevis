@@ -90,7 +90,7 @@ export interface NotificationDestinationInput {
 
 export type NotificationDestinationPatch = Partial<
   Pick<NotificationDestinationInput, "name" | "events" | "min_score_drop" | "url" | "secret" | "recipients">
-> & { enabled?: boolean }
+> & { enabled?: boolean; add_events?: AlertEvent[]; remove_events?: AlertEvent[] }
 
 export interface ApiToken {
   id: number

@@ -426,3 +426,17 @@ def test_explicit_scored_stamp_wins_over_informational(db, acme):
     _seed(db, org, 90, [_chk("a"), _chk("h", informational=True, scored=True)])
     now = [_chk("a"), _chk("h", "fail", informational=True, scored=False)]
     assert _run_persist(db, org, _result(60, now)).call_count == 0
+
+
+def test_event_deltas_apply_to_the_stored_set_not_a_stale_copy(db, acme):
+    client = _client(db, acme["admin"])
+    dest_id = _create(client, events=["score_drop", "waiver_expired"]).json()["id"]
+    url = f"/orgs/acme/notification-destinations/{dest_id}"
+
+    # Another admin already removed waiver_expired; this admin's stale view still lists it.
+    assert client.patch(url, json={"remove_events": ["waiver_expired"]}).status_code == 200
+    body = client.patch(url, json={"add_events": ["automation_failed", "automation_failed"]}).json()
+    assert body["events"] == ["score_drop", "automation_failed"]
+
+    assert client.patch(url, json={"remove_events": ["score_drop"]}).json()["events"] == ["automation_failed"]
+    assert client.patch(url, json={"events": ["score_drop"], "add_events": ["waiver_expired"]}).status_code == 422

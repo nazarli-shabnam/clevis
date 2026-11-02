@@ -114,8 +114,10 @@ def create_destination(
     return _out(dest)
 
 
-def _get_or_404(db: Session, ctx: OrgContext, destination_id: int) -> NotificationDestination:
-    dest = notification_repo.get(db, ctx.org.tenant_id, destination_id)
+def _get_or_404(
+    db: Session, ctx: OrgContext, destination_id: int, *, for_update: bool = False
+) -> NotificationDestination:
+    dest = notification_repo.get(db, ctx.org.tenant_id, destination_id, for_update=for_update)
     if dest is None:
         raise HTTPException(status_code=404, detail="Destination not found")
     return dest
@@ -129,7 +131,16 @@ def update_destination(
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
-    dest = _get_or_404(db, ctx, destination_id)
+    if body.events is not None and (body.add_events or body.remove_events):
+        raise HTTPException(status_code=422, detail="Send either events or add_events/remove_events, not both")
+    # Validated before the row lock: it resolves DNS, which must not run while holding the lock.
+    if body.url is not None:
+        try:
+            notifications.validate_destination_url(body.url.get_secret_value())
+        except notifications.UnsafeDestinationURL as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+    # Locked so a delta is applied to the stored set, not to a concurrent admin's stale copy.
+    dest = _get_or_404(db, ctx, destination_id, for_update=True)
     sent = body.model_fields_set
     key = settings.job_secret_key.get_secret_value()
     changed: list[str] = []
@@ -148,12 +159,7 @@ def update_destination(
         if body.secret is not None and not body.secret.get_secret_value():
             raise HTTPException(status_code=422, detail="A signing secret cannot be empty")
         if body.url is not None:
-            url = body.url.get_secret_value()
-            try:
-                notifications.validate_destination_url(url)
-            except notifications.UnsafeDestinationURL as exc:
-                raise HTTPException(status_code=422, detail=str(exc))
-            dest.encrypted_url = encrypt_job_token(url, key)
+            dest.encrypted_url = encrypt_job_token(body.url.get_secret_value(), key)
             changed.append("url")
         if body.secret is not None:
             dest.encrypted_secret = encrypt_job_token(body.secret.get_secret_value(), key)
@@ -166,6 +172,11 @@ def update_destination(
             changed.append(field)
     if "events" in sent and body.events is not None:
         dest.events = list(body.events)
+        changed.append("events")
+    elif body.add_events or body.remove_events:
+        removed = set(body.remove_events or [])
+        current = [e for e in dest.events if e not in removed]
+        dest.events = current + [e for e in dict.fromkeys(body.add_events or []) if e not in current]
         changed.append("events")
 
     audit_repo.write(

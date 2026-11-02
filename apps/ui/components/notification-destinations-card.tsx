@@ -33,7 +33,7 @@ function DestinationRow({ orgLogin, dest }: { orgLogin: string; dest: Notificati
   const [confirming, setConfirming] = useState(false)
 
   const update = useMutation({
-    mutationFn: (patch: { enabled?: boolean; events?: AlertEvent[] }) =>
+    mutationFn: (patch: { enabled?: boolean; add_events?: AlertEvent[]; remove_events?: AlertEvent[] }) =>
       api.notificationDestinations.update(orgLogin, dest.id, patch),
     // Also on error: a PATCH can commit and lose its response, and the next toggle must not start from stale values.
     onSettled: () => queryClient.invalidateQueries({ queryKey }),
@@ -53,7 +53,7 @@ function DestinationRow({ orgLogin, dest }: { orgLogin: string; dest: Notificati
   const busy = update.isPending || remove.isPending
 
   function toggleEvent(event: AlertEvent, on: boolean) {
-    update.mutate({ events: on ? [...dest.events, event] : dest.events.filter((e) => e !== event) })
+    update.mutate(on ? { add_events: [event] } : { remove_events: [event] })
   }
 
   return (
