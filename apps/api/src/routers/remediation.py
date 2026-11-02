@@ -8,7 +8,7 @@ scopes Clevis doesn't request by default (``administration:write``,
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
@@ -20,6 +20,7 @@ from src.services.github_client import GitHubClient
 from src.services.token_resolution import (
     InsufficientOrgRole,
     NoGitHubTokenAvailable,
+    pick_client_token,
     resolve_owner_token,
 )
 
@@ -27,7 +28,7 @@ router = APIRouter()
 
 
 class RemediateRequest(BaseModel):
-    token: str | None = None
+    token: SecretStr | None = None
 
 
 class RemediateResponse(BaseModel):
@@ -57,7 +58,7 @@ def remediate_check(
             db,
             user_id=user.id,
             owner=owner,
-            client_token=body.token or x_github_token,
+            client_token=pick_client_token(body.token, x_github_token),
             min_role="admin",
         )
     except InsufficientOrgRole as exc:

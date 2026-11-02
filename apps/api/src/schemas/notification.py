@@ -4,6 +4,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr, model_validator
 
 
+EventName = Literal["score_drop", "waiver_expired", "new_critical_alert", "stale_pr_summary", "automation_failed"]
+
+
 class DestinationCreate(BaseModel):
     kind: Literal["slack", "teams", "generic", "email"]
     name: str = Field(min_length=1, max_length=100)
@@ -13,7 +16,7 @@ class DestinationCreate(BaseModel):
     recipients: list[EmailStr] | None = Field(default=None, max_length=10)
     # HMAC-SHA256 signing secret; only meaningful for `generic`.
     secret: SecretStr | None = None
-    events: list[Literal["score_drop", "waiver_expired"]] = ["score_drop"]
+    events: list[EventName] = ["score_drop"]
     min_score_drop: int = Field(default=10, ge=1, le=100)
 
     @model_validator(mode="after")
@@ -26,6 +29,19 @@ class DestinationCreate(BaseModel):
         elif self.url is None:
             raise ValueError("url is required")
         return self
+
+
+class DestinationUpdate(BaseModel):
+    """Partial update: only the fields sent change. ``url``/``secret`` rotate the stored (encrypted) values;
+    ``recipients`` replaces an email destination's list. ``kind`` is fixed at creation."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    enabled: bool | None = None
+    events: list[EventName] | None = None
+    min_score_drop: int | None = Field(default=None, ge=1, le=100)
+    url: SecretStr | None = None
+    recipients: list[EmailStr] | None = Field(default=None, min_length=1, max_length=10)
+    secret: SecretStr | None = None
 
 
 class DestinationOut(BaseModel):

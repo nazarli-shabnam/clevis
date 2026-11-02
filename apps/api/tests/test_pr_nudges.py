@@ -356,3 +356,30 @@ def test_error_after_a_posted_nudge_keeps_the_result_and_stops():
     fake.request = request
     results = pr_nudge.run_nudge_sweep(fake, "o", "r", stale_days=3, mode="label")
     assert [(r.number, r.action) for r in results] == [(1, "labeled"), (2, "error")]
+
+
+def test_org_route_sends_a_stale_pr_summary_only_when_something_was_nudged(client, db, user):
+    _admin_org(db, user, login="acme")
+    set_config("pr_nudge_stale_days", "3")
+    set_config("pr_nudge_mode", "comment")
+    with patch("src.routers.pr_nudges.notifications.notify_stale_prs") as notify:
+        with patch("src.routers.pr_nudges.GitHubClient") as mock:
+            _wire(mock, prs=[_pr(1, 10), _pr(2, 1)])
+            client.post("/orgs/acme/repos/acme/api/pr-nudges", json={"token": "ghp_admin"})
+        assert [p["number"] for p in notify.call_args.args[4]] == [1]
+        notify.reset_mock()
+        with patch("src.routers.pr_nudges.GitHubClient") as mock:
+            _wire(mock, prs=[_pr(2, 1)])  # nothing stale
+            client.post("/orgs/acme/repos/acme/api/pr-nudges", json={"token": "ghp_admin"})
+        assert notify.call_args.args[4] == []
+
+
+def test_a_failing_summary_alert_does_not_fail_the_nudge(client, db, user):
+    _admin_org(db, user, login="acme")
+    set_config("pr_nudge_stale_days", "3")
+    set_config("pr_nudge_mode", "comment")
+    with patch("src.routers.pr_nudges.notifications.notify_stale_prs", side_effect=RuntimeError("x")):
+        with patch("src.routers.pr_nudges.GitHubClient") as mock:
+            _wire(mock, prs=[_pr(1, 10)])
+            resp = client.post("/orgs/acme/repos/acme/api/pr-nudges", json={"token": "ghp_admin"})
+    assert resp.status_code == 200

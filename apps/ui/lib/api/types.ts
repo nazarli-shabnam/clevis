@@ -92,6 +92,24 @@ export type NotificationDestinationPatch = Partial<
   Pick<NotificationDestinationInput, "name" | "events" | "min_score_drop" | "url" | "secret" | "recipients">
 > & { enabled?: boolean }
 
+export interface ApiToken {
+  id: number
+  name: string
+  /** First characters of the token, to tell tokens apart; never the secret. */
+  prefix: string
+  scope: string
+  created_by: string
+  created_at: string
+  last_used_at: string | null
+  revoked_at: string | null
+  expires_at: string | null
+}
+
+/** Returned once, at creation: `token` is never retrievable again. */
+export interface ApiTokenCreated extends ApiToken {
+  token: string
+}
+
 export interface CheckWaiverInput {
   check_id: string
   repos: string[] | null

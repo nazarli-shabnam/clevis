@@ -8,7 +8,7 @@ scopes Clevis doesn't request by default; a 403 becomes a 400 pointing at the do
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
@@ -25,6 +25,7 @@ from src.services.github_client import GitHubClient, github_error as _github_err
 from src.services.token_resolution import (
     InsufficientOrgRole,
     NoGitHubTokenAvailable,
+    pick_client_token,
     resolve_org_token,
     resolve_owner_token,
 )
@@ -39,7 +40,7 @@ _PERMISSION_HINT = (
 
 
 class LintRequest(BaseModel):
-    token: str | None = None
+    token: SecretStr | None = None
     open_pr: bool = False
 
 
@@ -101,7 +102,7 @@ def workflow_lint_personal(
             db,
             user_id=user.id,
             owner=owner,
-            client_token=body.token or x_github_token,
+            client_token=pick_client_token(body.token, x_github_token),
             # Opening a PR writes to GitHub, so it needs org-admin when owner is a
             # connected org; a read-only scan only needs membership.
             min_role="admin" if body.open_pr else "member",
@@ -133,7 +134,7 @@ def workflow_lint_org(
     assert_owner_matches_org(owner, ctx)
     try:
         token = resolve_org_token(
-            db, org_id=ctx.org.id, account_login=owner, client_token=body.token or x_github_token
+            db, org_id=ctx.org.id, account_login=owner, client_token=pick_client_token(body.token, x_github_token)
         )
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
