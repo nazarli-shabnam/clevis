@@ -35,6 +35,7 @@ vi.mock("@/lib/api/client", () => ({
       inactiveMembers: vi.fn(),
     },
     tokens: { resolve: vi.fn().mockRejectedValue(new Error("no saved token")) },
+    notificationDestinations: { list: vi.fn().mockResolvedValue([]), create: vi.fn(), update: vi.fn(), test: vi.fn(), remove: vi.fn() },
   },
 }));
 
