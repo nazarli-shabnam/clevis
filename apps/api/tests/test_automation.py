@@ -609,3 +609,45 @@ def test_personal_dispatch_all_rejects_org_member(automation_client, db):
         )
     assert resp.status_code == 403
     mock_client.return_value.request.assert_not_called()
+
+
+def test_bulk_dispatch_failures_are_reported_to_alert_destinations(automation_client, db):
+    db.add(User(id=_USER.id, email=_USER.email, name=None, password_hash=None, is_workspace_admin=False))
+    db.commit()
+    forbidden = httpx.HTTPStatusError(
+        "boom",
+        request=httpx.Request("POST", "https://api.github.com/x"),
+        response=httpx.Response(403, json={"message": "Resource not accessible by integration"}),
+    )
+    with (
+        patch("src.routers.automation.GitHubClient") as mock_client,
+        patch("src.routers.automation.notifications.notify_automation_failed") as notify,
+    ):
+        mock_client.return_value.request.side_effect = [_WORKFLOWS_3, {}, forbidden]
+        resp = automation_client.post(
+            "/me/repos/acme/demo/workflows/dispatch-all",
+            json={"token": "ghp_testtoken123456789012345678901234", "ref": "main"},
+        )
+    assert resp.status_code == 200
+    failures = notify.call_args.args[4]
+    assert [f["workflow"] for f in failures] == ["Release"]
+
+
+def test_a_failing_failure_alert_does_not_change_the_dispatch_response(automation_client, db):
+    db.add(User(id=_USER.id, email=_USER.email, name=None, password_hash=None, is_workspace_admin=False))
+    db.commit()
+    forbidden = httpx.HTTPStatusError(
+        "boom",
+        request=httpx.Request("POST", "https://api.github.com/x"),
+        response=httpx.Response(403, json={"message": "nope"}),
+    )
+    with (
+        patch("src.routers.automation.GitHubClient") as mock_client,
+        patch("src.routers.automation.notifications.notify_automation_failed", side_effect=RuntimeError("x")),
+    ):
+        mock_client.return_value.request.side_effect = [{"workflows": [{"id": 1, "name": "CI", "path": "p", "state": "active"}]}, forbidden]
+        resp = automation_client.post(
+            "/me/repos/acme/demo/workflows/dispatch-all",
+            json={"token": "ghp_testtoken123456789012345678901234", "ref": "main"},
+        )
+    assert resp.status_code == 200 and resp.json()["failed_count"] == 1
