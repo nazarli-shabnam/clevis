@@ -15,6 +15,12 @@ from src.services.retention_sweep import run_retention_sweep
 _NOW = datetime.now(timezone.utc)
 
 
+@pytest.fixture(autouse=True)
+def _clear_stop_requested():
+    # The app lifespan's shutdown sets this module-level event; an earlier TestClient test would leave it set.
+    retention_sweep.stop_requested.clear()
+
+
 def _ago(days: float) -> datetime:
     return _NOW - timedelta(days=days)
 

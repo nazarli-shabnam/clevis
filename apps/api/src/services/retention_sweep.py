@@ -43,6 +43,8 @@ BATCH_SIZE = 5_000
 # Caps one table's (or one tenant's) work per tick: 500k rows. The rest is picked up on the next tick.
 MAX_BATCHES = 100
 MAX_DAYS = 3650
+# How long one batch's DELETE may wait on a row lock before giving up.
+LOCK_TIMEOUT = "5s"
 
 # Set on API shutdown. Cancelling the loop's task does not stop the worker thread running a sweep, and the
 # interpreter waits for that thread at exit, so batches check this and stop issuing deletes.
@@ -101,6 +103,9 @@ def _delete_in_batches(db: Session, sql: str, params: dict) -> int:
     for _ in range(MAX_BATCHES):
         if stop_requested.is_set():
             break
+        # Transaction-local, so it lapses at the commit below (or the caller's rollback). A DELETE stuck behind
+        # another transaction's row lock raises instead of blocking; run_retention_sweep rolls back and moves on.
+        db.execute(text("SELECT set_config('lock_timeout', :t, true)"), {"t": LOCK_TIMEOUT})
         deleted = db.execute(text(sql), {**params, "limit": BATCH_SIZE}).rowcount
         db.commit()
         total += deleted
