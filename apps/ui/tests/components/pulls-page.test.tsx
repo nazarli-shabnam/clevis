@@ -409,6 +409,11 @@ describe("PullRequestsPage", () => {
 
     renderPage();
 
+    // each sortable header runs its sortValue
+    fireEvent.click(await screen.findByRole("button", { name: /^Repo/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Pull Request/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Author/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Opened/ }));
     fireEvent.click(await screen.findByRole("button", { name: /Export CSV/ }));
     const [filename, csv] = downloadTextFileMock.mock.calls[0];
     expect(filename).toMatch(/^clevis-pull-requests-acme-\d{4}-\d{2}-\d{2}\.csv$/);

@@ -176,6 +176,12 @@ describe("ReleasesPage", () => {
 
     renderPage();
 
+    // each sortable header runs its sortValue
+    fireEvent.click(await screen.findByRole("button", { name: /^Repository/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Release/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Tag/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Published/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Type/ }));
     fireEvent.click(await screen.findByRole("button", { name: /Export CSV/ }));
     const [filename, csv] = downloadTextFileMock.mock.calls[0];
     expect(filename).toMatch(/^clevis-releases-acme-90d-\d{4}-\d{2}-\d{2}\.csv$/);
