@@ -16,6 +16,8 @@ def clear(db: Session, owner: str, repo: str, payload: CacheClearInput, actor: s
         token,
         settings.job_secret_key.get_secret_value(),
     )
+    # The job (it carries the encrypted token and runs as soon as the worker sees it) and its audit
+    # row commit together: a crash or failure between them must not leave a cache clear with no trail.
     job_id = job_repo.enqueue(db, "github.clear_actions_cache", {
         "owner": owner,
         "repo": repo,
@@ -23,8 +25,15 @@ def clear(db: Session, owner: str, repo: str, payload: CacheClearInput, actor: s
         "key": payload.key,
         "ref": payload.ref,
         "actor": actor,
-    }, tenant_id=tenant_id)
+    }, tenant_id=tenant_id, commit=False)
     audit_repo.write(
-        db, actor, "cache.clear.queued", target, {"job_id": job_id, **payload.model_dump(exclude={"token"})}, tenant_id=tenant_id
+        db,
+        actor,
+        "cache.clear.queued",
+        target,
+        {"job_id": job_id, **payload.model_dump(exclude={"token"})},
+        tenant_id=tenant_id,
+        commit=False,
     )
+    db.commit()
     return {"queued": True, "job_id": job_id}
