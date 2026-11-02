@@ -242,7 +242,7 @@ def _build_matrix(
         low=0,
     )
     summary = MatrixSummary(
-        fully_compliant_count=sum(1 for r in rows if r.score == 100),
+        fully_compliant_count=sum(1 for r in rows if r.score == 100 and not r.unknown_dimensions),
         critical_risk_count=sum(1 for r in rows if r.dependabot_critical_count > 0),
         secret_hits_count=sum(1 for r in rows if not r.secret_scanning),
         vuln_by_severity=vuln,

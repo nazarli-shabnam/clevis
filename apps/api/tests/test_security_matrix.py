@@ -184,6 +184,7 @@ def test_security_matrix_repo_without_default_branch_skips_branch_call(client):
     paths = [c.args[1] for c in mock_client.return_value.request.call_args_list]
     assert not any("/branches/" in p for p in paths)
     assert sorted(resp.json()["repos"][0]["unknown_dimensions"]) == ["branch_protection", "force_push"]
+    assert resp.json()["summary"]["fully_compliant_count"] == 0  # unknown dimensions can't be "fully compliant"
 
 
 def test_security_matrix_403_on_dependabot_is_unknown_not_clean(client):
@@ -213,6 +214,7 @@ def test_security_matrix_403_on_dependabot_is_unknown_not_clean(client):
     assert row["unknown_dimensions"] == ["dependabot"]
     assert row["score"] == 100  # remaining 4 evaluable dimensions all pass
     assert row["dependabot_critical_count"] == 0  # not silently zero-and-clean -- flagged unknown instead
+    assert resp.json()["summary"]["fully_compliant_count"] == 0  # score 100 but one dimension unknown
 
 
 def test_security_matrix_404_on_dependabot_is_genuinely_disabled(client):
