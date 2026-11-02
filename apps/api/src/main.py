@@ -50,7 +50,9 @@ from src.services.digest_loop import digest_loop
 from src.services.gap_heal_loop import gap_heal_loop
 from src.services.membership_reconcile_loop import membership_reconcile_loop
 from src.services.scheduled_scan_loop import scheduled_scan_loop
+from src.services.retention_loop import retention_loop
 from src.services.security_alert_loop import security_alert_loop
+from src.services import retention_sweep
 from src.services.waiver_expiry_loop import waiver_expiry_loop
 from src.services.webhook_requeue_loop import webhook_requeue_loop
 
@@ -61,6 +63,7 @@ _cors_origins = settings.cors_origins
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     setup_logging()
+    retention_sweep.stop_requested.clear()
     # Separate tasks: unrelated concerns, each tolerating its own iteration errors.
     tasks = [
         # One-time, best-effort notice when the DB role bypasses RLS (the default deployment); see
@@ -76,12 +79,14 @@ async def lifespan(_: FastAPI):
         asyncio.create_task(webhook_requeue_loop()),
         # Announces lapsed check waivers once (audit row + alert destinations).
         asyncio.create_task(waiver_expiry_loop()),
+        asyncio.create_task(retention_loop()),
         # Announces newly ingested critical/high security alerts once to alert destinations.
         asyncio.create_task(security_alert_loop()),
     ]
     try:
         yield
     finally:
+        retention_sweep.stop_requested.set()
         for task in tasks:
             task.cancel()
         for task in tasks:

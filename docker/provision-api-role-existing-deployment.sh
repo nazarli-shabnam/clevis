@@ -61,7 +61,7 @@ GRANT USAGE, SELECT ON users_id_seq, orgs_id_seq, tenants_id_seq, memberships_id
 DO $do$
 BEGIN
   IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'repo_events') THEN
-    GRANT SELECT, INSERT ON repo_events TO clevis_api;
+    GRANT SELECT, INSERT, DELETE ON repo_events TO clevis_api;
     GRANT USAGE, SELECT ON repo_events_id_seq TO clevis_api;
   END IF;
 END
