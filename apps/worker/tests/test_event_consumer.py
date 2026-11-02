@@ -1473,3 +1473,23 @@ def test_sweep_pages_past_a_first_page_made_only_of_waiting_entries(pg_conn, red
         event_consumer._deferred.clear()
     assert mins == ["-", "(100-0"]
     assert [d[2] for d in dropped] == ["500-0"]
+
+
+def test_a_redelivered_entry_already_deferred_is_not_queued_twice(pg_conn, tenant_id, monkeypatch):
+    conn, state = pg_conn
+    monkeypatch.setattr(event_consumer, "_TENANT_LOCK_WAIT_SECONDS", 0.1)
+    event_consumer._deferred.clear()
+    payload = {"action": "member_added", "membership": {"role": "member", "user": {"login": "dup-user"}}}
+    row_id = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-dup", event_type="organization", payload=payload)
+    redis_client = _FakeRedis()
+
+    holder = psycopg.connect(_DB_URL, autocommit=False)
+    try:
+        org_membership_store.acquire_tenant_lock(holder, tenant_id)
+        fields = _entry_fields(row_id, "organization", tenant_id)
+        event_consumer._dispatch(conn, redis_client, "1-0", fields)
+        event_consumer._dispatch(conn, redis_client, "1-0", fields)  # replayed after the group was recreated
+        assert [e for e, _ in event_consumer._deferred[str(tenant_id)]] == ["1-0"]
+    finally:
+        holder.close()
+        event_consumer._deferred.clear()

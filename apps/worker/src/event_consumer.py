@@ -301,7 +301,9 @@ def _dispatch(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry_id: 
     waiting on it) is queued locally instead of raising."""
     key = _tenant_key(fields)
     if fields.get("event_type") in _ORG_MEMBERSHIP_EVENT_TYPES and key in _deferred:
-        _deferred[key].append((entry_id, fields))
+        # A recreated group replays from 0 and can redeliver an entry that is already waiting.
+        if not any(queued_id == entry_id for queued_id, _ in _deferred[key]):
+            _deferred[key].append((entry_id, fields))
         return
     try:
         _process_entry(pg_conn, redis_client, entry_id, fields)
