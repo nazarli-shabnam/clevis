@@ -102,7 +102,7 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
       return queryClient.invalidateQueries({ queryKey })
     },
   })
-  const canSubmit = name.trim() !== "" && !create.isPending
+  const canSubmit = name.trim() !== "" && !create.isPending && !created
 
   return (
     <div className="card mt-4">
