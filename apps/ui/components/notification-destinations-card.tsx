@@ -168,6 +168,9 @@ export function NotificationDestinationsCard({ orgLogin }: { orgLogin: string })
       setRecipients("")
       return queryClient.invalidateQueries({ queryKey })
     },
+    // A create can commit and lose its response. The form keeps its values for a retry, so reload the list:
+    // if the destination is already there, the admin sees it instead of adding a duplicate.
+    onError: () => queryClient.invalidateQueries({ queryKey }),
   })
 
   const hasTarget = kind === "email" ? recipients.split(/[,\s]+/).filter(Boolean).length > 0 : url.trim() !== ""

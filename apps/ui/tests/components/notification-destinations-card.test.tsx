@@ -216,4 +216,16 @@ describe("NotificationDestinationsCard", () => {
     fireEvent.change(screen.getByLabelText("Recipients"), { target: { value: "a@e.com" } })
     expect(screen.getByRole("button", { name: "Add destination" })).toBeEnabled()
   })
+
+  it("reloads the list after a failed create, so a create whose response was lost shows up before a retry", async () => {
+    listMock.mockResolvedValueOnce([]).mockResolvedValue([dest({ name: "#sec" })])
+    createMock.mockRejectedValue(new Error("network"))
+    renderCard()
+    await screen.findByText("No destinations.")
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "#sec" } })
+    fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: "https://hooks.slack.com/x" } })
+    fireEvent.click(screen.getByRole("button", { name: "Add destination" }))
+    expect(await screen.findByText("#sec", { selector: "p, span" })).toBeInTheDocument()
+    expect(listMock).toHaveBeenCalledTimes(2)
+  })
 })
