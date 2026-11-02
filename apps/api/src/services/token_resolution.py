@@ -13,6 +13,7 @@ import logging
 from typing import Literal
 
 import httpx
+from pydantic import SecretStr
 from sqlalchemy.orm import Session
 
 from src.core.config import settings
@@ -23,6 +24,13 @@ from src.services import github_app
 logger = logging.getLogger(__name__)
 
 _ROLE_RANK = {"member": 0, "admin": 1}
+
+
+def pick_client_token(body_token: SecretStr | None, header_token: str | None) -> str | None:
+    """The GitHub token the caller supplied: the request body's field if it is set, else the
+    ``X-GitHub-Token`` header. Body fields are ``SecretStr`` so the value never lands in a 422
+    response or a log line; this is the one place that unwraps it."""
+    return (body_token.get_secret_value() if body_token else None) or header_token
 
 
 class NoGitHubTokenAvailable(RuntimeError):

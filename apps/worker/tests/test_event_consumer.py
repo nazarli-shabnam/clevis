@@ -1120,13 +1120,13 @@ def test_run_processes_a_stream_entry_then_stops(pg_conn, tenant_id, redis_clien
 
 
 def test_run_recovers_from_a_connection_error(monkeypatch, caplog):
-    # run() swallows connect() errors by design, so stop the loop via _touch_heartbeat
-    # (called outside the try) and assert connect() was retried.
+    # run() swallows connect() errors by design and backs off with a sleep, so stop the loop from the
+    # second back-off and assert connect() was retried.
     monkeypatch.setattr(event_consumer, "_redis_client", lambda: MagicMock())
     monkeypatch.setattr(event_consumer, "_ensure_group", MagicMock())
     monkeypatch.setattr(event_consumer.psycopg, "connect", MagicMock(side_effect=psycopg.OperationalError("refused")))
-    monkeypatch.setattr(event_consumer.time, "sleep", MagicMock())
-    monkeypatch.setattr(event_consumer, "_touch_heartbeat", MagicMock(side_effect=[None, None, _StopLoop]))
+    monkeypatch.setattr(event_consumer.time, "sleep", MagicMock(side_effect=[None, _StopLoop]))
+    monkeypatch.setattr(event_consumer, "_touch_heartbeat", MagicMock())
 
     with caplog.at_level("ERROR", logger="event_consumer"), pytest.raises(_StopLoop):
         event_consumer.run()
@@ -1142,8 +1142,8 @@ def test_run_recovers_from_a_generic_loop_error(monkeypatch, caplog):
     monkeypatch.setattr(event_consumer, "_redis_client", lambda: MagicMock())
     monkeypatch.setattr(event_consumer, "_ensure_group", MagicMock())
     monkeypatch.setattr(event_consumer.psycopg, "connect", MagicMock(side_effect=psycopg.ProgrammingError("boom")))
-    monkeypatch.setattr(event_consumer.time, "sleep", MagicMock())
-    monkeypatch.setattr(event_consumer, "_touch_heartbeat", MagicMock(side_effect=[None, None, _StopLoop]))
+    monkeypatch.setattr(event_consumer.time, "sleep", MagicMock(side_effect=[None, _StopLoop]))
+    monkeypatch.setattr(event_consumer, "_touch_heartbeat", MagicMock())
 
     with caplog.at_level("ERROR", logger="event_consumer"), pytest.raises(_StopLoop):
         event_consumer.run()
@@ -1151,6 +1151,124 @@ def test_run_recovers_from_a_generic_loop_error(monkeypatch, caplog):
     assert event_consumer.psycopg.connect.call_count == 2  # retried instead of crashing after the first failure
     # log.exception must record the message and traceback, not just the class name.
     assert any("boom" in r.exc_text for r in caplog.records if r.exc_info)
+
+
+def test_run_recreates_a_consumer_group_redis_lost_and_keeps_processing(
+    pg_conn, tenant_id, redis_client, monkeypatch, caplog
+):
+    conn, state = pg_conn
+    payload = {"repository": {"full_name": "acme/widgets"}, "sender": {"login": "octocat", "avatar_url": ""}, "ref_type": "tag", "ref": "v6"}
+    row_id = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-group-lost-1", event_type="create", payload=payload)
+    event_consumer._ensure_group(redis_client)
+    redis_client.xadd(event_consumer._STREAM_KEY, _entry_fields(row_id, "create", tenant_id))
+
+    # Redis loses the group mid-run (here: destroyed during the first cycle), so the next XREADGROUP raises
+    # the real NOGROUP error.
+    calls = {"n": 0}
+
+    def _lose_the_group(pg, client):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            client.xgroup_destroy(event_consumer._STREAM_KEY, event_consumer._GROUP_NAME)
+
+    monkeypatch.setattr(event_consumer, "_sweep_pending", _lose_the_group)
+    monkeypatch.setattr(event_consumer, "_redis_client", lambda: redis_client)
+    monkeypatch.setattr(event_consumer, "_BLOCK_MS", 100)
+    # Initial touch, then one after the first *successful* cycle -- the failed NOGROUP cycle must not touch.
+    heartbeat = MagicMock(side_effect=[None, _StopLoop])
+    monkeypatch.setattr(event_consumer, "_touch_heartbeat", heartbeat)
+
+    with caplog.at_level("WARNING", logger="event_consumer"), pytest.raises(_StopLoop):
+        event_consumer.run()
+
+    assert any("recreating it" in r.message for r in caplog.records)
+    assert calls["n"] == 2  # a failed cycle, then the recovered one
+    assert heartbeat.call_count == 2
+    assert len(redis_client.xinfo_groups(event_consumer._STREAM_KEY)) == 1
+    with conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        cur.execute("SELECT count(*) FROM repo_events WHERE delivery_id = %s", ("d-group-lost-1",))
+        assert cur.fetchone()[0] == 1  # the entry was delivered again by the new group and processed
+
+
+def test_run_does_not_refresh_the_heartbeat_while_every_cycle_fails(monkeypatch):
+    """A consumer stuck in an error loop must go stale so the container healthcheck can fail."""
+    monkeypatch.setattr(event_consumer, "_redis_client", lambda: MagicMock())
+    monkeypatch.setattr(event_consumer, "_ensure_group", MagicMock())
+    monkeypatch.setattr(event_consumer.psycopg, "connect", MagicMock(side_effect=psycopg.OperationalError("db down")))
+    monkeypatch.setattr(event_consumer.time, "sleep", MagicMock(side_effect=[None, None, _StopLoop]))
+    heartbeat = MagicMock()
+    monkeypatch.setattr(event_consumer, "_touch_heartbeat", heartbeat)
+
+    with pytest.raises(_StopLoop):
+        event_consumer.run()
+
+    assert event_consumer.psycopg.connect.call_count == 3  # three failed cycles...
+    assert heartbeat.call_count == 1  # ...and only the start-up touch
+
+
+def _stub_cycle_collaborators(monkeypatch, xreadgroup_effects):
+    """A run() whose Redis client yields the given XREADGROUP results and whose Postgres connection is a stub."""
+    client = MagicMock()
+    client.xreadgroup.side_effect = xreadgroup_effects
+    monkeypatch.setattr(event_consumer, "_redis_client", lambda: client)
+    monkeypatch.setattr(event_consumer.psycopg, "connect", MagicMock())
+    monkeypatch.setattr(event_consumer, "_retry_deferred", MagicMock())
+    monkeypatch.setattr(event_consumer, "_sweep_pending", MagicMock())
+    return client
+
+
+def test_run_survives_redis_still_being_down_when_it_tries_to_recreate_the_group(monkeypatch, caplog):
+    # Raising inside an `except` clause is not caught by its sibling clauses, so an unguarded recreate
+    # would kill the consumer thread. It must be logged and retried instead.
+    _stub_cycle_collaborators(
+        monkeypatch,
+        [redis.ResponseError("NOGROUP No such key"), redis.ResponseError("NOGROUP No such key"), None],
+    )
+    ensure = MagicMock(side_effect=[None, redis.ConnectionError("still down"), None])
+    monkeypatch.setattr(event_consumer, "_ensure_group", ensure)
+    sleep = MagicMock()
+    monkeypatch.setattr(event_consumer.time, "sleep", sleep)
+    monkeypatch.setattr(event_consumer, "_touch_heartbeat", MagicMock(side_effect=[None, _StopLoop]))
+
+    with caplog.at_level("ERROR", logger="event_consumer"), pytest.raises(_StopLoop):
+        event_consumer.run()
+
+    assert ensure.call_count == 3  # start-up, the failed recreate, the successful one
+    # One 5 s wait after the failed recreate, one after the second consecutive NOGROUP.
+    assert [c.args for c in sleep.call_args_list] == [(5,), (5,)]
+    assert any("still down" in r.exc_text for r in caplog.records if r.exc_info)
+
+
+def test_run_backs_off_when_the_group_is_still_missing_right_after_recreating_it(monkeypatch):
+    """Recreate succeeds but XREADGROUP keeps saying NOGROUP: don't spin on it."""
+    nogroup = redis.ResponseError("NOGROUP No such key")
+    _stub_cycle_collaborators(monkeypatch, [nogroup, nogroup, nogroup, None])
+    ensure = MagicMock()
+    monkeypatch.setattr(event_consumer, "_ensure_group", ensure)
+    sleep = MagicMock()
+    monkeypatch.setattr(event_consumer.time, "sleep", sleep)
+    monkeypatch.setattr(event_consumer, "_touch_heartbeat", MagicMock(side_effect=[None, _StopLoop]))
+
+    with pytest.raises(_StopLoop):
+        event_consumer.run()
+
+    assert ensure.call_count == 4  # start-up plus one recreate per NOGROUP
+    # The first NOGROUP is retried at once; each consecutive one after it waits.
+    assert [c.args for c in sleep.call_args_list] == [(5,), (5,)]
+
+
+def test_run_does_not_recreate_the_group_for_an_unrelated_redis_response_error(monkeypatch):
+    _stub_cycle_collaborators(monkeypatch, [redis.ResponseError("WRONGTYPE Operation against a key"), None])
+    ensure = MagicMock()
+    monkeypatch.setattr(event_consumer, "_ensure_group", ensure)
+    monkeypatch.setattr(event_consumer.time, "sleep", MagicMock())
+    monkeypatch.setattr(event_consumer, "_touch_heartbeat", MagicMock(side_effect=[None, _StopLoop]))
+
+    with pytest.raises(_StopLoop):
+        event_consumer.run()
+
+    assert ensure.call_count == 1  # only the start-up call
 
 
 def test_run_retries_initialization_instead_of_dying_on_a_startup_redis_error(monkeypatch, caplog):
@@ -1355,3 +1473,23 @@ def test_sweep_pages_past_a_first_page_made_only_of_waiting_entries(pg_conn, red
         event_consumer._deferred.clear()
     assert mins == ["-", "(100-0"]
     assert [d[2] for d in dropped] == ["500-0"]
+
+
+def test_a_redelivered_entry_already_deferred_is_not_queued_twice(pg_conn, tenant_id, monkeypatch):
+    conn, state = pg_conn
+    monkeypatch.setattr(event_consumer, "_TENANT_LOCK_WAIT_SECONDS", 0.1)
+    event_consumer._deferred.clear()
+    payload = {"action": "member_added", "membership": {"role": "member", "user": {"login": "dup-user"}}}
+    row_id = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-dup", event_type="organization", payload=payload)
+    redis_client = _FakeRedis()
+
+    holder = psycopg.connect(_DB_URL, autocommit=False)
+    try:
+        org_membership_store.acquire_tenant_lock(holder, tenant_id)
+        fields = _entry_fields(row_id, "organization", tenant_id)
+        event_consumer._dispatch(conn, redis_client, "1-0", fields)
+        event_consumer._dispatch(conn, redis_client, "1-0", fields)  # replayed after the group was recreated
+        assert [e for e, _ in event_consumer._deferred[str(tenant_id)]] == ["1-0"]
+    finally:
+        holder.close()
+        event_consumer._deferred.clear()

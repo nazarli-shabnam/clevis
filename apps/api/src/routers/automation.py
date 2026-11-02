@@ -4,6 +4,7 @@ Reads accept an optional PAT via the `X-GitHub-Token` header; dispatch is a POST
 the token in the body and requires org-admin (no dry-run mode exists for dispatch).
 """
 
+import logging
 from datetime import datetime
 
 import httpx
@@ -25,6 +26,7 @@ from src.schemas.automation import (
     WorkflowSummary,
     WorkflowsResponse,
 )
+from src.services import notifications
 from src.services.github_client import GitHubClient, github_error as _github_error
 from src.services.token_resolution import (
     InsufficientOrgRole,
@@ -33,6 +35,7 @@ from src.services.token_resolution import (
     resolve_owner_token,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -105,6 +108,18 @@ def _list_runs(owner: str, repo: str, token: str, per_page: int) -> RunsResponse
     return RunsResponse(repository=f"{owner}/{repo}", runs=runs)
 
 
+def _alert_failures(
+    db: Session, tenant_id: int | None, owner: str, repo: str, actor: str, failures: list[dict]
+) -> None:
+    """Tell alert destinations a dispatch GitHub rejected. Best-effort: the caller's response is unaffected."""
+    if tenant_id is None or not failures:
+        return
+    try:
+        notifications.notify_automation_failed(db, tenant_id, owner, repo, failures, actor=actor)
+    except Exception:
+        logger.exception("automation failure alert failed for %s/%s", owner, repo)
+
+
 def _dispatch(
     db: Session,
     owner: str,
@@ -132,7 +147,9 @@ def _dispatch(
             json={"ref": payload.ref, "inputs": payload.inputs or {}},
         )
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
-        raise _github_error(exc) from exc
+        err = _github_error(exc)
+        _alert_failures(db, tenant_id, owner, repo, actor, [{"workflow": f"#{workflow_id}", "message": str(err.detail)}])
+        raise err from exc
     return DispatchResponse(dispatched=True, message="Workflow dispatched.")
 
 
@@ -237,6 +254,10 @@ def _dispatch_all(
         else:
             results.append(DispatchAllResult(workflow_id=wf_id, name=name, status="dispatched"))
 
+    _alert_failures(
+        db, tenant_id, owner, repo, actor,
+        [{"workflow": r.name, "message": r.message} for r in results if r.status == "failed"],
+    )
     return DispatchAllResponse(
         ref=payload.ref,
         results=results,

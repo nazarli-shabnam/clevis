@@ -12,7 +12,7 @@ from src.core.db import NotificationDestination, get_db
 from src.core.rate_limit import check_account_rate_limit
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import audit_repo, notification_repo
-from src.schemas.notification import DestinationCreate, DestinationOut, TestSendResult
+from src.schemas.notification import DestinationCreate, DestinationOut, DestinationUpdate, TestSendResult
 from src.services import email, notifications
 
 router = APIRouter()
@@ -42,7 +42,7 @@ def list_destinations(
     return [_out(d) for d in notification_repo.list_for_tenant(db, ctx.org.tenant_id)]
 
 
-def _email_recipients_or_422(db: Session, ctx: OrgContext, body: DestinationCreate) -> str:
+def _email_recipients_or_422(db: Session, ctx: OrgContext, recipients: list | None) -> str:
     """JSON list of the recipients to store, after checking SMTP is set up and every address belongs to a
     verified member of this org (so the instance's mail server can't be aimed at arbitrary addresses)."""
     if not email.is_configured():
@@ -50,7 +50,7 @@ def _email_recipients_or_422(db: Session, ctx: OrgContext, body: DestinationCrea
             status_code=422,
             detail="Email alerts need SMTP: an operator must set SMTP_HOST and SMTP_FROM on this instance.",
         )
-    wanted = sorted({str(r).lower() for r in body.recipients or []})
+    wanted = sorted({str(r).lower() for r in recipients or []})
     allowed = notifications.verified_member_emails(db, ctx.org.tenant_id)
     unknown = [r for r in wanted if r not in allowed]
     if unknown:
@@ -71,7 +71,7 @@ def create_destination(
     db: Session = Depends(get_db),
 ):
     if body.kind == "email":
-        stored = _email_recipients_or_422(db, ctx, body)
+        stored = _email_recipients_or_422(db, ctx, body.recipients)
     else:
         url = body.url.get_secret_value()
         try:
@@ -119,6 +119,68 @@ def _get_or_404(db: Session, ctx: OrgContext, destination_id: int) -> Notificati
     if dest is None:
         raise HTTPException(status_code=404, detail="Destination not found")
     return dest
+
+
+@router.patch("/orgs/{org_login}/notification-destinations/{destination_id}", response_model=DestinationOut)
+def update_destination(
+    destination_id: int,
+    body: DestinationUpdate,
+    ctx: OrgContext = Depends(require_org_role(min_role="admin")),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    dest = _get_or_404(db, ctx, destination_id)
+    sent = body.model_fields_set
+    key = settings.job_secret_key.get_secret_value()
+    changed: list[str] = []
+
+    if dest.kind == "email":
+        if body.url is not None or body.secret is not None:
+            raise HTTPException(status_code=422, detail="An email destination takes recipients, not a url or secret")
+        if body.recipients is not None:
+            dest.encrypted_url = encrypt_job_token(_email_recipients_or_422(db, ctx, body.recipients), key)
+            changed.append("recipients")
+    else:
+        if body.recipients is not None:
+            raise HTTPException(status_code=422, detail="Only an email destination takes recipients")
+        if body.secret is not None and dest.kind != "generic":
+            raise HTTPException(status_code=422, detail="Only a generic webhook destination takes a signing secret")
+        if body.secret is not None and not body.secret.get_secret_value():
+            raise HTTPException(status_code=422, detail="A signing secret cannot be empty")
+        if body.url is not None:
+            url = body.url.get_secret_value()
+            try:
+                notifications.validate_destination_url(url)
+            except notifications.UnsafeDestinationURL as exc:
+                raise HTTPException(status_code=422, detail=str(exc))
+            dest.encrypted_url = encrypt_job_token(url, key)
+            changed.append("url")
+        if body.secret is not None:
+            dest.encrypted_secret = encrypt_job_token(body.secret.get_secret_value(), key)
+            changed.append("secret")
+
+    # `null` on these is "not provided", not "clear": they are NOT NULL columns.
+    for field in ("name", "enabled", "min_score_drop"):
+        if field in sent and getattr(body, field) is not None:
+            setattr(dest, field, getattr(body, field))
+            changed.append(field)
+    if "events" in sent and body.events is not None:
+        dest.events = list(body.events)
+        changed.append("events")
+
+    audit_repo.write(
+        db,
+        actor=user.email,
+        action="notification.destination_updated",
+        target=ctx.org.github_login,
+        # Names of what changed only: a URL or secret never goes into the audit log.
+        payload={"destination_id": dest.id, "kind": dest.kind, "changed": changed},
+        tenant_id=ctx.org.tenant_id,
+        commit=False,
+    )
+    db.commit()
+    db.refresh(dest)
+    return _out(dest)
 
 
 @router.delete("/orgs/{org_login}/notification-destinations/{destination_id}", status_code=status.HTTP_204_NO_CONTENT)

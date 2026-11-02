@@ -21,6 +21,7 @@ import { WaiversCard } from "@/components/waivers-card"
 import { EvidenceExportCard } from "@/components/evidence-export-card"
 import { MemberAccessSheet } from "@/components/member-access-sheet"
 import { BadgeSettingsCard } from "@/components/badge-settings-card"
+import { ApiTokensCard } from "@/components/api-tokens-card"
 import type { GithubOrgMember, GithubOutsideCollaborator, InvitationBulkItem, InvitationOut, MyOrgMembership } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
 
@@ -819,6 +820,7 @@ export default function OrgMembersPage() {
       )}
 
       {!rolePending && !notAdmin && <BadgeSettingsCard orgLogin={orgLogin} />}
+      {!rolePending && !notAdmin && <ApiTokensCard orgLogin={orgLogin} />}
 
       <div className="mt-4">
         <GithubRoster orgLogin={orgLogin} canReview={role === "admin"} />
