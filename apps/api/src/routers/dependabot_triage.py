@@ -5,7 +5,7 @@ Approving needs ``pull_requests: write``; merging needs ``contents: write``.
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
@@ -14,7 +14,7 @@ from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role
 from src.repositories import audit_repo, automation_settings_repo
 from src.services import dependabot_triage
 from src.services.github_client import GitHubClient
-from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token
+from src.services.token_resolution import NoGitHubTokenAvailable, pick_client_token, resolve_org_token
 
 router = APIRouter()
 
@@ -35,7 +35,7 @@ class SettingRequest(BaseModel):
 
 
 class TriageRequest(BaseModel):
-    token: str | None = None
+    token: SecretStr | None = None
     repos: list[str] | None = None
     dry_run: bool = False
 
@@ -116,7 +116,7 @@ def run_triage(
             db,
             org_id=ctx.org.id,
             account_login=ctx.org.github_login,
-            client_token=body.token or x_github_token,
+            client_token=pick_client_token(body.token, x_github_token),
         )
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
