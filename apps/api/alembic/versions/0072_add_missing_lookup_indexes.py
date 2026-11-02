@@ -31,16 +31,16 @@ Downgrade drops the six indexes. ``ix_repo_events_tenant_id`` is left in place: 
 of both new ``repo_events`` indexes and could be dropped later, but removing an index that is
 already in production is a separate decision from adding the missing ones.
 
-Revision ID: 0071
-Revises: 0070
+Revision ID: 0072
+Revises: 0071
 Create Date: 2026-11-01
 """
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0071"
-down_revision = "0070"
+revision = "0072"
+down_revision = "0071"
 branch_labels = None
 depends_on = None
 
