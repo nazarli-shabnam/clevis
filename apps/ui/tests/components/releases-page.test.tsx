@@ -12,6 +12,11 @@ vi.mock("@/lib/api/client", () => ({
   },
 }));
 
+const downloadTextFileMock = vi.fn();
+vi.mock("@/lib/download", () => ({
+  downloadTextFile: (...args: unknown[]) => downloadTextFileMock(...args),
+}));
+
 import ReleasesPage from "@/app/releases/page";
 
 function renderPage() {
@@ -39,6 +44,7 @@ describe("ReleasesPage", () => {
   beforeEach(() => {
     tokensResolveMock.mockReset();
     releaseTimelineMock.mockReset();
+    downloadTextFileMock.mockReset();
     localStorage.clear();
   });
 
@@ -158,5 +164,31 @@ describe("ReleasesPage", () => {
     renderPage();
 
     await waitFor(() => expect(screen.getByText(/No releases in the last 90 days/)).toBeInTheDocument());
+  });
+
+  it("exports the releases as CSV, including the pre-release flag and link", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+    releaseTimelineMock.mockResolvedValue({
+      org: "acme",
+      releases: [RELEASE, { ...RELEASE, name: "=cmd()", tag_name: "v2.0.0-rc1", is_prerelease: true, url: "https://github.com/acme/api/releases/tag/v2" }],
+    });
+
+    renderPage();
+
+    // each sortable header runs its sortValue
+    fireEvent.click(await screen.findByRole("button", { name: /^Repository/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Release/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Tag/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Published/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Type/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Export CSV/ }));
+    const [filename, csv] = downloadTextFileMock.mock.calls[0];
+    expect(filename).toMatch(/^clevis-releases-acme-90d-\d{4}-\d{2}-\d{2}\.csv$/);
+    expect(csv).toContain("Repository,Release,Tag,Notes,Published,Type,Link");
+    expect(csv).toContain("pre-release");
+    expect(csv).toContain("https://github.com/acme/api/releases/tag/v1.2.0");
+    // a name that looks like a formula is neutralised by the shared CSV helper
+    expect(csv).not.toMatch(/(^|,)=cmd/m);
   });
 });

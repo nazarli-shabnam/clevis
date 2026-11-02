@@ -22,6 +22,11 @@ vi.mock("@/lib/api/client", () => ({
   },
 }));
 
+const downloadTextFileMock = vi.fn();
+vi.mock("@/lib/download", () => ({
+  downloadTextFile: (...args: unknown[]) => downloadTextFileMock(...args),
+}));
+
 import PullRequestsPage from "@/app/pulls/page";
 
 function renderPage() {
@@ -53,6 +58,7 @@ describe("PullRequestsPage", () => {
     reposListMock.mockReset();
     reposPullsMock.mockReset();
     prNudgesSweepMock.mockReset();
+    downloadTextFileMock.mockReset();
     tokensResolveMock.mockRejectedValue(new Error("no saved token"));
     reposListMock.mockResolvedValue({ org: "acme", total: 0, repos: [] });
     reposPullsMock.mockResolvedValue({ repository: "acme/demo", total: 0, pulls: [] });
@@ -381,5 +387,39 @@ describe("PullRequestsPage", () => {
     await waitFor(() =>
       expect(screen.getByText(/Pull requests: write/)).toBeInTheDocument(),
     );
+  });
+
+  it("exports every open PR as CSV with author, date and link", async () => {
+    localStorage.setItem("default_org", "acme");
+    reposListMock.mockResolvedValue({
+      org: "acme",
+      total: 1,
+      repos: [
+        { name: "api", full_name: "acme/api", private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: "https://github.com/acme/api" },
+      ],
+    });
+    reposPullsMock.mockResolvedValue({
+      repository: "acme/api",
+      total: 2,
+      pulls: [
+        pull({ number: 1, title: "=HYPERLINK(1)", user: "alice", html_url: "https://github.com/acme/api/pull/1" }),
+        pull({ number: 2, title: "Second", user: null, html_url: "https://github.com/acme/api/pull/2" }),
+      ],
+    });
+
+    renderPage();
+
+    // each sortable header runs its sortValue
+    fireEvent.click(await screen.findByRole("button", { name: /^Repo/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Pull Request/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Author/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Opened/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Export CSV/ }));
+    const [filename, csv] = downloadTextFileMock.mock.calls[0];
+    expect(filename).toMatch(/^clevis-pull-requests-acme-\d{4}-\d{2}-\d{2}\.csv$/);
+    expect(csv).toContain("Repo,Pull Request,Author,Opened,Link");
+    expect(csv).toContain("unknown");
+    expect(csv).toContain("https://github.com/acme/api/pull/2");
+    expect(csv).not.toMatch(/(^|,)"?=HYPERLINK/m);
   });
 });

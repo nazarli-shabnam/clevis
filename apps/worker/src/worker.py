@@ -645,8 +645,7 @@ def run() -> None:
     log.info("worker started, polling every %ds", poll_seconds)
     while True:
         _touch_heartbeat()
-        # Re-read each cycle so settings changes take effect without restart.
-        poll_seconds = _read_poll_seconds()
+        processed_a_job = False
         try:
             with psycopg.connect(_DB_URL) as conn:
                 _reclaim_stale_jobs(conn)
@@ -684,14 +683,22 @@ def run() -> None:
                         try:
                             with _JobHeartbeat(job_id):
                                 process_job(conn, *row)
+                            processed_a_job = True
                         finally:
                             _release_job_lock(conn, job_id)
         except psycopg.OperationalError:
-            log.error("database connection failed, retrying in %ds", poll_seconds)
+            log.error("database connection failed, retrying after the poll interval")
         except Exception:
             log.exception("worker poll error")
 
-        time.sleep(poll_seconds)
+        if processed_a_job:
+            # More jobs may be waiting: poll again straight away. Sleeping here capped throughput at one
+            # job per poll interval, so a backlog of N jobs took N x poll_seconds however fast the
+            # handlers were. The sleep below only happens once a poll comes back empty, or on an error.
+            continue
+        # Read only when about to sleep (it opens its own connection), and each time so a settings change
+        # takes effect without a restart.
+        time.sleep(_read_poll_seconds())
 
 
 if __name__ == "__main__":
