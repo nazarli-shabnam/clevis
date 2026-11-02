@@ -100,7 +100,7 @@ describe("NotificationDestinationsCard", () => {
     await waitFor(() => expect(updateMock).toHaveBeenCalledWith("acme", 1, { enabled: false }))
     const events = screen.getByRole("group", { name: "Events for #alerts" })
     fireEvent.click(within(events).getByLabelText("Automation failed"))
-    await waitFor(() => expect(updateMock).toHaveBeenCalledWith("acme", 1, { events: ["score_drop", "automation_failed"] }))
+    await waitFor(() => expect(updateMock).toHaveBeenCalledWith("acme", 1, { add_events: ["automation_failed"] }))
   })
 
   it("shows the test-send result on its own row", async () => {

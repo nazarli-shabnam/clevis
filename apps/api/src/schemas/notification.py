@@ -38,6 +38,9 @@ class DestinationUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     enabled: bool | None = None
     events: list[EventName] | None = None
+    # Deltas applied to the stored set, so concurrent admins' toggles don't overwrite each other.
+    add_events: list[EventName] | None = None
+    remove_events: list[EventName] | None = None
     min_score_drop: int | None = Field(default=None, ge=1, le=100)
     url: SecretStr | None = None
     recipients: list[EmailStr] | None = Field(default=None, min_length=1, max_length=10)

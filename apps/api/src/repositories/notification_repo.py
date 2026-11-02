@@ -27,12 +27,15 @@ def count_for_tenant(db: Session, tenant_id: int) -> int:
     ).scalar_one()
 
 
-def get(db: Session, tenant_id: int, destination_id: int) -> NotificationDestination | None:
-    return db.execute(
-        select(NotificationDestination).where(
-            NotificationDestination.tenant_id == tenant_id, NotificationDestination.id == destination_id
-        )
-    ).scalar_one_or_none()
+def get(
+    db: Session, tenant_id: int, destination_id: int, *, for_update: bool = False
+) -> NotificationDestination | None:
+    stmt = select(NotificationDestination).where(
+        NotificationDestination.tenant_id == tenant_id, NotificationDestination.id == destination_id
+    )
+    if for_update:
+        stmt = stmt.with_for_update()
+    return db.execute(stmt).scalar_one_or_none()
 
 
 def create(db: Session, **fields) -> NotificationDestination:
