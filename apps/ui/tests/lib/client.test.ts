@@ -1202,6 +1202,27 @@ describe("waivers, notification preferences and evidence endpoints", () => {
     expect(revoke()[1].method).toBe("DELETE");
   });
 
+  it("notification destinations use the org-scoped routes", async () => {
+    const calls: Array<[string, RequestInit]> = []
+    const run = async (fn: () => Promise<unknown>, body: unknown = {}, status = 200) => {
+      const f = stub(body, status)
+      await fn()
+      calls.push([f()[0], f()[1]])
+    }
+    await run(() => api.notificationDestinations.list("a/b"), [])
+    await run(() => api.notificationDestinations.create("acme", { kind: "slack", name: "n", url: "u", events: [], min_score_drop: 10 }), { id: 1 }, 201)
+    await run(() => api.notificationDestinations.update("acme", 3, { enabled: false }), { id: 3 })
+    await run(() => api.notificationDestinations.test("acme", 3), { ok: true, detail: "" })
+    await run(() => api.notificationDestinations.remove("acme", 3), null, 204)
+    expect(calls.map(([u, i]) => `${i?.method ?? "GET"} ${u.replace(/^.*\/orgs\//, "")}`)).toEqual([
+      "GET a%2Fb/notification-destinations",
+      "POST acme/notification-destinations",
+      "PATCH acme/notification-destinations/3",
+      "POST acme/notification-destinations/3/test",
+      "DELETE acme/notification-destinations/3",
+    ])
+  })
+
   it("api tokens use the org-scoped routes and omit expires_in_days when the token never expires", async () => {
     const list = stub([])
     await api.apiTokens.list("a/b")

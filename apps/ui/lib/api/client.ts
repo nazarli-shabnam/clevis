@@ -1,4 +1,7 @@
 import type {
+  NotificationDestination,
+  NotificationDestinationInput,
+  NotificationDestinationPatch,
   ApiToken,
   ApiTokenCreated,
   ScanChanges,
@@ -600,6 +603,21 @@ export const api = {
     create: (orgLogin: string, body: CheckWaiverInput) =>
       post<CheckWaiver>(`/orgs/${encodeURIComponent(orgLogin)}/waivers`, body),
     revoke: (orgLogin: string, id: number) => del(`/orgs/${encodeURIComponent(orgLogin)}/waivers/${id}`),
+  },
+  notificationDestinations: {
+    list: (orgLogin: string) =>
+      get<NotificationDestination[]>(`/orgs/${encodeURIComponent(orgLogin)}/notification-destinations`),
+    create: (orgLogin: string, body: NotificationDestinationInput) =>
+      post<NotificationDestination>(`/orgs/${encodeURIComponent(orgLogin)}/notification-destinations`, body),
+    update: (orgLogin: string, id: number, body: NotificationDestinationPatch) =>
+      patch<NotificationDestination>(`/orgs/${encodeURIComponent(orgLogin)}/notification-destinations/${id}`, body),
+    remove: (orgLogin: string, id: number) =>
+      del(`/orgs/${encodeURIComponent(orgLogin)}/notification-destinations/${id}`),
+    test: (orgLogin: string, id: number) =>
+      post<{ ok: boolean; detail: string }>(
+        `/orgs/${encodeURIComponent(orgLogin)}/notification-destinations/${id}/test`,
+        {},
+      ),
   },
   apiTokens: {
     list: (orgLogin: string) => get<ApiToken[]>(`/orgs/${encodeURIComponent(orgLogin)}/api-tokens`),
