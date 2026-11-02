@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import text
 
-from src.core.db import Job, RepoEvent, RepoEventDailyCount, User, WebhookDelivery
+from src.core.db import Job, RepoEvent, RepoEventDailyCount, User, WebhookDelivery, set_session_tenant
 from src.repositories import tenant_repo
 from src.services import retention_sweep
 from src.services.retention_sweep import run_retention_sweep
@@ -57,6 +57,7 @@ def _job(db, *, status: str, age_days: float, name: str) -> None:
 
 
 def _event(db, *, tenant_id: int, age_days: float, name: str) -> None:
+    set_session_tenant(db, tenant_id)  # repo_events is RLS-forced
     db.add(
         RepoEvent(
             tenant_id=tenant_id, delivery_id=name, event_type="push", actor="alice", actor_avatar="",
@@ -129,6 +130,7 @@ def test_old_repo_events_are_deleted_per_tenant_and_the_rollup_is_kept(db):
     for tenant_id, label in ((tenant_a, "a"), (tenant_b, "b")):
         _event(db, tenant_id=tenant_id, age_days=400, name=f"ev-{label}-old")
         _event(db, tenant_id=tenant_id, age_days=10, name=f"ev-{label}-recent")
+    set_session_tenant(db, tenant_a)
     db.add(RepoEventDailyCount(tenant_id=tenant_a, repo="api", event_type="push", day=date(2025, 1, 1), count=7))
     db.commit()
 
