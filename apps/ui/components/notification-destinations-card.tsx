@@ -22,7 +22,7 @@ const ALL_EVENTS = Object.keys(EVENT_LABELS) as AlertEvent[]
 const KIND_LABELS: Record<DestinationKind, string> = {
   slack: "Slack",
   teams: "Microsoft Teams",
-  generic: "Signed webhook",
+  generic: "Webhook",
   email: "Email",
 }
 
@@ -35,7 +35,8 @@ function DestinationRow({ orgLogin, dest }: { orgLogin: string; dest: Notificati
   const update = useMutation({
     mutationFn: (patch: { enabled?: boolean; events?: AlertEvent[] }) =>
       api.notificationDestinations.update(orgLogin, dest.id, patch),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+    // Also on error: a PATCH can commit and lose its response, and the next toggle must not start from stale values.
+    onSettled: () => queryClient.invalidateQueries({ queryKey }),
   })
   const test = useMutation({ mutationFn: () => api.notificationDestinations.test(orgLogin, dest.id) })
   const remove = useMutation({
@@ -44,7 +45,10 @@ function DestinationRow({ orgLogin, dest }: { orgLogin: string; dest: Notificati
       setConfirming(false)
       return queryClient.invalidateQueries({ queryKey })
     },
-    onError: () => setConfirming(false),
+    onError: () => {
+      setConfirming(false)
+      return queryClient.invalidateQueries({ queryKey })
+    },
   })
   const busy = update.isPending || remove.isPending
 
@@ -166,9 +170,9 @@ export function NotificationDestinationsCard({ orgLogin }: { orgLogin: string })
     },
   })
 
-  const target = kind === "email" ? recipients.trim() : url.trim()
+  const hasTarget = kind === "email" ? recipients.split(/[,\s]+/).filter(Boolean).length > 0 : url.trim() !== ""
   const dropValid = Number.isInteger(Number(minDrop)) && Number(minDrop) >= 1 && Number(minDrop) <= 100
-  const canSubmit = name.trim() !== "" && target !== "" && dropValid && !create.isPending
+  const canSubmit = name.trim() !== "" && hasTarget && dropValid && !create.isPending
 
   return (
     <div className="card mt-4">
@@ -184,7 +188,7 @@ export function NotificationDestinationsCard({ orgLogin }: { orgLogin: string })
         <div className="px-4 py-4 flex items-center gap-2 text-sm text-muted-foreground">
           <CircleNotch className="size-3.5 animate-spin" /> Loading…
         </div>
-      ) : query.isError || !query.data ? (
+      ) : !query.data ? (
         <SectionError
           message={`Couldn't load destinations: ${query.error instanceof Error ? query.error.message : "unknown error"}`}
           onRetry={() => query.refetch()}
