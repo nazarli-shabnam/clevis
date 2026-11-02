@@ -103,3 +103,94 @@ def test_run_does_not_claim_a_retried_job_before_its_backoff_elapses(worker_db, 
 
     assert _fetch(conn, job_id)[0] == "queued"
     assert not any(c.args[1] == job_id for c in process.call_args_list)
+
+
+# --- throughput: no sleep between jobs ------------------------------------------------------------
+
+def test_run_drains_a_backlog_without_sleeping_between_jobs(worker_db, monkeypatch):
+    conn, created_ids = worker_db
+    job_ids = [_insert_queued_job(conn, created_ids) for _ in range(3)]
+    sleep = MagicMock(side_effect=_StopLoop)
+    process = MagicMock()
+    monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 5)
+    monkeypatch.setattr(worker.time, "sleep", sleep)
+    monkeypatch.setattr(worker, "process_job", process)
+
+    try:
+        worker.run()
+    except _StopLoop:
+        pass
+
+    # All three were claimed one poll after another; the only sleep is the empty poll after the last one.
+    assert [c.args[1] for c in process.call_args_list] == job_ids
+    sleep.assert_called_once_with(5)
+
+
+def test_run_sleeps_when_the_queue_is_empty(worker_db, monkeypatch):
+    sleep = MagicMock(side_effect=_StopLoop)
+    process = MagicMock()
+    monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 5)
+    monkeypatch.setattr(worker.time, "sleep", sleep)
+    monkeypatch.setattr(worker, "process_job", process)
+
+    try:
+        worker.run()
+    except _StopLoop:
+        pass
+
+    process.assert_not_called()
+    sleep.assert_called_once_with(5)
+
+
+def test_run_still_backs_off_after_a_poll_error(worker_db, monkeypatch):
+    """The no-sleep fast path is only for a job that was processed, never for a failing poll."""
+    conn, created_ids = worker_db
+    first, second = _insert_queued_job(conn, created_ids), _insert_queued_job(conn, created_ids)
+    sleep = MagicMock(side_effect=_StopLoop)
+    process = MagicMock(side_effect=RuntimeError("handler blew up"))
+    monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 5)
+    monkeypatch.setattr(worker.time, "sleep", sleep)
+    monkeypatch.setattr(worker, "process_job", process)
+
+    try:
+        worker.run()
+    except _StopLoop:
+        pass
+
+    assert [c.args[1] for c in process.call_args_list] == [first]  # the loop slept instead of spinning on
+    sleep.assert_called_once_with(5)
+    assert _fetch(conn, second)[0] == "queued"
+
+
+def test_run_backs_off_when_the_database_is_unreachable(monkeypatch, caplog):
+    sleep = MagicMock(side_effect=_StopLoop)
+    monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 7)
+    monkeypatch.setattr(worker.time, "sleep", sleep)
+    monkeypatch.setattr(worker.psycopg, "connect", MagicMock(side_effect=worker.psycopg.OperationalError("down")))
+
+    with caplog.at_level("ERROR", logger="worker"):
+        try:
+            worker.run()
+        except _StopLoop:
+            pass
+
+    sleep.assert_called_once_with(7)
+    assert "database connection failed" in caplog.text
+
+
+def test_run_reads_the_poll_interval_only_when_it_is_about_to_sleep(worker_db, monkeypatch):
+    conn, created_ids = worker_db
+    for _ in range(3):
+        _insert_queued_job(conn, created_ids)
+    read = MagicMock(return_value=5)
+    monkeypatch.setattr(worker, "_read_poll_seconds", read)
+    monkeypatch.setattr(worker.time, "sleep", MagicMock(side_effect=_StopLoop))
+    monkeypatch.setattr(worker, "process_job", MagicMock())
+
+    try:
+        worker.run()
+    except _StopLoop:
+        pass
+
+    # Once at start-up for the log line, once for the single sleep: not once per job.
+    assert read.call_count == 2

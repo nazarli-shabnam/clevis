@@ -629,7 +629,7 @@ const CONFIG_FIELDS: {
   // What the server uses while the key is unset; shown (and saved) for a key that isn't persisted yet.
   defaultValue?: string
 }[] = [
-  { key: "worker_poll_seconds", label: "Worker Poll Interval",    description: "Seconds between job queue polls.", type: "number" },
+  { key: "worker_poll_seconds", label: "Worker Poll Interval",    description: "Seconds to wait before polling again when the job queue is empty (queued jobs are picked up back to back).", type: "number" },
   { key: "dependabot_sla_critical_days", label: "Critical Alert SLA", description: "Days a critical Dependabot alert may stay open before it counts as an SLA breach (default 7).", type: "number" },
   { key: "dependabot_sla_high_days", label: "High Alert SLA", description: "Days a high-severity Dependabot alert may stay open before it counts as an SLA breach (default 30).", type: "number" },
   { key: "score_hygiene_checks", label: "Score Hygiene Checks (default)", description: "Default for organizations that haven't chosen for themselves: count CODEOWNERS, SECURITY.md, license, stale-branch and unpinned-Action checks toward the security score (off: these checks are not run). Org admins can override it per organization.", type: "boolean", defaultValue: "false" },
