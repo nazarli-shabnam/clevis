@@ -159,6 +159,39 @@ def test_security_matrix_excludes_unknown_dimensions_from_score(client):
     assert row["score"] == 0  # secret_scanning is the only evaluable dimension, and it's False
 
 
+@pytest.mark.parametrize("status_code, unknown", [(401, True), (403, True), (429, True), (502, True), (404, False)])
+def test_security_matrix_branch_protection_only_404_is_unprotected(client, status_code, unknown):
+    """A 5xx/401 from the branch call is no answer, not 'unprotected'; only a 404 is a real negative."""
+    def _request_side_effect(method, path, params=None):
+        if "/branches/" in path:
+            raise httpx.HTTPStatusError(
+                "err", request=httpx.Request("GET", "https://api.github.com/x"),
+                response=httpx.Response(status_code, request=httpx.Request("GET", "https://api.github.com/x")),
+            )
+        return {}
+
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.return_value = [{"name": "api", "default_branch": "main"}]
+        mock_client.return_value.request.side_effect = _request_side_effect
+        resp = client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
+
+    row = resp.json()["repos"][0]
+    assert ("branch_protection" in row["unknown_dimensions"]) is unknown
+    assert ("force_push" in row["unknown_dimensions"]) is unknown
+
+
+def test_security_matrix_repo_without_default_branch_skips_branch_call(client):
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.return_value = [{"name": "empty", "default_branch": None}]
+        mock_client.return_value.request.return_value = {}
+        resp = client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
+
+    paths = [c.args[1] for c in mock_client.return_value.request.call_args_list]
+    assert not any("/branches/" in p for p in paths)
+    assert sorted(resp.json()["repos"][0]["unknown_dimensions"]) == ["branch_protection", "force_push"]
+    assert resp.json()["summary"]["fully_compliant_count"] == 0  # unknown dimensions can't be "fully compliant"
+
+
 def test_security_matrix_403_on_dependabot_is_unknown_not_clean(client):
     """A 403 (missing security-events scope) must not read as 'no critical/high alerts'."""
     forbidden = _branch_error(403)
@@ -183,6 +216,7 @@ def test_security_matrix_403_on_dependabot_is_unknown_not_clean(client):
     assert row["unknown_dimensions"] == ["dependabot"]
     assert row["score"] == 100  # remaining 4 evaluable dimensions all pass
     assert row["dependabot_critical_count"] == 0  # not silently zero-and-clean -- flagged unknown instead
+    assert resp.json()["summary"]["fully_compliant_count"] == 0  # score 100 but one dimension unknown
 
 
 def test_security_matrix_404_on_dependabot_is_genuinely_disabled(client):
