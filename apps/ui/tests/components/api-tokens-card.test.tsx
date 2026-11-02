@@ -89,4 +89,54 @@ describe("ApiTokensCard", () => {
     expect(screen.getAllByRole("alert")).toHaveLength(1)
     expect(screen.getByRole("button", { name: "Revoke token other" })).toBeEnabled()
   })
+
+  it("revokes a token after confirming and refreshes the list", async () => {
+    listMock.mockResolvedValueOnce([token()]).mockResolvedValue([token({ revoked_at: new Date().toISOString() })])
+    revokeMock.mockResolvedValue(undefined)
+    renderCard()
+    await screen.findByText("ci")
+    fireEvent.click(screen.getByRole("button", { name: "Revoke token ci" }))
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Revoke" }))
+    await waitFor(() => expect(revokeMock).toHaveBeenCalledWith("acme", 1))
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Revoke token ci" })).not.toBeInTheDocument())
+    expect(listMock).toHaveBeenCalledTimes(2)
+  })
+
+  it("shows when an active token expires", async () => {
+    listMock.mockResolvedValue([token({ expires_at: new Date(Date.now() + 5 * 86_400_000).toISOString() })])
+    renderCard()
+    expect(await screen.findByText(/expires/)).toBeInTheDocument()
+  })
+
+  it("shows a load error and retries it", async () => {
+    listMock.mockRejectedValueOnce(new Error("boom")).mockResolvedValue([token()])
+    renderCard()
+    expect(await screen.findByText(/Couldn't load API tokens: boom/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }))
+    expect(await screen.findByText("ci")).toBeInTheDocument()
+  })
+
+  it("shows why a token could not be created", async () => {
+    listMock.mockResolvedValue([])
+    createMock.mockRejectedValue(new Error("Name already used"))
+    renderCard()
+    await screen.findByText("No API tokens.")
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "ci" } })
+    fireEvent.click(screen.getByRole("button", { name: "Create token" }))
+    expect(await screen.findByText(/Couldn't create the token: Name already used/)).toBeInTheDocument()
+  })
+
+  it("won't create another token while the new secret is still showing", async () => {
+    listMock.mockResolvedValue([])
+    createMock.mockResolvedValue({ ...token({ name: "deploy" }), token: "clv_secret_value" })
+    renderCard()
+    await screen.findByText("No API tokens.")
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "deploy" } })
+    fireEvent.click(screen.getByRole("button", { name: "Create token" }))
+    await screen.findByText("clv_secret_value")
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "second" } })
+    expect(screen.getByRole("button", { name: "Create token" })).toBeDisabled()
+    fireEvent.click(screen.getByRole("button", { name: "I've saved it" }))
+    expect(screen.getByRole("button", { name: "Create token" })).toBeEnabled()
+  })
 })
