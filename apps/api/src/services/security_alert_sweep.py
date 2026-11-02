@@ -51,19 +51,28 @@ def run_security_alert_sweep(db: Session) -> None:
             if not rows:
                 db.commit()  # release the advisory slot
                 continue
-            announced = [
-                {"repo": r.repo, "kind": r.kind, "number": r.number, "severity": r.severity} for r in rows
-            ]
             # Commit the stamp before messaging: the message is best-effort, a repeat announcement is not.
             # A non-critical alert stays unstamped, so one later raised to critical is still announced.
-            db.execute(
+            # Re-check state and severity here: a worker update may have closed or downgraded an alert since
+            # the SELECT, and only the rows this UPDATE actually stamps are announced.
+            stamped = db.execute(
                 text(
                     "UPDATE security_alerts SET alert_notified_at = now() "
-                    "WHERE tenant_id = :t AND alert_notified_at IS NULL AND id = ANY(:ids)"
+                    "WHERE tenant_id = :t AND alert_notified_at IS NULL AND id = ANY(:ids) AND state = 'open' "
+                    "AND (kind = 'secret_scanning' OR severity IN ('critical', 'high')) "
+                    "RETURNING id"
                 ),
                 {"t": tenant_id, "ids": [r.id for r in rows]},
-            )
+            ).scalars().all()
             db.commit()
+            stamped_ids = set(stamped)
+            announced = [
+                {"repo": r.repo, "kind": r.kind, "number": r.number, "severity": r.severity}
+                for r in rows
+                if r.id in stamped_ids
+            ]
+            if not announced:
+                continue
             try:
                 notifications.notify_new_critical_alerts(db, tenant_id, org_login, announced, actor=ACTOR)
             except Exception:

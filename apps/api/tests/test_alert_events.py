@@ -108,6 +108,20 @@ def test_patch_rejects_fields_that_do_not_fit_the_kind(db, acme):
     )
 
 
+def test_patch_rejects_an_empty_signing_secret(db, acme):
+    client = _client(db, acme["admin"])
+    dest_id = _create(client, kind="generic", url="https://example.com/hook", secret="s3cret").json()["id"]
+    resp = client.patch(f"/orgs/acme/notification-destinations/{dest_id}", json={"secret": ""})
+    assert resp.status_code == 422
+    dest = db.get(NotificationDestination, dest_id)
+    db.refresh(dest)
+    assert decrypt_job_token(dest.encrypted_secret, settings.job_secret_key.get_secret_value()) == "s3cret"
+
+
+def test_every_event_has_its_own_email_subject():
+    assert all(event in notifications._EMAIL_SUBJECTS for event in notifications.EVENTS)
+
+
 def test_patch_rejects_unknown_event_and_missing_destination_and_non_admin(db, acme):
     admin = _client(db, acme["admin"])
     dest_id = _create(admin).json()["id"]

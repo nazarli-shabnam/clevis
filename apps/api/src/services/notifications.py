@@ -138,6 +138,9 @@ def sign(secret: str, body: bytes, timestamp: str) -> str:
 _EMAIL_SUBJECTS = {
     "score_drop": "Clevis: security score dropped for {org}",
     "waiver_expired": "Clevis: check waivers expired for {org}",
+    "new_critical_alert": "Clevis: new critical alert for {org}",
+    "stale_pr_summary": "Clevis: stale PR summary for {org}",
+    "automation_failed": "Clevis: automation failed for {org}",
     "test": "Clevis: test message for {org}",
 }
 

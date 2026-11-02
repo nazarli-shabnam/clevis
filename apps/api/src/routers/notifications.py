@@ -145,6 +145,8 @@ def update_destination(
             raise HTTPException(status_code=422, detail="Only an email destination takes recipients")
         if body.secret is not None and dest.kind != "generic":
             raise HTTPException(status_code=422, detail="Only a generic webhook destination takes a signing secret")
+        if body.secret is not None and not body.secret.get_secret_value():
+            raise HTTPException(status_code=422, detail="A signing secret cannot be empty")
         if body.url is not None:
             url = body.url.get_secret_value()
             try:

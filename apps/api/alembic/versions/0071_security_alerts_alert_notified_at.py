@@ -20,7 +20,13 @@ depends_on = None
 
 def upgrade() -> None:
     op.add_column("security_alerts", sa.Column("alert_notified_at", sa.DateTime(timezone=True), nullable=True))
-    op.execute(sa.text("UPDATE security_alerts SET alert_notified_at = now()"))
+    # Only the rows the sweep would announce; a medium alert later raised to critical must still be announced.
+    op.execute(
+        sa.text(
+            "UPDATE security_alerts SET alert_notified_at = now() "
+            "WHERE kind = 'secret_scanning' OR severity IN ('critical', 'high')"
+        )
+    )
 
 
 def downgrade() -> None:
