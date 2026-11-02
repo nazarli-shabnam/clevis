@@ -309,6 +309,17 @@ def test_get_all_pages_follows_link_header_across_pages():
     assert results == [{"id": 1}, {"id": 2}, {"id": 3}]
 
 
+def test_get_all_pages_picks_next_out_of_a_multi_relation_link_header():
+    def fake_get(url, headers):
+        if "page=2" in url:
+            return httpx.Response(200, json=[{"id": 2}], request=httpx.Request("GET", url))
+        link = '<https://x/y?page=1>; rel="prev", <https://x/y?page=2>; rel="next", <https://x/y?page=9>; rel="last"'
+        return httpx.Response(200, json=[{"id": 1}], headers={"Link": link}, request=httpx.Request("GET", url))
+
+    with patch("httpx.Client.get", side_effect=fake_get):
+        assert _get_all_pages("https://x", "/y", "tok") == [{"id": 1}, {"id": 2}]
+
+
 def test_get_all_pages_raises_instead_of_returning_a_partial_list_at_the_page_cap():
     call_count = 0
 

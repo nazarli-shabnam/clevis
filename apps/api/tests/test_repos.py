@@ -686,3 +686,8 @@ def test_non_member_forbidden(db):
     client = TestClient(app)
     resp = client.post("/orgs/acme/repos", json={})
     assert resp.status_code == 403
+
+
+def test_list_pulls_rejects_an_unknown_state_with_422(repos_client):
+    resp = repos_client.post("/orgs/acme/repos/acme/demo/pulls", json={"state": "everything"})
+    assert resp.status_code == 422

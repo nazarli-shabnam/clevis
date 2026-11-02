@@ -62,7 +62,7 @@ class RepoStatsResponse(BaseModel):
 
 class RepoPullsInput(BaseModel):
     token: SecretStr | None = None
-    state: str = "open"
+    state: Literal["open", "closed", "all"] = "open"
 
 
 class PullSummary(BaseModel):

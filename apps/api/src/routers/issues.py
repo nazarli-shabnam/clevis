@@ -7,7 +7,7 @@ installation or PAT -- a 403 surfaces as a 400 with a "needs Issues: write" hint
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
@@ -18,6 +18,7 @@ from src.services.github_client import GitHubClient, github_error as _github_err
 from src.services.token_resolution import (
     InsufficientOrgRole,
     NoGitHubTokenAvailable,
+    pick_client_token,
     resolve_owner_token,
 )
 
@@ -27,7 +28,7 @@ router = APIRouter()
 class CreateIssueRequest(BaseModel):
     title: str = Field(min_length=1, max_length=256)
     body: str = Field(default="", max_length=65536)
-    token: str | None = None
+    token: SecretStr | None = None
 
 
 class CreateIssueResponse(BaseModel):
@@ -52,7 +53,7 @@ def create_issue(
             db,
             user_id=user.id,
             owner=owner,
-            client_token=body.token or x_github_token,
+            client_token=pick_client_token(body.token, x_github_token),
             min_role="admin",
         )
     except InsufficientOrgRole as exc:
