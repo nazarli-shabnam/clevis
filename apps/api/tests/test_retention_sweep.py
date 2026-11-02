@@ -248,3 +248,16 @@ def test_a_failing_purge_does_not_stop_the_others(db, caplog):
     assert _left(db, Job, Job.job_type, ["ret-isolated-job"]) == set()
     assert _left(db, WebhookDelivery, WebhookDelivery.delivery_id, ["isolated-delivery"]) == {"isolated-delivery"}
     assert any("retention purge failed" in r.message for r in caplog.records)
+
+
+def test_a_requested_shutdown_stops_further_delete_batches(db):
+    for i in range(3):
+        _delivery(db, status="processed", age_days=45, name=f"stop-{i}")
+
+    retention_sweep.stop_requested.set()
+    try:
+        _run(db)
+    finally:
+        retention_sweep.stop_requested.clear()
+
+    assert len(_left(db, WebhookDelivery, WebhookDelivery.delivery_id, [f"stop-{i}" for i in range(3)])) == 3

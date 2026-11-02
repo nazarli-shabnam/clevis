@@ -26,6 +26,7 @@ time: deleting a row twice is a no-op, so no cross-replica lock is needed.
 """
 
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -42,6 +43,10 @@ BATCH_SIZE = 5_000
 # Caps one table's (or one tenant's) work per tick: 500k rows. The rest is picked up on the next tick.
 MAX_BATCHES = 100
 MAX_DAYS = 3650
+
+# Set on API shutdown. Cancelling the loop's task does not stop the worker thread running a sweep, and the
+# interpreter waits for that thread at exit, so batches check this and stop issuing deletes.
+stop_requested = threading.Event()
 
 
 @dataclass(frozen=True)
@@ -94,6 +99,8 @@ def retention_days(policy: RetentionPolicy) -> int | None:
 def _delete_in_batches(db: Session, sql: str, params: dict) -> int:
     total = 0
     for _ in range(MAX_BATCHES):
+        if stop_requested.is_set():
+            break
         deleted = db.execute(text(sql), {**params, "limit": BATCH_SIZE}).rowcount
         db.commit()
         total += deleted
