@@ -136,8 +136,12 @@ def test_old_repo_events_are_deleted_per_tenant_and_the_rollup_is_kept(db):
 
     _run(db)
 
-    names = ["ev-a-old", "ev-a-recent", "ev-b-old", "ev-b-recent"]
-    assert _left(db, RepoEvent, RepoEvent.delivery_id, names) == {"ev-a-recent", "ev-b-recent"}
+    # repo_events is RLS-scoped, so each tenant's rows are read under its own context.
+    for tenant_id, label in ((tenant_a, "a"), (tenant_b, "b")):
+        set_session_tenant(db, tenant_id)
+        names = [f"ev-{label}-old", f"ev-{label}-recent"]
+        assert _left(db, RepoEvent, RepoEvent.delivery_id, names) == {f"ev-{label}-recent"}
+    set_session_tenant(db, tenant_a)
     assert db.query(RepoEventDailyCount).filter_by(tenant_id=tenant_a).one().count == 7
 
 
