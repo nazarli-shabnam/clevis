@@ -69,7 +69,7 @@ The API uses `postgresql+psycopg://` (SQLAlchemy dialect). The worker strips the
 
 ### Request ID propagation
 
-`RequestIdMiddleware` (`apps/api/src/core/middleware.py`) assigns a UUID to every request (or forwards `X-Request-ID` if present), stores it in a `ContextVar`, and injects it into all log records. The ID is echoed in the `X-Request-ID` response header.
+`RequestIdMiddleware` (`apps/api/src/core/middleware.py`) assigns a UUID to every request (or forwards `X-Request-ID` if present), stores it in a `ContextVar`, and `setup_logging()` (`apps/api/src/core/logging.py`, called from the app lifespan) installs a root log handler whose format prints it (`[%(request_id)s]`) on every application log line (`-` outside a request). uvicorn's own access/error lines keep uvicorn's format and do not carry it. The ID is echoed in the `X-Request-ID` response header.
 
 ### UI routing
 
