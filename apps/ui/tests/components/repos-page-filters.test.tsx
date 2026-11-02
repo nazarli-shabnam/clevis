@@ -10,6 +10,11 @@ const securityMock = vi.fn();
 
 vi.mock("next/navigation", () => ({ useParams: () => ({}) }));
 
+const downloadTextFileMock = vi.fn();
+vi.mock("@/lib/download", () => ({
+  downloadTextFile: (...args: unknown[]) => downloadTextFileMock(...args),
+}));
+
 // Workspace admin by default (saved tokens are admin-only); member tests flip it.
 let mockIsWorkspaceAdmin = true
 vi.mock("@/lib/auth-context", () => ({
@@ -78,6 +83,7 @@ const visibleNames = () => ["api", "web", "legacy"].filter((n) => screen.queryBy
 
 describe("ReposPage filters", () => {
   beforeEach(() => {
+    downloadTextFileMock.mockReset();
     mockIsWorkspaceAdmin = true;
     localStorage.clear();
     tokensResolveMock.mockReset();
@@ -370,5 +376,26 @@ describe("ReposPage auto-load", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /load repositories/i }));
     await waitFor(() => expect(reposListMock).toHaveBeenCalledTimes(2));
+  });
+
+  it("exports exactly the filtered rows, with 'unknown' protection for repos that were not checked", async () => {
+    renderPage();
+    await loadReposByHand();
+
+    fireEvent.change(screen.getByLabelText("Filter by language"), { target: { value: "Python" } });
+    await waitFor(() => expect(visibleNames().sort()).toEqual(["api", "legacy"]));
+    fireEvent.click(screen.getByRole("button", { name: /export csv/i }));
+
+    const [filename, csv, mime] = downloadTextFileMock.mock.calls[0];
+    expect(filename).toMatch(/^clevis-repos-acme-\d{4}-\d{2}-\d{2}\.csv$/);
+    expect(mime).toBe("text/csv");
+    const lines = csv.split(String.fromCharCode(13, 10));
+    expect(lines[0]).toContain("Repository,Visibility,Archived,Language,Stars");
+    expect(lines).toHaveLength(3); // header + api + legacy, not web
+    const legacy = lines.find((l: string) => l.startsWith("acme/legacy"));
+    expect(legacy).toContain("public,yes,Python");
+    expect(legacy).toContain(",unknown,"); // protection never checked
+    expect(legacy).toContain("2020-01-01T00:00:00Z,yes"); // archived long ago: no push in 90+ days
+    expect(csv).not.toContain("acme/web");
   });
 });

@@ -5,8 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("next/navigation", () => ({
   useParams: () => ({ login: "acme" }),
   useRouter: () => ({ replace: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(mockRoster ? `roster=${mockRoster}` : ""),
 }));
+let mockRoster = "";
 
 const downloadTextFileMock = vi.fn();
 vi.mock("@/lib/download", () => ({
@@ -14,13 +15,14 @@ vi.mock("@/lib/download", () => ({
 }));
 
 const membersMock = vi.fn();
+const outsideMock = vi.fn();
 
 vi.mock("@/lib/api/client", () => ({
   api: {
     invitations: { list: vi.fn().mockResolvedValue([]), revoke: vi.fn(), create: vi.fn() },
     collab: {
       members: (...args: unknown[]) => membersMock(...args),
-      outsideCollaborators: vi.fn(),
+      outsideCollaborators: (...args: unknown[]) => outsideMock(...args),
       invitations: vi.fn().mockResolvedValue({ org: "acme", invitations: [] }),
       permissionAudit: vi.fn(),
       inactiveMembers: vi.fn(),
@@ -45,6 +47,7 @@ function renderPage() {
 describe("OrgMembersPage CSV export", () => {
   beforeEach(() => {
     downloadTextFileMock.mockReset();
+    mockRoster = "";
     membersMock.mockReset();
     membersMock.mockResolvedValue({
       org: "acme",
@@ -79,5 +82,30 @@ describe("OrgMembersPage CSV export", () => {
     fireEvent.click(screen.getByRole("button", { name: /export csv/i }));
 
     expect(downloadTextFileMock.mock.calls[0][1].split("\r\n")).toEqual(["Member,Role,2FA", "bob,member,no"]);
+  });
+
+  it("exports the outside collaborators with their repos, noting a partial scan", async () => {
+    outsideMock.mockResolvedValue({
+      org: "acme",
+      repos_scanned: 40,
+      repos_total: 55,
+      collaborators: [
+        { login: "dana", avatar_url: "", repos: ["api", "web"] },
+        { login: "=evil", avatar_url: "", repos: ["api"] },
+      ],
+    });
+    mockRoster = "outside";
+    renderPage();
+    expect(await screen.findByText("dana")).toBeInTheDocument();
+    expect(screen.getByText("Covers 40 of 55 repos")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /export csv/i }));
+
+    const [filename, csv] = downloadTextFileMock.mock.calls[0];
+    expect(filename).toMatch(/^clevis-outside-collaborators-acme-\d{4}-\d{2}-\d{2}\.csv$/);
+    const lines = csv.split(String.fromCharCode(13, 10));
+    expect(lines[0]).toBe("Collaborator,Repos,Repo count");
+    expect(lines[1]).toBe("dana,api; web,2");
+    expect(lines[2]).not.toMatch(/^=/); // formula-looking login is neutralised
   });
 });

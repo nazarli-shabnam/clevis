@@ -8,12 +8,14 @@ import { EmptyStateNoAccount } from "@/components/empty-state"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Warning, Key, CircleNotch, Lock, Star, GitPullRequest, ArrowSquareOut } from "@phosphor-icons/react"
+import { Warning, Key, CircleNotch, Lock, Star, GitPullRequest, ArrowSquareOut, DownloadSimple } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
 import { useAuth } from "@/lib/auth-context"
 import { hasOrgLogin, shouldApplyResolvedToken } from "@/lib/token-resolve"
 import { invalidateTokens } from "@/lib/query-invalidation"
+import { toCsv } from "@/lib/csv"
+import { downloadTextFile } from "@/lib/download"
 import { MiniSparkline } from "@/components/charts/mini-sparkline"
 import { relativeTime } from "@/lib/format"
 import { useInView } from "@/lib/use-in-view"
@@ -22,6 +24,7 @@ import {
   STALE_DAYS,
   filterRepos,
   hasActiveRepoFilters,
+  repoCsvColumns,
   repoLanguages,
   type ProtectionMap,
   type RepoFilters,
@@ -391,6 +394,13 @@ export default function ReposPage() {
   }
   const protectionChecked = protection.size > 0
 
+  // Exports exactly the rows on screen (every active filter and the chosen sort applied).
+  function exportRepos() {
+    const stamp = new Date().toISOString().slice(0, 10)
+    const name = (loadedOrg || "repositories").replace(/[^A-Za-z0-9._-]+/g, "-")
+    downloadTextFile(`clevis-repos-${name}-${stamp}.csv`, toCsv(repos, repoCsvColumns(protection)), "text/csv")
+  }
+
   const toggleRepo = (name: string) =>
     setSelected((prev) => {
       const next = new Set(prev)
@@ -512,6 +522,9 @@ export default function ReposPage() {
                       <option value="name">Sort: Name</option>
                     </select>
                     <span className="stat-chip">{repos.length} of {listMutation.data.total}</span>
+                    <Button size="sm" variant="outline" disabled={repos.length === 0} onClick={exportRepos}>
+                      <DownloadSimple className="size-3.5" /> Export CSV
+                    </Button>
                   </>
                 )}
               </div>
