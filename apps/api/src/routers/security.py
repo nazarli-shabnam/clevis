@@ -41,15 +41,11 @@ _SLA_DEFAULTS = {"critical": 7, "high": 30}
 _MAX_REPOS_FOR_MATRIX = 20
 
 
-def _branch_protection_status(exc: httpx.HTTPStatusError) -> str:
-    # A 404 is a real negative answer ("unprotected"), not an error; 403/429 mean the
-    # token can't see the answer at all, which must not be scored as a compliance fail.
-    code = exc.response.status_code
-    if code == 404:
-        return "unprotected"
-    if code in (403, 429):
-        return "unknown"
-    return "unprotected"
+def _branch_lookup_is_unknown(exc: httpx.HTTPStatusError) -> bool:
+    # Only a 404 is a real negative answer ("unprotected"). Every other failure -- 401/403/429
+    # (the token can't see the answer) and 5xx (GitHub had a problem) -- says nothing about the
+    # repo, and must not be scored as a compliance fail.
+    return exc.response.status_code != 404
 
 
 def _security_connected_tenant(db: Session, user_id: int, owner: str) -> int | None:
@@ -124,21 +120,26 @@ def _repo_row(client: GitHubClient, owner: str, repo: dict, alerts_by_repo: dict
 
     branch_protection = False
     force_push_allowed = False
-    try:
-        details = client.request("GET", f"/repos/{owner}/{name}/branches/{branch}")
-        if isinstance(details, dict):
-            branch_protection = bool(details.get("protected"))
-            protection = details.get("protection") or {}
-            force_push_allowed = bool((protection.get("allow_force_pushes") or {}).get("enabled"))
-    except httpx.HTTPStatusError as exc:
-        # force_push_allowed comes from the same branch-details response, so an unknown
-        # branch_protection answer means force_push is equally unknown.
-        if _branch_protection_status(exc) == "unknown":
-            unknown.extend(["branch_protection", "force_push"])
-    except httpx.RequestError:
-        # A transient network error is exactly as unknowable as a 403/429 -- neither
-        # is a real "unprotected" answer from GitHub.
+    if not branch:
+        # The repo payload carries no default branch: there is nothing to ask GitHub about, and
+        # requesting /branches/None would just be a guaranteed 404 read as "unprotected".
         unknown.extend(["branch_protection", "force_push"])
+    else:
+        try:
+            details = client.request("GET", f"/repos/{owner}/{name}/branches/{branch}")
+            if isinstance(details, dict):
+                branch_protection = bool(details.get("protected"))
+                protection = details.get("protection") or {}
+                force_push_allowed = bool((protection.get("allow_force_pushes") or {}).get("enabled"))
+        except httpx.HTTPStatusError as exc:
+            # force_push_allowed comes from the same branch-details response, so an unknown
+            # branch_protection answer means force_push is equally unknown.
+            if _branch_lookup_is_unknown(exc):
+                unknown.extend(["branch_protection", "force_push"])
+        except httpx.RequestError:
+            # A transient network error is exactly as unknowable as a 403/429 -- neither
+            # is a real "unprotected" answer from GitHub.
+            unknown.extend(["branch_protection", "force_push"])
 
     secret_scanning = (
         (repo.get("security_and_analysis") or {}).get("secret_scanning") or {}
@@ -243,7 +244,9 @@ def _build_matrix(
         low=0,
     )
     summary = MatrixSummary(
-        fully_compliant_count=sum(1 for r in rows if r.score == 100),
+        # A repo with an unevaluated dimension (lookup failed, no default branch) is not known to be
+        # compliant, even if everything that could be checked passed.
+        fully_compliant_count=sum(1 for r in rows if r.score == 100 and not r.unknown_dimensions),
         critical_risk_count=sum(1 for r in rows if r.dependabot_critical_count > 0),
         secret_hits_count=sum(1 for r in rows if not r.secret_scanning),
         vuln_by_severity=vuln,
