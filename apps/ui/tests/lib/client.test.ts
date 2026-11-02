@@ -1202,6 +1202,25 @@ describe("waivers, notification preferences and evidence endpoints", () => {
     expect(revoke()[1].method).toBe("DELETE");
   });
 
+  it("api tokens use the org-scoped routes and omit expires_in_days when the token never expires", async () => {
+    const list = stub([])
+    await api.apiTokens.list("a/b")
+    expect(list()[0]).toMatch(/\/orgs\/a%2Fb\/api-tokens$/)
+
+    const never = stub({ id: 1 }, 201)
+    await api.apiTokens.create("acme", "ci")
+    expect(JSON.parse(String(never()[1].body))).toEqual({ name: "ci" })
+
+    const timed = stub({ id: 1 }, 201)
+    await api.apiTokens.create("acme", "ci", 30)
+    expect(JSON.parse(String(timed()[1].body))).toEqual({ name: "ci", expires_in_days: 30 })
+
+    const revoke = stub(null, 204)
+    await api.apiTokens.revoke("acme", 7)
+    expect(revoke()[0]).toMatch(/\/orgs\/acme\/api-tokens\/7$/)
+    expect(revoke()[1].method).toBe("DELETE")
+  })
+
   it("notification preferences are read and replaced per org", async () => {
     const get = stub({ muted_kinds: [] });
     await api.notifications.preferences("acme");
