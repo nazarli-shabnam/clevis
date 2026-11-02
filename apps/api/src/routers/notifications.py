@@ -133,6 +133,12 @@ def update_destination(
 ):
     if body.events is not None and (body.add_events or body.remove_events):
         raise HTTPException(status_code=422, detail="Send either events or add_events/remove_events, not both")
+    # Validated before the row lock: it resolves DNS, which must not run while holding the lock.
+    if body.url is not None:
+        try:
+            notifications.validate_destination_url(body.url.get_secret_value())
+        except notifications.UnsafeDestinationURL as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
     # Locked so a delta is applied to the stored set, not to a concurrent admin's stale copy.
     dest = _get_or_404(db, ctx, destination_id, for_update=True)
     sent = body.model_fields_set
@@ -153,12 +159,7 @@ def update_destination(
         if body.secret is not None and not body.secret.get_secret_value():
             raise HTTPException(status_code=422, detail="A signing secret cannot be empty")
         if body.url is not None:
-            url = body.url.get_secret_value()
-            try:
-                notifications.validate_destination_url(url)
-            except notifications.UnsafeDestinationURL as exc:
-                raise HTTPException(status_code=422, detail=str(exc))
-            dest.encrypted_url = encrypt_job_token(url, key)
+            dest.encrypted_url = encrypt_job_token(body.url.get_secret_value(), key)
             changed.append("url")
         if body.secret is not None:
             dest.encrypted_secret = encrypt_job_token(body.secret.get_secret_value(), key)
