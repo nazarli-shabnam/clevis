@@ -8,13 +8,22 @@ from src.core._sanitize import sanitize_error
 from src.core.db import Job
 
 
-def enqueue(db: Session, job_type: str, payload: dict, tenant_id: int | None = None) -> int:
+def enqueue(
+    db: Session, job_type: str, payload: dict, tenant_id: int | None = None, *, commit: bool = True
+) -> int:
     """`tenant_id` links the job to the tenant it was enqueued for (an org's admins list their own
-    jobs by it); None leaves it unattributed."""
+    jobs by it); None leaves it unattributed.
+
+    commit=False flushes into the caller's transaction instead, so the job only becomes visible to
+    the worker (which polls for queued rows) when the caller commits -- e.g. together with the audit
+    row that records why it exists."""
     job = Job(job_type=job_type, payload=json.dumps(payload), status="queued", tenant_id=tenant_id)
     db.add(job)
-    db.commit()
-    db.refresh(job)
+    if commit:
+        db.commit()
+        db.refresh(job)
+    else:
+        db.flush()
     return job.id
 
 

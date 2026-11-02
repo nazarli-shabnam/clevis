@@ -5,15 +5,15 @@ runtime role the retention sweep's purge fails with "permission denied" and old 
 removed. Guarded on the role existing, like the other grants: a deployment still running as the
 superuser (no clevis_api) is unaffected.
 
-Revision ID: 0071
-Revises: 0070
+Revision ID: 0073
+Revises: 0072
 Create Date: 2026-11-02
 """
 
 from alembic import op
 
-revision = "0071"
-down_revision = "0070"
+revision = "0073"
+down_revision = "0072"
 branch_labels = None
 depends_on = None
 

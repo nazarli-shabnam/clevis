@@ -1,4 +1,6 @@
 import type {
+  ApiToken,
+  ApiTokenCreated,
   ScanChanges,
   ScheduledScanSettings,
   MemberAccess,
@@ -598,6 +600,16 @@ export const api = {
     create: (orgLogin: string, body: CheckWaiverInput) =>
       post<CheckWaiver>(`/orgs/${encodeURIComponent(orgLogin)}/waivers`, body),
     revoke: (orgLogin: string, id: number) => del(`/orgs/${encodeURIComponent(orgLogin)}/waivers/${id}`),
+  },
+  apiTokens: {
+    list: (orgLogin: string) => get<ApiToken[]>(`/orgs/${encodeURIComponent(orgLogin)}/api-tokens`),
+    // expiresInDays: omit for a token that never expires.
+    create: (orgLogin: string, name: string, expiresInDays?: number) =>
+      post<ApiTokenCreated>(`/orgs/${encodeURIComponent(orgLogin)}/api-tokens`, {
+        name,
+        ...(expiresInDays ? { expires_in_days: expiresInDays } : {}),
+      }),
+    revoke: (orgLogin: string, id: number) => del(`/orgs/${encodeURIComponent(orgLogin)}/api-tokens/${id}`),
   },
   orgs: {
     mine: () => get<MyOrgMembership[]>("/me/orgs"),

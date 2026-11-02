@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table"
 import { Skeleton } from "@/components/ui/skeleton"
 import { SectionError } from "@/components/section-error"
 import { EmptyStateNoAccount } from "@/components/empty-state"
@@ -25,6 +26,61 @@ interface PullRow extends PullSummary {
 }
 
 type GroupBy = "repo" | "author"
+
+const COLUMNS: DataTableColumn<PullRow>[] = [
+  {
+    key: "repo",
+    header: "Repo",
+    sortValue: (p) => p.repo,
+    cellClassName: "text-muted-foreground",
+    render: (p) => p.repo,
+    csvValue: (p) => p.repo,
+  },
+  {
+    key: "pr",
+    header: "Pull Request",
+    sortValue: (p) => p.title.toLowerCase(),
+    render: (p) => (
+      <a
+        href={p.html_url}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex items-center gap-1.5 text-foreground/90 hover:text-primary transition-colors"
+      >
+        <GitPullRequest className="size-3.5 shrink-0" />
+        #{p.number} {p.title}
+      </a>
+    ),
+    csvValue: (p) => `#${p.number} ${p.title}`,
+  },
+  {
+    key: "author",
+    header: "Author",
+    sortValue: (p) => (p.user ?? "unknown").toLowerCase(),
+    cellClassName: "text-muted-foreground",
+    render: (p) => p.user ?? "unknown",
+    csvValue: (p) => p.user ?? "unknown",
+  },
+  {
+    key: "opened",
+    header: "Opened",
+    align: "right",
+    sortValue: (p) => p.created_at,
+    cellClassName: "text-muted-foreground whitespace-nowrap",
+    render: (p) => relativeTime(p.created_at),
+    csvValue: (p) => p.created_at,
+  },
+  {
+    key: "url",
+    header: "Link",
+    render: (p) => (
+      <a href={p.html_url} target="_blank" rel="noreferrer" aria-label={`Open ${p.repo} #${p.number} on GitHub`} className="text-primary underline">
+        GitHub
+      </a>
+    ),
+    csvValue: (p) => p.html_url,
+  },
+]
 
 export default function PullRequestsPage() {
   const queryClient = useQueryClient()
@@ -269,40 +325,16 @@ export default function PullRequestsPage() {
             ))}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left text-muted-foreground font-medium px-4 py-2">Repo</th>
-                  <th className="text-left text-muted-foreground font-medium px-4 py-2">Pull Request</th>
-                  <th className="text-left text-muted-foreground font-medium px-4 py-2">Author</th>
-                  <th className="text-right text-muted-foreground font-medium px-4 py-2">Opened</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {pulls.map((p) => (
-                  <tr key={`${p.repo}-${p.number}`} className="hover:bg-muted/40 transition-colors">
-                    <td className="px-4 py-2.5 text-muted-foreground">{p.repo}</td>
-                    <td className="px-4 py-2.5">
-                      <a
-                        href={p.html_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1.5 text-foreground/90 hover:text-primary transition-colors"
-                      >
-                        <GitPullRequest className="size-3.5 shrink-0" />
-                        #{p.number} {p.title}
-                      </a>
-                    </td>
-                    <td className="px-4 py-2.5 text-muted-foreground">{p.user ?? "unknown"}</td>
-                    <td className="px-4 py-2.5 text-right text-muted-foreground whitespace-nowrap">
-                      {relativeTime(p.created_at)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            columns={COLUMNS}
+            data={pulls}
+            getRowKey={(p) => `${p.repo}-${p.number}`}
+            pageSize={50}
+            exportCsv={{
+              name: `pull-requests-${org}`,
+              note: failedRepos.length > 0 ? "Excludes repositories that could not be loaded." : undefined,
+            }}
+          />
         )}
       </div>
     </>

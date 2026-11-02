@@ -179,12 +179,18 @@ def _github_error_message(resp: httpx.Response) -> str:
     return f"GitHub API error: {resp.status_code}"
 
 
+def _is_transient_github_error(resp: httpx.Response) -> bool:
+    """Whether a failed GitHub response is worth retrying later: a 5xx, a 429, or a secondary-rate-limit 403
+    (told apart from a permission-denied 403 by its rate-limit headers or its message). Any other 4xx is
+    permanent. Every job handler uses this one rule, so none of them fails a job that another would retry."""
+    return resp.status_code >= 500 or resp.status_code == 429 or membership_reconcile._is_secondary_rate_limit(resp)
+
+
 def _github_response_is_error(conn: psycopg.Connection, job_id: int, retry_count: int, resp: httpx.Response) -> bool:
     """Apply the transient/permanent split to one GitHub response.
 
     Returns True (after requeueing or failing the job) on an error, False otherwise."""
-    rate_limited = resp.status_code == 429 or membership_reconcile._is_secondary_rate_limit(resp)
-    if resp.status_code >= 500 or rate_limited:
+    if _is_transient_github_error(resp):
         # 5xx, 429, and secondary-rate-limit 403 are transient: back off and retry.
         log.warning("job %d got a %d from GitHub (attempt %d)", job_id, resp.status_code, retry_count + 1)
         _requeue_for_retry(conn, job_id, retry_count, sanitize_error(_github_error_message(resp)))
@@ -289,14 +295,9 @@ def _handle_backfill_repo_events(conn: psycopg.Connection, job_id: int, payload_
         with httpx.Client(timeout=20) as client:
             raw_events = backfill.fetch_events(client, base, headers, payload.account_login, payload.account_type)
     except httpx.HTTPStatusError as error:
-        resp = error.response
-        if resp.status_code >= 500:
-            # 5xx is presumed transient (GitHub-side issue) — worth retrying, unlike 4xx.
-            log.warning("job %d got a %d from GitHub (attempt %d)", job_id, resp.status_code, retry_count + 1)
-            _requeue_for_retry(conn, job_id, retry_count, sanitize_error(_github_error_message(resp)))
-        else:
-            log.error("job %d failed: GitHub API error %d", job_id, resp.status_code)
-            _mark_failed(conn, job_id, sanitize_error(_github_error_message(resp)), retry_count)
+        # Still failing after fetch_events' own retries: a 5xx or a rate limit is requeued with the job
+        # backoff, a genuine 4xx fails the job.
+        _github_response_is_error(conn, job_id, retry_count, error.response)
         return
     except httpx.RequestError as error:
         log.warning("job %d hit a network error (attempt %d): %s", job_id, retry_count + 1, error)
@@ -406,15 +407,9 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
             with httpx.Client(timeout=20) as client:
                 roster = membership_reconcile.fetch_org_roster(client, base, headers, payload.org_login)
         except httpx.HTTPStatusError as error:
-            resp = error.response
-            # Rate limit still in effect after _get_with_retry's backoff: requeue for a later
+            # A rate limit still in effect after _get_with_retry's backoff is requeued for a later
             # attempt rather than failing like a genuine 4xx.
-            if resp.status_code == 429 or membership_reconcile._is_secondary_rate_limit(resp) or resp.status_code >= 500:
-                log.warning("job %d got a %d from GitHub (attempt %d)", job_id, resp.status_code, retry_count + 1)
-                _requeue_for_retry(conn, job_id, retry_count, sanitize_error(_github_error_message(resp)))
-            else:
-                log.error("job %d failed: GitHub API error %d", job_id, resp.status_code)
-                _mark_failed(conn, job_id, sanitize_error(_github_error_message(resp)), retry_count)
+            _github_response_is_error(conn, job_id, retry_count, error.response)
             return
         except httpx.RequestError as error:
             log.warning("job %d hit a network error (attempt %d): %s", job_id, retry_count + 1, error)
@@ -650,8 +645,7 @@ def run() -> None:
     log.info("worker started, polling every %ds", poll_seconds)
     while True:
         _touch_heartbeat()
-        # Re-read each cycle so settings changes take effect without restart.
-        poll_seconds = _read_poll_seconds()
+        processed_a_job = False
         try:
             with psycopg.connect(_DB_URL) as conn:
                 _reclaim_stale_jobs(conn)
@@ -689,14 +683,22 @@ def run() -> None:
                         try:
                             with _JobHeartbeat(job_id):
                                 process_job(conn, *row)
+                            processed_a_job = True
                         finally:
                             _release_job_lock(conn, job_id)
         except psycopg.OperationalError:
-            log.error("database connection failed, retrying in %ds", poll_seconds)
+            log.error("database connection failed, retrying after the poll interval")
         except Exception:
             log.exception("worker poll error")
 
-        time.sleep(poll_seconds)
+        if processed_a_job:
+            # More jobs may be waiting: poll again straight away. Sleeping here capped throughput at one
+            # job per poll interval, so a backlog of N jobs took N x poll_seconds however fast the
+            # handlers were. The sleep below only happens once a poll comes back empty, or on an error.
+            continue
+        # Read only when about to sleep (it opens its own connection), and each time so a settings change
+        # takes effect without a restart.
+        time.sleep(_read_poll_seconds())
 
 
 if __name__ == "__main__":

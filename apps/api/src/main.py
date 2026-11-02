@@ -2,6 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.core.config import settings
@@ -9,6 +10,7 @@ from src.core.db import engine
 from src.core.logging import setup_logging
 from src.core.middleware import RequestIdMiddleware
 from src.core.rls_posture import warn_if_rls_bypassed
+from src.core.validation_errors import validation_error_handler
 from src.core.version import VERSION
 from src.routers import (
     actions_cache,
@@ -49,6 +51,7 @@ from src.services.gap_heal_loop import gap_heal_loop
 from src.services.membership_reconcile_loop import membership_reconcile_loop
 from src.services.scheduled_scan_loop import scheduled_scan_loop
 from src.services.retention_loop import retention_loop
+from src.services.security_alert_loop import security_alert_loop
 from src.services.waiver_expiry_loop import waiver_expiry_loop
 from src.services.webhook_requeue_loop import webhook_requeue_loop
 
@@ -75,6 +78,8 @@ async def lifespan(_: FastAPI):
         # Announces lapsed check waivers once (audit row + alert destinations).
         asyncio.create_task(waiver_expiry_loop()),
         asyncio.create_task(retention_loop()),
+        # Announces newly ingested critical/high security alerts once to alert destinations.
+        asyncio.create_task(security_alert_loop()),
     ]
     try:
         yield
@@ -97,6 +102,7 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
 )
+app.add_exception_handler(RequestValidationError, validation_error_handler)
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(
     CORSMiddleware,

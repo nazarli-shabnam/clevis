@@ -362,6 +362,61 @@ def test_handler_requeues_on_5xx_from_github():
     assert "status='queued'" in sql  # requeued, not failed -- retry_count 0 -> 1, well under MAX_RETRIES
 
 
+# status, headers, body, whether GitHub's answer is worth retrying later
+_GITHUB_ERROR_CASES = [
+    pytest.param(500, {}, "", True, id="5xx"),
+    pytest.param(429, {}, "", True, id="429"),
+    pytest.param(403, {"Retry-After": "30"}, "", True, id="403-retry-after"),
+    pytest.param(403, {"X-RateLimit-Remaining": "0"}, "", True, id="403-primary-limit-exhausted"),
+    pytest.param(
+        403, {}, '{"message": "You have exceeded a secondary rate limit. Please wait."}', True,
+        id="403-secondary-limit-message-only",
+    ),
+    pytest.param(
+        403, {}, '{"message": "Resource not accessible by integration"}', False, id="403-permission-denied"
+    ),
+    pytest.param(401, {}, "", False, id="401"),
+    pytest.param(404, {}, "", False, id="404"),
+]
+
+
+def _github_status_error(status_code: int, headers: dict, body: str) -> httpx.HTTPStatusError:
+    request = httpx.Request("GET", "https://api.github.com/orgs/acme/events")
+    response = httpx.Response(status_code, headers=headers, text=body, request=request)
+    return httpx.HTTPStatusError("error", request=request, response=response)
+
+
+@pytest.mark.parametrize("status_code, headers, body, transient", _GITHUB_ERROR_CASES)
+def test_transient_github_error_classifier(status_code, headers, body, transient):
+    error = _github_status_error(status_code, headers, body)
+    assert worker._is_transient_github_error(error.response) is transient
+
+
+@pytest.mark.parametrize("status_code, headers, body, transient", _GITHUB_ERROR_CASES)
+def test_handler_requeues_only_transient_github_errors(status_code, headers, body, transient):
+    """A rate limit that outlasts fetch_events' own retries must be retried later, not failed for good."""
+    conn = _FakeConn()
+    error = _github_status_error(status_code, headers, body)
+
+    with patch("worker.backfill.fetch_events", side_effect=error):
+        worker._handle_backfill_repo_events(conn, 6, _payload(), 0)
+
+    sql, _params = conn._cursor.calls[0]
+    assert ("status='queued'" in sql) is transient
+    assert ("status='failed'" in sql) is (not transient)
+
+
+def test_handler_fails_a_rate_limited_job_for_good_once_its_retries_are_spent():
+    conn = _FakeConn()
+    error = _github_status_error(429, {}, "")
+
+    with patch("worker.backfill.fetch_events", side_effect=error):
+        worker._handle_backfill_repo_events(conn, 7, _payload(), worker.MAX_RETRIES)
+
+    sql, _params = conn._cursor.calls[0]
+    assert "status='failed'" in sql
+
+
 def test_handler_requeues_on_network_error():
     conn = _FakeConn()
 

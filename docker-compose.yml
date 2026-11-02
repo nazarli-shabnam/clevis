@@ -107,9 +107,10 @@ services:
     restart: unless-stopped
     healthcheck:
       # worker.py's jobs-poll-loop thread and event_consumer.py's Redis-Streams-consumer thread
-      # each touch a heartbeat file per loop iteration -- catches a hung-but-alive thread that
-      # `restart: unless-stopped` alone wouldn't (that only fires on a hard crash); both files
-      # must stay fresh.
+      # each touch a heartbeat file -- the job poller every loop iteration, the event consumer after every
+      # cycle that actually reached Redis and Postgres (a consumer stuck in an error loop goes stale) --
+      # catches a hung-but-alive thread that `restart: unless-stopped` alone wouldn't (that only fires on
+      # a hard crash); both files must stay fresh.
       test: ["CMD", "python", "-c", "import time,sys,os; now=time.time(); sys.exit(0 if all(now - os.path.getmtime(f) < 60 for f in ('/tmp/worker_heartbeat', '/tmp/worker_event_consumer_heartbeat')) else 1)"]
       interval: 15s
       timeout: 5s

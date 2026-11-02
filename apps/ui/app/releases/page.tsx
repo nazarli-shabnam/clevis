@@ -5,12 +5,75 @@ import { useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { EmptyStateInline, EmptyStateNoAccount } from "@/components/empty-state"
 import { SectionError } from "@/components/section-error"
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table"
 import { relativeTime } from "@/lib/format"
 import { api } from "@/lib/api/client"
+import type { ReleaseSummary } from "@/lib/api/types"
 import { useActiveScope } from "@/lib/active-scope"
 import { hasOrgLogin } from "@/lib/token-resolve"
 
 const DAY_OPTIONS = [30, 90, 180] as const
+
+const COLUMNS: DataTableColumn<ReleaseSummary>[] = [
+  {
+    key: "repo",
+    header: "Repository",
+    sortValue: (r) => r.repo,
+    render: (r) => <span className="text-muted-foreground">{r.repo}</span>,
+    csvValue: (r) => r.repo,
+  },
+  {
+    key: "release",
+    header: "Release",
+    sortValue: (r) => r.name,
+    render: (r) => (
+      <a href={r.url} target="_blank" rel="noreferrer" className="text-foreground/90 hover:text-primary transition-colors">
+        {r.name}
+      </a>
+    ),
+    csvValue: (r) => r.name,
+  },
+  {
+    key: "tag",
+    header: "Tag",
+    sortValue: (r) => r.tag_name,
+    render: (r) => <span className="font-mono text-muted-foreground">{r.tag_name}</span>,
+    csvValue: (r) => r.tag_name,
+  },
+  {
+    key: "notes",
+    header: "Notes",
+    cellClassName: "max-w-xs truncate text-muted-foreground",
+    render: (r) => r.body_preview,
+    csvValue: (r) => r.body_preview,
+  },
+  {
+    key: "published",
+    header: "Published",
+    align: "right",
+    sortValue: (r) => r.published_at,
+    cellClassName: "whitespace-nowrap text-muted-foreground",
+    render: (r) => relativeTime(r.published_at),
+    csvValue: (r) => r.published_at,
+  },
+  {
+    key: "type",
+    header: "Type",
+    sortValue: (r) => (r.is_prerelease ? 1 : 0),
+    render: (r) => (r.is_prerelease ? <span className="stat-chip">pre-release</span> : <span className="text-muted-foreground">stable</span>),
+    csvValue: (r) => (r.is_prerelease ? "pre-release" : "stable"),
+  },
+  {
+    key: "url",
+    header: "Link",
+    render: (r) => (
+      <a href={r.url} target="_blank" rel="noreferrer" aria-label={`Open ${r.repo} ${r.name} on GitHub`} className="text-primary underline">
+        GitHub
+      </a>
+    ),
+    csvValue: (r) => r.url,
+  },
+]
 
 export default function ReleasesPage() {
   const { scope } = useActiveScope()
@@ -80,30 +143,12 @@ export default function ReleasesPage() {
           ) : releases.length === 0 ? (
             <EmptyStateInline noun={`releases in the last ${days} days`} />
           ) : (
-            <div className="divide-y divide-border">
-              {releases.map((r) => (
-                <a
-                  key={r.url}
-                  href={r.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center justify-between px-4 py-2.5 text-sm hover:bg-elevated transition-colors"
-                >
-                  <span className="flex flex-col min-w-0">
-                    <span className="text-foreground/90 truncate">
-                      {r.repo} · {r.name}
-                      {r.is_prerelease && <span className="stat-chip ml-1.5 align-middle">pre-release</span>}
-                    </span>
-                    <span className="text-[0.6875rem] text-muted-foreground truncate">
-                      {r.tag_name} — {r.body_preview}
-                    </span>
-                  </span>
-                  <span className="text-[0.6875rem] text-muted-foreground whitespace-nowrap shrink-0 ml-3">
-                    {relativeTime(r.published_at)}
-                  </span>
-                </a>
-              ))}
-            </div>
+            <DataTable
+              columns={COLUMNS}
+              data={releases}
+              getRowKey={(r) => r.url}
+              exportCsv={{ name: `releases-${org}-${days}d` }}
+            />
           )}
         </div>
       )}

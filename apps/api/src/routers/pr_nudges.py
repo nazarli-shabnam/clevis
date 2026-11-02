@@ -3,9 +3,11 @@ GitHub); token resolved via resolve_owner_token/resolve_org_token, audit row wri
 before the GitHub call. Requires ``pull_requests: write`` on the App / PAT.
 """
 
+import logging
+
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 from sqlalchemy.orm import Session
 
 from src.core.app_config import get_config
@@ -18,11 +20,12 @@ from src.core.rbac import (
     require_org_role,
 )
 from src.repositories import audit_repo
-from src.services import pr_nudge
+from src.services import notifications, pr_nudge
 from src.services.github_client import GitHubClient, github_error as _github_error
 from src.services.token_resolution import (
     InsufficientOrgRole,
     NoGitHubTokenAvailable,
+    pick_client_token,
     resolve_org_token,
     resolve_owner_token,
 )
@@ -31,7 +34,7 @@ router = APIRouter()
 
 
 class NudgeRequest(BaseModel):
-    token: str | None = None
+    token: SecretStr | None = None
 
 
 class NudgeItem(BaseModel):
@@ -102,6 +105,12 @@ def _run_audited(
         db, user.email, "pr_nudge.sweep", f"{owner}/{repo}",
         {"mode": resp.mode, "stale_days": resp.stale_days, "results": acted}, tenant_id=tenant_id,
     )
+    nudged = [r for r in acted if r["action"] in ("commented", "labeled")]
+    try:
+        notifications.notify_stale_prs(db, tenant_id, owner, repo, nudged, actor=user.email)
+    except Exception:
+        # Best-effort by contract: the nudges already happened and are audited.
+        logging.getLogger(__name__).exception("stale PR summary alert failed for %s/%s", owner, repo)
     return resp
 
 
@@ -117,7 +126,7 @@ def nudge_stale_prs(
     try:
         token = resolve_owner_token(
             db, user_id=user.id, owner=owner,
-            client_token=body.token or x_github_token, min_role="admin",
+            client_token=pick_client_token(body.token, x_github_token), min_role="admin",
         )
     except InsufficientOrgRole as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -144,7 +153,7 @@ def nudge_stale_prs_for_org(
     try:
         token = resolve_org_token(
             db, org_id=ctx.org.id, account_login=owner,
-            client_token=body.token or x_github_token,
+            client_token=pick_client_token(body.token, x_github_token),
         )
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

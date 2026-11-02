@@ -13,6 +13,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import re
 import socket
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -34,7 +35,16 @@ logger = logging.getLogger(__name__)
 KINDS = ("slack", "teams", "generic", "email")
 EVENT_SCORE_DROP = "score_drop"
 EVENT_WAIVER_EXPIRED = "waiver_expired"
-EVENTS = (EVENT_SCORE_DROP, EVENT_WAIVER_EXPIRED)
+EVENT_NEW_CRITICAL_ALERT = "new_critical_alert"
+EVENT_STALE_PR_SUMMARY = "stale_pr_summary"
+EVENT_AUTOMATION_FAILED = "automation_failed"
+EVENTS = (
+    EVENT_SCORE_DROP,
+    EVENT_WAIVER_EXPIRED,
+    EVENT_NEW_CRITICAL_ALERT,
+    EVENT_STALE_PR_SUMMARY,
+    EVENT_AUTOMATION_FAILED,
+)
 _TIMEOUT_SECONDS = 5
 # Destinations are messaged in parallel so one slow endpoint can't stall a scan request for
 # (destinations x timeout).
@@ -128,6 +138,9 @@ def sign(secret: str, body: bytes, timestamp: str) -> str:
 _EMAIL_SUBJECTS = {
     "score_drop": "Clevis: security score dropped for {org}",
     "waiver_expired": "Clevis: check waivers expired for {org}",
+    "new_critical_alert": "Clevis: new critical alert for {org}",
+    "stale_pr_summary": "Clevis: stale PR summary for {org}",
+    "automation_failed": "Clevis: automation failed for {org}",
     "test": "Clevis: test message for {org}",
 }
 
@@ -260,12 +273,47 @@ def notify_score_drop(
         )
 
 
+def _chat_safe(value: object, limit: int = 80) -> str:
+    """Make a GitHub-derived name safe to embed in the chat ``text`` of Slack/Teams messages.
+
+    Workflow names (and similar) are written by anyone with repo write access, so they could carry Slack
+    control sequences (``<!channel>``, ``<https://evil|label>``) or Teams markdown links. Escape ``& < >``
+    as Slack requires, drop the markdown characters that build links/emphasis, flatten whitespace and cap
+    the length. The raw value still travels, untouched, in the structured ``data`` of generic webhooks."""
+    cleaned = str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    cleaned = re.sub(r"[\[\]*`]", "", cleaned)
+    cleaned = " ".join(cleaned.split())
+    return cleaned[: limit - 1] + "…" if len(cleaned) > limit else cleaned
+
+
+def _notify_event(
+    db: Session, tenant_id: int, org_login: str, event: str, text: str, data: dict, *, actor: str
+) -> None:
+    """Message every enabled destination subscribed to ``event`` and audit each delivery. Best-effort,
+    like notify_score_drop: a delivery problem is audit-logged and swallowed, never raised to the caller.
+    No cooldown claim: callers only announce each occurrence once."""
+    targets = [d for d in notification_repo.list_for_tenant(db, tenant_id) if d.enabled and event in d.events]
+    if not targets:
+        return
+    allowed = allowed_emails_for(db, tenant_id, targets)
+    with ThreadPoolExecutor(max_workers=_MAX_PARALLEL_SENDS) as pool:
+        results = list(pool.map(lambda d: send(d, event, text, data, email_allowed=allowed), targets))
+    for dest, (ok, detail) in zip(targets, results):
+        audit_repo.write(
+            db,
+            actor=actor,
+            action="notification.sent",
+            target=org_login,
+            payload={"destination_id": dest.id, "kind": dest.kind, "event": event, "ok": ok, "detail": detail},
+            tenant_id=tenant_id,
+        )
+
+
 def notify_waiver_expired(
     db: Session, tenant_id: int, org_login: str, expired: list[dict], *, actor: str = "system"
 ) -> None:
-    """Message every enabled destination subscribed to waiver expiries. ``expired`` is a list of
-    ``{"check_id", "repos", "owner", "reason"}`` dicts. Best-effort, like notify_score_drop: a delivery
-    problem is audit-logged and swallowed. No cooldown claim: expiries are rare and each is reported once."""
+    """``expired`` is a list of ``{"check_id", "repos", "owner", "reason"}`` dicts. Expiries are rare and
+    each is reported once."""
     if not expired:
         return
     names = ", ".join(sorted({e["check_id"] for e in expired}))
@@ -273,21 +321,44 @@ def notify_waiver_expired(
         f"Clevis: {len(expired)} check waiver{'s' if len(expired) != 1 else ''} for {org_login} expired "
         f"({names}). The check{'s' if len(expired) != 1 else ''} count toward the score again on the next scan."
     )
-    data = {"org": org_login, "waivers": expired}
-    targets = [
-        d for d in notification_repo.list_for_tenant(db, tenant_id) if d.enabled and EVENT_WAIVER_EXPIRED in d.events
-    ]
-    if not targets:
+    _notify_event(db, tenant_id, org_login, EVENT_WAIVER_EXPIRED, text, {"org": org_login, "waivers": expired}, actor=actor)
+
+
+def notify_new_critical_alerts(
+    db: Session, tenant_id: int, org_login: str, alerts: list[dict], *, actor: str = "system"
+) -> None:
+    """``alerts`` is a list of ``{"repo", "kind", "number", "severity"}`` dicts for newly ingested
+    critical/high alerts (secret-scanning alerts carry no severity and always count)."""
+    if not alerts:
         return
-    allowed = allowed_emails_for(db, tenant_id, targets)
-    with ThreadPoolExecutor(max_workers=_MAX_PARALLEL_SENDS) as pool:
-        results = list(pool.map(lambda d: send(d, EVENT_WAIVER_EXPIRED, text, data, email_allowed=allowed), targets))
-    for dest, (ok, detail) in zip(targets, results):
-        audit_repo.write(
-            db,
-            actor=actor,
-            action="notification.sent",
-            target=org_login,
-            payload={"destination_id": dest.id, "kind": dest.kind, "event": EVENT_WAIVER_EXPIRED, "ok": ok, "detail": detail},
-            tenant_id=tenant_id,
-        )
+    shown = "; ".join(f"{_chat_safe(a['repo'])} ({_chat_safe(a['kind'].replace('_', ' '))} #{int(a['number'])})" for a in alerts[:5])
+    more = f" and {len(alerts) - 5} more" if len(alerts) > 5 else ""
+    text = f"Clevis: {len(alerts)} new critical/high security alert{'s' if len(alerts) != 1 else ''} in {org_login}: {shown}{more}."
+    _notify_event(db, tenant_id, org_login, EVENT_NEW_CRITICAL_ALERT, text, {"org": org_login, "alerts": alerts}, actor=actor)
+
+
+def notify_stale_prs(
+    db: Session, tenant_id: int, org_login: str, repo: str, prs: list[dict], *, actor: str = "system"
+) -> None:
+    """``prs`` is a list of ``{"number", "title", "action"}`` dicts for the stale pull requests a nudge
+    sweep just acted on."""
+    if not prs:
+        return
+    text = (
+        f"Clevis: {len(prs)} stale pull request{'s' if len(prs) != 1 else ''} in {_chat_safe(org_login)}/{_chat_safe(repo)} "
+        f"{'were' if len(prs) != 1 else 'was'} nudged: " + ", ".join(f"#{int(p['number'])}" for p in prs[:10]) + "."
+    )
+    _notify_event(db, tenant_id, org_login, EVENT_STALE_PR_SUMMARY, text, {"org": org_login, "repo": repo, "prs": prs}, actor=actor)
+
+
+def notify_automation_failed(
+    db: Session, tenant_id: int, org_login: str, repo: str, failures: list[dict], *, actor: str = "system"
+) -> None:
+    """``failures`` is a list of ``{"workflow", "message"}`` dicts for workflow dispatches GitHub rejected."""
+    if not failures:
+        return
+    text = (
+        f"Clevis: {len(failures)} workflow dispatch{'es' if len(failures) != 1 else ''} failed in "
+        f"{_chat_safe(org_login)}/{_chat_safe(repo)}: " + ", ".join(_chat_safe(f["workflow"]) for f in failures[:5]) + "."
+    )
+    _notify_event(db, tenant_id, org_login, EVENT_AUTOMATION_FAILED, text, {"org": org_login, "repo": repo, "failures": failures}, actor=actor)
