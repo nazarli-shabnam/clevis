@@ -163,9 +163,12 @@ def _fetch_events_from_repo_events(db: Session, org_login: str, tenant_id: int, 
 def _evict_expired_events(now: float) -> None:
     # Same reasoning as repos.py's _evict_expired_stats: token_hash rotates hourly with
     # each fresh installation token, so stale keys would otherwise accumulate forever.
-    expired = [key for key, (cached_at, _) in _events_cache.items() if now - cached_at >= _EVENTS_CACHE_TTL_SECONDS]
+    # Snapshot + pop(default): org_events runs in the threadpool, so other requests insert and
+    # evict concurrently -- iterating a changing dict raises, and a second sweep may have already
+    # deleted a key we collected.
+    expired = [key for key, (cached_at, _) in list(_events_cache.items()) if now - cached_at >= _EVENTS_CACHE_TTL_SECONDS]
     for key in expired:
-        del _events_cache[key]
+        _events_cache.pop(key, None)
 
 
 def _cached_events(org_login: str, token: str, per_page: int) -> OrgEventsResponse:
