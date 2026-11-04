@@ -91,7 +91,7 @@ def reissue(db: Session, invitation: Invitation) -> Invitation:
     return invitation
 
 
-def get_by_token(db: Session, token: str) -> Invitation | None:
+def get_by_token(db: Session, token: str, *, for_update: bool = False) -> Invitation | None:
     # Token holders (preview/accept) have no tenant context yet; under the non-owner clevis_api
     # role RLS would hide the row. Resolve its tenant via the narrow SECURITY DEFINER lookup
     # (migration 0047) and set it first. The token itself is the capability.
@@ -99,7 +99,11 @@ def get_by_token(db: Session, token: str) -> Invitation | None:
     if tenant_id is None:
         return None
     set_session_tenant(db, tenant_id)
-    return db.query(Invitation).filter(Invitation.token == token).first()
+    query = db.query(Invitation).filter(Invitation.token == token)
+    if for_update:
+        # Serialises accept against revoke/regenerate: whoever locks second re-reads the new status.
+        query = query.with_for_update()
+    return query.first()
 
 
 def get_by_id_and_org(
