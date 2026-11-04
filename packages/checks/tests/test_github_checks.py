@@ -42,11 +42,47 @@ def test_org_mfa_not_applicable_for_personal_account():
     assert result["status"] == "not_applicable"
 
 
-def test_secret_scanning_null_security_and_analysis_does_not_crash():
-    check = SecretScanningEnabled()
-    repos = [{"name": "demo", "security_and_analysis": None}]
-    result = check.run(owner="acme", token="tok", repos=repos)
-    assert result["status"] in {"pass", "fail"}
+def _ss(name, status=None, key=True):
+    repo = {"name": name}
+    if key:
+        repo["security_and_analysis"] = {"secret_scanning": {"status": status}}
+    return repo
+
+
+def test_secret_scanning_null_security_and_analysis_is_unknown_not_disabled():
+    # GitHub omits security_and_analysis for callers without repo admin; that is "can't tell".
+    result = SecretScanningEnabled().run(
+        owner="acme", token="tok", repos=[{"name": "demo", "security_and_analysis": None}]
+    )
+    assert result["status"] == "error"
+    assert result["value"]["unknown"] == 1
+    assert "repos" not in result["value"]
+
+
+def test_secret_scanning_all_repos_omitting_the_field_is_error_not_fail():
+    repos = [_ss("a", key=False), _ss("b", key=False)]
+    result = SecretScanningEnabled().run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "error"
+    assert result["value"] == {"enabled": 0, "total": 0, "unknown": 2}
+
+
+def test_secret_scanning_clean_result_from_partial_data_is_error():
+    repos = [_ss("a", "enabled"), _ss("b", key=False)]
+    result = SecretScanningEnabled().run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "error"
+    assert result["value"] == {"enabled": 1, "total": 1, "unknown": 1}
+
+
+def test_secret_scanning_real_disabled_repo_still_fails_alongside_unknown():
+    repos = [_ss("a", "enabled"), _ss("b", "disabled"), _ss("c", key=False)]
+    result = SecretScanningEnabled().run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "fail"
+    assert result["value"] == {"enabled": 1, "total": 2, "unknown": 1, "repos": ["b"]}
+
+
+def test_secret_scanning_all_enabled_passes_without_unknown_key():
+    result = SecretScanningEnabled().run(owner="acme", token="tok", repos=[_ss("a", "enabled")])
+    assert result == {"status": "pass", "value": {"enabled": 1, "total": 1}}
 
 
 def test_secret_scanning_empty_org_is_not_applicable():
@@ -941,7 +977,7 @@ def test_passing_results_keep_their_exact_shape_without_a_repos_key():
     assert result["value"] == {"checked": 1, "protected": 1, "unknown": 0}
 
 
-def test_secret_scanning_names_repos_without_it():
+def test_secret_scanning_names_only_repos_known_to_lack_it():
     repos = [
         {"name": "on", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
         {"name": "off", "security_and_analysis": {"secret_scanning": {"status": "disabled"}}},
@@ -949,7 +985,7 @@ def test_secret_scanning_names_repos_without_it():
     ]
     result = SecretScanningEnabled().run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "fail"
-    assert result["value"] == {"enabled": 1, "total": 3, "repos": ["off", "unknown"]}
+    assert result["value"] == {"enabled": 1, "total": 2, "unknown": 1, "repos": ["off"]}
 
 
 def test_dependabot_only_names_repos_with_critical_or_high_alerts():
