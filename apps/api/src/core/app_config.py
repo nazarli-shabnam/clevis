@@ -65,6 +65,16 @@ def get_config(key: str, default: str = "") -> str:
     return val
 
 
+def registration_enabled(db) -> bool:
+    """Whether self-signup is allowed, read straight from app_config in the caller's transaction.
+
+    Unlike get_config this skips the per-process cache (a toggle made on another replica would
+    otherwise take up to _TTL to apply) and a failed read raises instead of falling back to the
+    permissive default, so signup fails closed. A missing row means the code default: enabled."""
+    value = db.execute(text("SELECT value FROM app_config WHERE key = 'registration_enabled'")).scalar()
+    return value is None or value == "true"
+
+
 def read_all() -> dict[str, str]:
     """Return all app_config rows as a plain dict (no caching)."""
     from src.core.db import SessionLocal  # noqa: PLC0415
