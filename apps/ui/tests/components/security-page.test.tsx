@@ -121,6 +121,19 @@ describe("SecurityPage", () => {
     vi.restoreAllMocks();
   });
 
+  it("looks the org up once after typing pauses, not once per keystroke", async () => {
+    renderPage();
+    const box = screen.getByLabelText("Organization");
+    for (const value of ["a", "ac", "acm", "acme"]) fireEvent.change(box, { target: { value } });
+
+    await waitFor(() => expect(tokensResolveMock).toHaveBeenCalledTimes(1));
+    expect(tokensResolveMock).toHaveBeenCalledWith("acme");
+    await waitFor(() => expect(installationsListForOrgMock).toHaveBeenCalledWith("acme"));
+    expect(installationsListForOrgMock).toHaveBeenCalledTimes(1);
+    expect(analyticsHistoryMock).toHaveBeenCalledTimes(1);
+    expect(analyticsHistoryMock).toHaveBeenCalledWith("acme");
+  });
+
   it("shows the changed-since-last-scan panel for the active org scope", async () => {
     localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "acme" }));
     renderPage();
