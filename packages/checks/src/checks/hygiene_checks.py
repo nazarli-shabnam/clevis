@@ -115,6 +115,9 @@ class _PerRepoCheck(Check):
         extra_total = sum(extra for _, extra in evaluable)
         if extra_total:
             value[self.extra_label] = extra_total
+        if missing == 0 and unknown > 0:
+            # Same as the core checks: a clean result from only the repos we could inspect is not a pass.
+            return {"status": "error", "value": value}
         return {"status": "pass" if missing == 0 else "fail", "value": value}
 
     extra_label = "count"
