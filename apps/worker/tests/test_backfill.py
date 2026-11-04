@@ -561,6 +561,53 @@ def _insert_webhook_event(conn, tenant_id, repo, event_type, actor, occurred_at)
     conn.commit()
 
 
+@pytest.fixture()
+def other_tenant_id(pg_conn):
+    email = "s5-backfill-tests-other@example.com"
+    with pg_conn.cursor() as cur:
+        cur.execute("SELECT id FROM users WHERE lower(email) = lower(%s)", (email,))
+        row = cur.fetchone()
+        if row is None:
+            cur.execute("INSERT INTO users (email) VALUES (%s) RETURNING id", (email,))
+            user_id = cur.fetchone()[0]
+        else:
+            user_id = row[0]
+        cur.execute("SELECT id FROM tenants WHERE personal_user_id = %s", (user_id,))
+        row = cur.fetchone()
+        if row is None:
+            cur.execute("INSERT INTO tenants (kind, personal_user_id) VALUES ('personal', %s) RETURNING id", (user_id,))
+            row = cur.fetchone()
+    pg_conn.commit()
+    return row[0]
+
+
+def test_the_same_github_event_is_stored_for_each_tenant_that_backfills_it(pg_conn, tenant_id, other_tenant_id):
+    # GitHub event ids are global: a member's push to an org repo is in both their personal feed and the
+    # org's feed. The second tenant to backfill must still get its own row and daily count (#764).
+    repo = f"acme/backfill-xtenant-{uuid.uuid4().hex[:8]}"
+    events = [_raw_event(id=f"b-xtenant-{repo[-8:]}", event_type="PushEvent", repo={"name": repo})]
+
+    for job_id, tenant in ((130, tenant_id), (131, other_tenant_id)):
+        with patch("worker.httpx.Client", return_value=_mock_github_client(events)):
+            worker._handle_backfill_repo_events(pg_conn, job_id, _payload_for(tenant), 0)
+
+    for tenant in (tenant_id, other_tenant_id):
+        assert _repo_events_count(pg_conn, tenant, repo) == 1
+        assert _daily_count(pg_conn, tenant, repo, "push", date(2026, 8, 21)) == 1
+
+
+def test_rerunning_a_backfill_for_the_same_tenant_still_dedupes(pg_conn, tenant_id):
+    repo = f"acme/backfill-rerun-{uuid.uuid4().hex[:8]}"
+    events = [_raw_event(id=f"b-rerun-{repo[-8:]}", event_type="PushEvent", repo={"name": repo})]
+
+    for job_id in (132, 133):
+        with patch("worker.httpx.Client", return_value=_mock_github_client(events)):
+            worker._handle_backfill_repo_events(pg_conn, job_id, _payload_for(tenant_id), 0)
+
+    assert _repo_events_count(pg_conn, tenant_id, repo) == 1
+    assert _daily_count(pg_conn, tenant_id, repo, "push", date(2026, 8, 21)) == 1
+
+
 def test_handler_skips_an_event_the_webhook_path_already_stored(pg_conn, tenant_id):
     # The same push arrives by webhook (stamped when we received it) and in the Events API; it must count once (#542).
     repo = f"acme/backfill-twin-{uuid.uuid4().hex[:8]}"  # unique per run: rows persist

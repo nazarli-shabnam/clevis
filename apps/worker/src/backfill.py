@@ -1,7 +1,8 @@
 """Install-time backfill of recent activity into repo_events via the GitHub Events API.
 
 GitHub caps the Events API at ~90 days / ~300 events. Synthetic delivery_id
-("backfill:<event id>") keeps retries idempotent via ON CONFLICT (delivery_id).
+("backfill:<event id>") keeps retries idempotent via ON CONFLICT (tenant_id, delivery_id)
+(per tenant: GitHub event ids are global, and one event can sit in several tenants' feeds).
 The webhook path uses GitHub's delivery GUID, so the same event can arrive both ways; the worker
 skips a backfilled event that has a webhook twin (repo_events_store.consume_webhook_twin).
 """
