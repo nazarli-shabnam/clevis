@@ -841,7 +841,43 @@ def test_empty_repo_without_a_default_branch_is_skipped_by_branch_checks():
         force = DefaultBranchNoForcePushCheck().run(owner="acme", token="tok", repos=repos)
         protection = BranchProtectionEnabled().run(owner="acme", token="tok", repos=repos)
     assert force["value"]["force_push_allowed"] == 0
-    assert protection["value"]["protected"] == 0 and protection["status"] == "error"
+    assert protection["value"]["protected"] == 0
+    # Nothing to protect is not a failure: excluded from the score, not an error.
+    assert force["status"] == "not_applicable" and protection["status"] == "not_applicable"
+
+
+def test_all_empty_repos_are_not_applicable_even_with_several_repos():
+    def fake_get(url, token):
+        _raise(404, url)
+
+    repos = [{"name": n, "default_branch": None} for n in ("a", "b", "c")]
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        assert DefaultBranchNoForcePushCheck().run(owner="acme", token="tok", repos=repos)["status"] == "not_applicable"
+        assert BranchProtectionEnabled().run(owner="acme", token="tok", repos=repos)["status"] == "not_applicable"
+
+
+def test_unreachable_repos_keep_the_branch_checks_at_error():
+    def fake_get(url, token):
+        _raise(403, url)
+
+    repos = [{"name": "a", "default_branch": "main"}, {"name": "b", "default_branch": "main"}]
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        force = DefaultBranchNoForcePushCheck().run(owner="acme", token="tok", repos=repos)
+        protection = BranchProtectionEnabled().run(owner="acme", token="tok", repos=repos)
+    assert force["status"] == "error" and protection["status"] == "error"
+
+
+def test_empty_repo_mixed_with_an_unreachable_one_stays_error():
+    def fake_get(url, token):
+        _raise(404 if "/empty/" in url else 403, url)
+
+    repos = [{"name": "empty", "default_branch": "main"}, {"name": "locked", "default_branch": "main"}]
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        assert BranchProtectionEnabled().run(owner="acme", token="tok", repos=repos)["status"] == "error"
+        assert DefaultBranchNoForcePushCheck().run(owner="acme", token="tok", repos=repos)["status"] == "error"
 
 
 def test_shared_client_is_reused_across_gets_and_closed_afterwards():
