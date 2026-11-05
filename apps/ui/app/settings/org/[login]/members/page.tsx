@@ -207,8 +207,12 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
     }
   }
 
-  const filteredMembers = (membersQuery.data?.members ?? []).filter((m) =>
-    m.login.toLowerCase().includes(search.toLowerCase()),
+  // Memoised: DataTable returns to page 1 whenever its `data` identity changes, so a fresh array on
+  // every render (the parent's 60 s clock tick, an opened invite form) would kick the admin off the
+  // page they were reviewing.
+  const filteredMembers = useMemo(
+    () => (membersQuery.data?.members ?? []).filter((m) => m.login.toLowerCase().includes(search.toLowerCase())),
+    [membersQuery.data, search],
   )
   // Derived from filteredMembers so the count matches the visible table -- a stale org-wide
   // total next to a filtered table reads as a data-integrity bug for a 2FA-compliance number.
