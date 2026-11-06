@@ -7,6 +7,8 @@ export interface RatioCheckValue {
   type: "ratio"
   numerator: number
   denominator: number
+  /** Repos the check could not inspect; not part of the ratio. */
+  unknown?: number
 }
 
 export interface SeverityCountsValue {
