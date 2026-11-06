@@ -97,7 +97,7 @@ function CheckValueDisplay({ value }: { value: CheckValue }) {
             />
           </div>
           <span className={`text-[0.6875rem] font-mono tabular-nums shrink-0 ${textColor}`}>
-            {numerator} / {denominator} · {pct}%
+            {numerator} / {denominator} · {pct}%{value.unknown ? ` · ${value.unknown} unknown` : ""}
           </span>
         </div>
       </div>
