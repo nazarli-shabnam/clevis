@@ -254,6 +254,59 @@ def test_revoke_invitation(db, acme_org):
     assert resp.status_code == 409
 
 
+def _statements(db, fn) -> list[str]:
+    from sqlalchemy import event
+
+    seen: list[str] = []
+
+    def capture(conn, cursor, statement, *args):
+        seen.append(statement)
+
+    engine = db.get_bind()
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        fn()
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    return seen
+
+
+def test_accept_and_revoke_lock_the_invitation_row(db, acme_org):
+    # Accept and revoke each read-check-write the status; without a row lock a revoke committed
+    # between accept's pending check and its write is lost and the invitee still joins.
+    created = _client(db, acme_org["admin"]).post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+    token = created["invite_link"].rsplit("/", 1)[-1]
+
+    def invitation_selects(stmts):
+        return [q for q in stmts if "FROM invitations" in q and q.lstrip().startswith("SELECT")]
+
+    revoke = _statements(
+        db,
+        lambda: _client(db, acme_org["admin"]).post(
+            f"/orgs/acme/invitations/{created['invitation']['id']}/revoke"
+        ),
+    )
+    assert all("FOR UPDATE" in q for q in invitation_selects(revoke)[:1])
+
+    again = _client(db, acme_org["admin"]).post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+    token = again["invite_link"].rsplit("/", 1)[-1]
+    accept = _statements(db, lambda: _client(db, acme_org["invitee"]).post(f"/invitations/{token}/accept"))
+    locked = [q for q in invitation_selects(accept) if "WHERE invitations.token" in q]
+    assert locked and all("FOR UPDATE" in q for q in locked)
+
+
+def test_accept_defers_the_membership_commit_to_the_status_change(db, acme_org):
+    # Committing the membership first would leave it behind if a revoke lands before the status write.
+    created = _client(db, acme_org["admin"]).post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+    token = created["invite_link"].rsplit("/", 1)[-1]
+    with patch.object(
+        org_membership_repo, "create_if_missing", wraps=org_membership_repo.create_if_missing
+    ) as spy:
+        resp = _client(db, acme_org["invitee"]).post(f"/invitations/{token}/accept")
+    assert resp.status_code == 200
+    assert spy.call_args.kwargs["commit"] is False
+
+
 def _expire_invitation(db, invitation_id: int) -> None:
     from src.core.db import Invitation
 
