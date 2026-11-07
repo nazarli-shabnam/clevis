@@ -13,7 +13,7 @@ from src.core.auth import UserOut, require_auth
 from src.core.db import User, get_db
 from src.repositories import installation_repo, org_membership_repo, org_repo
 from src.routers.github import router as github_router
-from src.routers.github import _events_cache
+from src.routers.github import _evict_expired_events, _events_cache
 
 _ADMIN = UserOut(id=1, email="admin@example.com", name=None, is_workspace_admin=False)
 
@@ -215,6 +215,23 @@ def test_events_evicts_expired_entries_from_the_cache(events_client):
 
     assert resp.status_code == 200
     assert stale_key not in _events_cache
+
+
+def test_evicting_an_entry_another_thread_already_removed_does_not_raise(monkeypatch):
+    # org_events runs in the threadpool, so two requests can sweep the same expired key. The loser
+    # of that race must not turn the activity feed request into a 500.
+    class _RacyCache(dict):
+        def items(self):
+            snapshot = list(super().items())
+            self.clear()  # a concurrent sweep removed everything after we read the snapshot
+            return snapshot
+
+    racy = _RacyCache({("acme", "hash", 30): (0.0, {"org": "acme", "events": []})})
+    monkeypatch.setattr("src.routers.github._events_cache", racy)
+
+    _evict_expired_events(10_000.0)
+
+    assert racy == {}
 
 
 def test_events_non_list_response_returns_502(events_client):
