@@ -80,6 +80,20 @@ describe("CheckCard", () => {
     expect(screen.getByText(/2 \/ 10/)).toBeInTheDocument();
   });
 
+  it("shows how many repos a ratio check could not inspect", () => {
+    render(
+      <CheckCard
+        check={{
+          ...baseCheck,
+          status: "error",
+          value: { type: "ratio", numerator: 2, denominator: 2, unknown: 1 },
+        }}
+      />,
+    );
+
+    expect(screen.getByText(/2 \/ 2.*1 unknown/)).toBeInTheDocument();
+  });
+
   it("renders a not_applicable check with neutral styling, not failed styling", () => {
     const { container } = render(
       <CheckCard
