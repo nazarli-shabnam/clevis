@@ -16,7 +16,7 @@ def webhook_events_between(cur: psycopg.Cursor, *, tenant_id: int, start: dateti
     """Webhook-sourced rows (not backfilled ones) near [start, end], grouped for twin matching.
 
     Backfill ids are 'backfill:<event id>' while webhook ids are GitHub's delivery GUIDs, so
-    ON CONFLICT (delivery_id) cannot see that both describe the same real event."""
+    ON CONFLICT (tenant_id, delivery_id) cannot see that both describe the same real event."""
     cur.execute(
         """
         SELECT repo, event_type, actor, occurred_at FROM repo_events
@@ -53,7 +53,7 @@ def insert_event_and_upsert_daily_count(
     summary: str,
     occurred_at: datetime,
 ) -> bool:
-    """Insert a repo_events row (ON CONFLICT (delivery_id) DO NOTHING) and, only if
+    """Insert a repo_events row (ON CONFLICT (tenant_id, delivery_id) DO NOTHING) and, only if
     inserted, upsert the daily count. Returns True iff a new row was inserted.
 
     Caller must `SET app.tenant_id` on this connection first (RLS WITH CHECK).
@@ -64,7 +64,7 @@ def insert_event_and_upsert_daily_count(
             (tenant_id, delivery_id, event_type, actor, actor_avatar, repo, summary, occurred_at)
         VALUES (%(tenant_id)s, %(delivery_id)s, %(event_type)s, %(actor)s, %(actor_avatar)s,
                 %(repo)s, %(summary)s, %(occurred_at)s)
-        ON CONFLICT (delivery_id) DO NOTHING
+        ON CONFLICT (tenant_id, delivery_id) DO NOTHING
         RETURNING id
         """,
         {

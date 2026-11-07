@@ -164,7 +164,9 @@ class RepoEvent(Base):
         Index("ix_repo_events_tenant_id_occurred_at", "tenant_id", "occurred_at"),
         # Inactive members: each login's newest push (DISTINCT ON (actor) ... ORDER BY actor, occurred_at DESC).
         Index("ix_repo_events_tenant_id_event_type_actor_occurred_at", "tenant_id", "event_type", "actor", "occurred_at"),
-        UniqueConstraint("delivery_id", name="uq_repo_events_delivery_id"),
+        # Per tenant: backfill ids ("backfill:<GitHub event id>") are global, so the same real event can
+        # legitimately be stored once for each tenant whose feed contains it.
+        UniqueConstraint("tenant_id", "delivery_id", name="uq_repo_events_tenant_delivery"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
