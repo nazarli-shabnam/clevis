@@ -271,12 +271,26 @@ def test_register_stores_email_lowercased(auth_client):
     assert resp.json()["user"]["email"] == "mixedcase@example.com"
 
 
-def test_register_disabled_returns_403(auth_client):
+def test_register_disabled_returns_403(auth_client, db):
     _setup_owner(auth_client)
-    with patch("src.routers.auth.get_config", return_value="false"):
-        resp = auth_client.post(
-            "/auth/register", json={"email": "blocked@example.com", "password": "supersecret1234"}
-        )
+    db.execute(text("INSERT INTO app_config (key, value, updated_at) VALUES ('registration_enabled', 'false', NOW())"))
+    resp = auth_client.post("/auth/register", json={"email": "blocked@example.com", "password": "supersecret1234"})
+    assert resp.status_code == 403
+
+
+def test_register_ignores_a_stale_cached_enabled_value(auth_client, db):
+    # Another replica switched registration off; this process still holds "true" in its 60s cache.
+    import time
+
+    from src.core import app_config
+
+    _setup_owner(auth_client)
+    app_config._cache["registration_enabled"] = ("true", time.monotonic())
+    try:
+        db.execute(text("INSERT INTO app_config (key, value, updated_at) VALUES ('registration_enabled', 'false', NOW())"))
+        resp = auth_client.post("/auth/register", json={"email": "late@example.com", "password": "supersecret1234"})
+    finally:
+        app_config._cache.pop("registration_enabled", None)
     assert resp.status_code == 403
 
 
