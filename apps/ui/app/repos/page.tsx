@@ -19,6 +19,7 @@ import { downloadTextFile } from "@/lib/download"
 import { MiniSparkline } from "@/components/charts/mini-sparkline"
 import { relativeTime } from "@/lib/format"
 import { useInView } from "@/lib/use-in-view"
+import { useLookupOwner } from "@/lib/use-lookup-owner"
 import {
   NO_REPO_FILTERS,
   STALE_DAYS,
@@ -245,6 +246,10 @@ export default function ReposPage() {
     setScopeChecked(true)
   }, [])
 
+  // The owner box drives token resolution and the installation lookup; follow it only once typing
+  // pauses, so each keystroke doesn't fire a request per query.
+  const lookupOwner = useLookupOwner(owner)
+
   const { data: installs = [], isFetched: installsFetched } = useQuery<InstallationMeta[]>({
     queryKey: ["installations"],
     queryFn: () => api.installations.list(),
@@ -252,13 +257,13 @@ export default function ReposPage() {
   // Org installs need the org-scoped endpoint (list() is personal-only). 403/404 is treated as
   // "not installed": this is only a soft signal to hide the token field.
   const orgInstallsQuery = useQuery<InstallationMeta[]>({
-    queryKey: ["installations.org", owner.trim()],
-    queryFn: () => api.installations.listForOrg(owner.trim()),
-    enabled: owner.trim().length > 0,
+    queryKey: ["installations.org", lookupOwner],
+    queryFn: () => api.installations.listForOrg(lookupOwner),
+    enabled: lookupOwner.length > 0,
     retry: false,
   })
   const hasInstallationForOwner =
-    installs.some((i) => i.account_login === owner.trim()) || (orgInstallsQuery.data?.length ?? 0) > 0
+    installs.some((i) => i.account_login === lookupOwner) || (orgInstallsQuery.data?.length ?? 0) > 0
 
   const resolveMutation = useMutation({
     mutationFn: (org: string) => api.tokens.resolve(org),
@@ -274,11 +279,13 @@ export default function ReposPage() {
   })
 
   useEffect(() => {
+    // A token belongs to the org it was resolved for: drop it the moment the box changes...
     setToken("")
     setTokenSaved(false)
-    if (hasOrgLogin(owner)) resolveMutation.mutate(owner.trim())
+    // ...but only look the new one up once typing has paused on this value.
+    if (hasOrgLogin(lookupOwner) && lookupOwner === owner.trim()) resolveMutation.mutate(lookupOwner)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [owner])
+  }, [owner, lookupOwner])
 
   const saveTokenMutation = useMutation({
     mutationFn: () => api.tokens.upsert(owner.trim(), token.trim()),
@@ -326,6 +333,8 @@ export default function ReposPage() {
   useEffect(() => {
     const org = owner.trim()
     if (!org || org !== scopeOrgLogin || autoLoadedFor.current === org) return
+    // The installation answer is for lookupOwner: wait until it has caught up with the box.
+    if (lookupOwner !== org) return
     if (!installsSettled || !(hasInstallationForOwner || tokenSaved)) return
     // isPending is a dependency so an org switched to mid-request is loaded as soon as that finishes.
     if (listMutation.isPending) return
@@ -334,7 +343,7 @@ export default function ReposPage() {
     // never a legacy saved one that happened to resolve first.
     loadRepos(hasInstallationForOwner ? "" : token)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [owner, scopeOrgLogin, installsSettled, hasInstallationForOwner, tokenSaved, listMutation.isPending])
+  }, [owner, lookupOwner, scopeOrgLogin, installsSettled, hasInstallationForOwner, tokenSaved, listMutation.isPending])
 
   const allRepos = useMemo(() => listMutation.data?.repos ?? [], [listMutation.data])
   const languages = useMemo(() => repoLanguages(allRepos), [allRepos])

@@ -27,6 +27,7 @@ import { BarGroupChart } from "@/components/charts/bar-group-chart"
 import { CHART_COLORS } from "@/lib/charts/theme"
 import { relativeTime } from "@/lib/format"
 import { isOrgMemberOnly } from "@/lib/members-href"
+import { useLookupOwner } from "@/lib/use-lookup-owner"
 import type { CheckResult, InstallationMeta, MyOrgMembership } from "@/lib/api/types"
 
 const TABS = [
@@ -127,6 +128,10 @@ export default function SecurityPage() {
     setScopeChecked(true)
   }, [])
 
+  // The owner box drives token resolution, the installation lookup and the history query; follow it
+  // only once typing pauses, so each keystroke doesn't fire a request per query.
+  const lookupOwner = useLookupOwner(owner)
+
   const { data: installs = [] } = useQuery<InstallationMeta[]>({
     queryKey: ["installations"],
     queryFn: () => api.installations.list(),
@@ -134,13 +139,13 @@ export default function SecurityPage() {
   // Org installs need the org-scoped endpoint (list() is personal-only). 403/404 is treated as
   // "not installed": this is only a soft signal to hide the token field.
   const orgInstallsQuery = useQuery<InstallationMeta[]>({
-    queryKey: ["installations.org", owner.trim()],
-    queryFn: () => api.installations.listForOrg(owner.trim()),
-    enabled: owner.trim().length > 0,
+    queryKey: ["installations.org", lookupOwner],
+    queryFn: () => api.installations.listForOrg(lookupOwner),
+    enabled: lookupOwner.length > 0,
     retry: false,
   })
   const hasInstallationForOwner =
-    installs.some((i) => i.account_login === owner.trim()) || (orgInstallsQuery.data?.length ?? 0) > 0
+    installs.some((i) => i.account_login === lookupOwner) || (orgInstallsQuery.data?.length ?? 0) > 0
 
   const resolveMutation = useMutation({
     mutationFn: (org: string) => api.tokens.resolve(org),
@@ -156,11 +161,13 @@ export default function SecurityPage() {
   })
 
   useEffect(() => {
+    // A token belongs to the org it was resolved for: drop it the moment the box changes...
     setToken("")
     setTokenSaved(false)
-    if (hasOrgLogin(owner)) resolveMutation.mutate(owner.trim())
+    // ...but only look the new one up once typing has paused on this value.
+    if (hasOrgLogin(lookupOwner) && lookupOwner === owner.trim()) resolveMutation.mutate(lookupOwner)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [owner])
+  }, [owner, lookupOwner])
 
   const saveTokenMutation = useMutation({
     mutationFn: () => api.tokens.upsert(owner.trim(), token.trim()),
@@ -171,9 +178,9 @@ export default function SecurityPage() {
   })
 
   const historyQuery = useQuery({
-    queryKey: ["analytics.history", owner],
-    queryFn: () => api.analytics.history(owner),
-    enabled: hasOrgLogin(owner),
+    queryKey: ["analytics.history", lookupOwner],
+    queryFn: () => api.analytics.history(lookupOwner),
+    enabled: hasOrgLogin(lookupOwner),
   })
 
   const scan = useMutation({
