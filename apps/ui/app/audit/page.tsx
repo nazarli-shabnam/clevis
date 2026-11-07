@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useSearchParams } from "next/navigation"
-import { useQuery } from "@tanstack/react-query"
+import { keepPreviousData, useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { EmptyStateInline } from "@/components/empty-state"
 import { SectionError } from "@/components/section-error"
@@ -46,14 +46,11 @@ export default function AuditPage() {
   const searchParams = useSearchParams()
   const highlightJobId = Number(searchParams.get("job_id")) || null
 
-  // A new filter starts back at the default window.
-  useEffect(() => {
-    setLimit(INITIAL_LIMIT)
-  }, [actionFilter])
-
-  const { data: logs = [], isLoading, isError, error, isFetching, refetch } = useQuery({
+  const { data: logs = [], isLoading, isError, error, isFetching, isPlaceholderData, refetch } = useQuery({
     queryKey: ["audit", actionFilter, limit],
     queryFn: () => api.audit.list(actionFilter || undefined, limit),
+    // Keep the rows (and scroll position) on screen while a bigger limit or another filter loads.
+    placeholderData: keepPreviousData,
     refetchInterval: 30_000,
     enabled: isAdmin,
   })
@@ -164,7 +161,11 @@ export default function AuditPage() {
             <select
               aria-label="Filter by action"
               value={actionFilter}
-              onChange={(e) => setActionFilter(e.target.value)}
+              onChange={(e) => {
+                // A new filter starts back at the default window; set together so only one request fires.
+                setActionFilter(e.target.value)
+                setLimit(INITIAL_LIMIT)
+              }}
               className="bg-elevated border border-border rounded-md text-xs text-muted-foreground font-mono px-2 py-1 focus:outline-none focus:border-primary"
             >
               <option value="">all actions</option>
@@ -218,7 +219,7 @@ export default function AuditPage() {
                 ].join(" ")
               }}
             />
-            {logs.length >= limit && limit < MAX_LIMIT && (
+            {(logs.length >= limit || isPlaceholderData) && limit < MAX_LIMIT && (
               <div className="px-4 py-3 border-t border-border flex justify-center">
                 <Button
                   size="sm"

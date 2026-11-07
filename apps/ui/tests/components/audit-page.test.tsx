@@ -287,6 +287,58 @@ describe("AuditPage", () => {
     await waitFor(() => expect(auditListMock).toHaveBeenCalledWith(undefined, 200));
   });
 
+  it("keeps the table on screen and shows 'Loading…' on the button while a bigger limit loads (#768)", async () => {
+    const fullPage = Array.from({ length: 100 }, (_, i) => ({
+      id: i + 1,
+      actor: "u@e.com",
+      action: "installation.connected",
+      target: "acme",
+      payload: "{}",
+      created_at: "2026-01-01T00:00:00Z",
+    }));
+    let resolveBigger: (rows: typeof fullPage) => void = () => {};
+    auditListMock.mockImplementation((_action: unknown, limit: number) =>
+      limit === 100 ? Promise.resolve(fullPage) : new Promise((resolve) => { resolveBigger = resolve }),
+    );
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText("100 entries")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: /load more/i }));
+
+    const loading = await screen.findByRole("button", { name: /loading/i });
+    expect(loading).toBeDisabled();
+    expect(screen.getByText("100 entries")).toBeInTheDocument();
+
+    resolveBigger(fullPage);
+    await waitFor(() => expect(screen.queryByRole("button", { name: /loading/i })).not.toBeInTheDocument());
+  });
+
+  it("resets the limit with the filter change, so a raised limit is never requested for the new filter (#768)", async () => {
+    const fullPage = Array.from({ length: 100 }, (_, i) => ({
+      id: i + 1,
+      actor: "u@e.com",
+      action: "installation.connected",
+      target: "acme",
+      payload: "{}",
+      created_at: "2026-01-01T00:00:00Z",
+    }));
+    auditListMock.mockResolvedValue(fullPage);
+    auditActionsMock.mockResolvedValue(["installation.connected"]);
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText("100 entries")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /load more/i }));
+    await waitFor(() => expect(auditListMock).toHaveBeenCalledWith(undefined, 200));
+
+    await screen.findByRole("option", { name: "installation.connected" });
+    auditListMock.mockClear();
+    fireEvent.change(screen.getByLabelText("Filter by action"), { target: { value: "installation.connected" } });
+
+    await waitFor(() => expect(auditListMock).toHaveBeenCalledWith("installation.connected", 100));
+    expect(auditListMock).not.toHaveBeenCalledWith("installation.connected", 200);
+  });
+
   it("does not show a Load more button when fewer rows than the limit come back", async () => {
     auditListMock.mockResolvedValue([
       { id: 1, actor: "u@e.com", action: "installation.connected", target: "acme", payload: "{}", created_at: "2026-01-01T00:00:00Z" },
