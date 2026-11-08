@@ -18,7 +18,7 @@ from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from src.core.app_config import get_config
+from src.core.app_config import registration_enabled
 from src.core.auth import (
     SESSION_COOKIE_NAME,
     SETUP_LOCK_KEY,
@@ -224,7 +224,7 @@ def register(body: RegisterRequest, request: Request, db: Session = Depends(get_
     """Creates a non-admin account. 409 if setup hasn't run yet; 403 if registration is disabled."""
     if db.query(User).count() == 0:
         raise HTTPException(status_code=409, detail="Setup must be completed before registration")
-    if get_config("registration_enabled", "true") != "true":
+    if not registration_enabled(db):
         raise HTTPException(status_code=403, detail="Registration is disabled")
     if len(body.password) < _MIN_PASSWORD_LEN:
         raise HTTPException(

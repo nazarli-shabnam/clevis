@@ -174,7 +174,10 @@ def revoke_invitation(
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
-    invitation = invitation_repo.get_by_id_and_org(db, invitation_id=invitation_id, org_id=ctx.org.id)
+    # Locked so a concurrent accept can't pass its pending check and then overwrite this revoke.
+    invitation = invitation_repo.get_by_id_and_org(
+        db, invitation_id=invitation_id, org_id=ctx.org.id, for_update=True
+    )
     if invitation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
     if invitation.status != "pending":
@@ -282,7 +285,9 @@ def accept_invitation(
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
-    invitation = invitation_repo.get_by_token(db, token)
+    # Row lock: a concurrent revoke either commits first (we then see "revoked" and refuse) or
+    # waits for this transaction, which creates the membership and flips the status atomically.
+    invitation = invitation_repo.get_by_token(db, token, for_update=True)
     if invitation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
     if _is_expired(invitation):
@@ -306,15 +311,16 @@ def accept_invitation(
     # An existing membership (e.g. a GitHub-verified admin) is kept as-is: accepting a member
     # invite must never demote it.
     membership = org_membership_repo.create_if_missing(
-        db, org_id=invitation.org_id, user_id=user.id, role="member", source="invite"
+        db, org_id=invitation.org_id, user_id=user.id, role="member", source="invite", commit=False
     )
+    role = membership.role
     invitation.status = "accepted"
     invitation.accepted_at = datetime.now(timezone.utc)
     db.commit()
 
     org = db.query(Org).filter(Org.id == invitation.org_id).first()
     audit_repo.write(
-        db, user.email, "invitation.accept", org.github_login, {"role": membership.role},
+        db, user.email, "invitation.accept", org.github_login, {"role": role},
         tenant_id=org.tenant_id,
     )
-    return {"org_login": org.github_login, "role": membership.role}
+    return {"org_login": org.github_login, "role": role}

@@ -21,11 +21,9 @@ import { CHART_COLORS } from "@/lib/charts/theme"
 import { WorkflowLintCard } from "@/components/automation/workflow-lint-card"
 import { PermissionDriftNotice } from "@/components/permission-drift-notice"
 import { relativeTime } from "@/lib/format"
+import { useLookupOwner } from "@/lib/use-lookup-owner"
 import { orgRoleFor } from "@/lib/members-href"
 import type { InstallationMeta, MyOrgMembership, RunSummary, WorkflowSummary } from "@/lib/api/types"
-
-// Pause after the last keystroke in the owner box before it drives network lookups.
-const OWNER_LOOKUP_DEBOUNCE_MS = 400
 
 function runDurationSeconds(run: RunSummary): number | null {
   return run.duration_ms == null ? null : Math.round(run.duration_ms / 1000)
@@ -78,11 +76,7 @@ export default function AutomationPage() {
 
   // The owner box drives token resolution, the installation lookup and the repo list; follow it
   // only once typing pauses, so each keystroke doesn't fire three requests.
-  const [lookupOwner, setLookupOwner] = useState("")
-  useEffect(() => {
-    const timer = setTimeout(() => setLookupOwner(owner.trim()), OWNER_LOOKUP_DEBOUNCE_MS)
-    return () => clearTimeout(timer)
-  }, [owner])
+  const lookupOwner = useLookupOwner(owner)
 
   const { data: installs = [] } = useQuery<InstallationMeta[]>({
     queryKey: ["installations"],

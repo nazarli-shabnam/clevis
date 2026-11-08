@@ -385,6 +385,13 @@ def test_installation_suspend_and_unsuspend_return_200_without_side_effects(db, 
     assert len(installation_repo.list_for_org(db, org_id=org.id)) == 1
 
 
+@pytest.mark.parametrize("payload", [[], None, "x", 1])
+@pytest.mark.parametrize("event", ["installation", "push"])
+def test_signed_non_object_json_body_returns_400(webhook_client, payload, event):
+    # Valid JSON that isn't an object used to reach payload.get() and 500, which GitHub retries.
+    assert _post(webhook_client, event, payload).status_code == 400
+
+
 def test_malformed_json_body_returns_400(webhook_client):
     body = b"not json"
     resp = webhook_client.post(
