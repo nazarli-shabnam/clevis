@@ -44,11 +44,18 @@ export default function CachesPage() {
   const [jobIds, setJobIds] = useState<number[]>([])
 
   // Clearing deletes caches through the repo clear route, which needs org admin; a plain member would 403.
-  const { data: memberships = [] } = useQuery<MyOrgMembership[]>({
+  const { data: memberships } = useQuery<MyOrgMembership[]>({
     queryKey: ["my-orgs"],
     queryFn: () => api.orgs.mine(),
   })
-  const canClear = !isOrgMemberOnly(memberships, org)
+  // Unknown until memberships load: don't offer the controls to someone who may turn out to be a plain member.
+  const canClear = !!memberships && !isOrgMemberOnly(memberships, org)
+
+  // A selection and an open confirmation belong to one org; never carry them over to another.
+  useEffect(() => {
+    setSelected(new Set())
+    setConfirmOpen(false)
+  }, [org])
 
   const resolveQuery = useQuery({
     queryKey: ["tokens.resolve", org],
@@ -114,7 +121,7 @@ export default function CachesPage() {
   }
 
   const clearMutation = useMutation({
-    mutationFn: async ({ repos, dryRun }: { repos: string[]; dryRun: boolean }) => {
+    mutationFn: async ({ repos, dryRun }: { repos: string[]; dryRun: boolean; rows: RepoCacheStats[] }) => {
       const results = await inBatches(repos, (repo) =>
         api.cache
           .clear(org, repo, { token, dry_run: dryRun })
@@ -123,13 +130,15 @@ export default function CachesPage() {
       )
       return { dryRun, results }
     },
-    onSuccess: ({ dryRun, results }) => {
+    onSuccess: ({ dryRun, results }, { rows }) => {
       setConfirmOpen(false)
       const failed = results.filter((r) => !r.ok)
       const okCount = results.length - failed.length
       const failNote = failed.length > 0 ? ` ${failed.length} failed (${failed.map((f) => f.repo).join(", ")}).` : ""
       if (dryRun) {
-        const bytes = chosen.reduce((sum, r) => sum + r.totalBytes, 0)
+        // The rows that were selected when the request was sent, and only those whose request succeeded.
+        const succeeded = new Set(results.filter((r) => r.ok).map((r) => r.repo))
+        const bytes = rows.filter((r) => succeeded.has(r.repo)).reduce((sum, r) => sum + r.totalBytes, 0)
         toast.info(`Dry run complete for ${okCount} repo${okCount === 1 ? "" : "s"} (${formatBytes(bytes)} would be deleted). Nothing was changed.${failNote}`)
       } else {
         const ids = results.flatMap((r) => (r.jobId != null ? [r.jobId] : []))
@@ -195,7 +204,7 @@ export default function CachesPage() {
                   size="sm"
                   variant="outline"
                   disabled={chosen.length === 0 || busy}
-                  onClick={() => clearMutation.mutate({ repos: chosen.map((r) => r.repo), dryRun: true })}
+                  onClick={() => clearMutation.mutate({ repos: chosen.map((r) => r.repo), dryRun: true, rows: chosen })}
                 >
                   <Eye className="size-3.5" /> Dry run ({chosen.length})
                 </Button>
@@ -300,7 +309,7 @@ export default function CachesPage() {
         title={`Delete cache in ${chosen.length} repo${chosen.length === 1 ? "" : "s"}?`}
         description={`This permanently deletes every Actions cache entry (${formatBytes(chosen.reduce((s, r) => s + r.totalBytes, 0))}) in: ${chosen.map((r) => r.repo).join(", ")}. This can't be undone.`}
         confirmLabel="Delete"
-        onConfirm={() => clearMutation.mutate({ repos: chosen.map((r) => r.repo), dryRun: false })}
+        onConfirm={() => clearMutation.mutate({ repos: chosen.map((r) => r.repo), dryRun: false, rows: chosen })}
         pending={clearMutation.isPending}
       />
     </>

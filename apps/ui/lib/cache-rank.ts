@@ -18,7 +18,8 @@ export function summarizeCaches(repo: string, entries: CacheEntry[]): RepoCacheS
   for (const e of entries) {
     totalBytes += e.size_in_bytes
     if (classifyStaleness(e.last_accessed_at) !== "fresh") staleBytes += e.size_in_bytes
-    if (lastAccessed === null || e.last_accessed_at > lastAccessed) lastAccessed = e.last_accessed_at
+    // Compare instants, not strings: the API may format the same moment differently.
+    if (lastAccessed === null || Date.parse(e.last_accessed_at) > Date.parse(lastAccessed)) lastAccessed = e.last_accessed_at
   }
   return { repo, count: entries.length, totalBytes, staleBytes, lastAccessed }
 }

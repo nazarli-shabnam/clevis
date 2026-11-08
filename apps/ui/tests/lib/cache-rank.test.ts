@@ -21,6 +21,13 @@ describe("cache ranking", () => {
     expect(stats).toEqual({ repo: "api", count: 3, totalBytes: 700, staleBytes: 600, lastAccessed: daysAgo(1) })
   })
 
+  it("picks the latest access by instant even when timestamps are formatted differently", () => {
+    // "+02:00" 11:00 is 09:00Z, earlier than 10:00Z, although it sorts after it as a string.
+    const earlier = { ...entry(1, 1), last_accessed_at: "2026-07-30T11:00:00+02:00" };
+    const later = { ...entry(1, 1), last_accessed_at: "2026-07-30T10:00:00Z" };
+    expect(summarizeCaches("api", [earlier, later]).lastAccessed).toBe("2026-07-30T10:00:00Z");
+  });
+
   it("summarizes a repo with no entries as empty", () => {
     expect(summarizeCaches("api", [])).toEqual({ repo: "api", count: 0, totalBytes: 0, staleBytes: 0, lastAccessed: null })
   })

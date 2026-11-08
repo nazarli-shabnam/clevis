@@ -227,6 +227,8 @@ describe("CachesPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /dry run \(2\)/i }));
 
     await waitFor(() => expect(toastInfo).toHaveBeenCalledWith(expect.stringContaining("1 failed (api)")));
+    // Only the repo whose dry run succeeded counts toward the bytes that "would be deleted".
+    expect(toastInfo).toHaveBeenCalledWith(expect.stringContaining("(1.0 MB would be deleted)"));
   });
 
   it("hides selection and clear controls from a plain org member", async () => {
