@@ -75,16 +75,24 @@ function SecurityStatusRow({
     <div className="flex items-center gap-2 text-xs">
       <Icon className={`size-4 shrink-0 ${color}`} />
       <span className="text-foreground">{label}</span>
-      {link && (
+      {link && (link.external ? (
         <a
           href={link.href}
-          onClick={link.onClick}
-          {...(link.external ? { target: "_blank", rel: "noreferrer" } : {})}
+          target="_blank"
+          rel="noreferrer"
           className="text-muted-foreground hover:text-foreground underline underline-offset-2"
         >
           {link.text}
         </a>
-      )}
+      ) : (
+        <Link
+          href={link.href}
+          onClick={link.onClick}
+          className="text-muted-foreground hover:text-foreground underline underline-offset-2"
+        >
+          {link.text}
+        </Link>
+      ))}
       {waiver && tone === "bad" && (
         <span
           className="rounded bg-muted px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground"
@@ -213,7 +221,8 @@ export default function RepoDetailPage() {
   const securityRowQuery = useQuery({
     queryKey: ["repo-detail-security-row", owner, repo, token],
     queryFn: () => api.security.repoRow(owner, repo, token),
-    enabled: tab === "security" && !!owner && !!repo,
+    // Wait for the saved-token lookup to settle (either way) so a repo that needs it isn't fetched tokenless first.
+    enabled: tab === "security" && !!owner && !!repo && (resolveMutation.isSuccess || resolveMutation.isError),
   })
 
   // Waivers are org-scoped; a personal account has none, and a failed lookup just means no badge.

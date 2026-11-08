@@ -6,6 +6,7 @@ Personal-scoped (`/me/...`); the Security page scans an arbitrary owner by name,
 token resolution goes through `resolve_owner_token` rather than `require_org_role`.
 """
 
+import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -273,6 +274,10 @@ def personal_security_matrix(
         raise _github_error(exc) from exc
 
 
+# GitHub logins and repo names; "." and ".." are path segments, not names, so they must not reach the URL.
+_GH_NAME_RE = re.compile(r"^(?!\.\.?$)[A-Za-z0-9._-]{1,100}$")
+
+
 @router.get("/me/analytics/security-matrix/{owner}/{repo}", response_model=RepoSecurityRow)
 def personal_repo_security_row(
     owner: str,
@@ -283,6 +288,8 @@ def personal_repo_security_row(
 ):
     """One matrix row for a single repo -- what the org matrix shows for that cell, without
     scanning every repo in the org to get it. Same token resolution and aggregate-vs-live rules."""
+    if not _GH_NAME_RE.match(owner) or not _GH_NAME_RE.match(repo):
+        raise HTTPException(status_code=422, detail="Invalid owner or repository name")
     try:
         token = resolve_owner_token(db, user_id=user.id, owner=owner, client_token=x_github_token)
     except NoGitHubTokenAvailable as exc:
@@ -291,6 +298,8 @@ def personal_repo_security_row(
     client = GitHubClient(token)
     try:
         repo_meta = client.request("GET", f"/repos/{owner}/{repo}")
+        if not isinstance(repo_meta, dict) or not isinstance(repo_meta.get("name"), str):
+            raise HTTPException(status_code=502, detail="Unexpected response from GitHub")
         alerts_by_repo = None
         if tenant_id is not None:
             alerts_by_repo = _open_alerts_by_repo(db, tenant_id, [f"{owner}/{repo_meta['name']}"])

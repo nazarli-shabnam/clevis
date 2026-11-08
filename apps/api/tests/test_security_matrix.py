@@ -739,4 +739,20 @@ def test_repo_security_row_github_error_maps_to_http_error(client):
     with patch("src.routers.security.GitHubClient") as mock_client:
         mock_client.return_value.request.side_effect = _branch_error(404)
         resp = client.get("/me/analytics/security-matrix/acme/missing", headers={"X-GitHub-Token": "ghp_test"})
-    assert resp.status_code in (400, 404)
+    assert resp.status_code == 400
+
+
+def test_repo_security_row_github_unreachable_maps_to_503(client):
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = httpx.ConnectError("down")
+        resp = client.get("/me/analytics/security-matrix/acme/api", headers={"X-GitHub-Token": "ghp_test"})
+    assert resp.status_code == 503
+
+
+def test_repo_security_row_rejects_path_like_names_and_odd_github_metadata(client):
+    assert client.get("/me/analytics/security-matrix/acme/a%20b", headers={"X-GitHub-Token": "ghp_test"}).status_code == 422
+    assert client.get("/me/analytics/security-matrix/acme/a%3Fb", headers={"X-GitHub-Token": "ghp_test"}).status_code == 422
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = ["not", "a", "repo"]
+        resp = client.get("/me/analytics/security-matrix/acme/api", headers={"X-GitHub-Token": "ghp_test"})
+    assert resp.status_code == 502
