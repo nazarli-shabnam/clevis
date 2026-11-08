@@ -117,6 +117,9 @@ async def github_webhook(request: Request, db: Session = Depends(get_db)):
         payload = json.loads(raw_body)
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Malformed webhook payload")
+    if not isinstance(payload, dict):
+        # Valid JSON but not an object ([], null, "x", 1): every handler below calls payload.get().
+        raise HTTPException(status_code=400, detail="Malformed webhook payload")
 
     event = request.headers.get("X-GitHub-Event", "")
     delivery_id = request.headers.get("X-GitHub-Delivery", "")
