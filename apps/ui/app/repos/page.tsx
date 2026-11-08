@@ -435,7 +435,7 @@ export default function ReposPage() {
         <EmptyStateNoAccount message="No account selected — pick an organization from the profile menu to prefill the search below, or just type one in directly." />
       )}
 
-      <div className="grid gap-4">
+      <div className="grid grid-cols-1 gap-4">
         <div className="card">
           <div className="px-4 py-3 border-b border-border">
             <span className="section-title">Organization</span>
