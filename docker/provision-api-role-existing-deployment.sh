@@ -228,8 +228,8 @@ BEGIN
     GRANT SELECT, INSERT, UPDATE, DELETE ON notification_dismissals TO clevis_api;
   END IF;
   -- Migration 0075's filtered workspace-admin audit read (PUBLIC EXECUTE is revoked there).
-  IF EXISTS (SELECT FROM pg_proc WHERE proname = 'audit_logs_for_admin_filtered') THEN
-    GRANT EXECUTE ON FUNCTION audit_logs_for_admin_filtered(text, text, text, timestamptz, timestamptz, integer, integer) TO clevis_api;
+  IF to_regprocedure('public.audit_logs_for_admin_filtered(text, text, text, timestamptz, timestamptz, integer, integer)') IS NOT NULL THEN
+    GRANT EXECUTE ON FUNCTION public.audit_logs_for_admin_filtered(text, text, text, timestamptz, timestamptz, integer, integer) TO clevis_api;
   END IF;
 END
 $do$;

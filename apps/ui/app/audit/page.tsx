@@ -68,7 +68,8 @@ export default function AuditPage() {
   const { isLoading, isFetching, refetch } = query
   const logs: AuditLogOut[] = query.data?.pages.flat() ?? []
   const filtered = JSON.stringify(applied) !== JSON.stringify(EMPTY_FORM)
-  const isError = query.isError && !query.data
+  // A failed refresh with nothing cached to show (including a cached empty list) is an error, not "no entries".
+  const isError = query.isError && logs.length === 0
   const error = query.error
 
   // The filter options come from the log itself. If this fails the dropdown still works for "all"

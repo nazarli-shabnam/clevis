@@ -20,6 +20,7 @@ export function SessionsCard() {
     onSettled: () => queryClient.invalidateQueries({ queryKey: SESSIONS_KEY }),
   })
   const sessions = query.data ?? []
+  const failed = sessions.find((s) => s.id === revoke.variables)
 
   return (
     <div className="card">
@@ -38,7 +39,7 @@ export function SessionsCard() {
           <Skeleton className="h-10 w-full" />
         </div>
       ) : sessions.length === 0 ? (
-        <p className="px-4 py-4 text-sm text-muted-foreground">No other sessions are recorded.</p>
+        <p className="px-4 py-4 text-sm text-muted-foreground">No sessions are recorded.</p>
       ) : (
         <ul className="divide-y divide-border">
           {sessions.map((s) => (
@@ -73,7 +74,8 @@ export function SessionsCard() {
       )}
       {revoke.isError && (
         <p role="alert" className="px-4 pb-3 text-xs text-destructive">
-          That session was not revoked. {revoke.error.message}
+          {failed ? `The ${describeDevice(failed.user_agent)} session from ${failed.ip ?? "an unknown IP"} was not revoked.` : "That session was not revoked."}{" "}
+          {revoke.error.message}
         </p>
       )}
     </div>

@@ -103,3 +103,8 @@ def test_action_filter_still_exact_and_combines_with_the_new_filters(db):
 
 def test_limit_is_still_capped_at_500(db):
     assert _client(db).get("/audit", params={"limit": 501}).status_code == 422
+
+
+def test_a_before_id_cursor_beyond_the_integer_range_is_rejected_not_a_500(db):
+    resp = _client(db).get("/audit", params={"before_id": 2**31})
+    assert resp.status_code == 422

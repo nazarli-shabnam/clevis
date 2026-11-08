@@ -2,6 +2,7 @@
 // "Chrome", and Chrome also says "Safari"; iOS and Android UAs also say "Mac OS X" / "Linux".
 const BROWSERS: [RegExp, string][] = [
   [/Edg(e|A|iOS)?\//, "Edge"],
+  [/SamsungBrowser\//, "Samsung Internet"],
   [/OPR\/|Opera/, "Opera"],
   [/Firefox\/|FxiOS\//, "Firefox"],
   [/Chrome\/|CriOS\//, "Chrome"],

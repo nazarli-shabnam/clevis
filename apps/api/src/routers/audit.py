@@ -37,7 +37,7 @@ def list_audit_logs(
     target: str | None = Query(default=None, max_length=200, description="Target containing this text"),
     since: datetime | None = Query(default=None, description="Created at or after this time"),
     until: datetime | None = Query(default=None, description="Created before this time"),
-    before_id: int | None = Query(default=None, ge=1, description="Cursor: only rows older than this id"),
+    before_id: int | None = Query(default=None, ge=1, le=2_147_483_647, description="Cursor: only rows older than this id"),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
     _user: UserOut = Depends(require_workspace_admin),
