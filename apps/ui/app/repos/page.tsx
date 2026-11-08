@@ -71,7 +71,7 @@ function RepoActivityCell({ org, repo, token }: { org: string; repo: string; tok
       ) : (
         <>
           {weeks.length === 0 || weeks.every((n) => n === 0) ? (
-            <span className="text-muted-foreground text-[0.6875rem]">— no recent activity</span>
+            <span className="text-muted-foreground text-[0.6875rem] whitespace-nowrap">— no recent activity</span>
           ) : (
             <MiniSparkline data={weeks} height={28} />
           )}
@@ -187,7 +187,7 @@ function RepoRow({
           <p className="text-[0.6875rem] text-muted-foreground truncate mt-0.5">{repo.description}</p>
         )}
       </td>
-      <td className="px-4 py-2.5 text-muted-foreground">{repo.language ?? "—"}</td>
+      <td className="hidden xl:table-cell px-4 py-2.5 text-muted-foreground">{repo.language ?? "—"}</td>
       <td className="px-4 py-2.5 text-right text-muted-foreground tabular-nums">
         <span className="inline-flex items-center gap-1">
           <Star className="size-3.5" />
@@ -435,13 +435,13 @@ export default function ReposPage() {
         <EmptyStateNoAccount message="No account selected — pick an organization from the profile menu to prefill the search below, or just type one in directly." />
       )}
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4">
         <div className="card">
           <div className="px-4 py-3 border-b border-border">
             <span className="section-title">Organization</span>
           </div>
-          <div className="p-4 flex flex-col gap-3">
-            <div>
+          <div className="p-4 flex flex-col gap-3 md:flex-row md:items-end">
+            <div className="md:w-64 md:shrink-0">
               <label htmlFor="repos-owner" className="text-xs font-medium text-foreground block mb-1.5">Organization</label>
               <Input
                 id="repos-owner"
@@ -452,7 +452,7 @@ export default function ReposPage() {
               />
             </div>
             {!hasInstallationForOwner && (
-            <div>
+            <div className="md:flex-1">
               <div className="mb-1.5 flex items-center gap-1.5">
                 <label htmlFor="repos-token" className="text-xs font-medium text-foreground">GitHub Token</label>
                 <span id="repos-token-hint" className="text-[0.6875rem] text-muted-foreground font-normal">
@@ -479,7 +479,7 @@ export default function ReposPage() {
             <Button
               onClick={() => loadRepos()}
               disabled={listMutation.isPending || !owner.trim()}
-              className="mt-1"
+              className="md:shrink-0"
             >
               {listMutation.isPending ? (
                 <><CircleNotch className="size-3.5 animate-spin" />Loading…</>
@@ -507,7 +507,7 @@ export default function ReposPage() {
         </div>
 
         {(listMutation.data || listMutation.isPending) && (
-          <div className="card lg:col-span-2">
+          <div className="card">
             <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
               <span className="section-title">Repositories</span>
               <div className="flex items-center gap-2">
@@ -630,7 +630,7 @@ export default function ReposPage() {
                       <tr key={i}>
                         <td className="pl-4 py-3 w-6" />
                         <td className="px-4 py-3"><Skeleton className="h-3 w-32" /></td>
-                        <td className="px-4 py-3"><Skeleton className="h-3 w-16" /></td>
+                        <td className="hidden xl:table-cell px-4 py-3"><Skeleton className="h-3 w-16" /></td>
                         <td className="px-4 py-3"><Skeleton className="h-3 w-10 ml-auto" /></td>
                         <td className="px-4 py-3"><Skeleton className="h-3 w-10 ml-auto" /></td>
                         <td className="px-4 py-3"><Skeleton className="h-6 w-24" /></td>
@@ -662,7 +662,7 @@ export default function ReposPage() {
                         />
                       </th>
                       <th className="text-left text-muted-foreground font-medium px-4 py-2">Repository</th>
-                      <th className="text-left text-muted-foreground font-medium px-4 py-2">Language</th>
+                      <th className="hidden xl:table-cell text-left text-muted-foreground font-medium px-4 py-2">Language</th>
                       <th className="text-right text-muted-foreground font-medium px-4 py-2">Stars</th>
                       <th className="text-right text-muted-foreground font-medium px-4 py-2">Open PRs</th>
                       <th className="text-left text-muted-foreground font-medium px-4 py-2">Activity (8w)</th>
