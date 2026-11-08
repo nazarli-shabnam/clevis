@@ -467,6 +467,9 @@ describe("RepoDetailPage", () => {
       "https://github.com/acme/demo/security/code-scanning",
     );
     expect(screen.getByRole("link", { name: "Burndown" })).toHaveAttribute("href", "/security/burndown");
+    // The secret-scanning row's "Alerts" link points the security page at this org before navigating.
+    const alerts = screen.getAllByRole("link", { name: "Alerts" }).find((a) => a.getAttribute("href") === "/security")!
+    fireEvent.click(alerts)
   });
 
   it("shows unknown, not a pass, for a dimension the token could not evaluate", async () => {
