@@ -14,7 +14,7 @@ export default function InviteAcceptPage() {
   const params = useParams<{ token: string }>()
   const router = useRouter()
   const queryClient = useQueryClient()
-  const { user, isLoading: authLoading, dismissPendingInvitations } = useAuth()
+  const { user, isLoading: authLoading, removePendingInvitation } = useAuth()
   const token = params.token
 
   const { data: preview, isLoading, isError, error } = useQuery({
@@ -24,12 +24,13 @@ export default function InviteAcceptPage() {
 
   const accept = useMutation({
     mutationFn: () => api.invitations.accept(token),
-    onSuccess: () => {
+    onSuccess: (accepted) => {
       // The new membership must show up in the sidebar/Overview immediately, not after the 30 s staleTime.
       queryClient.invalidateQueries({ queryKey: ["my-orgs"] })
       // The auth guard's "pending invite" banner is fed by the list captured at login/register; it
-      // would otherwise keep telling the now-member to use an invite link they just accepted.
-      dismissPendingInvitations()
+      // would otherwise keep telling the now-member to use an invite link they just accepted. Only
+      // this org's entry goes: invites to other orgs are still pending.
+      removePendingInvitation(accepted.org_login)
       router.push("/")
     },
   })

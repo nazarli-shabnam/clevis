@@ -60,11 +60,12 @@ function PendingProbe() {
   const { pendingInvitations, setSession } = useAuth();
   return (
     <>
-      <span data-testid="pending-count">{pendingInvitations.length}</span>
+      <span data-testid="pending-orgs">{pendingInvitations.map((i) => i.org_login).join(",")}</span>
       <button
         onClick={() =>
           setSession(makeJwt(), { id: 1, email: "user@example.com", name: null, is_workspace_admin: false } as never, [
             { org_login: "acme" } as never,
+            { org_login: "globex" } as never,
           ])
         }
       >
@@ -197,7 +198,7 @@ describe("InviteAcceptPage", () => {
     invalidate.mockRestore();
   });
 
-  it("clears the pending-invite banner state once the invitation is accepted", async () => {
+  it("drops only the accepted org from the pending-invite banner state", async () => {
     previewMock.mockResolvedValue({ org_login: "acme", status: "pending" });
     acceptMock.mockResolvedValue({ org_login: "acme", role: "member" });
 
@@ -214,10 +215,10 @@ describe("InviteAcceptPage", () => {
     );
 
     fireEvent.click(await screen.findByRole("button", { name: "seed" }));
-    await waitFor(() => expect(screen.getByTestId("pending-count")).toHaveTextContent("1"));
+    await waitFor(() => expect(screen.getByTestId("pending-orgs")).toHaveTextContent("acme,globex"));
 
     fireEvent.click(await screen.findByRole("button", { name: /accept invitation/i }));
 
-    await waitFor(() => expect(screen.getByTestId("pending-count")).toHaveTextContent("0"));
+    await waitFor(() => expect(screen.getByTestId("pending-orgs")).toHaveTextContent(/^globex$/));
   });
 });
