@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -78,7 +78,7 @@ describe("AuditPage", () => {
     expect(screen.queryByRole("option", { name: "cache.clear" })).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Filter by action"), { target: { value: "token.save" } });
-    await waitFor(() => expect(auditListMock).toHaveBeenLastCalledWith("token.save", 100));
+    await waitFor(() => expect(auditListMock).toHaveBeenLastCalledWith(expect.objectContaining({ action: "token.save", limit: 100 })));
   });
 
   it("still offers only the all-actions option when the actions request fails (#664)", async () => {
@@ -255,36 +255,82 @@ describe("AuditPage", () => {
     const rowsBefore = screen.getAllByRole("row").slice(1);
     expect(rowsBefore[0]).toHaveTextContent("bravo@e.com");
 
-    fireEvent.click(screen.getByText("Actor"));
+    fireEvent.click(within(screen.getByRole("table")).getByText("Actor"));
 
     const rowsAfterAsc = screen.getAllByRole("row").slice(1);
     expect(rowsAfterAsc[0]).toHaveTextContent("alpha@e.com");
 
-    fireEvent.click(screen.getByText("Actor"));
+    fireEvent.click(within(screen.getByRole("table")).getByText("Actor"));
 
     const rowsAfterDesc = screen.getAllByRole("row").slice(1);
     expect(rowsAfterDesc[0]).toHaveTextContent("bravo@e.com");
   });
 
-  it("shows a Load more button when the result hits the current limit, and requests a bigger one", async () => {
+  it("shows a Load more button on a full page and requests the next page below the last id seen", async () => {
     const fullPage = Array.from({ length: 100 }, (_, i) => ({
-      id: i + 1,
+      id: 200 - i,
       actor: "u@e.com",
       action: "installation.connected",
       target: "acme",
       payload: "{}",
       created_at: "2026-01-01T00:00:00Z",
     }));
-    auditListMock.mockResolvedValue(fullPage);
+    auditListMock.mockResolvedValueOnce(fullPage);
+    auditListMock.mockResolvedValueOnce([
+      { id: 100, actor: "u@e.com", action: "older.event", target: "acme", payload: "{}", created_at: "2025-12-01T00:00:00Z" },
+    ]);
 
     renderPage();
 
     await waitFor(() => expect(screen.getByText("100 entries")).toBeInTheDocument());
-    const loadMore = screen.getByRole("button", { name: /load more/i });
+    fireEvent.click(screen.getByRole("button", { name: /load more/i }));
 
-    fireEvent.click(loadMore);
+    // The cursor is the oldest id loaded (101), and the next page is appended, not swapped in.
+    await waitFor(() => expect(auditListMock).toHaveBeenLastCalledWith(expect.objectContaining({ before_id: 101, limit: 100 })));
+    await waitFor(() => expect(screen.getByText("101 entries")).toBeInTheDocument());
+    expect(screen.getByText("older.event")).toBeInTheDocument();
+    // A short page means the log is exhausted, so there is nothing more to load.
+    expect(screen.queryByRole("button", { name: /load more/i })).not.toBeInTheDocument();
+  });
 
-    await waitFor(() => expect(auditListMock).toHaveBeenCalledWith(undefined, 200));
+  it("applies the actor, target and date filters on submit, not per keystroke", async () => {
+    auditListMock.mockResolvedValue([]);
+    renderPage();
+    await waitFor(() => expect(auditListMock).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByLabelText("Actor"), { target: { value: " ada@example.com " } });
+    fireEvent.change(screen.getByLabelText("Target contains"), { target: { value: "acme/api" } });
+    fireEvent.change(screen.getByLabelText("From (UTC)"), { target: { value: "2026-03-01" } });
+    fireEvent.change(screen.getByLabelText("To (UTC)"), { target: { value: "2026-03-05" } });
+    expect(auditListMock).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+
+    // "To" is inclusive, so the exclusive upper bound is the start of the next UTC day.
+    await waitFor(() =>
+      expect(auditListMock).toHaveBeenLastCalledWith({
+        actor: "ada@example.com",
+        target: "acme/api",
+        since: "2026-03-01T00:00:00Z",
+        until: "2026-03-06T00:00:00.000Z",
+        action: undefined,
+        before_id: undefined,
+        limit: 100,
+      }),
+    );
+    expect(await screen.findByText(/No audit events matching "the applied filters"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    await waitFor(() => expect(auditListMock).toHaveBeenLastCalledWith({ action: undefined, before_id: undefined, limit: 100 }));
+    expect(screen.getByLabelText("Actor")).toHaveValue("");
+  });
+
+  it("filters by exact action only; the action-prefix field is the org view's", async () => {
+    auditListMock.mockResolvedValue([]);
+    renderPage();
+    await waitFor(() => expect(auditListMock).toHaveBeenCalled());
+    expect(screen.queryByLabelText("Action starts with")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Filter by action")).toBeInTheDocument();
   });
 
   it("does not show a Load more button when fewer rows than the limit come back", async () => {

@@ -688,22 +688,39 @@ describe("api.audit", () => {
     );
   }
 
-  it("defaults to limit=100 and omits action when not given", async () => {
+  it("sends no query string when no filter is given", async () => {
     stubOkJson([]);
     await api.audit.list();
     const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    const parsed = new URL(String(url));
-    expect(parsed.searchParams.get("limit")).toBe("100");
-    expect(parsed.searchParams.has("action")).toBe(false);
+    expect(new URL(String(url)).search).toBe("");
   });
 
-  it("passes a custom limit and action through as query params", async () => {
+  it("passes every filter, the cursor and the limit through as query params, dropping blanks", async () => {
     stubOkJson([]);
-    await api.audit.list("cache.clear", 200);
+    await api.audit.list({
+      action: "cache.clear",
+      actor: "a@b.c",
+      target: "acme",
+      since: "2026-03-01T00:00:00Z",
+      until: "2026-03-02T00:00:00Z",
+      before_id: 42,
+      limit: 200,
+    });
     const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    const parsed = new URL(String(url));
-    expect(parsed.searchParams.get("limit")).toBe("200");
-    expect(parsed.searchParams.get("action")).toBe("cache.clear");
+    const p = new URL(String(url)).searchParams;
+    expect(Object.fromEntries(p)).toEqual({
+      action: "cache.clear",
+      actor: "a@b.c",
+      target: "acme",
+      since: "2026-03-01T00:00:00Z",
+      until: "2026-03-02T00:00:00Z",
+      before_id: "42",
+      limit: "200",
+    });
+
+    await api.audit.list({ action: "", actor: undefined });
+    const [url2] = (fetch as ReturnType<typeof vi.fn>).mock.calls[1];
+    expect(new URL(String(url2)).search).toBe("");
   });
 });
 

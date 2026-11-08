@@ -399,6 +399,9 @@ export interface OrgAuditFilters {
   limit?: number
 }
 
+/** `GET /audit` takes an exact `action` (no prefix match) where the org view takes `action_prefix`. */
+export type AdminAuditFilters = Omit<OrgAuditFilters, "action_prefix"> & { action?: string }
+
 export interface AuditLogOut {
   id: number
   actor: string

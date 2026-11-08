@@ -14,6 +14,7 @@ import type {
   ActionsUsageResponse,
   AnalyticsHistoryResponse,
   AnalyticsOverviewResponse,
+  AdminAuditFilters,
   AuditLogOut,
   OrgAuditFilters,
   BranchProtectionBulkResponse,
@@ -503,12 +504,15 @@ export const api = {
       }),
   },
   audit: {
-    // No offset/cursor on the backend (it returns the N most recent rows, cap 500);
-    // callers raise limit to page further back.
-    list: (action?: string, limit = 100) => {
-      const params = new URLSearchParams({ limit: String(limit) })
-      if (action) params.set("action", action)
-      return get<AuditLogOut[]>(`/audit?${params.toString()}`)
+    // The instance-wide log, newest first. Workspace-admin only. Pages with `before_id` (the id of the
+    // last row already loaded); `since`/`until` are ISO timestamps.
+    list: (filters: AdminAuditFilters = {}) => {
+      const params = new URLSearchParams()
+      for (const [key, value] of Object.entries(filters)) {
+        if (value !== undefined && value !== "") params.set(key, String(value))
+      }
+      const qs = params.toString()
+      return get<AuditLogOut[]>(`/audit${qs ? `?${qs}` : ""}`)
     },
     // One org's own audit rows, newest first. Org-admin only. Pages with `before_id` (the id of the
     // last row already loaded); `since`/`until` are ISO timestamps.

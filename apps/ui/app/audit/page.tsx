@@ -2,15 +2,17 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useSearchParams } from "next/navigation"
-import { useQuery } from "@tanstack/react-query"
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { EmptyStateInline } from "@/components/empty-state"
 import { SectionError } from "@/components/section-error"
+import { AuditFilterForm } from "@/components/audit-filter-form"
 import { Button } from "@/components/ui/button"
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table"
 import { api } from "@/lib/api/client"
 import { useAuth } from "@/lib/auth-context"
-import type { AuditLogOut, JobOut } from "@/lib/api/types"
+import { EMPTY_FORM, toAuditFilters, type FilterForm } from "@/lib/audit-filters"
+import type { AdminAuditFilters, AuditLogOut, JobOut } from "@/lib/api/types"
 
 const JOB_STATUS_COLOR: Record<JobOut["status"], string> = {
   queued:     "text-muted-foreground",
@@ -19,11 +21,9 @@ const JOB_STATUS_COLOR: Record<JobOut["status"], string> = {
   failed:     "text-destructive",
 }
 
-// /audit has no offset/cursor (it returns the N most recent rows), so "Load more" refetches
-// with a bigger limit.
-const INITIAL_LIMIT = 100
-const LIMIT_STEP = 100
-const MAX_LIMIT = 500
+// Pages of the newest-first log; "Load more" fetches the next page below the last id seen, so there
+// is no ceiling on how far back it can go.
+const PAGE_SIZE = 100
 
 // audit_logs.payload embeds job_id for cache-clear rows, so live job status can be shown inline.
 function parseJobId(payload: string): number | null {
@@ -42,21 +42,34 @@ export default function AuditPage() {
   const { user } = useAuth()
   const isAdmin = !!user?.is_workspace_admin
   const [actionFilter, setActionFilter] = useState("")
-  const [limit, setLimit] = useState(INITIAL_LIMIT)
+  const [form, setForm] = useState<FilterForm>(EMPTY_FORM)
+  // Filters apply on submit, not per keystroke: each change is a server query.
+  const [applied, setApplied] = useState<FilterForm>(EMPTY_FORM)
   const searchParams = useSearchParams()
   const highlightJobId = Number(searchParams.get("job_id")) || null
 
-  // A new filter starts back at the default window.
-  useEffect(() => {
-    setLimit(INITIAL_LIMIT)
-  }, [actionFilter])
-
-  const { data: logs = [], isLoading, isError, error, isFetching, refetch } = useQuery({
-    queryKey: ["audit", actionFilter, limit],
-    queryFn: () => api.audit.list(actionFilter || undefined, limit),
+  const query = useInfiniteQuery({
+    queryKey: ["audit", actionFilter, applied],
+    queryFn: ({ pageParam }) => {
+      const filters: AdminAuditFilters = {
+        ...toAuditFilters(applied),
+        action: actionFilter || undefined,
+        before_id: pageParam,
+        limit: PAGE_SIZE,
+      }
+      return api.audit.list(filters)
+    },
+    initialPageParam: undefined as number | undefined,
+    // A full page means there may be older rows; the next page starts below the last id seen.
+    getNextPageParam: (last) => (last.length === PAGE_SIZE ? last[last.length - 1].id : undefined),
     refetchInterval: 30_000,
     enabled: isAdmin,
   })
+  const { isLoading, isFetching, refetch } = query
+  const logs: AuditLogOut[] = query.data?.pages.flat() ?? []
+  const filtered = JSON.stringify(applied) !== JSON.stringify(EMPTY_FORM)
+  const isError = query.isError && !query.data
+  const error = query.error
 
   // The filter options come from the log itself. If this fails the dropdown still works for "all"
   // and for whatever is currently selected.
@@ -176,6 +189,15 @@ export default function AuditPage() {
           </div>
         </div>
 
+        <AuditFilterForm
+          form={form}
+          setForm={setForm}
+          filtered={filtered}
+          onApply={() => setApplied(form)}
+          onClear={() => setApplied(EMPTY_FORM)}
+          showActionPrefix={false}
+        />
+
         {isLoading ? (
           <div className="px-4 py-8">
             <p className="text-sm text-muted-foreground animate-pulse">Loading…</p>
@@ -187,7 +209,10 @@ export default function AuditPage() {
             retrying={isFetching}
           />
         ) : logs.length === 0 ? (
-          <EmptyStateInline noun="audit events" qualifier={actionFilter || undefined} />
+          <EmptyStateInline
+            noun="audit events"
+            qualifier={actionFilter || (filtered ? "the applied filters" : undefined)}
+          />
         ) : (
           <>
             <DataTable
@@ -197,14 +222,13 @@ export default function AuditPage() {
               exportCsv={{
                 name: actionFilter ? `audit-${actionFilter}` : "audit",
                 // The table only holds the events loaded so far (see "Load more"), not the whole log.
-                note:
-                  logs.length >= limit && limit < MAX_LIMIT
-                    ? `Exports the ${logs.length} loaded events. Load more to include older ones.`
-                    : `Exports the ${logs.length} loaded events.`,
+                note: query.hasNextPage
+                  ? `Exports the ${logs.length} loaded events. Load more to include older ones.`
+                  : `Exports the ${logs.length} loaded events.`,
               }}
-              // High enough that table pagination never triggers (backend caps at MAX_LIMIT); "Load more"
-              // keeps a highlighted row reachable instead of hiding it behind a page click.
-              pageSize={MAX_LIMIT}
+              // Table pagination stays off (it would hide a highlighted row behind a page click); "Load more"
+              // is the only paging, so size it past anything the table can hold.
+              pageSize={Number.MAX_SAFE_INTEGER}
               getRowRef={(log) => {
                 const jobId = parseJobId(log.payload)
                 return highlightJobId !== null && jobId === highlightJobId ? highlightRef : undefined
@@ -218,17 +242,22 @@ export default function AuditPage() {
                 ].join(" ")
               }}
             />
-            {logs.length >= limit && limit < MAX_LIMIT && (
+            {query.hasNextPage && (
               <div className="px-4 py-3 border-t border-border flex justify-center">
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={isFetching}
-                  onClick={() => setLimit((l) => Math.min(l + LIMIT_STEP, MAX_LIMIT))}
+                  disabled={query.isFetchingNextPage}
+                  onClick={() => query.fetchNextPage()}
                 >
-                  {isFetching ? "Loading…" : "Load more"}
+                  {query.isFetchingNextPage ? "Loading…" : "Load more"}
                 </Button>
               </div>
+            )}
+            {query.isError && (
+              <p role="alert" className="px-4 pb-3 text-xs text-destructive">
+                Couldn&apos;t load more: {query.error.message}
+              </p>
             )}
           </>
         )}
