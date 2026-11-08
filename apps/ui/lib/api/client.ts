@@ -237,7 +237,17 @@ function normalizeCheckValue(id: string, raw: unknown): CheckValue {
 
 export const api = {
   notifications: {
-    feed: (org: string) => get<NotificationFeed>(`/orgs/${encodeURIComponent(org)}/notifications`),
+    // `days`/`limit` widen the window past the bell's defaults (14 days, 50 items) for the full page.
+    feed: (org: string, opts: { days?: number; limit?: number } = {}) => {
+      const params = new URLSearchParams()
+      if (opts.days) params.set("days", String(opts.days))
+      if (opts.limit) params.set("limit", String(opts.limit))
+      const qs = params.toString()
+      return get<NotificationFeed>(`/orgs/${encodeURIComponent(org)}/notifications${qs ? `?${qs}` : ""}`)
+    },
+    // 204: marks one item (an id from the feed) read for the caller, without moving the read-up-to marker.
+    dismiss: (org: string, itemId: string) =>
+      post<null>(`/orgs/${encodeURIComponent(org)}/notifications/${encodeURIComponent(itemId)}/dismiss`, {}),
     // 204: marks everything currently in the feed as read for the caller.
     // `upTo` = the newest item shown, so an item that arrived after the feed loaded stays unread.
     markRead: (org: string, upTo?: string) =>

@@ -55,6 +55,7 @@ describe("NotificationBell", () => {
     await waitFor(() => expect(screen.getByText("title a")).toBeInTheDocument());
     expect(screen.getByText("title b")).toBeInTheDocument();
     expect(screen.getByText(/Critical alert ·/)).toBeInTheDocument();
+     expect(screen.getByRole("link", { name: "View all notifications" })).toHaveAttribute("href", "/notifications");
   });
 
   it("mutes a kind from the settings panel and refetches the feed", async () => {

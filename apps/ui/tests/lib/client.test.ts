@@ -1315,3 +1315,30 @@ describe("waivers, notification preferences and evidence endpoints", () => {
     await expect(api.evidence.download("acme")).rejects.toThrow(/timed out/);
   });
 });
+
+describe("api.notifications feed window and dismiss", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function stubOk(body: unknown, status = 200) {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(status === 204 ? null : JSON.stringify(body), { status }))));
+  }
+
+  it("adds days and limit only when given", async () => {
+    stubOk({ org: "acme", items: [], unread_count: 0, last_read_at: null });
+    await api.notifications.feed("acme");
+    expect(new URL(String((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0])).search).toBe("");
+    await api.notifications.feed("acme", { days: 90, limit: 200 });
+    expect(new URL(String((fetch as ReturnType<typeof vi.fn>).mock.calls[1][0])).search).toBe("?days=90&limit=200");
+  });
+
+  it("POSTs a dismissal to the item's own path with the id encoded", async () => {
+    stubOk(null, 204);
+    await api.notifications.dismiss("acme", "critical_alert:12");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(new URL(String(url)).pathname).toBe("/orgs/acme/notifications/critical_alert%3A12/dismiss");
+    expect(init.method).toBe("POST");
+  });
+});

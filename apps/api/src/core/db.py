@@ -417,6 +417,20 @@ class NotificationRead(Base):
     last_read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class NotificationDismissal(Base):
+    """One in-app notification a user has marked read on its own (one row per user, tenant and item).
+
+    Keyed by the feed's stable item id (``kind:source_row_id``). Separate from NotificationRead's cursor
+    so reading one item neither moves the cursor nor affects any other item."""
+
+    __tablename__ = "notification_dismissals"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True)
+    item_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    dismissed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class NotificationPreference(Base):
     """Which in-app notification kinds a user has muted for an org (one row per user and tenant).
 

@@ -293,3 +293,83 @@ def test_requires_auth(db):
     app.include_router(router)
     app.dependency_overrides[get_db] = lambda: db
     assert TestClient(app).get("/orgs/acme/notifications").status_code == 401
+
+
+# ── per-item dismissal and the wider window ──────────────────────────────────────────────────────────
+
+
+def _ids(feed):
+    return [i["id"] for i in feed["items"]]
+
+
+def test_dismissing_one_item_marks_only_it_read_and_leaves_the_cursor_alone(db, world):
+    t = world["acme"].tenant_id
+    _alert(db, t, number=1, when=NOW - timedelta(minutes=5))
+    _alert(db, t, number=2, when=NOW - timedelta(minutes=4))
+    admin, member = _client(db, world["users"]["admin"]), _client(db, world["users"]["member"])
+    first, second = admin.get("/orgs/acme/notifications").json()["items"][::-1]
+
+    assert admin.post(f"/orgs/acme/notifications/{first['id']}/dismiss").status_code == 204
+
+    feed = admin.get("/orgs/acme/notifications").json()
+    by_id = {i["id"]: i for i in feed["items"]}
+    assert by_id[first["id"]]["read"] is True and by_id[second["id"]]["read"] is False
+    assert feed["unread_count"] == 1
+    assert feed["last_read_at"] is None  # "Mark all read" is a different action
+    # It is this user's mark only.
+    assert member.get("/orgs/acme/notifications").json()["unread_count"] == 2
+
+
+def test_dismissing_is_idempotent_and_does_not_hide_the_item(db, world):
+    t = world["acme"].tenant_id
+    _alert(db, t, number=1, when=NOW - timedelta(minutes=5))
+    admin = _client(db, world["users"]["admin"])
+    item_id = admin.get("/orgs/acme/notifications").json()["items"][0]["id"]
+
+    assert admin.post(f"/orgs/acme/notifications/{item_id}/dismiss").status_code == 204
+    assert admin.post(f"/orgs/acme/notifications/{item_id}/dismiss").status_code == 204
+
+    feed = admin.get("/orgs/acme/notifications").json()
+    assert _ids(feed) == [item_id] and feed["unread_count"] == 0
+
+
+def test_a_dismissed_item_past_the_per_source_limit_does_not_hide_unread_ones(db, world):
+    t = world["acme"].tenant_id
+    for n in range(45):
+        _alert(db, t, number=n, when=NOW - timedelta(minutes=n + 1))
+    admin = _client(db, world["users"]["admin"])
+    newest = admin.get("/orgs/acme/notifications").json()["items"][0]["id"]
+
+    admin.post(f"/orgs/acme/notifications/{newest}/dismiss")
+
+    # 44 unread: 39 still listed + 5 the per-source limit cut; the dismissed one is not mistaken for a cut row.
+    assert admin.get("/orgs/acme/notifications").json()["unread_count"] == 44
+
+
+def test_dismiss_rejects_ids_the_feed_cannot_produce_and_outsiders(db, world):
+    admin = _client(db, world["users"]["admin"])
+    for bad in ("nonsense", "critical_alert:abc", "critical_alert:1;drop", "other_kind:1"):
+        assert admin.post(f"/orgs/acme/notifications/{bad}/dismiss").status_code == 422
+    # A member of another org cannot write into this org's scope.
+    assert _client(db, world["users"]["other_admin"]).post("/orgs/acme/notifications/critical_alert:1/dismiss").status_code in (403, 404)
+
+
+def test_a_wider_window_and_limit_reach_older_and_more_items(db, world):
+    t = world["acme"].tenant_id
+    _alert(db, t, number=1, when=NOW - timedelta(days=40))
+    for n in range(2, 62):
+        _alert(db, t, number=n, when=NOW - timedelta(minutes=n))
+    admin = _client(db, world["users"]["admin"])
+
+    default = admin.get("/orgs/acme/notifications").json()
+    assert len(default["items"]) == 50  # the bell's default window and cap
+
+    wide = admin.get("/orgs/acme/notifications", params={"days": 60, "limit": 200}).json()
+    assert len(wide["items"]) == 61
+    assert wide["items"][-1]["at"].startswith((NOW - timedelta(days=40)).strftime("%Y-%m-%d"))
+
+
+def test_window_and_limit_are_bounded(db, world):
+    admin = _client(db, world["users"]["admin"])
+    for params in ({"days": 0}, {"days": 91}, {"limit": 0}, {"limit": 201}):
+        assert admin.get("/orgs/acme/notifications", params=params).status_code == 422
