@@ -169,6 +169,66 @@ describe("CachesPage", () => {
     expect(toastSuccess).not.toHaveBeenCalled();
   });
 
+  it("lists at most five failed repos, then retries the load", async () => {
+    const names = ["a", "b", "c", "d", "e", "f", "ok"];
+    reposListMock.mockResolvedValue({ org: "acme", total: names.length, repos: names.map(repo) });
+    cacheListMock.mockImplementation((_o: string, r: string) =>
+      r === "ok" ? Promise.resolve({ repository: "acme/ok", total: 1, actions_caches: [entry(MB, 1)] }) : Promise.reject(new Error("nope")),
+    );
+    renderPage();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("6 repositories could not be loaded (a, b, c, d, e, …)");
+    const before = cacheListMock.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(cacheListMock.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  it("shows the first error, with a retry, when every repo fails to load", async () => {
+    seed({});
+    reposListMock.mockResolvedValue({ org: "acme", total: 1, repos: [repo("api")] });
+    renderPage();
+
+    expect(await screen.findByText("rate limited")).toBeInTheDocument();
+    const before = cacheListMock.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(cacheListMock.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  it("shows the error, with a retry, when the repository list fails", async () => {
+    reposListMock.mockRejectedValueOnce(new Error("repos down"));
+    seed({ api: [entry(MB, 1)] });
+    renderPage();
+
+    expect(await screen.findByText("repos down")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("api")).toBeInTheDocument();
+  });
+
+  it("says so when no repository has any cache, or none has stale cache", async () => {
+    seed({});
+    reposListMock.mockResolvedValue({ org: "acme", total: 0, repos: [] });
+    renderPage();
+    expect(await screen.findByText("No repository has any Actions cache")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /stale only/i }));
+    expect(await screen.findByText("No repository has stale cache")).toBeInTheDocument();
+  });
+
+  it("shows a dash for a repo with no cache entries and names the repos whose clear failed", async () => {
+    seed({ api: [entry(MB, 1)], idle: [{ ...entry(MB, 1), last_accessed_at: null as unknown as string }] });
+    cacheClearMock.mockImplementation((_o: string, r: string) =>
+      r === "api" ? Promise.reject(new Error("forbidden")) : Promise.resolve({ queued: false, dry_run: true }),
+    );
+    renderPage();
+    await screen.findByText("api");
+    expect(screen.getByText("—")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all repositories" }));
+    fireEvent.click(screen.getByRole("button", { name: /dry run \(2\)/i }));
+
+    await waitFor(() => expect(toastInfo).toHaveBeenCalledWith(expect.stringContaining("1 failed (api)")));
+  });
+
   it("hides selection and clear controls from a plain org member", async () => {
     orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "member" }]);
     seed({ api: [entry(MB, 1)] });
