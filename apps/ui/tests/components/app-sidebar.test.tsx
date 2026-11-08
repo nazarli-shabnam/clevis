@@ -404,6 +404,7 @@ describe("AppSidebar coming-soon badges", () => {
     "Pull Requests",
     "Releases",
     "Repositories",
+    "Actions Cache",
     "Health & Security",
     "Collaborators",
     "Automation",
