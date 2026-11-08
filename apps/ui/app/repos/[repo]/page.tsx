@@ -21,6 +21,7 @@ import { HeatmapCalendar } from "@/components/charts/heatmap-calendar"
 import { CHART_COLORS } from "@/lib/charts/theme"
 import { CachePanel } from "@/components/repo/cache-panel"
 import { cn } from "@/lib/utils"
+import { relativeTime } from "@/lib/format"
 
 const HEATMAP_SCALE = [CHART_COLORS.grid, "#1e3a8a", "#1d4ed8", "#3b82f6", "#60a5fa"]
 
@@ -253,6 +254,32 @@ export default function RepoDetailPage() {
             )}
           </div>
         </div>
+
+        {(pullsQuery.data?.pulls.length ?? 0) > 0 && (
+          <div className="card lg:col-span-2">
+            <div className="px-4 py-3 border-b border-border">
+              <span className="section-label">Open pull requests</span>
+            </div>
+            <ul className="divide-y divide-border/60">
+              {pullsQuery.data?.pulls.map((p) => (
+                <li key={p.number} className="px-4 py-2 flex items-center justify-between gap-3 text-xs">
+                  <a
+                    href={p.html_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 min-w-0 text-foreground/90 hover:text-primary transition-colors"
+                  >
+                    <GitPullRequest className="size-3.5 shrink-0" />
+                    <span className="truncate">#{p.number} {p.title}</span>
+                  </a>
+                  <span className="shrink-0 text-muted-foreground whitespace-nowrap">
+                    {p.user ?? "unknown"} · {relativeTime(p.created_at)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <div className="card lg:col-span-2">
           <div className="px-4 py-3 border-b border-border flex items-center gap-2">

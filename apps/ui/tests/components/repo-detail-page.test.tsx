@@ -120,6 +120,24 @@ describe("RepoDetailPage", () => {
     await waitFor(() => expect(screen.getByText(/4 open prs/i)).toBeInTheDocument());
   });
 
+  it("lists the open pull requests on the Overview tab with title, author and a GitHub link", async () => {
+    reposPullsMock.mockResolvedValue({
+      repository: "acme/demo",
+      total: 2,
+      pulls: [
+        { number: 7, title: "Add caching", user: "octocat", created_at: "2026-01-01T00:00:00Z", html_url: "https://github.com/acme/demo/pull/7" },
+        { number: 9, title: "Fix typo", user: null, created_at: "2026-01-02T00:00:00Z", html_url: "https://github.com/acme/demo/pull/9" },
+      ],
+    });
+
+    renderPage();
+
+    const link = await screen.findByRole("link", { name: /#7 add caching/i });
+    expect(link).toHaveAttribute("href", "https://github.com/acme/demo/pull/7");
+    expect(screen.getByText(/octocat ·/)).toBeInTheDocument();
+    expect(screen.getByText(/unknown ·/)).toBeInTheDocument();
+  });
+
   it("shows 'PRs unavailable' with a retry, not '0 open PRs', when the pulls request fails", async () => {
     reposPullsMock.mockRejectedValue(new Error("API rate limit exceeded"));
 
