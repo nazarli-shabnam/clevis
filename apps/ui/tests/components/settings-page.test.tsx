@@ -12,6 +12,7 @@ const tokensDeleteMock = vi.fn();
 const configGetAllMock = vi.fn();
 const patchMeMock = vi.fn();
 const revokeSessionsMock = vi.fn();
+const sessionsMock = vi.fn();
 const configUpdateMock = vi.fn();
 const routerReplace = vi.fn();
 let searchParams = new URLSearchParams();
@@ -45,6 +46,7 @@ vi.mock("@/lib/api/client", () => ({
     auth: {
       patchMe: (...args: unknown[]) => patchMeMock(...args),
       revokeSessions: (...args: unknown[]) => revokeSessionsMock(...args),
+      sessions: (...args: unknown[]) => sessionsMock(...args),
     },
   },
 }));
@@ -108,6 +110,8 @@ describe("SettingsPage", () => {
     configGetAllMock.mockReset();
     patchMeMock.mockReset();
     revokeSessionsMock.mockReset();
+    sessionsMock.mockReset();
+    sessionsMock.mockResolvedValue([]);
     configUpdateMock.mockReset();
     routerReplace.mockClear();
     searchParams = new URLSearchParams();

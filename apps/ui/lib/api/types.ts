@@ -1,3 +1,14 @@
+/** One of the caller's signed-in sessions (`GET /auth/me/sessions`). */
+export interface UserSessionOut {
+  id: string
+  created_at: string
+  last_seen_at: string
+  user_agent: string | null
+  ip: string | null
+  /** True for the session making the request. */
+  current: boolean
+}
+
 export interface MFACheckValue {
   type: "boolean"
   enabled: boolean
@@ -398,6 +409,9 @@ export interface OrgAuditFilters {
   before_id?: number
   limit?: number
 }
+
+/** `GET /audit` takes an exact `action` (no prefix match) where the org view takes `action_prefix`. */
+export type AdminAuditFilters = Omit<OrgAuditFilters, "action_prefix"> & { action?: string }
 
 export interface AuditLogOut {
   id: number

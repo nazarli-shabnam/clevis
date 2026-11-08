@@ -60,6 +60,41 @@ def list_for_tenant(
     return q.order_by(AuditLog.id.desc()).limit(limit).all()
 
 
+def list_for_admin(
+    db: Session,
+    *,
+    action: str | None = None,
+    actor: str | None = None,
+    target: str | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    before_id: int | None = None,
+    limit: int = 100,
+) -> list[AuditLog]:
+    """The instance-wide audit log, newest first, for workspace admins. Reads through the SECURITY DEFINER
+    function from migration 0075 (there is no tenant context for audit_logs RLS to match); same filter
+    semantics as `list_for_tenant`: actor is an exact case-insensitive match, target is a substring."""
+    return (
+        db.query(AuditLog)
+        .from_statement(
+            text(
+                "SELECT * FROM audit_logs_for_admin_filtered("
+                ":action, :actor, :target, :since, :until, :before_id, :limit)"
+            )
+        )
+        .params(
+            action=action or None,
+            actor=_like_escape(actor) if actor else None,
+            target=f"%{_like_escape(target)}%" if target else None,
+            since=since,
+            until=until,
+            before_id=before_id,
+            limit=limit,
+        )
+        .all()
+    )
+
+
 # Audit actions written when an automation really ran (not a dry run or a settings save). Used for the
 # "run your first automation" onboarding step.
 AUTOMATION_RUN_ACTIONS = (

@@ -71,7 +71,11 @@ def test_audit_log_reads_are_instance_wide_with_no_tenant_context(tenant_session
 
     assert session.query(AuditLog).filter(AuditLog.action == "rls.reads.test").count() == 0
 
-    rows = audit_router.list_audit_logs(action="rls.reads.test", limit=10, db=session, _user=None)
+    # Called directly, so every Query() default must be passed explicitly (it would be a FieldInfo, not None).
+    rows = audit_router.list_audit_logs(
+        action="rls.reads.test", actor=None, target=None, since=None, until=None, before_id=None,
+        limit=10, db=session, _user=None,
+    )
     assert [r.action for r in rows] == ["rls.reads.test"]
     assert "rls.reads.test" in audit_router.list_audit_actions(db=session, _user=None)
 

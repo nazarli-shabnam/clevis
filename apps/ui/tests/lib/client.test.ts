@@ -688,22 +688,39 @@ describe("api.audit", () => {
     );
   }
 
-  it("defaults to limit=100 and omits action when not given", async () => {
+  it("sends no query string when no filter is given", async () => {
     stubOkJson([]);
     await api.audit.list();
     const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    const parsed = new URL(String(url));
-    expect(parsed.searchParams.get("limit")).toBe("100");
-    expect(parsed.searchParams.has("action")).toBe(false);
+    expect(new URL(String(url)).search).toBe("");
   });
 
-  it("passes a custom limit and action through as query params", async () => {
+  it("passes every filter, the cursor and the limit through as query params, dropping blanks", async () => {
     stubOkJson([]);
-    await api.audit.list("cache.clear", 200);
+    await api.audit.list({
+      action: "cache.clear",
+      actor: "a@b.c",
+      target: "acme",
+      since: "2026-03-01T00:00:00Z",
+      until: "2026-03-02T00:00:00Z",
+      before_id: 42,
+      limit: 200,
+    });
     const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    const parsed = new URL(String(url));
-    expect(parsed.searchParams.get("limit")).toBe("200");
-    expect(parsed.searchParams.get("action")).toBe("cache.clear");
+    const p = new URL(String(url)).searchParams;
+    expect(Object.fromEntries(p)).toEqual({
+      action: "cache.clear",
+      actor: "a@b.c",
+      target: "acme",
+      since: "2026-03-01T00:00:00Z",
+      until: "2026-03-02T00:00:00Z",
+      before_id: "42",
+      limit: "200",
+    });
+
+    await api.audit.list({ action: "", actor: undefined });
+    const [url2] = (fetch as ReturnType<typeof vi.fn>).mock.calls[1];
+    expect(new URL(String(url2)).search).toBe("");
   });
 });
 
@@ -1296,5 +1313,51 @@ describe("waivers, notification preferences and evidence endpoints", () => {
       vi.fn(() => Promise.reject(new DOMException("aborted", "AbortError"))),
     );
     await expect(api.evidence.download("acme")).rejects.toThrow(/timed out/);
+  });
+});
+
+describe("api.notifications feed window and dismiss", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function stubOk(body: unknown, status = 200) {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(status === 204 ? null : JSON.stringify(body), { status }))));
+  }
+
+  it("adds days and limit only when given", async () => {
+    stubOk({ org: "acme", items: [], unread_count: 0, last_read_at: null });
+    await api.notifications.feed("acme");
+    expect(new URL(String((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0])).search).toBe("");
+    await api.notifications.feed("acme", { days: 90, limit: 200 });
+    expect(new URL(String((fetch as ReturnType<typeof vi.fn>).mock.calls[1][0])).search).toBe("?days=90&limit=200");
+  });
+
+  it("POSTs a dismissal to the item's own path with the id encoded", async () => {
+    stubOk(null, 204);
+    await api.notifications.dismiss("acme", "critical_alert:12");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(new URL(String(url)).pathname).toBe("/orgs/acme/notifications/critical_alert%3A12/dismiss");
+    expect(init.method).toBe("POST");
+  });
+});
+
+describe("api.auth sessions", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("GETs the session list and DELETEs one session by its encoded id", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("[]", { status: 200 }))));
+    await api.auth.sessions();
+    expect(new URL(String((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0])).pathname).toBe("/auth/me/sessions");
+
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(null, { status: 204 }))));
+    await api.auth.revokeSession("a/b c");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(new URL(String(url)).pathname).toBe("/auth/me/sessions/a%2Fb%20c");
+    expect(init.method).toBe("DELETE");
   });
 });
