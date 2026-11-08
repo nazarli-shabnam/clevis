@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import Link from "next/link"
 import { Input } from "@/components/ui/input"
+import { Field, FieldLabel } from "@/components/ui/field"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
@@ -190,8 +191,8 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
         </div>
         <div className="p-4 flex flex-col gap-3">
           {!hasInstallationForOwner && (
-            <div>
-              <label className="text-xs font-medium text-foreground mb-1.5 flex items-center gap-1.5">
+            <Field>
+              <FieldLabel className="flex items-center gap-1.5">
                 GitHub Token
                 <span className="text-[0.6875rem] text-muted-foreground font-normal">
                   optional if the GitHub App is connected for this org
@@ -201,7 +202,7 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
                     <Key className="size-3" />saved
                   </span>
                 )}
-              </label>
+              </FieldLabel>
               <Input
                 placeholder="ghp_... (leave blank to use the connected GitHub App)"
                 type="password"
@@ -209,7 +210,7 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
                 onChange={(e) => { setToken(e.target.value); setTokenSaved(false) }}
                 className="font-mono"
               />
-            </div>
+            </Field>
           )}
           {user?.is_workspace_admin && !tokenSaved && token && (
             <Button

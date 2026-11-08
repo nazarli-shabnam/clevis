@@ -57,6 +57,15 @@ describe("NotificationBell", () => {
     expect(screen.getByText(/Critical alert ·/)).toBeInTheDocument();
   });
 
+  it("exposes unread items to assistive tech as text, not an aria-label on a plain span", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "critical_alert"), item("b", "score_drop", true)]));
+    wrap(<NotificationBell />);
+    fireEvent.click(await screen.findByRole("button", { name: "Notifications, 1 unread" }));
+    const link = (await screen.findByText("title a")).closest("a")!;
+    expect(link).toHaveTextContent(/Unread/);
+    expect(screen.getByText("title b").closest("a")).not.toHaveTextContent(/Unread/);
+  });
+
   it("mutes a kind from the settings panel and refetches the feed", async () => {
     // Once the kind is muted the server drops it: the first load has the item, every later one is empty.
     feedMock.mockResolvedValueOnce(feed([item("a", "score_drop")])).mockResolvedValue(feed([]));

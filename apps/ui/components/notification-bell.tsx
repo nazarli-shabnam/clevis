@@ -129,7 +129,12 @@ export function NotificationBell() {
                       className={`flex flex-col gap-0.5 px-3 py-2 text-xs hover:bg-elevated ${n.read ? "text-muted-foreground" : "text-foreground"}`}
                     >
                       <span className="flex items-center gap-2">
-                        {!n.read && <span aria-label="Unread" className="size-1.5 shrink-0 rounded-full bg-primary" />}
+                        {!n.read && (
+                          <>
+                            <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-primary" />
+                            <span className="sr-only">Unread</span>
+                          </>
+                        )}
                         <span className="font-medium">{n.title}</span>
                       </span>
                       {n.detail && <span className="truncate text-muted-foreground">{n.detail}</span>}
