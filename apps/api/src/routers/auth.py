@@ -10,7 +10,7 @@ import logging
 import secrets
 
 import bcrypt
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, EmailStr
@@ -24,14 +24,15 @@ from src.core.auth import (
     SETUP_LOCK_KEY,
     UserOut,
     clear_session_cookie,
-    create_access_token,
+    current_session_id,
     require_auth,
     revoke_presented_tokens,
+    start_session,
 )
 from src.core.config import settings
 from src.core.db import Org, User, get_db, set_session_user
 from src.core.rate_limit import check_account_rate_limit, rate_limit
-from src.repositories import invitation_repo, tenant_repo
+from src.repositories import invitation_repo, session_repo, tenant_repo
 from src.services.email import EmailNotConfigured, send_verification_email
 
 logger = logging.getLogger(__name__)
@@ -177,7 +178,7 @@ def setup_required(db: Session = Depends(get_db)):
 
 
 @router.post("/setup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(rate_limit())])
-def setup(body: SetupRequest, db: Session = Depends(get_db)):
+def setup(body: SetupRequest, request: Request, db: Session = Depends(get_db)):
     """First-run only. Returns 409 if any user already exists."""
     # Two concurrent calls could both pass count()==0 before either commits -- no unique
     # constraint catches this. The advisory lock serializes check-then-insert.
@@ -214,12 +215,12 @@ def setup(body: SetupRequest, db: Session = Depends(get_db)):
     tenant_repo.ensure_personal_tenant(db, user.id, commit=False)
     db.commit()
     db.refresh(user)
-    token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name, user.token_version)
+    token = start_session(db, request, user)
     return {"access_token": token, "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin)}
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(rate_limit())])
-def register(body: RegisterRequest, db: Session = Depends(get_db)):
+def register(body: RegisterRequest, request: Request, db: Session = Depends(get_db)):
     """Creates a non-admin account. 409 if setup hasn't run yet; 403 if registration is disabled."""
     if db.query(User).count() == 0:
         raise HTTPException(status_code=409, detail="Setup must be completed before registration")
@@ -262,7 +263,7 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     # Only send the real email after the commit above succeeds -- see
     # _generate_verification_token's docstring for why the two are split.
     _send_verification_email_best_effort(user)
-    token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name, user.token_version)
+    token = start_session(db, request, user)
     return {
         "access_token": token,
         "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin),
@@ -345,7 +346,7 @@ def logout(
 
 
 @router.post("/login", response_model=TokenResponse, dependencies=[Depends(rate_limit())])
-def login(body: LoginRequest, db: Session = Depends(get_db)):
+def login(body: LoginRequest, request: Request, db: Session = Depends(get_db)):
     """Returns a JWT on valid credentials. Always returns 401 on failure (no field leaking)."""
     # Per-account limit in addition to the per-IP one -- catches credential stuffing
     # spread across many source IPs targeting one victim.
@@ -356,7 +357,7 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     password_ok = _verify_password(body.password, user.password_hash if user else None)
     if not user or not password_ok:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name, user.token_version)
+    token = start_session(db, request, user)
     return {
         "access_token": token,
         "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin),
@@ -402,5 +403,56 @@ def revoke_sessions(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     user.token_version += 1
+    # Every token is dead now, so none of them belongs in the active-sessions list.
+    session_repo.forget_all(db, user.id)
     db.commit()
     return {"ok": True}
+
+
+class SessionOut(BaseModel):
+    # The session's jti: it identifies the session to its own user only, and cannot authenticate anything without
+    # the signed token.
+    id: str
+    created_at: datetime
+    last_seen_at: datetime
+    user_agent: str | None
+    ip: str | None
+    # True for the session making this request.
+    current: bool
+
+
+@router.get("/me/sessions", response_model=list[SessionOut])
+def list_sessions(
+    current_user: UserOut = Depends(require_auth),
+    current_id: str | None = Depends(current_session_id),
+    db: Session = Depends(get_db),
+):
+    """The caller's active sessions that Clevis has a record of, most recently used first. Sessions started
+    before sessions were recorded are not listed (they still work; "Sign out of all devices" ends them)."""
+    return [
+        SessionOut(
+            id=s.jti,
+            created_at=s.created_at,
+            last_seen_at=s.last_seen_at,
+            user_agent=s.user_agent,
+            ip=s.ip,
+            current=s.jti == current_id,
+        )
+        for s in session_repo.list_active(db, current_user.id)
+    ]
+
+
+@router.delete("/me/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def revoke_session(
+    session_id: str,
+    current_user: UserOut = Depends(require_auth),
+    current_id: str | None = Depends(current_session_id),
+    db: Session = Depends(get_db),
+):
+    """End one of the caller's other sessions. It stops working immediately; nothing else is signed out.
+    Ending the current session is what /logout is for, and an id that is not the caller's is a plain 404."""
+    if session_id == current_id:
+        raise HTTPException(status_code=400, detail="This is your current session; use sign out instead")
+    if not session_repo.revoke(db, current_user.id, session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    db.commit()

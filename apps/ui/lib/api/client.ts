@@ -64,6 +64,7 @@ import type {
   ScanExportResponse,
   SecretScanningResponse,
   SecurityMatrixResponse,
+  UserSessionOut,
   SyncInstallationsResponse,
   WorkflowLintResponse,
   WorkflowsResponse,
@@ -741,6 +742,10 @@ export const api = {
     patchMe: (name: string) =>
       patch<{ id: number; email: string; name: string | null; is_workspace_admin: boolean }>("/auth/me", { name }),
     revokeSessions: () => post<{ ok: boolean }>("/auth/me/revoke-sessions", {}),
+    // Sessions Clevis has a record of, most recently used first.
+    sessions: () => get<UserSessionOut[]>("/auth/me/sessions"),
+    // Ends one other session; 204. The current session is refused (use logout).
+    revokeSession: (id: string) => del(`/auth/me/sessions/${encodeURIComponent(id)}`),
     verifyEmail: (token: string) => post<{ ok: boolean }>("/auth/verify-email", { token }),
     resendVerification: () =>
       post<{ ok: boolean; already_verified: boolean }>("/auth/resend-verification", {}),

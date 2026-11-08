@@ -615,6 +615,27 @@ class RevokedToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class UserSession(Base):
+    """One issued session JWT, keyed by its ``jti``, so a user can list their sessions and end one.
+
+    Not tenant data (no RLS), like RevokedToken: require_auth touches it before any tenant context exists,
+    and every query filters by the authenticated user. Holds an IP and user-agent hint (personal data).
+    Ending a session writes its jti to ``revoked_tokens`` (what require_auth actually checks) and deletes
+    the row here.
+    """
+
+    __tablename__ = "user_sessions"
+    __table_args__ = (Index("ix_user_sessions_user_id", "user_id"),)
+
+    jti: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    user_agent: Mapped[str | None] = mapped_column(String, nullable=True)
+    ip: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
 # Pool sizing. require_auth opens a transaction at the start of every request, so a connection stays
 # checked out for the whole request, including slow GitHub calls; the default 5 + 10 overflow and a
 # 30s checkout wait let ~15 concurrent proxying requests starve everything else for half a minute.

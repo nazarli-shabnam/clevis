@@ -1342,3 +1342,22 @@ describe("api.notifications feed window and dismiss", () => {
     expect(init.method).toBe("POST");
   });
 });
+
+describe("api.auth sessions", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("GETs the session list and DELETEs one session by its encoded id", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("[]", { status: 200 }))));
+    await api.auth.sessions();
+    expect(new URL(String((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0])).pathname).toBe("/auth/me/sessions");
+
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(null, { status: 204 }))));
+    await api.auth.revokeSession("a/b c");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(new URL(String(url)).pathname).toBe("/auth/me/sessions/a%2Fb%20c");
+    expect(init.method).toBe("DELETE");
+  });
+});
