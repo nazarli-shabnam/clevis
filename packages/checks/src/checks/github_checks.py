@@ -296,7 +296,9 @@ class BranchProtectionEnabled(Check):
                 unknown += 1
         evaluable = checked - unknown
         if evaluable == 0:
-            return {"status": "error", "value": {"checked": checked, "protected": protected, "unknown": unknown}}
+            value = {"checked": checked, "protected": protected, "unknown": unknown}
+            # Every repo was empty (nothing to protect): not applicable. Unreachable repos stay an error.
+            return {"status": "not_applicable" if unknown == 0 else "error", "value": value}
         compliant = protected == evaluable
         value = _with_repos({"checked": checked, "protected": protected, "unknown": unknown}, unprotected)
         if compliant and unknown > 0:
@@ -536,7 +538,8 @@ class DefaultBranchNoForcePushCheck(Check):
             checked += 1
         value = {"repos_checked": checked, "force_push_allowed": force_push_allowed, "unknown": unknown}
         if checked == 0:
-            return {"status": "error", "value": value}
+            # No repo evaluated: all empty (nothing to protect) is not applicable, unreachable is an error.
+            return {"status": "not_applicable" if unknown == 0 else "error", "value": value}
         compliant = force_push_allowed == 0
         if compliant and unknown > 0:
             # Same as DependabotAlertsCheck: a clean result from only the reachable repos is not a pass.
