@@ -126,6 +126,7 @@ _EXPECTED_FORCE_RLS_TABLES = {
     "notification_destinations",
     "notification_reads",
     "notification_preferences",
+    "notification_dismissals",
     "check_waivers",
     "api_tokens",
 }
