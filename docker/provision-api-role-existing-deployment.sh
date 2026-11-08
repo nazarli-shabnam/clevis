@@ -216,6 +216,24 @@ BEGIN
 END
 $do$;
 
+-- user_sessions (migration 0077) and notification_dismissals (migration 0076): migrations only grant
+-- clevis_api when the role already exists, which is not true the first time this script runs (CI creates
+-- the role after Alembic). Composite/text primary keys, so no sequences. Guarded by existence.
+DO $do$
+BEGIN
+  IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'user_sessions') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON user_sessions TO clevis_api;
+  END IF;
+  IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'notification_dismissals') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON notification_dismissals TO clevis_api;
+  END IF;
+  -- Migration 0075's filtered workspace-admin audit read (PUBLIC EXECUTE is revoked there).
+  IF EXISTS (SELECT FROM pg_proc WHERE proname = 'audit_logs_for_admin_filtered') THEN
+    GRANT EXECUTE ON FUNCTION audit_logs_for_admin_filtered(text, text, text, timestamptz, timestamptz, integer, integer) TO clevis_api;
+  END IF;
+END
+$do$;
+
 -- resolve_installation_tenant_id() (migration 0035) REVOKEs its default PUBLIC EXECUTE
 -- and re-GRANTs it only to clevis_api -- but that migration's own GRANT is conditional
 -- on clevis_api already existing, which isn't true the first time this script runs.

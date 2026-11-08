@@ -7,7 +7,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from src.core.auth import UserOut, require_auth
-from src.core.db import AuditLog, get_db
+from src.core.db import AuditLog, Tenant, User, get_db
+from src.core.rbac import set_tenant_session_context
 from src.routers.audit import router as audit_router
 
 _ADMIN = UserOut(id=1, email="admin@example.com", name=None, is_workspace_admin=True)
@@ -22,9 +23,24 @@ def _client(db):
     return TestClient(app)
 
 
+def _tenant_id(db):
+    """audit_logs RLS is strict tenant equality, so seed rows under a real tenant's context (the read itself
+    goes through the SECURITY DEFINER function and sees every tenant)."""
+    if not hasattr(db, "_audit_tenant_id"):
+        user = User(email="audit-filters@test.local", name=None, password_hash=None, is_workspace_admin=False)
+        db.add(user)
+        db.flush()
+        tenant = Tenant(kind="personal", personal_user_id=user.id)
+        db.add(tenant)
+        db.flush()
+        set_tenant_session_context(db, tenant.id, user.id)
+        db._audit_tenant_id = tenant.id
+    return db._audit_tenant_id
+
+
 def _row(db, actor, action, target, day):
     row = AuditLog(
-        actor=actor, action=action, target=target, payload="{}",
+        actor=actor, action=action, target=target, payload="{}", tenant_id=_tenant_id(db),
         created_at=datetime(2026, 3, day, 12, tzinfo=timezone.utc),
     )
     db.add(row)
