@@ -62,6 +62,7 @@ import type {
   SavedTokenMeta,
   ScanExportResponse,
   SecretScanningResponse,
+  RepoSecurityRow,
   SecurityMatrixResponse,
   SyncInstallationsResponse,
   WorkflowLintResponse,
@@ -313,6 +314,12 @@ export const api = {
     matrix: (owner: string, token?: string) =>
       get<SecurityMatrixResponse>(
         `/me/analytics/security-matrix/${encodeURIComponent(owner)}`,
+        githubTokenHeader(token),
+      ),
+    // The org matrix's row for one repo, without scanning the rest of the org.
+    repoRow: (owner: string, repo: string, token?: string) =>
+      get<RepoSecurityRow>(
+        `/me/analytics/security-matrix/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
         githubTokenHeader(token),
       ),
     secretScanning: (owner: string, repo: string, token?: string) =>

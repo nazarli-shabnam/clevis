@@ -273,6 +273,32 @@ def personal_security_matrix(
         raise _github_error(exc) from exc
 
 
+@router.get("/me/analytics/security-matrix/{owner}/{repo}", response_model=RepoSecurityRow)
+def personal_repo_security_row(
+    owner: str,
+    repo: str,
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+    x_github_token: str | None = Header(default=None),
+):
+    """One matrix row for a single repo -- what the org matrix shows for that cell, without
+    scanning every repo in the org to get it. Same token resolution and aggregate-vs-live rules."""
+    try:
+        token = resolve_owner_token(db, user_id=user.id, owner=owner, client_token=x_github_token)
+    except NoGitHubTokenAvailable as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    tenant_id = _security_connected_tenant(db, user.id, owner)
+    client = GitHubClient(token)
+    try:
+        repo_meta = client.request("GET", f"/repos/{owner}/{repo}")
+        alerts_by_repo = None
+        if tenant_id is not None:
+            alerts_by_repo = _open_alerts_by_repo(db, tenant_id, [f"{owner}/{repo_meta['name']}"])
+        return _repo_row(client, owner, repo_meta, alerts_by_repo)
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        raise _github_error(exc) from exc
+
+
 def _secret_scanning_alerts_from_aggregate(db: Session, tenant_id: int, owner: str, repo: str) -> list[SecretAlert]:
     """Reads security_alerts instead of a live GitHub call. No `url` field is stored (only
     the live API response carries html_url) -- None, not "" (a fake link); the UI renders
