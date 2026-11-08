@@ -7,23 +7,7 @@ import { Bell, GearSix } from "@phosphor-icons/react"
 import { relativeTime } from "@/lib/format"
 import type { NotificationKind } from "@/lib/api/types"
 import { useNotificationPreferences, useNotifications } from "@/lib/use-notifications"
-
-const KIND_LABEL = {
-  critical_alert: "Critical alert",
-  score_drop: "Score drop",
-  job_failed: "Job failed",
-  permission_drift: "Permissions",
-  waiver_expired: "Waiver expired",
-} as const
-
-const KIND_ORDER: NotificationKind[] = ["critical_alert", "score_drop", "job_failed", "permission_drift", "waiver_expired"]
-const KIND_HINT: Record<NotificationKind, string> = {
-  critical_alert: "New critical Dependabot alerts",
-  score_drop: "Security score drops",
-  job_failed: "Failed background jobs (admins)",
-  permission_drift: "GitHub App permission changes (admins)",
-  waiver_expired: "Check waivers that expired (admins)",
-}
+import { KIND_HINT, KIND_LABEL, KIND_ORDER } from "@/lib/notification-kinds"
 
 /** Per-user switches for which kinds appear in the bell. Loads (and saves) only while shown. */
 function PreferencesPanel({ org }: { org: string }) {
@@ -146,6 +130,11 @@ export function NotificationBell() {
                 Couldn&apos;t mark as read: {markRead.error.message}
               </p>
             )}
+            <div className="border-t border-border px-3 py-2 text-right">
+              <Link href="/notifications" onClick={() => setOpen(false)} className="text-xs text-primary hover:underline">
+                View all notifications
+              </Link>
+            </div>
           </Popover.Popup>
         </Popover.Positioner>
       </Popover.Portal>
