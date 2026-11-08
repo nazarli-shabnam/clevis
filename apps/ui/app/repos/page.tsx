@@ -440,7 +440,7 @@ export default function ReposPage() {
           <div className="px-4 py-3 border-b border-border">
             <span className="section-title">Organization</span>
           </div>
-          <div className="p-4 flex flex-col gap-3 md:flex-row md:items-end">
+          <div className="p-4 flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end">
             <div className="md:w-64 md:shrink-0">
               <label htmlFor="repos-owner" className="text-xs font-medium text-foreground block mb-1.5">Organization</label>
               <Input
@@ -452,7 +452,7 @@ export default function ReposPage() {
               />
             </div>
             {!hasInstallationForOwner && (
-            <div className="md:flex-1">
+            <div className="md:min-w-64 md:flex-1">
               <div className="mb-1.5 flex items-center gap-1.5">
                 <label htmlFor="repos-token" className="text-xs font-medium text-foreground">GitHub Token</label>
                 <span id="repos-token-hint" className="text-[0.6875rem] text-muted-foreground font-normal">
@@ -498,7 +498,7 @@ export default function ReposPage() {
               </Button>
             )}
             {listMutation.isError && (
-              <div className="flex items-start gap-2 text-xs text-destructive">
+              <div className="flex items-start gap-2 text-xs text-destructive md:basis-full">
                 <Warning className="size-3.5 mt-0.5 shrink-0" />
                 {listMutation.error.message}
               </div>
