@@ -171,8 +171,8 @@ describe("OverviewPage cockpit", () => {
 
     renderPage();
 
-    expect(await screen.findByText("Actions cache in use")).toBeInTheDocument();
-    expect(screen.getByText("3.0 MB")).toBeInTheDocument();
+    expect(await screen.findByText("3.0 MB")).toBeInTheDocument();
+    expect(screen.getByText("Actions cache in use")).toBeInTheDocument();
     expect(screen.getByText("Cache clears succeeded")).toBeInTheDocument();
     expect(screen.getByText("75%")).toBeInTheDocument();
     expect(screen.getByText("Actions cache in use").closest("a")).toHaveAttribute("href", "/repos");
@@ -186,7 +186,7 @@ describe("OverviewPage cockpit", () => {
 
     renderPage();
 
-    expect(await screen.findByText("Actions cache in use")).toBeInTheDocument();
+    expect(await screen.findByText("1.0 KB")).toBeInTheDocument();
     expect(screen.queryByText("Cache clears succeeded")).not.toBeInTheDocument();
   });
 
