@@ -296,7 +296,9 @@ class BranchProtectionEnabled(Check):
                 unknown += 1
         evaluable = checked - unknown
         if evaluable == 0:
-            return {"status": "error", "value": {"checked": checked, "protected": protected, "unknown": unknown}}
+            value = {"checked": checked, "protected": protected, "unknown": unknown}
+            # Every repo was empty (nothing to protect): not applicable. Unreachable repos stay an error.
+            return {"status": "not_applicable" if unknown == 0 else "error", "value": value}
         compliant = protected == evaluable
         value = _with_repos({"checked": checked, "protected": protected, "unknown": unknown}, unprotected)
         if compliant and unknown > 0:
@@ -323,22 +325,34 @@ class SecretScanningEnabled(Check):
     ) -> dict:
         if repos is None:
             repos = _get_all_pages(base_url, f"/orgs/{owner}/repos", token)
-        total = len(repos)
-        if total == 0:
+        if len(repos) == 0:
             return {"status": "not_applicable", "value": {"enabled": 0, "total": 0}}
         enabled = 0
+        total = 0
+        unknown = 0
         disabled_repos: list[str] = []
         for repo in repos:
-            sec = repo.get("security_and_analysis") or {}
-            if sec.get("secret_scanning", {}).get("status") == "enabled":
+            sec = repo.get("security_and_analysis")
+            if not sec:
+                # GitHub only returns security_and_analysis to callers with admin access to the repo;
+                # otherwise the key is absent, which says nothing about whether scanning is on.
+                unknown += 1
+                continue
+            total += 1
+            if (sec.get("secret_scanning") or {}).get("status") == "enabled":
                 enabled += 1
             else:
                 disabled_repos.append(repo["name"])
+        value = {"enabled": enabled, "total": total}
+        if unknown:
+            value["unknown"] = unknown
+        value = _with_repos(value, disabled_repos)
         compliant = enabled == total
-        return {
-            "status": "pass" if compliant else "fail",
-            "value": _with_repos({"enabled": enabled, "total": total}, disabled_repos),
-        }
+        if total == 0 or (compliant and unknown > 0):
+            # Same as the other per-repo checks: a clean result from only the repos we could read
+            # (or from none of them) is not a pass.
+            return {"status": "error", "value": value}
+        return {"status": "pass" if compliant else "fail", "value": value}
 
 
 class DependabotAlertsCheck(Check):
@@ -524,7 +538,8 @@ class DefaultBranchNoForcePushCheck(Check):
             checked += 1
         value = {"repos_checked": checked, "force_push_allowed": force_push_allowed, "unknown": unknown}
         if checked == 0:
-            return {"status": "error", "value": value}
+            # No repo evaluated: all empty (nothing to protect) is not applicable, unreachable is an error.
+            return {"status": "not_applicable" if unknown == 0 else "error", "value": value}
         compliant = force_push_allowed == 0
         if compliant and unknown > 0:
             # Same as DependabotAlertsCheck: a clean result from only the reachable repos is not a pass.

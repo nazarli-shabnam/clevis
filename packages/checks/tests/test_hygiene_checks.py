@@ -185,6 +185,31 @@ def test_api_errors_make_a_repo_unknown_and_all_unknown_is_error():
     assert out["status"] == "error" and out["value"]["unknown"] == 1
 
 
+def test_compliant_repos_with_some_unreachable_is_error_not_pass():
+    repos = [_repo("good")] + [_repo(f"locked{i}") for i in range(14)]
+
+    def get(url, token):
+        if "/good/git/trees" in url:
+            return _tree(".github/CODEOWNERS")
+        raise _status_error(403)
+
+    out = _run(h.CodeownersPresent(), repos, get)
+    assert out["status"] == "error"
+    assert out["value"]["checked"] == 1 and out["value"]["unknown"] == 14
+
+
+def test_a_missing_file_still_fails_when_other_repos_are_unreachable():
+    repos = [_repo("bare"), _repo("locked")]
+
+    def get(url, token):
+        if "/bare/git/trees" in url:
+            return _tree("README.md")
+        raise _status_error(403)
+
+    out = _run(h.CodeownersPresent(), repos, get)
+    assert out["status"] == "fail" and out["value"]["unknown"] == 1
+
+
 def test_not_applicable_without_active_repos_and_sampling_flag():
     assert _run(h.LicensePresent(), [_repo(archived=True)], lambda u, t: {})["status"] == "not_applicable"
     many = [_repo(f"r{i}") for i in range(h._MAX_REPOS + 5)]

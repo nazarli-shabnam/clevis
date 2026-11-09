@@ -38,15 +38,21 @@ def get_or_create(db: Session, org_id: int, user_id: int, role: str, source: str
     return membership
 
 
-def create_if_missing(db: Session, org_id: int, user_id: int, role: str, source: str) -> Membership:
+def create_if_missing(
+    db: Session, org_id: int, user_id: int, role: str, source: str, *, commit: bool = True
+) -> Membership:
     """Like get_or_create, but never changes an existing row's role -- including one a
-    concurrent transaction inserted first (e.g. a GitHub admin grant racing an invite accept)."""
+    concurrent transaction inserted first (e.g. a GitHub admin grant racing an invite accept).
+
+    commit=False leaves the commit to the caller, so the membership lands atomically with
+    whatever else the caller writes (e.g. an invitation's status change)."""
     _set_session_user(db, user_id)
     tenant_id = tenant_repo.get_or_create_org_tenant(db, org_id, commit=False).id
     membership = tenant_repo.get_or_create_membership(
         db, tenant_id=tenant_id, user_id=user_id, role=role, commit=False, source=source
     )
-    db.commit()
+    if commit:
+        db.commit()
     return membership
 
 

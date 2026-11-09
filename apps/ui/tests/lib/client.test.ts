@@ -472,6 +472,18 @@ describe("api.analytics value normalization", () => {
     expect(result.checks[0].value).toEqual({ type: "ratio", numerator: 6, denominator: 10 });
   });
 
+  it("carries a check's unknown repo count through the ratio value", async () => {
+    stubOkJson({
+      owner: "acme", score: 100, total_checks: 1, failed_checks: 1, repo_count: 3,
+      checks: [{
+        id: "repository_secret_scanning_enabled", title: "Secret scanning", severity: "high",
+        remediation: "n/a", status: "error", value: { enabled: 2, total: 2, unknown: 1 },
+      }],
+    });
+    const result = await api.analytics.overview("acme", "ghp_test");
+    expect(result.checks[0].value).toEqual({ type: "ratio", numerator: 2, denominator: 2, unknown: 1 });
+  });
+
   it("GETs /me/analytics/cockpit/{owner} with no body and no token header when omitted", async () => {
     stubOkJson({
       repo_count: 1, member_count: 2, latest_score: 90, score_trend: [90],

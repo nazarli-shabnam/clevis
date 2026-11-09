@@ -42,11 +42,47 @@ def test_org_mfa_not_applicable_for_personal_account():
     assert result["status"] == "not_applicable"
 
 
-def test_secret_scanning_null_security_and_analysis_does_not_crash():
-    check = SecretScanningEnabled()
-    repos = [{"name": "demo", "security_and_analysis": None}]
-    result = check.run(owner="acme", token="tok", repos=repos)
-    assert result["status"] in {"pass", "fail"}
+def _ss(name, status=None, key=True):
+    repo = {"name": name}
+    if key:
+        repo["security_and_analysis"] = {"secret_scanning": {"status": status}}
+    return repo
+
+
+def test_secret_scanning_null_security_and_analysis_is_unknown_not_disabled():
+    # GitHub omits security_and_analysis for callers without repo admin; that is "can't tell".
+    result = SecretScanningEnabled().run(
+        owner="acme", token="tok", repos=[{"name": "demo", "security_and_analysis": None}]
+    )
+    assert result["status"] == "error"
+    assert result["value"]["unknown"] == 1
+    assert "repos" not in result["value"]
+
+
+def test_secret_scanning_all_repos_omitting_the_field_is_error_not_fail():
+    repos = [_ss("a", key=False), _ss("b", key=False)]
+    result = SecretScanningEnabled().run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "error"
+    assert result["value"] == {"enabled": 0, "total": 0, "unknown": 2}
+
+
+def test_secret_scanning_clean_result_from_partial_data_is_error():
+    repos = [_ss("a", "enabled"), _ss("b", key=False)]
+    result = SecretScanningEnabled().run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "error"
+    assert result["value"] == {"enabled": 1, "total": 1, "unknown": 1}
+
+
+def test_secret_scanning_real_disabled_repo_still_fails_alongside_unknown():
+    repos = [_ss("a", "enabled"), _ss("b", "disabled"), _ss("c", key=False)]
+    result = SecretScanningEnabled().run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "fail"
+    assert result["value"] == {"enabled": 1, "total": 2, "unknown": 1, "repos": ["b"]}
+
+
+def test_secret_scanning_all_enabled_passes_without_unknown_key():
+    result = SecretScanningEnabled().run(owner="acme", token="tok", repos=[_ss("a", "enabled")])
+    assert result == {"status": "pass", "value": {"enabled": 1, "total": 1}}
 
 
 def test_secret_scanning_empty_org_is_not_applicable():
@@ -841,7 +877,43 @@ def test_empty_repo_without_a_default_branch_is_skipped_by_branch_checks():
         force = DefaultBranchNoForcePushCheck().run(owner="acme", token="tok", repos=repos)
         protection = BranchProtectionEnabled().run(owner="acme", token="tok", repos=repos)
     assert force["value"]["force_push_allowed"] == 0
-    assert protection["value"]["protected"] == 0 and protection["status"] == "error"
+    assert protection["value"]["protected"] == 0
+    # Nothing to protect is not a failure: excluded from the score, not an error.
+    assert force["status"] == "not_applicable" and protection["status"] == "not_applicable"
+
+
+def test_all_empty_repos_are_not_applicable_even_with_several_repos():
+    def fake_get(url, token):
+        _raise(404, url)
+
+    repos = [{"name": n, "default_branch": None} for n in ("a", "b", "c")]
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        assert DefaultBranchNoForcePushCheck().run(owner="acme", token="tok", repos=repos)["status"] == "not_applicable"
+        assert BranchProtectionEnabled().run(owner="acme", token="tok", repos=repos)["status"] == "not_applicable"
+
+
+def test_unreachable_repos_keep_the_branch_checks_at_error():
+    def fake_get(url, token):
+        _raise(403, url)
+
+    repos = [{"name": "a", "default_branch": "main"}, {"name": "b", "default_branch": "main"}]
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        force = DefaultBranchNoForcePushCheck().run(owner="acme", token="tok", repos=repos)
+        protection = BranchProtectionEnabled().run(owner="acme", token="tok", repos=repos)
+    assert force["status"] == "error" and protection["status"] == "error"
+
+
+def test_empty_repo_mixed_with_an_unreachable_one_stays_error():
+    def fake_get(url, token):
+        _raise(404 if "/empty/" in url else 403, url)
+
+    repos = [{"name": "empty", "default_branch": "main"}, {"name": "locked", "default_branch": "main"}]
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        assert BranchProtectionEnabled().run(owner="acme", token="tok", repos=repos)["status"] == "error"
+        assert DefaultBranchNoForcePushCheck().run(owner="acme", token="tok", repos=repos)["status"] == "error"
 
 
 def test_shared_client_is_reused_across_gets_and_closed_afterwards():
@@ -941,7 +1013,7 @@ def test_passing_results_keep_their_exact_shape_without_a_repos_key():
     assert result["value"] == {"checked": 1, "protected": 1, "unknown": 0}
 
 
-def test_secret_scanning_names_repos_without_it():
+def test_secret_scanning_names_only_repos_known_to_lack_it():
     repos = [
         {"name": "on", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
         {"name": "off", "security_and_analysis": {"secret_scanning": {"status": "disabled"}}},
@@ -949,7 +1021,7 @@ def test_secret_scanning_names_repos_without_it():
     ]
     result = SecretScanningEnabled().run(owner="acme", token="tok", repos=repos)
     assert result["status"] == "fail"
-    assert result["value"] == {"enabled": 1, "total": 3, "repos": ["off", "unknown"]}
+    assert result["value"] == {"enabled": 1, "total": 2, "unknown": 1, "repos": ["off"]}
 
 
 def test_dependabot_only_names_repos_with_critical_or_high_alerts():
