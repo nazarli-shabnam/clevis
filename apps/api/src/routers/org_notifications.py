@@ -101,7 +101,8 @@ def _critical_alert_items(
             "kind": "critical_alert",
             "at": r.ingested_at,
             "title": f"New critical Dependabot alert in {r.repo}",
-            "detail": str((r.details or {}).get("summary") or ""),
+            # The worker stores GitHub's advisory under ``security_advisory`` (event_consumer._normalize_security_alert).
+            "detail": str(((r.details or {}).get("security_advisory") or {}).get("summary") or ""),
             "href": "/security",
         }
         for r in rows
