@@ -64,6 +64,24 @@ describe("WaiversCard", () => {
     expect(screen.getByText(/^expired/)).toBeInTheDocument()
   })
 
+  it("hides the repositories field and sends an org-wide waiver for a check that never names repos", async () => {
+    listMock.mockResolvedValue([])
+    createMock.mockResolvedValue(waiver())
+    renderCard()
+    await screen.findByText("No waivers.")
+    expect(screen.getByLabelText(/Repositories/)).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText("Check"), { target: { value: "repository_license_present" } })
+    expect(screen.queryByLabelText(/Repositories/)).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "legacy repo" } })
+    fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "platform" } })
+    fireEvent.click(screen.getByRole("button", { name: "Add waiver" }))
+
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+    expect(createMock.mock.calls[0][1]).toMatchObject({ check_id: "repository_license_present", repos: [] })
+  })
+
   it("adds a waiver with a reason, an owner, optional repos and an end-of-day expiry", async () => {
     listMock.mockResolvedValue([])
     createMock.mockResolvedValue(waiver())

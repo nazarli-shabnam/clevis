@@ -32,6 +32,11 @@ def _out(w: CheckWaiver, now: datetime) -> WaiverOut:
 def _validate(body: WaiverIn, now: datetime) -> None:
     if body.check_id not in waiver_service.KNOWN_CHECK_IDS:
         raise HTTPException(status_code=422, detail="Unknown check")
+    if body.repos and body.check_id in waiver_service.ORG_WIDE_ONLY_CHECK_IDS:
+        raise HTTPException(
+            status_code=422,
+            detail="This check does not report which repositories fail, so it can only be waived for the whole organization; leave repositories empty",
+        )
     expires = _aware(body.expires_at)
     if expires <= now:
         raise HTTPException(status_code=422, detail="The waiver must expire in the future")
