@@ -177,7 +177,8 @@ def fetch_identity(user_token: str) -> GitHubIdentity:
             if not email:
                 e = client.get(f"{api}/user/emails", headers=headers)
                 e.raise_for_status()
-                email = _primary_verified_email(e.json())
+                emails = e.json()
+                email = _primary_verified_email(emails) if isinstance(emails, list) else None
     except (httpx.HTTPError, ValueError) as exc:
         raise GitHubOAuthError(f"GitHub profile lookup failed: {exc.__class__.__name__}") from exc
     if not email:
@@ -224,6 +225,7 @@ def list_user_org_memberships(user_token: str) -> list[GitHubOrgMembership]:
 
 
 def _primary_verified_email(emails: list[dict]) -> str | None:
+    emails = [e for e in emails if isinstance(e, dict)]
     for entry in emails:
         if entry.get("primary") and entry.get("verified"):
             return entry.get("email")
