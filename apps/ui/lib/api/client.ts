@@ -96,17 +96,28 @@ export function openActivityStream(org: string, days: number, signal: AbortSigna
 
 // Hard ceiling so a hanging API surfaces an error instead of leaving callers loading forever.
 const REQUEST_TIMEOUT_MS = 15000
+// Endpoints that do their GitHub work inside the request (scans, bulk remediation, bulk branch protection,
+// Dependabot triage) loop over every repo, so on a large org they legitimately outlast the default ceiling.
+const LONG_REQUEST_TIMEOUT_MS = 120_000
 
-export async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
+export async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
+): Promise<Response> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     // credentials:"include" sends the httpOnly session cookie (GitHub OAuth sessions) alongside
     // the Bearer header (email/password sessions); require_auth accepts either.
     return await fetch(url, { credentials: "include", ...init, signal: controller.signal })
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
-      throw new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s — is the API reachable?`)
+      // A timeout says nothing about whether the server finished: a long request keeps running after the
+      // browser gives up, so the message must not suggest it failed (or invite a blind retry).
+      throw new Error(
+        `Request timed out after ${timeoutMs / 1000}s. The server may still be working on it, so check the result before trying again.`,
+      )
     }
     throw err
   } finally {
@@ -146,12 +157,21 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return json as T
 }
 
-async function post<T>(path: string, body: unknown, extraHeaders?: Record<string, string>): Promise<T> {
-  const res = await fetchWithTimeout(`${BASE}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders(), ...extraHeaders },
-    body: JSON.stringify(body),
-  })
+async function post<T>(
+  path: string,
+  body: unknown,
+  extraHeaders?: Record<string, string>,
+  timeoutMs?: number,
+): Promise<T> {
+  const res = await fetchWithTimeout(
+    `${BASE}${path}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...getAuthHeaders(), ...extraHeaders },
+      body: JSON.stringify(body),
+    },
+    timeoutMs,
+  )
   return handleResponse<T>(res)
 }
 
@@ -273,7 +293,12 @@ export const api = {
     changes: (orgLogin: string) => get<ScanChanges>(`/orgs/${encodeURIComponent(orgLogin)}/analytics/changes`),
     // token is optional — the API falls back to a connected GitHub App installation.
     overview: async (owner: string, token: string): Promise<AnalyticsOverviewResponse> => {
-      const data = await post<AnalyticsOverviewResponse>("/me/analytics/overview", { owner, token: token || undefined })
+      const data = await post<AnalyticsOverviewResponse>(
+        "/me/analytics/overview",
+        { owner, token: token || undefined },
+        undefined,
+        LONG_REQUEST_TIMEOUT_MS,
+      )
       return {
         ...data,
         checks: data.checks.map((c) => ({ ...c, value: normalizeCheckValue(c.id, c.value) })),
@@ -351,6 +376,8 @@ export const api = {
       post<BulkRemediateResponse>(
         `/orgs/${encodeURIComponent(org)}/security/remediate/bulk`,
         { ...body, token: body.token || undefined },
+        undefined,
+        LONG_REQUEST_TIMEOUT_MS,
       ),
     // Needs a write-scoped token; a GitHub 403 comes back as a 400 with a permission hint.
     // Admin-gated when `owner` is a connected Clevis org.
@@ -475,6 +502,8 @@ export const api = {
       post<BranchProtectionBulkResponse>(
         `/orgs/${encodeURIComponent(org)}/branch-protection/bulk`,
         { ...body, token: body.token || undefined },
+        undefined,
+        LONG_REQUEST_TIMEOUT_MS,
       ),
   },
   workflowLint: {
@@ -507,6 +536,8 @@ export const api = {
       post<DependabotTriageResponse>(
         `/orgs/${encodeURIComponent(org)}/dependabot-triage`,
         { ...body, token: token || undefined },
+        undefined,
+        LONG_REQUEST_TIMEOUT_MS,
       ),
   },
   github: {
