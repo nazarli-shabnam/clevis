@@ -16,7 +16,7 @@ import { useActiveScope } from "@/lib/active-scope"
 import { membersHref } from "@/lib/members-href"
 import { useAuth } from "@/lib/auth-context"
 import { CHART_COLORS } from "@/lib/charts/theme"
-import { dueTime, relativeTime } from "@/lib/format"
+import { dueTime, formatBytes, relativeTime } from "@/lib/format"
 import { SectionError } from "@/components/section-error"
 import { EmptyStateNoAccount } from "@/components/empty-state"
 import { FirstRunChecklist } from "@/components/first-run-checklist"
@@ -245,6 +245,23 @@ export default function OverviewPage() {
           value={cockpit?.member_count ?? undefined}
         />
       </div>
+
+      {(cockpitQuery.isLoading || cockpit) && (
+        // auto-fit collapses the empty track when the success-rate card is hidden, so one card fills the row.
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-px mb-6 border border-border bg-border">
+          <Link href="/repos" className="block hover:bg-elevated transition-colors">
+            <StatCard
+              label="Actions cache in use"
+              value={cockpit ? formatBytes(cockpit.total_cache_size_bytes) : "…"}
+            />
+          </Link>
+          {cockpit?.cache_job_success_rate != null && (
+            <Link href="/repos" className="block hover:bg-elevated transition-colors">
+              <StatCard label="Cache clears succeeded" value={`${Math.round(cockpit.cache_job_success_rate * 100)}%`} />
+            </Link>
+          )}
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2 mb-6">
         <div className="card">
