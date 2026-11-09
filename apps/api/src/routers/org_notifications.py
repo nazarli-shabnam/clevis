@@ -178,18 +178,24 @@ def _waiver_expired_items(db: Session, org_login: str, tenant_id: int, since: da
     ]
 
 
-def _unread_beyond_limit(db: Session, filters: list, at_column, last_read, items: list, kind: str) -> int:
-    """Rows of one source past the read cursor that the per-source LIMIT kept out of ``items``.
+def _unread_beyond_limit(db: Session, filters: list, at_column, last_read, items: list, kind: str, dismissed) -> int:
+    """Unread rows of one source past the read cursor that the per-source LIMIT kept out of ``items``.
 
-    Counted against what is listed *past the cursor*, not what is listed unread: an item the user
-    dismissed is listed and read, but is still one of the rows past the cursor, so it must not be
-    mistaken for a row the limit cut."""
-    q = db.query(func.count()).select_from(at_column.class_).filter(*filters)
+    Rows the user dismissed are left out of both sides, so a dismissed row the limit cut is not counted
+    as unread and a dismissed row that is listed does not make a cut row look listed."""
+    model = at_column.class_
+    prefix = f"{kind}:"
+    dismissed_ids = [int(d[len(prefix):]) for d in dismissed if d.startswith(prefix)]
+    q = db.query(func.count()).select_from(model).filter(*filters)
+    if dismissed_ids:
+        q = q.filter(model.id.notin_(dismissed_ids))
     if last_read is not None:
         q = q.filter(at_column > last_read)
     past_cursor_total = q.scalar() or 0
     past_cursor_listed = sum(
-        1 for i in items if i.kind == kind and (last_read is None or _aware(i.at) > _aware(last_read))
+        1
+        for i in items
+        if i.kind == kind and i.id not in dismissed and (last_read is None or _aware(i.at) > _aware(last_read))
     )
     return max(0, past_cursor_total - past_cursor_listed)
 
@@ -229,7 +235,8 @@ def get_notifications(
     items = [
         NotificationItem(
             **i,
-            read=i["id"] in dismissed or (last_read is not None and _aware(i["at"]) <= _aware(last_read)),
+            read=(i["id"] in dismissed and _aware(dismissed[i["id"]]) >= _aware(i["at"]))
+            or (last_read is not None and _aware(i["at"]) <= _aware(last_read)),
         )
         for i in raw
     ]
@@ -237,9 +244,9 @@ def get_notifications(
     # rows) including the unread rows that cut left out, so a long list never under-reports.
     unread_count = sum(1 for i in items if not i.read)
     if "critical_alert" not in muted:
-        unread_count += _unread_beyond_limit(db, _critical_alert_filters(tenant_id, since), SecurityAlert.ingested_at, last_read, items, "critical_alert")
+        unread_count += _unread_beyond_limit(db, _critical_alert_filters(tenant_id, since), SecurityAlert.ingested_at, last_read, items, "critical_alert", dismissed)
     if is_admin and "job_failed" not in muted:
-        unread_count += _unread_beyond_limit(db, _failed_job_filters(tenant_id, since), Job.updated_at, last_read, items, "job_failed")
+        unread_count += _unread_beyond_limit(db, _failed_job_filters(tenant_id, since), Job.updated_at, last_read, items, "job_failed", dismissed)
     return NotificationFeed(
         org=org_login,
         unread_count=unread_count,
