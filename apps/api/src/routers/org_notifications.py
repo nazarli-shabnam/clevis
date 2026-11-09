@@ -42,6 +42,7 @@ MAX_ITEMS = 50
 MAX_LIMIT = 200
 _PER_SOURCE = 40
 # The stable ids the feed hands out: a kind plus the source row's integer id.
+_MAX_SCANS_IN_WINDOW = 1000
 _ITEM_ID = re.compile(r"^(critical_alert|score_drop|job_failed|permission_drift|waiver_expired):[0-9]{1,18}$")
 
 
@@ -98,7 +99,8 @@ def _score_drop_items(
     # Every scan in the window, so a drop is not hidden behind many non-dropping scans, plus the one
     # before it (possibly outside the window) for the oldest in-window scan to be compared with.
     ordered = q.order_by(ScanResult.created_at.desc(), ScanResult.id.desc())
-    rows = ordered.filter(ScanResult.created_at >= since).all()
+    # ponytail: capped so an org scanning every minute can't load a quarter of scans; drops older than the cap need the `before` cursor.
+    rows = ordered.filter(ScanResult.created_at >= since).limit(_MAX_SCANS_IN_WINDOW).all()
     predecessor = ordered.filter(ScanResult.created_at < since).first()
     if predecessor is not None:
         rows.append(predecessor)
