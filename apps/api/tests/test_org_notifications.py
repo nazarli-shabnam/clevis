@@ -516,3 +516,19 @@ def test_a_dismissal_older_than_the_keep_window_is_pruned_on_the_next_dismissal(
 
     kept = {r.item_id for r in db.query(NotificationDismissal).filter_by(user_id=admin_user.id, tenant_id=t)}
     assert kept == {item_id}
+
+
+def test_before_id_cursor_reaches_items_sharing_one_timestamp(db, world):
+    t = world["acme"].tenant_id
+    for n in range(5):
+        _alert(db, t, number=n, when=NOW - timedelta(hours=1))  # one batch, one ingested_at
+    admin = _client(db, world["users"]["admin"])
+    paged, params = [], {"limit": 2}
+    while True:
+        page = admin.get("/orgs/acme/notifications", params=params).json()["items"]
+        if not page:
+            break
+        paged += [i["id"] for i in page]
+        params = {"limit": 2, "before": page[-1]["at"], "before_id": page[-1]["id"]}
+    assert len(paged) == len(set(paged)) == 5
+    assert admin.get("/orgs/acme/notifications", params={"before_id": "critical_alert:1"}).status_code == 422

@@ -19,7 +19,7 @@ const FULL_FEED_DAYS = 90
 
 export default function NotificationsPage() {
   const { scope } = useActiveScope()
-  const { org, query, markRead, dismiss, items, unread, hasMore, loadingMore, loadMoreFailed, loadMore } = useNotifications({ full: true })
+  const { org, query, markRead, dismiss, items, unread, hasMore, loadingMore, loadMoreFailed, refreshFailed, loadMore } = useNotifications({ full: true })
   const [customizing, setCustomizing] = useState(false)
   // Kinds shown; all by default. Client-side: the feed is already one bounded request, and the per-user
   // mute preferences (in the bell) are what hide a kind server-side.
@@ -128,6 +128,16 @@ export default function NotificationsPage() {
               </li>
             ))}
           </ul>
+        )}
+        {refreshFailed && (
+          <div className="px-4 py-3 border-t border-border flex items-center gap-3">
+            <p role="alert" className="text-xs text-destructive">
+              Couldn&apos;t refresh notifications.
+            </p>
+            <Button size="sm" variant="outline" disabled={query.isFetching} onClick={() => query.refetch()}>
+              Retry
+            </Button>
+          </div>
         )}
         {hasMore && (
           <div className="px-4 py-3 border-t border-border flex items-center gap-3">

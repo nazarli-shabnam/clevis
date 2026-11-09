@@ -52,7 +52,7 @@ describe("NotificationsPage", () => {
     renderPage();
 
     await screen.findByText("title a");
-    expect(feedMock).toHaveBeenCalledWith("acme", { days: 90, limit: 50, before: undefined });
+    expect(feedMock).toHaveBeenCalledWith("acme", { days: 90, limit: 50 });
   });
 
   it("filters by kind and by unread, and says so when nothing matches", async () => {
@@ -147,7 +147,7 @@ describe("NotificationsPage", () => {
     feedMock.mockResolvedValueOnce(feed([item("older", "job_failed", true, { at: "2025-12-01T00:00:00Z" })]));
     fireEvent.click(loadMore);
     await waitFor(() =>
-      expect(feedMock).toHaveBeenLastCalledWith("acme", { days: 90, limit: 50, before: full[49].at }),
+      expect(feedMock).toHaveBeenLastCalledWith("acme", { days: 90, limit: 50, before: full[49].at, before_id: full[49].id }),
     );
     expect(await screen.findByText("title older")).toBeInTheDocument();
     expect(screen.getByText("title n0")).toBeInTheDocument();

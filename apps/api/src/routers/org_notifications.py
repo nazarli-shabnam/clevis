@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from src.core._sanitize import sanitize_error
@@ -50,6 +50,27 @@ def _aware(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
+# The feed is ordered by (at, kind, row id) descending. The cursor is the last item already loaded, so rows
+# that share its timestamp are neither skipped nor repeated on the next page.
+Cursor = tuple[datetime, str, int]
+
+
+def _item_key(item: dict) -> Cursor:
+    kind, _, row_id = item["id"].partition(":")
+    return (_aware(item["at"]), kind, int(row_id))
+
+
+def _after_cursor(at_col, id_col, kind: str, cursor: Cursor | None) -> list:
+    """SQL conditions keeping the rows of ``kind`` that sort after ``cursor`` in the feed order."""
+    if cursor is None:
+        return []
+    at, cursor_kind, cursor_id = cursor
+    if kind == cursor_kind:
+        return [or_(at_col < at, and_(at_col == at, id_col < cursor_id))]
+    # At the same instant, kinds sort descending: a smaller kind comes after the cursor's kind.
+    return [at_col <= at] if kind < cursor_kind else [at_col < at]
+
+
 def _critical_alert_filters(tenant_id: int, since: datetime) -> list:
     return [
         SecurityAlert.tenant_id == tenant_id,
@@ -65,16 +86,13 @@ def _failed_job_filters(tenant_id: int, since: datetime) -> list:
 
 
 def _critical_alert_items(
-    db: Session, tenant_id: int, since: datetime, per_source: int, before: datetime | None = None
+    db: Session, tenant_id: int, since: datetime, per_source: int, cursor: Cursor | None = None
 ) -> list[dict]:
-    q = db.query(SecurityAlert).filter(*_critical_alert_filters(tenant_id, since))
-    if before is not None:
-        q = q.filter(SecurityAlert.ingested_at < before)
-    rows = (
-        q.order_by(SecurityAlert.ingested_at.desc())
-        .limit(per_source)
-        .all()
+    q = db.query(SecurityAlert).filter(
+        *_critical_alert_filters(tenant_id, since),
+        *_after_cursor(SecurityAlert.ingested_at, SecurityAlert.id, "critical_alert", cursor),
     )
+    rows = q.order_by(SecurityAlert.ingested_at.desc(), SecurityAlert.id.desc()).limit(per_source).all()
     return [
         {
             "id": f"critical_alert:{r.id}",
@@ -89,30 +107,45 @@ def _critical_alert_items(
 
 
 def _score_drop_items(
-    db: Session, org_login: str, tenant_id: int, since: datetime, per_source: int, before: datetime | None = None
+    db: Session, org_login: str, tenant_id: int, since: datetime, per_source: int, cursor: Cursor | None = None
 ) -> list[dict]:
-    q = db.query(ScanResult).filter(func.lower(ScanResult.owner) == org_login.lower(), ScanResult.tenant_id == tenant_id)
-    if before is not None:
-        # Scans at or after the cursor are left out; a drop is dated by its newer scan, so each remaining
-        # pair is still compared with the scan before it.
-        q = q.filter(ScanResult.created_at < before)
-    # Every scan in the window, so a drop is not hidden behind many non-dropping scans, plus the one
-    # before it (possibly outside the window) for the oldest in-window scan to be compared with.
+    # Only the cheap columns are read for every scan; ``checks_json`` is loaded below for scans that
+    # actually dropped, since that is the only place it is needed.
+    q = db.query(
+        ScanResult.id, ScanResult.score, ScanResult.created_at, ScanResult.failed_checks, ScanResult.total_checks
+    ).filter(func.lower(ScanResult.owner) == org_login.lower(), ScanResult.tenant_id == tenant_id)
+    if cursor is not None:
+        # Ties on the cursor's instant are settled on the drops below; a drop is dated by its newer scan,
+        # so each remaining pair is still compared with the scan before it.
+        q = q.filter(ScanResult.created_at <= cursor[0])
     ordered = q.order_by(ScanResult.created_at.desc(), ScanResult.id.desc())
-    # ponytail: capped so an org scanning every minute can't load a quarter of scans; drops older than the cap need the `before` cursor.
-    rows = ordered.filter(ScanResult.created_at >= since).limit(_MAX_SCANS_IN_WINDOW).all()
-    predecessor = ordered.filter(ScanResult.created_at < since).first()
-    if predecessor is not None:
-        rows.append(predecessor)
-    items: list[dict] = []
+    # Every scan in the window, so a drop is not hidden behind many non-dropping scans. One extra row past
+    # the cap is the predecessor of the last one; when the window is exhausted instead, the newest scan
+    # before it is.
+    # ponytail: capped so an org scanning every minute can't load a quarter of scans; drops older than the cap need the cursor.
+    rows = ordered.filter(ScanResult.created_at >= since).limit(_MAX_SCANS_IN_WINDOW + 1).all()
+    if len(rows) <= _MAX_SCANS_IN_WINDOW:
+        predecessor = ordered.filter(ScanResult.created_at < since).first()
+        if predecessor is not None:
+            rows.append(predecessor)
     # rows are newest first: each scan is compared with the one before it in time.
-    for newer, older in zip(rows, rows[1:]):
-        if _aware(newer.created_at) < since:
-            break
-        if newer.score is None or older.score is None or newer.score >= older.score:
-            continue
-        previous = {"checks": scan_results_repo._parse_checks(older.checks_json)}
-        current = {"checks": scan_results_repo._parse_checks(newer.checks_json)}
+    dropped = [
+        (newer, older)
+        for newer, older in zip(rows, rows[1:])
+        if _aware(newer.created_at) >= since
+        and newer.score is not None
+        and older.score is not None
+        and newer.score < older.score
+        and (cursor is None or (_aware(newer.created_at), "score_drop", newer.id) < cursor)
+    ]
+    if not dropped:
+        return []
+    ids = {r.id for pair in dropped for r in pair}
+    checks = dict(db.query(ScanResult.id, ScanResult.checks_json).filter(ScanResult.id.in_(ids)).all())
+    items: list[dict] = []
+    for newer, older in dropped:
+        previous = {"checks": scan_results_repo._parse_checks(checks[older.id])}
+        current = {"checks": scan_results_repo._parse_checks(checks[newer.id])}
         # Same rule as the score-drop alert: an errored check or a different scored set is not a real drop.
         if not comparable_scans(previous, current):
             continue
@@ -126,20 +159,19 @@ def _score_drop_items(
                 "href": "/security",
             }
         )
-    return items[:per_source]
+        if len(items) == per_source:
+            break
+    return items
 
 
 def _failed_job_items(
-    db: Session, org_login: str, tenant_id: int, since: datetime, per_source: int, before: datetime | None = None
+    db: Session, org_login: str, tenant_id: int, since: datetime, per_source: int, cursor: Cursor | None = None
 ) -> list[dict]:
-    q = db.query(Job).filter(*_failed_job_filters(tenant_id, since))
-    if before is not None:
-        q = q.filter(Job.updated_at < before)
-    rows = (
-        q.order_by(Job.updated_at.desc())
-        .limit(per_source)
-        .all()
+    q = db.query(Job).filter(
+        *_failed_job_filters(tenant_id, since),
+        *_after_cursor(Job.updated_at, Job.id, "job_failed", cursor),
     )
+    rows = q.order_by(Job.updated_at.desc(), Job.id.desc()).limit(per_source).all()
     return [
         {
             "id": f"job_failed:{r.id}",
@@ -224,13 +256,26 @@ def get_notifications(
         description="Cursor: only items dated before this time (the `at` of the last item already loaded). "
         "`unread_count` is 0 on such a page; take it from the first page.",
     ),
+    before_id: str | None = Query(
+        default=None,
+        pattern=_ITEM_ID.pattern,
+        description="With `before`: the `id` of the last item already loaded, so items sharing its `at` "
+        "are neither skipped nor repeated.",
+    ),
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
     tenant_id = ctx.org.tenant_id
     since = datetime.now(timezone.utc) - timedelta(days=days)
-    before = _aware(before) if before is not None else None
+    if before_id is not None and before is None:
+        raise HTTPException(status_code=422, detail="before_id needs before")
+    # Without before_id the cursor is strict: an empty kind sorts before every real one, so nothing at
+    # `before` itself is kept.
+    cursor: Cursor | None = None
+    if before is not None:
+        cursor_kind, _, cursor_row = (before_id or ":0").partition(":")
+        cursor = (_aware(before), cursor_kind, int(cursor_row))
     per_source = max(_PER_SOURCE, limit)
     last_read = notification_read_repo.get_last_read(db, user.id, tenant_id)
     dismissed = notification_dismissal_repo.get_dismissed(db, user.id, tenant_id)
@@ -241,20 +286,20 @@ def get_notifications(
 
     raw: list[dict] = []
     if "critical_alert" not in muted:
-        raw += _critical_alert_items(db, tenant_id, since, per_source, before)
+        raw += _critical_alert_items(db, tenant_id, since, per_source, cursor)
     if "score_drop" not in muted:
-        raw += _score_drop_items(db, org_login, tenant_id, since, per_source, before)
+        raw += _score_drop_items(db, org_login, tenant_id, since, per_source, cursor)
     if is_admin and "job_failed" not in muted:
-        raw += _failed_job_items(db, org_login, tenant_id, since, per_source, before)
+        raw += _failed_job_items(db, org_login, tenant_id, since, per_source, cursor)
     if is_admin and "permission_drift" not in muted:
         raw += _permission_drift_items(db, ctx, org_login, since)
     if is_admin and "waiver_expired" not in muted:
         raw += _waiver_expired_items(db, org_login, tenant_id, since)
 
-    if before is not None:
+    if cursor is not None:
         # permission drift and waivers are not row-limited, so they are cut here instead of in a query.
-        raw = [i for i in raw if _aware(i["at"]) < before]
-    raw.sort(key=lambda i: _aware(i["at"]), reverse=True)
+        raw = [i for i in raw if _item_key(i) < cursor]
+    raw.sort(key=_item_key, reverse=True)
     items = [
         NotificationItem(
             **i,
@@ -266,7 +311,7 @@ def get_notifications(
     # Counted before the list is cut to MAX_ITEMS, and (for the sources that are cut to _PER_SOURCE
     # rows) including the unread rows that cut left out, so a long list never under-reports.
     unread_count = sum(1 for i in items if not i.read)
-    if before is not None:
+    if cursor is not None:
         # A later page lists older items only; the unread badge is the first page's job.
         return NotificationFeed(org=org_login, unread_count=0, items=items[:limit], last_read_at=last_read)
     if "critical_alert" not in muted:

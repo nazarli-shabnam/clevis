@@ -32,10 +32,13 @@ export function useNotifications({ full = false }: { full?: boolean } = {}) {
   })
   const long = useInfiniteQuery({
     queryKey: [...notificationsKey(org), "full"],
-    queryFn: ({ pageParam }) => api.notifications.feed(org, { ...FULL_FEED, before: pageParam }),
-    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => api.notifications.feed(org, { ...FULL_FEED, ...pageParam }),
+    initialPageParam: undefined as { before: string; before_id: string } | undefined,
     // A full page means there may be older items; the next page starts before the last one shown.
-    getNextPageParam: (last) => (last.items.length === FULL_FEED_PAGE ? last.items[last.items.length - 1].at : undefined),
+    getNextPageParam: (last) => {
+      const tail = last.items[last.items.length - 1]
+      return last.items.length === FULL_FEED_PAGE ? { before: tail.at, before_id: tail.id } : undefined
+    },
     enabled: org !== "" && full,
     retry: false,
     refetchInterval: REFRESH_MS,
@@ -47,7 +50,10 @@ export function useNotifications({ full = false }: { full?: boolean } = {}) {
   const { isError, error, isLoading, isFetching, refetch } = full ? long : short
   // A failed "Load more" keeps the loaded list on screen; it is reported separately from a failed first load.
   const loadMoreFailed = full && long.isFetchNextPageError
-  const query = { isError: isError && !loadMoreFailed, error: error as Error, isLoading, isFetching, refetch }
+  // A failed background refresh with a list already loaded keeps the list on screen (`refreshFailed`);
+  // only a failure with nothing to show replaces it.
+  const refreshFailed = isError && !loadMoreFailed && items.length > 0
+  const query = { isError: isError && !loadMoreFailed && items.length === 0, error: error as Error, isLoading, isFetching, refetch }
 
   const markRead = useMutation({
     // Items are newest first; mark up to the newest one this feed actually showed.
@@ -61,7 +67,7 @@ export function useNotifications({ full = false }: { full?: boolean } = {}) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: notificationsKey(org) }),
   })
 
-  const more = { hasMore: !!long.hasNextPage, loadingMore: long.isFetchingNextPage, loadMoreFailed, loadMore: () => long.fetchNextPage() }
+  const more = { hasMore: !!long.hasNextPage, loadingMore: long.isFetchingNextPage, loadMoreFailed, refreshFailed, loadMore: () => long.fetchNextPage() }
   return { org, query, markRead, dismiss, items, unread, ...more }
 }
 
