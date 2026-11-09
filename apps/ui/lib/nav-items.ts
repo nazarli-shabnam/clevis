@@ -8,6 +8,7 @@ export const NAV_GROUPS = [
   ],
   [
     { title: "Repositories",     href: "/repos" },
+    { title: "Actions Cache",    href: "/caches" },
     { title: "Health & Security",href: "/security", showHealthDot: true },
   ],
   [
