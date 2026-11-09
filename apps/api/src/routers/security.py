@@ -114,6 +114,24 @@ def _code_scanning_clear_from_aggregate(code_scanning_rows: list) -> bool:
     return not any(r.state == "open" for r in code_scanning_rows)
 
 
+def _force_push_allowed(client: GitHubClient, owner: str, name: str, branch: str) -> bool:
+    """Whether the default branch accepts force pushes. Mirrors ``DefaultBranchNoForcePushCheck``.
+
+    ``GET /branches/{branch}`` never carries ``allow_force_pushes``, so ask the protection
+    sub-resource (404 = no classic protection, which allows them) and, where classic protection
+    does not already forbid them, let an active ruleset's ``non_fast_forward`` rule veto it.
+    Any other failure raises: the caller must treat it as unknown, not as compliant."""
+    try:
+        protection = client.request("GET", f"/repos/{owner}/{name}/branches/{branch}/protection")
+        if not (isinstance(protection, dict) and (protection.get("allow_force_pushes") or {}).get("enabled")):
+            return False
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 404:
+            raise
+    rules = client.request_paginated(f"/repos/{owner}/{name}/rules/branches/{branch}")
+    return not any(isinstance(r, dict) and r.get("type") == "non_fast_forward" for r in rules)
+
+
 def _repo_row(client: GitHubClient, owner: str, repo: dict, alerts_by_repo: dict[str, list] | None = None) -> RepoSecurityRow:
     name = repo["name"]
     branch = repo.get("default_branch")
@@ -121,6 +139,7 @@ def _repo_row(client: GitHubClient, owner: str, repo: dict, alerts_by_repo: dict
 
     branch_protection = False
     force_push_allowed = False
+    branch_found = False
     if not branch:
         # The repo payload carries no default branch: there is nothing to ask GitHub about, and
         # requesting /branches/None would just be a guaranteed 404 read as "unprotected".
@@ -130,17 +149,21 @@ def _repo_row(client: GitHubClient, owner: str, repo: dict, alerts_by_repo: dict
             details = client.request("GET", f"/repos/{owner}/{name}/branches/{branch}")
             if isinstance(details, dict):
                 branch_protection = bool(details.get("protected"))
-                protection = details.get("protection") or {}
-                force_push_allowed = bool((protection.get("allow_force_pushes") or {}).get("enabled"))
+            branch_found = True
         except httpx.HTTPStatusError as exc:
-            # force_push_allowed comes from the same branch-details response, so an unknown
-            # branch_protection answer means force_push is equally unknown.
+            # Force push is looked up only once the branch is known to exist, so an unknown
+            # branch answer means force_push is equally unknown.
             if _branch_lookup_is_unknown(exc):
                 unknown.extend(["branch_protection", "force_push"])
         except httpx.RequestError:
             # A transient network error is exactly as unknowable as a 403/429 -- neither
             # is a real "unprotected" answer from GitHub.
             unknown.extend(["branch_protection", "force_push"])
+        if branch_found:
+            try:
+                force_push_allowed = _force_push_allowed(client, owner, name, branch)
+            except (httpx.HTTPStatusError, httpx.RequestError):
+                unknown.append("force_push")
 
     secret_scanning = (
         (repo.get("security_and_analysis") or {}).get("secret_scanning") or {}
