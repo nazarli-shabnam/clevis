@@ -74,7 +74,7 @@ export function SessionsCard() {
       )}
       {revoke.isError && (
         <p role="alert" className="px-4 pb-3 text-xs text-destructive">
-          {failed ? `The ${describeDevice(failed.user_agent)} session from ${failed.ip ?? "an unknown IP"} was not revoked.` : "That session was not revoked."}{" "}
+          {failed ? `The ${describeDevice(failed.user_agent)} session from ${failed.ip ?? "an unknown IP"} was not revoked.` : "The revoke request failed."}{" "}
           {revoke.error.message}
         </p>
       )}

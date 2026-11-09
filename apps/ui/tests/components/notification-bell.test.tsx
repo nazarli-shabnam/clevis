@@ -58,6 +58,18 @@ describe("NotificationBell", () => {
      expect(screen.getByRole("link", { name: "View all notifications" })).toHaveAttribute("href", "/notifications");
   });
 
+  it("closes the popover when the View all notifications link is followed", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "critical_alert")]));
+    wrap(<NotificationBell />);
+    fireEvent.click(await screen.findByRole("button", { name: /Notifications, 1 unread/ }));
+    const link = await screen.findByRole("link", { name: "View all notifications" });
+    link.addEventListener("click", (e) => e.preventDefault());
+
+    fireEvent.click(link);
+
+    await waitFor(() => expect(screen.queryByRole("link", { name: "View all notifications" })).not.toBeInTheDocument());
+  });
+
   it("mutes a kind from the settings panel and refetches the feed", async () => {
     // Once the kind is muted the server drops it: the first load has the item, every later one is empty.
     feedMock.mockResolvedValueOnce(feed([item("a", "score_drop")])).mockResolvedValue(feed([]));

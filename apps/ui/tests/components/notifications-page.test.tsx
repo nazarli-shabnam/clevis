@@ -107,8 +107,20 @@ describe("NotificationsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: 'Mark "title a" as read' }));
 
-    expect(await screen.findByText(/Couldn't mark that notification as read: boom/)).toBeInTheDocument();
+    expect(await screen.findByText(/Couldn't mark .title a. as read: boom/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: 'Mark "title a" as read' })).toBeInTheDocument();
+  });
+
+  it("disables only the Mark read button of the item being dismissed", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "critical_alert"), item("b", "score_drop")]));
+    dismissMock.mockReturnValue(new Promise(() => {})); // never settles: stays pending
+    renderPage();
+    await screen.findByText("title a");
+
+    fireEvent.click(screen.getByRole("button", { name: 'Mark "title a" as read' }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: 'Mark "title a" as read' })).toBeDisabled());
+    expect(screen.getByRole("button", { name: 'Mark "title b" as read' })).toBeEnabled();
   });
 
   it("shows a retryable error when the feed fails, not an empty state", async () => {
@@ -122,11 +134,11 @@ describe("NotificationsPage", () => {
     expect(await screen.findByText("title a")).toBeInTheDocument();
   });
 
-  it("says when the feed is at the cap and older items are not listed", async () => {
+  it("says how many notifications the page lists at most", async () => {
     feedMock.mockResolvedValue(feed(Array.from({ length: 200 }, (_, i) => item(`n${i}`, "score_drop", true))));
     renderPage();
 
-    expect(await screen.findByText(/Showing the newest 200 notifications/)).toBeInTheDocument();
+    expect(await screen.findByText(/lists at most 200 notifications/)).toBeInTheDocument();
   });
 
   it("makes no request for a personal scope and explains why", async () => {

@@ -347,6 +347,22 @@ def test_a_dismissed_item_past_the_per_source_limit_does_not_hide_unread_ones(db
     assert admin.get("/orgs/acme/notifications").json()["unread_count"] == 44
 
 
+def test_a_dismissed_item_pushed_out_of_the_feed_by_newer_ones_is_not_counted_unread(db, world):
+    t = world["acme"].tenant_id
+    for n in range(45):
+        _alert(db, t, number=n, when=NOW - timedelta(minutes=n + 100))
+    admin = _client(db, world["users"]["admin"])
+    newest = admin.get("/orgs/acme/notifications").json()["items"][0]["id"]
+    admin.post(f"/orgs/acme/notifications/{newest}/dismiss")
+    for n in range(100, 150):  # 50 alerts newer than everything above
+        _alert(db, t, number=n, when=NOW - timedelta(minutes=n - 99))
+
+    feed = admin.get("/orgs/acme/notifications").json()
+
+    assert newest not in _ids(feed)  # cut by the bell's 50-item cap
+    assert feed["unread_count"] == 94  # 95 alerts, one dismissed
+
+
 def test_a_dismissed_item_the_bells_limit_cut_is_not_counted_unread(db, world):
     t = world["acme"].tenant_id
     for n in range(55):
