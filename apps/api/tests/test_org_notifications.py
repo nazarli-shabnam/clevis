@@ -346,6 +346,39 @@ def test_a_dismissed_item_past_the_per_source_limit_does_not_hide_unread_ones(db
     assert admin.get("/orgs/acme/notifications").json()["unread_count"] == 44
 
 
+def test_a_dismissed_item_the_bells_limit_cut_is_not_counted_unread(db, world):
+    t = world["acme"].tenant_id
+    for n in range(55):
+        _alert(db, t, number=n, when=NOW - timedelta(minutes=n + 1))
+    admin = _client(db, world["users"]["admin"])
+    oldest = admin.get("/orgs/acme/notifications?limit=200").json()["items"][-1]["id"]
+
+    admin.post(f"/orgs/acme/notifications/{oldest}/dismiss")
+
+    # The bell lists the newest 50 and the oldest (dismissed) is one of the 5 it cuts: 54 unread, not 55.
+    assert admin.get("/orgs/acme/notifications").json()["unread_count"] == 54
+
+
+def test_a_permission_drift_that_changes_again_after_a_dismissal_is_unread_again(db, world):
+    db.execute(text(f"SET app.tenant_id = {world['acme'].tenant_id}"))
+    inst = installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=7, org_id=world["acme"].id
+    )
+    inst.granted_permissions = {"metadata": "read"}
+    inst.permissions_synced_at = inst.permissions_changed_at = NOW - timedelta(days=2)
+    db.commit()
+    admin = _client(db, world["users"]["admin"])
+    item_id = admin.get("/orgs/acme/notifications").json()["items"][0]["id"]
+    admin.post(f"/orgs/acme/notifications/{item_id}/dismiss")
+    assert admin.get("/orgs/acme/notifications").json()["unread_count"] == 0
+
+    inst.permissions_synced_at = inst.permissions_changed_at = datetime.now(timezone.utc) + timedelta(seconds=5)
+    db.commit()
+
+    feed = admin.get("/orgs/acme/notifications").json()
+    assert feed["items"][0]["read"] is False and feed["unread_count"] == 1
+
+
 def test_dismiss_rejects_ids_the_feed_cannot_produce_and_outsiders(db, world):
     admin = _client(db, world["users"]["admin"])
     for bad in ("nonsense", "critical_alert:abc", "critical_alert:1;drop", "other_kind:1"):

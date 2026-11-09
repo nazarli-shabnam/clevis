@@ -10,13 +10,15 @@ from src.core.db import NotificationDismissal
 _KEEP_DAYS = 120
 
 
-def get_dismissed(db: Session, user_id: int, tenant_id: int) -> set[str]:
+def get_dismissed(db: Session, user_id: int, tenant_id: int) -> dict[str, datetime]:
+    """item_id -> when this user dismissed it, so an item whose own date moves later (a repeat permission drift
+    keeps the installation's id) is not still treated as dismissed."""
     rows = db.execute(
-        select(NotificationDismissal.item_id).where(
+        select(NotificationDismissal.item_id, NotificationDismissal.dismissed_at).where(
             NotificationDismissal.user_id == user_id, NotificationDismissal.tenant_id == tenant_id
         )
     )
-    return set(rows.scalars())
+    return {item_id: dismissed_at for item_id, dismissed_at in rows}
 
 
 def dismiss(db: Session, user_id: int, tenant_id: int, item_id: str) -> None:
