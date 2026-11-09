@@ -127,22 +127,25 @@ def exchange_code_for_token(code: str, *, redirect_uri: str) -> str:
     """Swap the callback `code` for a GitHub user access token."""
     client_id, client_secret = _require_client()
     url = f"{_web_base()}/login/oauth/access_token"
-    with httpx.Client(timeout=20) as client:
-        resp = client.post(
-            url,
-            headers={"Accept": "application/json"},
-            data={
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "code": code,
-                "redirect_uri": redirect_uri,
-            },
-        )
-    resp.raise_for_status()
-    data = resp.json()
-    token = data.get("access_token")
+    try:
+        with httpx.Client(timeout=20) as client:
+            resp = client.post(
+                url,
+                headers={"Accept": "application/json"},
+                data={
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "code": code,
+                    "redirect_uri": redirect_uri,
+                },
+            )
+        resp.raise_for_status()
+        data = resp.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise GitHubOAuthError(f"GitHub token exchange failed: {exc.__class__.__name__}") from exc
+    token = data.get("access_token") if isinstance(data, dict) else None
     if not token:
-        raise GitHubOAuthError(data.get("error_description") or "No access_token in GitHub response")
+        raise GitHubOAuthError((data.get("error_description") if isinstance(data, dict) else None) or "No access_token in GitHub response")
     return token
 
 
@@ -163,15 +166,21 @@ def fetch_identity(user_token: str) -> GitHubIdentity:
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
-    with httpx.Client(timeout=20) as client:
-        u = client.get(f"{api}/user", headers=headers)
-        u.raise_for_status()
-        user = u.json()
-        email = user.get("email")
-        if not email:
-            e = client.get(f"{api}/user/emails", headers=headers)
-            e.raise_for_status()
-            email = _primary_verified_email(e.json())
+    try:
+        with httpx.Client(timeout=20) as client:
+            u = client.get(f"{api}/user", headers=headers)
+            u.raise_for_status()
+            user = u.json()
+            if not isinstance(user, dict) or "id" not in user or "login" not in user:
+                raise GitHubOAuthError("GitHub profile is missing id or login")
+            email = user.get("email")
+            if not email:
+                e = client.get(f"{api}/user/emails", headers=headers)
+                e.raise_for_status()
+                emails = e.json()
+                email = _primary_verified_email(emails) if isinstance(emails, list) else None
+    except (httpx.HTTPError, ValueError) as exc:
+        raise GitHubOAuthError(f"GitHub profile lookup failed: {exc.__class__.__name__}") from exc
     if not email:
         raise GitHubOAuthError("No verified email available from GitHub")
     return GitHubIdentity(
@@ -216,6 +225,7 @@ def list_user_org_memberships(user_token: str) -> list[GitHubOrgMembership]:
 
 
 def _primary_verified_email(emails: list[dict]) -> str | None:
+    emails = [e for e in emails if isinstance(e, dict)]
     for entry in emails:
         if entry.get("primary") and entry.get("verified"):
             return entry.get("email")

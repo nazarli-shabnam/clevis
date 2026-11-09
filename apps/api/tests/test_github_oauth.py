@@ -4,6 +4,7 @@ import time
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
+import httpx
 import jwt
 import pytest
 from pydantic import SecretStr
@@ -96,6 +97,61 @@ def test_exchange_code_error_raises(oauth_configured):
         mock_cls.return_value = client
         with pytest.raises(github_oauth.GitHubOAuthError):
             github_oauth.exchange_code_for_token("bad", redirect_uri=_REDIRECT)
+
+
+def _client_raising(method: str, exc: Exception):
+    client = MagicMock()
+    client.__enter__ = MagicMock(return_value=client)
+    client.__exit__ = MagicMock(return_value=False)
+    setattr(client, method, MagicMock(side_effect=exc))
+    return client
+
+
+@pytest.mark.parametrize("exc", [httpx.ReadTimeout("slow"), httpx.ConnectError("down"), ValueError("not json")])
+def test_exchange_code_transport_and_parse_errors_become_oauth_errors(oauth_configured, exc):
+    with patch("src.services.github_oauth.httpx.Client", return_value=_client_raising("post", exc)):
+        with pytest.raises(github_oauth.GitHubOAuthError):
+            github_oauth.exchange_code_for_token("code", redirect_uri=_REDIRECT)
+
+
+def test_exchange_code_5xx_becomes_an_oauth_error(oauth_configured):
+    resp = httpx.Response(500, request=httpx.Request("POST", "https://github.com/login/oauth/access_token"))
+    client = MagicMock()
+    client.__enter__ = MagicMock(return_value=client)
+    client.__exit__ = MagicMock(return_value=False)
+    client.post = MagicMock(return_value=resp)
+    with patch("src.services.github_oauth.httpx.Client", return_value=client):
+        with pytest.raises(github_oauth.GitHubOAuthError):
+            github_oauth.exchange_code_for_token("code", redirect_uri=_REDIRECT)
+
+
+@pytest.mark.parametrize("profile", [{"login": "gh", "email": "a@b.c"}, {"id": 1, "email": "a@b.c"}, ["not", "a", "dict"]])
+def test_fetch_identity_profile_without_id_or_login_is_an_oauth_error(profile):
+    client = MagicMock()
+    client.__enter__ = MagicMock(return_value=client)
+    client.__exit__ = MagicMock(return_value=False)
+    client.get = MagicMock(return_value=MagicMock(json=MagicMock(return_value=profile)))
+    with patch("src.services.github_oauth.httpx.Client", return_value=client):
+        with pytest.raises(github_oauth.GitHubOAuthError):
+            github_oauth.fetch_identity("gho_x")
+
+
+@pytest.mark.parametrize("emails", [{"message": "nope"}, ["junk", 3]])
+def test_fetch_identity_malformed_emails_response_is_an_oauth_error_not_a_crash(emails):
+    profile = MagicMock(json=MagicMock(return_value={"id": 1, "login": "gh", "email": None}))
+    client = MagicMock()
+    client.__enter__ = MagicMock(return_value=client)
+    client.__exit__ = MagicMock(return_value=False)
+    client.get = MagicMock(side_effect=[profile, MagicMock(json=MagicMock(return_value=emails))])
+    with patch("src.services.github_oauth.httpx.Client", return_value=client):
+        with pytest.raises(github_oauth.GitHubOAuthError):
+            github_oauth.fetch_identity("gho_x")
+
+
+def test_fetch_identity_timeout_becomes_an_oauth_error():
+    with patch("src.services.github_oauth.httpx.Client", return_value=_client_raising("get", httpx.ReadTimeout("slow"))):
+        with pytest.raises(github_oauth.GitHubOAuthError):
+            github_oauth.fetch_identity("gho_x")
 
 
 def test_fetch_identity_uses_profile_email():
