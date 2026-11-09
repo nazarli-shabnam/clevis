@@ -578,6 +578,22 @@ describe("api.security", () => {
     expect(result).toEqual(body);
   });
 
+  it("GETs one repo's row at /me/analytics/security-matrix/{owner}/{repo}", async () => {
+    const body = { repo: "demo" };
+    stubOkJson(body);
+    const result = await api.security.repoRow("acme", "demo", "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/analytics/security-matrix/acme/demo");
+    expect((init.headers as Record<string, string>)["X-GitHub-Token"]).toBe("ghp_test");
+    expect(result).toEqual(body);
+
+    stubOkJson(body);
+    await api.security.repoRow("a b", "c/d");
+    const [url2, init2] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url2)).toContain("/me/analytics/security-matrix/a%20b/c%2Fd");
+    expect((init2.headers as Record<string, string>)["X-GitHub-Token"]).toBeUndefined();
+  });
+
   it("GETs /me/repos/{owner}/{repo}/secret-scanning with no token header when omitted", async () => {
     const body = { repository: "acme/demo", alerts: [] };
     stubOkJson(body);

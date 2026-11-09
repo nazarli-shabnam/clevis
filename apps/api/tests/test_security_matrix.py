@@ -674,3 +674,85 @@ def test_security_matrix_personal_account_falls_back_to_user_repos_on_auth_misma
 
     assert resp.status_code == 200
     assert resp.json()["repos"][0]["repo"] == "dotfiles"
+
+
+def test_repo_security_row_requires_auth(db):
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: db
+    assert TestClient(app).get("/me/analytics/security-matrix/acme/api").status_code == 401
+
+
+def test_repo_security_row_no_token_returns_400(client):
+    assert client.get("/me/analytics/security-matrix/acme/api").status_code == 400
+
+
+def test_repo_security_row_returns_just_that_repo_without_listing_the_org(client):
+    def _request(method, path, params=None):
+        if path == "/repos/acme/api":
+            return {"name": "api", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}}
+        if path.endswith("/branches/main"):
+            return {"protected": True, "protection": {"allow_force_pushes": {"enabled": True}}}
+        if path.endswith("/dependabot/alerts"):
+            return [{"security_advisory": {"severity": "critical"}}, {"security_advisory": {"severity": "high"}}]
+        if path.endswith("/code-scanning/alerts"):
+            return [{"number": 1}]
+        return {}
+
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = _request
+        resp = client.get("/me/analytics/security-matrix/acme/api", headers={"X-GitHub-Token": "ghp_test"})
+
+    assert resp.status_code == 200
+    row = resp.json()
+    assert (row["repo"], row["dependabot_critical_count"], row["dependabot_high_count"]) == ("api", 1, 1)
+    assert row["code_scanning"] is False
+    assert row["force_push_allowed"] is True
+    mock_client.return_value.request_paginated.assert_not_called()
+
+
+def test_repo_security_row_uses_aggregate_alerts_when_connected(connected_client, db, acme_org_with_installation):
+    _insert_security_alert(
+        db, acme_org_with_installation.tenant_id, repo="acme/api", kind="dependabot", number=1,
+        state="open", severity="critical", details={},
+    )
+
+    def _request(method, path, params=None):
+        if path == "/repos/acme/api":
+            return {"name": "api", "default_branch": "main"}
+        if path.endswith("/branches/main"):
+            return {"protected": True, "protection": {}}
+        if path.endswith("/code-scanning/alerts"):
+            return []
+        raise AssertionError(f"dependabot should come from security_alerts, not {path}")
+
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = _request
+        resp = connected_client.get("/me/analytics/security-matrix/acme/api", headers={"X-GitHub-Token": "ghp_test"})
+
+    assert resp.status_code == 200
+    assert resp.json()["dependabot_critical_count"] == 1
+    assert resp.json()["alerts_source"] == "aggregate"
+
+
+def test_repo_security_row_github_error_maps_to_http_error(client):
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = _branch_error(404)
+        resp = client.get("/me/analytics/security-matrix/acme/missing", headers={"X-GitHub-Token": "ghp_test"})
+    assert resp.status_code == 400
+
+
+def test_repo_security_row_github_unreachable_maps_to_503(client):
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = httpx.ConnectError("down")
+        resp = client.get("/me/analytics/security-matrix/acme/api", headers={"X-GitHub-Token": "ghp_test"})
+    assert resp.status_code == 503
+
+
+def test_repo_security_row_rejects_path_like_names_and_odd_github_metadata(client):
+    assert client.get("/me/analytics/security-matrix/acme/a%20b", headers={"X-GitHub-Token": "ghp_test"}).status_code == 422
+    assert client.get("/me/analytics/security-matrix/acme/a%3Fb", headers={"X-GitHub-Token": "ghp_test"}).status_code == 422
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = ["not", "a", "repo"]
+        resp = client.get("/me/analytics/security-matrix/acme/api", headers={"X-GitHub-Token": "ghp_test"})
+    assert resp.status_code == 502
