@@ -25,6 +25,16 @@ export const WAIVABLE_CHECKS: Record<string, string> = {
   repository_actions_pinned_to_sha: "Actions pinned to a commit SHA",
 }
 
+/** Checks that never report which repos fail, so the API only accepts an org-wide waiver for them. */
+export const ORG_WIDE_ONLY_CHECKS = new Set([
+  "organization_members_mfa_required",
+  "repository_codeowners_present",
+  "repository_security_policy_present",
+  "repository_license_present",
+  "repository_no_stale_branches",
+  "repository_actions_pinned_to_sha",
+])
+
 const MAX_DAYS = 90
 
 /** A local calendar day as the YYYY-MM-DD an <input type="date"> uses (not the UTC day toISOString gives). */
@@ -52,11 +62,13 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
   const [owner, setOwner] = useState("")
   const [until, setUntil] = useState(dayInput(30))
 
+  const orgWideOnly = ORG_WIDE_ONLY_CHECKS.has(checkId)
+
   const create = useMutation({
     mutationFn: () =>
       api.waivers.create(orgLogin, {
         check_id: checkId,
-        repos: repos.split(",").map((r) => r.trim()).filter(Boolean),
+        repos: orgWideOnly ? [] : repos.split(",").map((r) => r.trim()).filter(Boolean),
         reason,
         owner,
         // End of the chosen day, local time.
@@ -149,10 +161,14 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
             ))}
           </select>
         </div>
-        <div>
-          <label htmlFor="waiver-repos" className="text-xs font-medium block mb-1.5">Repositories (optional)</label>
-          <Input id="waiver-repos" placeholder="legacy-api, old-site — blank = whole organization" value={repos} onChange={(e) => setRepos(e.target.value)} />
-        </div>
+        {orgWideOnly ? (
+          <p className="text-xs text-muted-foreground">This check does not report which repositories fail, so the waiver covers the whole organization.</p>
+        ) : (
+          <div>
+            <label htmlFor="waiver-repos" className="text-xs font-medium block mb-1.5">Repositories (optional)</label>
+            <Input id="waiver-repos" placeholder="legacy-api, old-site — blank = whole organization" value={repos} onChange={(e) => setRepos(e.target.value)} />
+          </div>
+        )}
         <div>
           <label htmlFor="waiver-reason" className="text-xs font-medium block mb-1.5">Reason</label>
           <Input id="waiver-reason" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />

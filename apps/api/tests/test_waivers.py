@@ -242,6 +242,27 @@ def test_waiver_validation(db, world):
     assert admin.post("/orgs/acme-w/waivers", json=_body(days=89)).status_code == 201
 
 
+@pytest.mark.parametrize("check_id", sorted(waiver_service.ORG_WIDE_ONLY_CHECK_IDS))
+def test_a_repo_scoped_waiver_is_refused_for_checks_that_never_name_repos(db, world, check_id):
+    admin = _client(db, world["users"]["admin"])
+    resp = admin.post("/orgs/acme-w/waivers", json=_body(check_id=check_id, repos=["legacy"]))
+    assert resp.status_code == 422 and "whole organization" in resp.json()["detail"]
+    assert admin.post("/orgs/acme-w/waivers", json=_body(check_id=check_id)).status_code == 201
+
+
+def test_the_org_wide_only_checks_are_mfa_and_the_five_hygiene_checks():
+    assert len(waiver_service.ORG_WIDE_ONLY_CHECK_IDS) == 6
+    assert "organization_members_mfa_required" in waiver_service.ORG_WIDE_ONLY_CHECK_IDS
+    assert BP not in waiver_service.ORG_WIDE_ONLY_CHECK_IDS
+
+
+def test_updating_a_waiver_to_a_repo_scope_on_an_org_wide_only_check_is_refused(db, world):
+    admin = _client(db, world["users"]["admin"])
+    created = admin.post("/orgs/acme-w/waivers", json=_body(check_id="repository_license_present")).json()
+    resp = admin.put(f"/orgs/acme-w/waivers/{created['id']}", json=_body(check_id="repository_license_present", repos=["x"]))
+    assert resp.status_code == 422
+
+
 def test_waivers_are_tenant_scoped(db, world):
     other = org_repo.get_or_create(db, github_login="globex-w")
     # Read the id before committing: the commit expires the instance, and a reload would run outside

@@ -31,6 +31,12 @@ from src.services.analytics_service import tally
 MAX_WAIVER_DAYS = 90
 MAX_WAIVERS_PER_TENANT = 100
 
+# Checks whose result never names the failing repos (org-level MFA; the hygiene checks only report counters),
+# so a repo-scoped waiver for one can never match and would silently do nothing: only org-wide ones are accepted.
+ORG_WIDE_ONLY_CHECK_IDS = frozenset(
+    cls.metadata.check_id for cls in (OrgMFARequired, *HYGIENE_CHECKS)
+)
+
 KNOWN_CHECK_IDS = frozenset(
     cls.metadata.check_id
     for cls in (
