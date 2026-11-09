@@ -142,8 +142,22 @@ def test_score_returns_latest_scan_without_check_values(db, acme):
     body = resp.json()
     assert body["score"] == 80 and body["org"] == "acme"
     assert [c["status"] for c in body["checks"]] == ["fail", "pass"]
-    assert all(set(c) == {"id", "title", "status"} for c in body["checks"])  # no per-check values
+    assert all(set(c) == {"id", "title", "status", "waived", "scored"} for c in body["checks"])  # no per-check values
     assert db.query(ApiToken).one().last_used_at is not None
+
+
+def test_score_marks_a_waived_check_as_waived_and_unscored(db, acme):
+    token = _new_token(db, acme)
+    checks = [dict(c) for c in CHECKS]
+    checks[0].update(waived={"until": None}, scored=False)
+    _scan(db, acme["org"], score=100, checks=checks)
+
+    body = _client(db).get("/api/v1/orgs/acme/score", headers=_bearer(token)).json()
+
+    by_id = {c["id"]: c for c in body["checks"]}
+    assert by_id["repository_secret_scanning_enabled"]["status"] == "fail"
+    assert (by_id["repository_secret_scanning_enabled"]["waived"], by_id["repository_secret_scanning_enabled"]["scored"]) == (True, False)
+    assert (by_id["organization_members_mfa_required"]["waived"], by_id["organization_members_mfa_required"]["scored"]) == (False, True)
 
 
 @pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer clv_nope"}, {"Authorization": "Basic abc"}, {"Authorization": "Bearer "}])
@@ -319,6 +333,12 @@ def _load_check():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_action_evaluate_ignores_a_waived_named_check():
+    check = _load_check()
+    data = {"score": 100, "checks": [{"id": "a", "title": "A", "status": "fail", "waived": True, "scored": False}]}
+    assert check.evaluate(data, 0, ["a"]) == []
 
 
 def test_action_evaluate_threshold_and_named_checks():
