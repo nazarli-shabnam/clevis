@@ -56,6 +56,7 @@ Cursor = tuple[datetime, str, int]
 
 
 def _item_key(item: dict) -> Cursor:
+    """The (time, kind, row id) sort key of a feed item, the same order the cursor uses."""
     kind, _, row_id = item["id"].partition(":")
     return (_aware(item["at"]), kind, int(row_id))
 
@@ -88,6 +89,7 @@ def _failed_job_filters(tenant_id: int, since: datetime) -> list:
 def _critical_alert_items(
     db: Session, tenant_id: int, since: datetime, per_source: int, cursor: Cursor | None = None
 ) -> list[dict]:
+    """New critical Dependabot alerts after the cursor, newest first."""
     q = db.query(SecurityAlert).filter(
         *_critical_alert_filters(tenant_id, since),
         *_after_cursor(SecurityAlert.ingested_at, SecurityAlert.id, "critical_alert", cursor),
@@ -111,6 +113,7 @@ def _score_drop_items(
 ) -> list[dict]:
     # Only the cheap columns are read for every scan; ``checks_json`` is loaded below for scans that
     # actually dropped, since that is the only place it is needed.
+    """Score drops between comparable scans in the window, newest first, after the cursor."""
     q = db.query(
         ScanResult.id, ScanResult.score, ScanResult.created_at, ScanResult.failed_checks, ScanResult.total_checks
     ).filter(func.lower(ScanResult.owner) == org_login.lower(), ScanResult.tenant_id == tenant_id)
@@ -167,6 +170,7 @@ def _score_drop_items(
 def _failed_job_items(
     db: Session, org_login: str, tenant_id: int, since: datetime, per_source: int, cursor: Cursor | None = None
 ) -> list[dict]:
+    """Failed background jobs after the cursor, newest first."""
     q = db.query(Job).filter(
         *_failed_job_filters(tenant_id, since),
         *_after_cursor(Job.updated_at, Job.id, "job_failed", cursor),
@@ -266,6 +270,7 @@ def get_notifications(
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
+    """The caller's notification feed for this org, newest first, paged with the `before`/`before_id` cursor."""
     tenant_id = ctx.org.tenant_id
     since = datetime.now(timezone.utc) - timedelta(days=days)
     if before_id is not None and before is None:

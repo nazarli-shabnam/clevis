@@ -207,6 +207,7 @@ def test_the_list_requires_authentication(client):
 
 
 def test_registering_records_the_new_accounts_session(client, owner):
+    """Registering records the new accounts session."""
     resp = client.post(
         "/auth/register",
         json={"email": "member@example.com", "password": PASSWORD},
@@ -219,6 +220,7 @@ def test_registering_records_the_new_accounts_session(client, owner):
 
 
 def test_revoking_the_same_session_twice_is_a_404_not_a_server_error(client, owner):
+    """Revoking the same session twice is a 404 not a server error."""
     phone = _login(client, ua=SAFARI)
     url = f"/auth/me/sessions/{_jti(phone)}"
 

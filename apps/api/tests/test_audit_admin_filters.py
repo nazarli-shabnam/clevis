@@ -115,6 +115,7 @@ def test_before_id_beyond_the_database_integer_range_is_rejected_not_a_server_er
 
 
 def test_filters_by_action_prefix_and_treats_like_wildcards_literally(db):
+    """Filters by action prefix and treats like wildcards literally."""
     save = _row(db, "a", "token.save", "t", 1)
     delete = _row(db, "a", "token.delete", "t", 2)
     _row(db, "a", "cache.clear.queued", "t", 3)
@@ -127,6 +128,7 @@ def test_filters_by_action_prefix_and_treats_like_wildcards_literally(db):
 
 
 def test_action_prefix_combines_with_exact_action_and_the_cursor(db):
+    """Action prefix combines with exact action and the cursor."""
     ids = [_row(db, "a", "token.save", "t", d) for d in range(1, 5)]
     _row(db, "a", "cache.clear.queued", "t", 5)
     client = _client(db)
@@ -140,6 +142,7 @@ def test_action_prefix_combines_with_exact_action_and_the_cursor(db):
 
 
 def test_cursor_combines_with_target_action_and_date_filters(db):
+    """Cursor combines with target action and date filters."""
     old = _row(db, "a", "token.save", "acme/api", 2)
     mid = _row(db, "a", "token.save", "acme/api", 5)
     new = _row(db, "a", "token.save", "acme/api", 8)
@@ -152,6 +155,7 @@ def test_cursor_combines_with_target_action_and_date_filters(db):
 
 
 def test_a_timestamp_without_an_offset_is_read_as_utc(db):
+    """A timestamp without an offset is read as utc."""
     _row(db, "a", "x", "t", 1)
     inside = _row(db, "a", "x", "t", 5)
     resp = _client(db).get("/audit", params={"since": "2026-03-05T00:00:00", "until": "2026-03-06T00:00:00"})
@@ -159,6 +163,7 @@ def test_a_timestamp_without_an_offset_is_read_as_utc(db):
 
 
 def test_actions_lists_every_distinct_action(db):
+    """Actions lists every distinct action."""
     _row(db, "a", "token.save", "t", 1)
     _row(db, "a", "token.save", "t", 2)
     _row(db, "a", "cache.clear.queued", "t", 3)
@@ -168,6 +173,7 @@ def test_actions_lists_every_distinct_action(db):
 
 
 def test_a_non_admin_is_refused_with_filters_too(db):
+    """A non admin is refused with filters too."""
     app = FastAPI()
     app.include_router(audit_router, prefix="/audit")
     app.dependency_overrides[get_db] = lambda: db

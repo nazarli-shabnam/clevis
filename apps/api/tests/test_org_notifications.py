@@ -461,10 +461,12 @@ def test_window_and_limit_are_bounded(db, world):
 
 
 def _at(resp_json):
+    """ at."""
     return [i["at"] for i in resp_json["items"]]
 
 
 def test_before_cursor_pages_older_items_across_sources_without_overlap(db, world):
+    """Before cursor pages older items across sources without overlap."""
     t = world["acme"].tenant_id
     for n in range(3):
         _alert(db, t, number=n, when=NOW - timedelta(hours=n + 1))
@@ -485,6 +487,7 @@ def test_before_cursor_pages_older_items_across_sources_without_overlap(db, worl
 
 
 def test_before_cursor_also_bounds_the_unlimited_sources_and_score_drops(db, world):
+    """Before cursor also bounds the unlimited sources and score drops."""
     t = world["acme"].tenant_id
     _scan(db, t, 90, age_days=6)
     _scan(db, t, 70, age_days=5)
@@ -501,6 +504,7 @@ def test_before_cursor_also_bounds_the_unlimited_sources_and_score_drops(db, wor
 
 
 def test_a_dismissal_older_than_the_keep_window_is_pruned_on_the_next_dismissal(db, world):
+    """A dismissal older than the keep window is pruned on the next dismissal."""
     from src.core.db import NotificationDismissal
 
     t = world["acme"].tenant_id
@@ -519,6 +523,7 @@ def test_a_dismissal_older_than_the_keep_window_is_pruned_on_the_next_dismissal(
 
 
 def test_before_id_cursor_reaches_items_sharing_one_timestamp(db, world):
+    """Before id cursor reaches items sharing one timestamp."""
     t = world["acme"].tenant_id
     for n in range(5):
         _alert(db, t, number=n, when=NOW - timedelta(hours=1))  # one batch, one ingested_at
