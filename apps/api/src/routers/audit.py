@@ -33,6 +33,7 @@ def _utc(value: datetime | None) -> datetime | None:
 @router.get("", response_model=list[AuditLogOut])
 def list_audit_logs(
     action: str | None = Query(default=None, description="Filter by action type"),
+    action_prefix: str | None = Query(default=None, max_length=100, description="Actions starting with this, e.g. 'token.'"),
     actor: str | None = Query(default=None, max_length=320, description="Exact actor (case-insensitive)"),
     target: str | None = Query(default=None, max_length=200, description="Target containing this text"),
     since: datetime | None = Query(default=None, description="Created at or after this time"),
@@ -45,8 +46,16 @@ def list_audit_logs(
     since, until = _utc(since), _utc(until)
     if since is not None and until is not None and since >= until:
         raise HTTPException(status_code=422, detail="'since' must be earlier than 'until'")
-    # Read through a SECURITY DEFINER function (migration 0075): this is the instance-wide view, and
+    # Read through a SECURITY DEFINER function (migrations 0075/0078): this is the instance-wide view, and
     # there is no tenant context to set, so under clevis_api RLS a plain query would always return [].
     return audit_repo.list_for_admin(
-        db, action=action, actor=actor, target=target, since=since, until=until, before_id=before_id, limit=limit
+        db,
+        action=action,
+        action_prefix=action_prefix,
+        actor=actor,
+        target=target,
+        since=since,
+        until=until,
+        before_id=before_id,
+        limit=limit,
     )

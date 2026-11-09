@@ -112,3 +112,72 @@ def test_a_before_id_cursor_beyond_the_integer_range_is_rejected_not_a_500(db):
 
 def test_before_id_beyond_the_database_integer_range_is_rejected_not_a_server_error(db):
     assert _client(db).get("/audit", params={"before_id": 2_147_483_648}).status_code == 422
+
+
+def test_filters_by_action_prefix_and_treats_like_wildcards_literally(db):
+    """Filters by action prefix and treats like wildcards literally."""
+    save = _row(db, "a", "token.save", "t", 1)
+    delete = _row(db, "a", "token.delete", "t", 2)
+    _row(db, "a", "cache.clear.queued", "t", 3)
+    odd = _row(db, "a", "50%_off.apply", "t", 4)
+    client = _client(db)
+    assert _ids(client.get("/audit", params={"action_prefix": "token."})) == [delete, save]
+    # "%" and "_" in the prefix are literal, not wildcards.
+    assert _ids(client.get("/audit", params={"action_prefix": "0%_"})) == []
+    assert _ids(client.get("/audit", params={"action_prefix": "50%_"})) == [odd]
+
+
+def test_action_prefix_combines_with_exact_action_and_the_cursor(db):
+    """Action prefix combines with exact action and the cursor."""
+    ids = [_row(db, "a", "token.save", "t", d) for d in range(1, 5)]
+    _row(db, "a", "cache.clear.queued", "t", 5)
+    client = _client(db)
+    assert _ids(client.get("/audit", params={"action_prefix": "token.", "action": "token.delete"})) == []
+    first = _ids(client.get("/audit", params={"action_prefix": "token.", "limit": 2}))
+    assert first == [ids[3], ids[2]]
+    assert _ids(client.get("/audit", params={"action_prefix": "token.", "limit": 2, "before_id": first[-1]})) == [
+        ids[1],
+        ids[0],
+    ]
+
+
+def test_cursor_combines_with_target_action_and_date_filters(db):
+    """Cursor combines with target action and date filters."""
+    old = _row(db, "a", "token.save", "acme/api", 2)
+    mid = _row(db, "a", "token.save", "acme/api", 5)
+    new = _row(db, "a", "token.save", "acme/api", 8)
+    _row(db, "a", "token.delete", "acme/api", 6)
+    _row(db, "a", "token.save", "other", 7)
+    client = _client(db)
+    params = {"action": "token.save", "target": "acme/", "since": "2026-03-01T00:00:00Z", "until": "2026-03-20T00:00:00Z"}
+    assert _ids(client.get("/audit", params={**params, "before_id": new})) == [mid, old]
+    assert _ids(client.get("/audit", params={**params, "before_id": new, "limit": 500})) == [mid, old]
+
+
+def test_a_timestamp_without_an_offset_is_read_as_utc(db):
+    """A timestamp without an offset is read as utc."""
+    _row(db, "a", "x", "t", 1)
+    inside = _row(db, "a", "x", "t", 5)
+    resp = _client(db).get("/audit", params={"since": "2026-03-05T00:00:00", "until": "2026-03-06T00:00:00"})
+    assert _ids(resp) == [inside]
+
+
+def test_actions_lists_every_distinct_action(db):
+    """Actions lists every distinct action."""
+    _row(db, "a", "token.save", "t", 1)
+    _row(db, "a", "token.save", "t", 2)
+    _row(db, "a", "cache.clear.queued", "t", 3)
+    resp = _client(db).get("/audit/actions")
+    assert resp.status_code == 200
+    assert {"token.save", "cache.clear.queued"} <= set(resp.json())
+
+
+def test_a_non_admin_is_refused_with_filters_too(db):
+    """A non admin is refused with filters too."""
+    app = FastAPI()
+    app.include_router(audit_router, prefix="/audit")
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[require_auth] = lambda: UserOut(id=2, email="m@example.com", name=None, is_workspace_admin=False)
+    client = TestClient(app)
+    assert client.get("/audit", params={"actor": "a", "action_prefix": "token."}).status_code == 403
+    assert client.get("/audit/actions").status_code == 403

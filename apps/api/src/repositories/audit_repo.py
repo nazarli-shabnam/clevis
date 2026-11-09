@@ -64,6 +64,7 @@ def list_for_admin(
     db: Session,
     *,
     action: str | None = None,
+    action_prefix: str | None = None,
     actor: str | None = None,
     target: str | None = None,
     since: datetime | None = None,
@@ -72,18 +73,20 @@ def list_for_admin(
     limit: int = 100,
 ) -> list[AuditLog]:
     """The instance-wide audit log, newest first, for workspace admins. Reads through the SECURITY DEFINER
-    function from migration 0075 (there is no tenant context for audit_logs RLS to match); same filter
-    semantics as `list_for_tenant`: actor is an exact case-insensitive match, target is a substring."""
+    function from migrations 0075/0078 (there is no tenant context for audit_logs RLS to match); same
+    filter semantics as `list_for_tenant`: action_prefix is a literal prefix, actor is an exact
+    case-insensitive match, target is a substring."""
     return (
         db.query(AuditLog)
         .from_statement(
             text(
                 "SELECT * FROM audit_logs_for_admin_filtered("
-                ":action, :actor, :target, :since, :until, :before_id, :limit)"
+                ":action, :action_prefix, :actor, :target, :since, :until, :before_id, :limit)"
             )
         )
         .params(
             action=action or None,
+            action_prefix=f"{_like_escape(action_prefix)}%" if action_prefix else None,
             actor=_like_escape(actor) if actor else None,
             target=f"%{_like_escape(target)}%" if target else None,
             since=since,

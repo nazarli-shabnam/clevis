@@ -204,3 +204,25 @@ def test_a_legacy_token_without_a_jti_still_authenticates_and_lists_other_sessio
 def test_the_list_requires_authentication(client):
     assert client.get("/auth/me/sessions").status_code == 401
     assert client.delete("/auth/me/sessions/x").status_code == 401
+
+
+def test_registering_records_the_new_accounts_session(client, owner):
+    """Registering records the new accounts session."""
+    resp = client.post(
+        "/auth/register",
+        json={"email": "member@example.com", "password": PASSWORD},
+        headers={"User-Agent": SAFARI},
+    )
+    assert resp.status_code == 201
+
+    rows = _sessions(client, resp.json()["access_token"])
+    assert len(rows) == 1 and rows[0]["current"] is True and rows[0]["user_agent"] == SAFARI
+
+
+def test_revoking_the_same_session_twice_is_a_404_not_a_server_error(client, owner):
+    """Revoking the same session twice is a 404 not a server error."""
+    phone = _login(client, ua=SAFARI)
+    url = f"/auth/me/sessions/{_jti(phone)}"
+
+    assert client.delete(url, headers=_bearer(owner)).status_code == 204
+    assert client.delete(url, headers=_bearer(owner)).status_code == 404

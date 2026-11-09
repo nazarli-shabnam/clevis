@@ -458,3 +458,82 @@ def test_window_and_limit_are_bounded(db, world):
     admin = _client(db, world["users"]["admin"])
     for params in ({"days": 0}, {"days": 91}, {"limit": 0}, {"limit": 201}):
         assert admin.get("/orgs/acme/notifications", params=params).status_code == 422
+
+
+def _at(resp_json):
+    """ at."""
+    return [i["at"] for i in resp_json["items"]]
+
+
+def test_before_cursor_pages_older_items_across_sources_without_overlap(db, world):
+    """Before cursor pages older items across sources without overlap."""
+    t = world["acme"].tenant_id
+    for n in range(3):
+        _alert(db, t, number=n, when=NOW - timedelta(hours=n + 1))
+    jobs = [_failed_job(db, t, age_days=1 + n) for n in range(2)]
+    admin = _client(db, world["users"]["admin"])
+
+    first = admin.get("/orgs/acme/notifications", params={"limit": 2}).json()
+    assert len(first["items"]) == 2 and first["unread_count"] == 5
+    second = admin.get("/orgs/acme/notifications", params={"limit": 2, "before": first["items"][-1]["at"]}).json()
+    third = admin.get("/orgs/acme/notifications", params={"limit": 2, "before": second["items"][-1]["at"]}).json()
+
+    paged = _ids(first) + _ids(second) + _ids(third)
+    assert len(paged) == len(set(paged)) == 5
+    assert [i for i in paged if i.startswith("job_failed:")] == [f"job_failed:{j}" for j in jobs]
+    assert paged == _ids(admin.get("/orgs/acme/notifications").json())  # same order as the unpaged feed
+    # Later pages leave the unread badge to the first page.
+    assert second["unread_count"] == 0 and third["unread_count"] == 0
+
+
+def test_before_cursor_also_bounds_the_unlimited_sources_and_score_drops(db, world):
+    """Before cursor also bounds the unlimited sources and score drops."""
+    t = world["acme"].tenant_id
+    _scan(db, t, 90, age_days=6)
+    _scan(db, t, 70, age_days=5)
+    _scan(db, t, 50, age_days=1)
+    admin = _client(db, world["users"]["admin"])
+
+    both = admin.get("/orgs/acme/notifications").json()
+    assert [i["title"] for i in both["items"]] == [
+        "Security score dropped from 70 to 50",
+        "Security score dropped from 90 to 70",
+    ]
+    older = admin.get("/orgs/acme/notifications", params={"before": both["items"][0]["at"]}).json()
+    assert [i["title"] for i in older["items"]] == ["Security score dropped from 90 to 70"]
+
+
+def test_a_dismissal_older_than_the_keep_window_is_pruned_on_the_next_dismissal(db, world):
+    """A dismissal older than the keep window is pruned on the next dismissal."""
+    from src.core.db import NotificationDismissal
+
+    t = world["acme"].tenant_id
+    admin_user = world["users"]["admin"]
+    _alert(db, t, number=1, when=NOW - timedelta(minutes=5))
+    admin = _client(db, admin_user)
+    item_id = admin.get("/orgs/acme/notifications").json()["items"][0]["id"]
+    db.add(NotificationDismissal(user_id=admin_user.id, tenant_id=t, item_id="critical_alert:999999",
+                                 dismissed_at=NOW - timedelta(days=121)))
+    db.commit()
+
+    assert admin.post(f"/orgs/acme/notifications/{item_id}/dismiss").status_code == 204
+
+    kept = {r.item_id for r in db.query(NotificationDismissal).filter_by(user_id=admin_user.id, tenant_id=t)}
+    assert kept == {item_id}
+
+
+def test_before_id_cursor_reaches_items_sharing_one_timestamp(db, world):
+    """Before id cursor reaches items sharing one timestamp."""
+    t = world["acme"].tenant_id
+    for n in range(5):
+        _alert(db, t, number=n, when=NOW - timedelta(hours=1))  # one batch, one ingested_at
+    admin = _client(db, world["users"]["admin"])
+    paged, params = [], {"limit": 2}
+    while True:
+        page = admin.get("/orgs/acme/notifications", params=params).json()["items"]
+        if not page:
+            break
+        paged += [i["id"] for i in page]
+        params = {"limit": 2, "before": page[-1]["at"], "before_id": page[-1]["id"]}
+    assert len(paged) == len(set(paged)) == 5
+    assert admin.get("/orgs/acme/notifications", params={"before_id": "critical_alert:1"}).status_code == 422

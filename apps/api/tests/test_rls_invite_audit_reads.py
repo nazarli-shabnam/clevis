@@ -73,7 +73,7 @@ def test_audit_log_reads_are_instance_wide_with_no_tenant_context(tenant_session
 
     # Called directly, so every Query() default must be passed explicitly (it would be a FieldInfo, not None).
     rows = audit_router.list_audit_logs(
-        action="rls.reads.test", actor=None, target=None, since=None, until=None, before_id=None,
+        action="rls.reads.test", action_prefix=None, actor=None, target=None, since=None, until=None, before_id=None,
         limit=10, db=session, _user=None,
     )
     assert [r.action for r in rows] == ["rls.reads.test"]

@@ -700,4 +700,10 @@ describe("AppSidebar scope switcher", () => {
     const link = await screen.findByRole("link", { name: /Audit Log/ });
     expect(link).not.toHaveTextContent("Soon");
   });
+
+  it("links to the Notifications page for every signed-in user", async () => {
+    renderSidebar();
+    const link = await screen.findByRole("link", { name: /Notifications/ });
+    expect(link).toHaveAttribute("href", "/notifications");
+  });
 });

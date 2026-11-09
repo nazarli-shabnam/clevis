@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const feedMock = vi.fn();
 const markReadMock = vi.fn();
 const dismissMock = vi.fn();
+const prefsMock = vi.fn();
 let scope: { kind: "org" | "personal"; login: string } | null = { kind: "org", login: "acme" };
 
 vi.mock("@/lib/active-scope", () => ({ useActiveScope: () => ({ scope }) }));
@@ -14,6 +15,7 @@ vi.mock("@/lib/api/client", () => ({
       feed: (...a: unknown[]) => feedMock(...a),
       markRead: (...a: unknown[]) => markReadMock(...a),
       dismiss: (...a: unknown[]) => dismissMock(...a),
+      preferences: (...a: unknown[]) => prefsMock(...a),
     },
   },
 }));
@@ -38,7 +40,7 @@ function renderPage() {
 
 describe("NotificationsPage", () => {
   beforeEach(() => {
-    [feedMock, markReadMock, dismissMock].forEach((m) => m.mockReset());
+    [feedMock, markReadMock, dismissMock, prefsMock].forEach((m) => m.mockReset());
     markReadMock.mockResolvedValue(null);
     dismissMock.mockResolvedValue(null);
     scope = { kind: "org", login: "acme" };
@@ -50,7 +52,7 @@ describe("NotificationsPage", () => {
     renderPage();
 
     await screen.findByText("title a");
-    expect(feedMock).toHaveBeenCalledWith("acme", { days: 90, limit: 200 });
+    expect(feedMock).toHaveBeenCalledWith("acme", { days: 90, limit: 50 });
   });
 
   it("filters by kind and by unread, and says so when nothing matches", async () => {
@@ -134,11 +136,41 @@ describe("NotificationsPage", () => {
     expect(await screen.findByText("title a")).toBeInTheDocument();
   });
 
-  it("says how many notifications the page lists at most", async () => {
-    feedMock.mockResolvedValue(feed(Array.from({ length: 200 }, (_, i) => item(`n${i}`, "score_drop", true))));
+  it("loads older notifications with the last item's time as the cursor, and stops on a short page", async () => {
+    const full = Array.from({ length: 50 }, (_, i) =>
+      item(`n${i}`, "score_drop", true, { at: `2026-02-${String(28 - (i % 27)).padStart(2, "0")}T00:00:00Z` }),
+    );
+    feedMock.mockResolvedValueOnce(feed(full));
     renderPage();
 
-    expect(await screen.findByText(/lists at most 200 notifications/)).toBeInTheDocument();
+    const loadMore = await screen.findByRole("button", { name: "Load more" });
+    feedMock.mockResolvedValueOnce(feed([item("older", "job_failed", true, { at: "2025-12-01T00:00:00Z" })]));
+    fireEvent.click(loadMore);
+    await waitFor(() =>
+      expect(feedMock).toHaveBeenLastCalledWith("acme", { days: 90, limit: 50, before: full[49].at, before_id: full[49].id }),
+    );
+    expect(await screen.findByText("title older")).toBeInTheDocument();
+    expect(screen.getByText("title n0")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+  });
+
+  it("shows no Load more when the first page is short", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "score_drop")]));
+    renderPage();
+
+    await screen.findByText("title a");
+    expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+  });
+
+  it("opens the same per-kind preferences as the bell, so a muted kind can be shown again", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "score_drop")]));
+    prefsMock.mockResolvedValue({ muted_kinds: ["job_failed"] });
+    renderPage();
+
+    await screen.findByText("title a");
+    fireEvent.click(screen.getByRole("button", { name: "Preferences" }));
+    expect(await screen.findByText("Show these in your notifications:")).toBeInTheDocument();
+    await waitFor(() => expect(prefsMock).toHaveBeenCalledWith("acme"));
   });
 
   it("makes no request for a personal scope and explains why", async () => {

@@ -412,8 +412,8 @@ export interface OrgAuditFilters {
   limit?: number
 }
 
-/** `GET /audit` takes an exact `action` (no prefix match) where the org view takes `action_prefix`. */
-export type AdminAuditFilters = Omit<OrgAuditFilters, "action_prefix"> & { action?: string }
+/** `GET /audit` takes the org view's filters plus an exact `action` (the dropdown); both may be combined. */
+export type AdminAuditFilters = OrgAuditFilters & { action?: string }
 
 export interface AuditLogOut {
   id: number

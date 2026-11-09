@@ -10,16 +10,17 @@ import { EmptyStateNoAccount } from "@/components/empty-state"
 import { useActiveScope } from "@/lib/active-scope"
 import { relativeTime } from "@/lib/format"
 import { KIND_LABEL, KIND_ORDER } from "@/lib/notification-kinds"
+import { PreferencesPanel } from "@/components/notification-bell"
 import { useNotifications } from "@/lib/use-notifications"
 import type { NotificationKind } from "@/lib/api/types"
 
-// Mirrors the API's cap for the full feed (`limit` / `days`).
-const FULL_FEED_LIMIT = 200
+// Mirrors the API's window for the full feed (`days`).
 const FULL_FEED_DAYS = 90
 
 export default function NotificationsPage() {
   const { scope } = useActiveScope()
-  const { org, query, markRead, dismiss, items, unread } = useNotifications({ full: true })
+  const { org, query, markRead, dismiss, items, unread, hasMore, loadingMore, loadMoreFailed, refreshFailed, loadMore } = useNotifications({ full: true })
+  const [customizing, setCustomizing] = useState(false)
   // Kinds shown; all by default. Client-side: the feed is already one bounded request, and the per-user
   // mute preferences (in the bell) are what hide a kind server-side.
   const [shown, setShown] = useState<Set<NotificationKind>>(new Set(KIND_ORDER))
@@ -61,11 +62,17 @@ export default function NotificationsPage() {
               <input type="checkbox" checked={unreadOnly} onChange={(e) => setUnreadOnly(e.target.checked)} />
               Unread only
             </label>
-            <Button size="sm" variant="outline" disabled={unread === 0 || markRead.isPending} onClick={() => markRead.mutate()}>
+            {org && (
+              <Button size="sm" variant="ghost" aria-expanded={customizing} onClick={() => setCustomizing((v) => !v)}>
+                Preferences
+              </Button>
+            )}
+            <Button size="sm" variant="outline" disabled={unread === 0 || items.length === 0 || markRead.isPending} onClick={() => markRead.mutate()}>
               Mark all read
             </Button>
           </div>
         </div>
+        {customizing && org && <PreferencesPanel org={org} />}
         {markRead.isError && (
           <p role="alert" className="px-4 py-2 text-xs text-destructive border-b border-border">
             Couldn&apos;t mark as read: {markRead.error.message}
@@ -122,10 +129,28 @@ export default function NotificationsPage() {
             ))}
           </ul>
         )}
-        {items.length >= FULL_FEED_LIMIT && (
-          <p className="px-4 py-2 text-xs text-muted-foreground border-t border-border">
-            This page lists at most {FULL_FEED_LIMIT} notifications.
-          </p>
+        {refreshFailed && (
+          <div className="px-4 py-3 border-t border-border flex items-center gap-3">
+            <p role="alert" className="text-xs text-destructive">
+              Couldn&apos;t refresh notifications.
+            </p>
+            <Button size="sm" variant="outline" disabled={query.isFetching} onClick={() => query.refetch()}>
+              Retry
+            </Button>
+          </div>
+        )}
+        {hasMore && (
+          <div className="px-4 py-3 border-t border-border flex items-center gap-3">
+            {/* Disabled while a mark-read refetch is in flight so the next page is read after it. */}
+            <Button size="sm" variant="outline" disabled={loadingMore || markRead.isPending || dismiss.isPending} onClick={loadMore}>
+              {loadingMore ? "Loading…" : loadMoreFailed ? "Retry" : "Load more"}
+            </Button>
+            {loadMoreFailed && (
+              <p role="alert" className="text-xs text-destructive">
+                Couldn&apos;t load more notifications.
+              </p>
+            )}
+          </div>
         )}
       </div>
     </>

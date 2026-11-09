@@ -196,7 +196,6 @@ export default function AuditPage() {
           filtered={filtered}
           onApply={() => setApplied(form)}
           onClear={() => setApplied(EMPTY_FORM)}
-          showActionPrefix={false}
         />
 
         {isLoading ? (

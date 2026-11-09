@@ -25,6 +25,10 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
   -v api_password="$API_DB_PASSWORD" -v db_name="$POSTGRES_DB" <<-'EOSQL'
 BEGIN;
 
+-- Same lock as migration 0078: whichever of the two runs second sees the other's committed
+-- function/role, so the audit_logs_for_admin_filtered grant below cannot be skipped by both.
+SELECT pg_advisory_xact_lock(hashtext('clevis:api-role-grants'));
+
 -- psql's :'var' substitution doesn't reach inside a dollar-quoted string, so the DO
 -- block is built as text via format()/%L (which also handles escaping the password
 -- safely) and executed with \gexec, rather than interpolating :'api_password'
@@ -230,6 +234,10 @@ BEGIN
   -- Migration 0075's filtered workspace-admin audit read (PUBLIC EXECUTE is revoked there).
   IF to_regprocedure('public.audit_logs_for_admin_filtered(text, text, text, timestamptz, timestamptz, integer, integer)') IS NOT NULL THEN
     GRANT EXECUTE ON FUNCTION public.audit_logs_for_admin_filtered(text, text, text, timestamptz, timestamptz, integer, integer) TO clevis_api;
+  END IF;
+  -- Migration 0078's action-prefix overload of the same function (also PUBLIC-revoked).
+  IF to_regprocedure('public.audit_logs_for_admin_filtered(text, text, text, text, timestamptz, timestamptz, integer, integer)') IS NOT NULL THEN
+    GRANT EXECUTE ON FUNCTION public.audit_logs_for_admin_filtered(text, text, text, text, timestamptz, timestamptz, integer, integer) TO clevis_api;
   END IF;
 END
 $do$;

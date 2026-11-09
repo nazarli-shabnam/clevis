@@ -16,6 +16,7 @@ export const NAV_GROUPS = [
     { title: "Collaborators",    href: "/collaborators" },
     { title: "Automation",       href: "/automation" },
     { title: "Audit Log",        href: "/audit" },
+    { title: "Notifications",    href: "/notifications" },
   ],
   [
     { title: "My Work",    href: "/my" },
