@@ -92,20 +92,21 @@ def start_session(db: Session, request: Request, user: User) -> str:
     The record is bookkeeping: if it cannot be written the sign-in still succeeds (the session is valid, just
     not listed), and the failure is logged. Commits.
     """
-    token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name, user.token_version)
+    user_id = user.id  # read before any insert: a failed flush expires ``user`` and reading it then would raise
+    token = create_access_token(user_id, user.email, user.is_workspace_admin, user.name, user.token_version)
     try:
         payload = jwt.decode(token, settings.auth_secret.get_secret_value(), algorithms=[_ALGORITHM])
         session_repo.record(
             db,
             jti=payload["jti"],
-            user_id=user.id,
+            user_id=user_id,
             expires_at=datetime.fromtimestamp(payload["exp"], tz=timezone.utc),
             user_agent=request.headers.get("user-agent"),
             ip=request.client.host if request.client else None,
         )
         db.commit()
     except Exception:
-        logger.exception("could not record the new session for user %s", user.id)
+        logger.exception("could not record the new session for user %s", user_id)
         db.rollback()
     return token
 

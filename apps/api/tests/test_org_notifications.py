@@ -1,6 +1,7 @@
 """Tests for GET/POST /orgs/{org}/notifications (derived feed + per-user read marker)."""
 
 import json
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -377,6 +378,41 @@ def test_a_permission_drift_that_changes_again_after_a_dismissal_is_unread_again
 
     feed = admin.get("/orgs/acme/notifications").json()
     assert feed["items"][0]["read"] is False and feed["unread_count"] == 1
+
+
+def test_dismiss_rejects_items_that_do_not_exist_or_the_caller_cannot_see(db, world):
+    t = world["acme"].tenant_id
+    _alert(db, t, number=1, when=NOW)
+    job = _failed_job(db, t)
+    admin = _client(db, world["users"]["admin"])
+    member = _client(db, world["users"]["member"])
+
+    assert admin.post("/orgs/acme/notifications/critical_alert:999999/dismiss").status_code == 404
+    assert admin.post("/orgs/acme/notifications/critical_alert:99999999999/dismiss").status_code == 404
+    assert member.post(f"/orgs/acme/notifications/job_failed:{job}/dismiss").status_code == 404  # admin-only kind
+    assert admin.post(f"/orgs/acme/notifications/job_failed:{job}/dismiss").status_code == 204
+
+
+def test_dismissing_a_drift_again_after_it_changed_marks_it_read_again(db, world):
+    db.execute(text(f"SET app.tenant_id = {world['acme'].tenant_id}"))
+    inst = installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=7, org_id=world["acme"].id
+    )
+    inst.granted_permissions = {"metadata": "read"}
+    inst.permissions_synced_at = inst.permissions_changed_at = NOW - timedelta(days=2)
+    db.commit()
+    admin = _client(db, world["users"]["admin"])
+    item_id = admin.get("/orgs/acme/notifications").json()["items"][0]["id"]
+    admin.post(f"/orgs/acme/notifications/{item_id}/dismiss")
+    time.sleep(0.05)  # Windows' clock ticks in ~15 ms steps; keep the three instants strictly ordered
+    inst.permissions_synced_at = inst.permissions_changed_at = datetime.now(timezone.utc)
+    db.commit()
+    assert admin.get("/orgs/acme/notifications").json()["unread_count"] == 1
+
+    time.sleep(0.05)
+    admin.post(f"/orgs/acme/notifications/{item_id}/dismiss")
+
+    assert admin.get("/orgs/acme/notifications").json()["unread_count"] == 0
 
 
 def test_dismiss_rejects_ids_the_feed_cannot_produce_and_outsiders(db, world):

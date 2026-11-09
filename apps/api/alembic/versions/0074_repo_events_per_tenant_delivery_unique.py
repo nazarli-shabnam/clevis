@@ -29,6 +29,9 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Both statements take an ACCESS EXCLUSIVE lock on repo_events. Fail fast instead of queueing behind a long
+    # transaction (which would stall every webhook insert and feed read queued after us); just re-run the migration.
+    op.execute("SET LOCAL lock_timeout = '5s'")
     op.create_unique_constraint("uq_repo_events_tenant_delivery", "repo_events", ["tenant_id", "delivery_id"])
     op.drop_constraint("uq_repo_events_delivery_id", "repo_events", type_="unique")
 

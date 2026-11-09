@@ -71,7 +71,7 @@ describe("SessionsCard", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /Revoke/ }));
 
-    expect(await screen.findByText(/not revoked.*boom/s)).toBeInTheDocument();
+    expect(await screen.findByText(/not revoked[\s\S]*boom/)).toBeInTheDocument();
     expect(screen.getByText("Safari on iOS")).toBeInTheDocument();
   });
 

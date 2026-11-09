@@ -22,17 +22,24 @@ def get_dismissed(db: Session, user_id: int, tenant_id: int) -> dict[str, dateti
 
 
 def dismiss(db: Session, user_id: int, tenant_id: int, item_id: str) -> None:
-    """Mark one item read for this user. Idempotent; also prunes this user's marks for items long out of any window."""
+    """Mark one item read for this user, as of now. A repeat dismissal refreshes the time, so an item that changed
+    since (a new permission drift keeps its id) can be dismissed again. Also prunes this user's marks for items long
+    out of any window."""
+    # The app's clock, not the database's: it is compared with item times the app also stamped (e.g.
+    # ``permissions_changed_at``), so a skew between the two machines cannot reorder them.
+    now = datetime.now(timezone.utc)
     db.execute(
         insert(NotificationDismissal)
-        .values(user_id=user_id, tenant_id=tenant_id, item_id=item_id)
-        .on_conflict_do_nothing(index_elements=["user_id", "tenant_id", "item_id"])
+        .values(user_id=user_id, tenant_id=tenant_id, item_id=item_id, dismissed_at=now)
+        .on_conflict_do_update(
+            index_elements=["user_id", "tenant_id", "item_id"], set_={"dismissed_at": now}
+        )
     )
     db.execute(
         delete(NotificationDismissal).where(
             NotificationDismissal.user_id == user_id,
             NotificationDismissal.tenant_id == tenant_id,
-            NotificationDismissal.dismissed_at < datetime.now(timezone.utc) - timedelta(days=_KEEP_DAYS),
+            NotificationDismissal.dismissed_at < now - timedelta(days=_KEEP_DAYS),
         )
     )
     db.commit()

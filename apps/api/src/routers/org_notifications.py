@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from src.core._sanitize import sanitize_error
 from src.core.auth import UserOut, require_auth
-from src.core.db import Job, ScanResult, SecurityAlert, get_db
+from src.core.db import CheckWaiver, Job, ScanResult, SecurityAlert, get_db
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import (
     installation_repo,
@@ -278,6 +278,36 @@ def set_notification_preferences(
     return NotificationPreferences(muted_kinds=stored)
 
 
+_MAX_ROW_ID = 2_147_483_647  # the source tables use 32-bit integer ids
+
+
+def _item_exists(db: Session, ctx: OrgContext, org_login: str, kind: str, row_id: int) -> bool:
+    """Whether ``kind:row_id`` names a row this caller's feed can show, so dismissals only ever hold real items
+    (not arbitrary ids a client invents, or admin-only ones a member cannot see)."""
+    if row_id > _MAX_ROW_ID:
+        return False
+    tenant_id = ctx.org.tenant_id
+    is_admin = ctx.membership.role == "admin"
+    if kind == "critical_alert":
+        model = SecurityAlert
+    elif kind == "score_drop":
+        model = ScanResult
+    elif not is_admin:
+        return False
+    elif kind == "job_failed":
+        return db.query(Job.id).filter(Job.id == row_id, *_failed_job_filters_any_age(tenant_id)).first() is not None
+    elif kind == "permission_drift":
+        install = installation_repo.get_for_org(db, org_id=ctx.org.id, account_login=org_login)
+        return install is not None and install.id == row_id
+    else:
+        model = CheckWaiver
+    return db.query(model.id).filter(model.id == row_id, model.tenant_id == tenant_id).first() is not None
+
+
+def _failed_job_filters_any_age(tenant_id: int) -> list:
+    return [Job.tenant_id == tenant_id, Job.status == "failed"]
+
+
 @router.post("/orgs/{org_login}/notifications/{item_id}/dismiss", status_code=204)
 def dismiss_notification(
     org_login: str,
@@ -290,6 +320,9 @@ def dismiss_notification(
     an id from the feed; anything else is rejected so the table only ever holds ids the feed can produce."""
     if not _ITEM_ID.match(item_id):
         raise HTTPException(status_code=422, detail="Not a notification id")
+    kind, _, raw_id = item_id.partition(":")
+    if not _item_exists(db, ctx, org_login, kind, int(raw_id)):
+        raise HTTPException(status_code=404, detail="No such notification")
     notification_dismissal_repo.dismiss(db, user.id, ctx.org.tenant_id, item_id)
 
 
