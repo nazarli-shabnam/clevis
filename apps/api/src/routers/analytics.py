@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from src.core.app_config import get_config
 from src.core.auth import UserOut, require_auth
-from src.core.db import RepoEventDailyCount, get_db
+from src.core.db import RepoEventDailyCount, get_db, release_connection, set_session_user
 from src.core.rbac import (
     OrgContext,
     assert_owner_matches_org,
@@ -45,7 +45,7 @@ from src.schemas.analytics import (
     ScanExportResponse,
     ScanHistoryEntry,
 )
-from src.services import api_job_runner, notifications, scan_service
+from src.services import api_job_runner, notifications, scan_limiter, scan_service
 from src.services.analytics_service import (
     get_account_type,
     get_overview,
@@ -290,7 +290,8 @@ async def org_analytics_overview(
         org_id, tenant_id, owner = ctx.org.id, ctx.org.tenant_id, payload.owner
 
         def work(session: Session) -> dict:
-            result = _overview_blocking(owner, token, score_hygiene=score_hygiene)
+            with scan_limiter.scan_slot(f"org:{tenant_id}"):
+                result = _overview_blocking(owner, token, score_hygiene=score_hygiene)
             org = org_repo.get_by_id(session, org_id)
             scan_service.persist_scan_and_alert(session, org, result, tenant_id)
             return result
@@ -303,9 +304,14 @@ async def org_analytics_overview(
                 )
             )
         )
-    result = await _run_overview(payload.owner, token, score_hygiene=score_hygiene)
-
-    await anyio.to_thread.run_sync(lambda: scan_service.persist_scan_and_alert(db, ctx.org, result, ctx.org.tenant_id))
+    # The scan holds no DB connection: read what the persist step needs, release the connection, scan, then
+    # reconnect with the same RLS context. (`ctx.org` is expired by the release and reloads on first use.)
+    tenant_id, user_id = ctx.org.tenant_id, ctx.membership.user_id
+    release_connection(db)
+    with scan_limiter.scan_slot(f"org:{tenant_id}"):
+        result = await _run_overview(payload.owner, token, score_hygiene=score_hygiene)
+    set_tenant_session_context(db, tenant_id, user_id)
+    await anyio.to_thread.run_sync(lambda: scan_service.persist_scan_and_alert(db, ctx.org, result, tenant_id))
     return result
 
 
@@ -327,15 +333,18 @@ async def personal_analytics_overview(
         raise HTTPException(status_code=403, detail=str(exc))
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    score_hygiene = await anyio.to_thread.run_sync(lambda: _hygiene_setting_for_member(db, user, payload.owner))
+    # No DB connection is held across the GitHub calls below (see release_connection).
+    release_connection(db)
     account_type = await _get_account_type(payload.owner, token)
     if account_type == "User" and client_token is not None and token == client_token:
         await _require_token_owns_login(payload.owner, token)
-    score_hygiene = await anyio.to_thread.run_sync(lambda: _hygiene_setting_for_member(db, user, payload.owner))
     if run_async:
         owner = payload.owner
 
         def work(session: Session) -> dict:
-            result = _overview_blocking(owner, token, account_type=account_type, score_hygiene=score_hygiene)
+            with scan_limiter.scan_slot(f"user:{user.id}"):
+                result = _overview_blocking(owner, token, account_type=account_type, score_hygiene=score_hygiene)
             _persist_personal_scan(session, user, result)
             return result
 
@@ -348,7 +357,9 @@ async def personal_analytics_overview(
                 )
             )
         )
-    result = await _run_overview(payload.owner, token, account_type=account_type, score_hygiene=score_hygiene)
+    with scan_limiter.scan_slot(f"user:{user.id}"):
+        result = await _run_overview(payload.owner, token, account_type=account_type, score_hygiene=score_hygiene)
+    set_session_user(db, user.id)
     # owner can be any account the user has a token for (BYO-token); where the scan is stored depends
     # on whether they belong to that org (see _persist_personal_scan).
     await anyio.to_thread.run_sync(lambda: _persist_personal_scan(db, user, result))
