@@ -342,6 +342,16 @@ describe("RepoDetailPage", () => {
     });
   });
 
+  it("associates the GitHub Token label with its input so the field has an accessible name", async () => {
+    installationsListForOrgMock.mockRejectedValue(new Error("403"));
+    cacheListMock.mockResolvedValue({ repository: "acme/demo", total: 0, actions_caches: [] });
+
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /actions cache/i }));
+
+    expect(await screen.findByLabelText(/github token/i)).toHaveAttribute("type", "password");
+  });
+
   it("defers the Actions Cache tab's own token-resolve call until the tab is opened", async () => {
     renderPage();
     // One call so far: the page's own resolveMutation for stats/pulls, fired on mount.

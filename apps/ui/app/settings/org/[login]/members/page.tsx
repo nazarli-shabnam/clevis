@@ -689,7 +689,7 @@ export default function OrgMembersPage() {
                 <EnvelopeSimple className="size-3.5" />
                 {invite.isPending ? "Inviting…" : addresses.length > 1 ? `Send ${addresses.length} invites` : "Send invite"}
               </Button>
-              {invite.isError && <p className="text-xs text-destructive">{invite.error.message}</p>}
+              {invite.isError && <p role="alert" className="text-xs text-destructive">{invite.error.message}</p>}
               {bulkResults && (
                 <div className="text-xs bg-muted/30 border border-border/50 rounded-md p-2">
                   <p className="text-muted-foreground">

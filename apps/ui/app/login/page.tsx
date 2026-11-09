@@ -130,7 +130,7 @@ export default function LoginPage() {
           </Field>
 
           {error && (
-            <p className="text-xs text-destructive">{error}</p>
+            <p role="alert" className="text-xs text-destructive">{error}</p>
           )}
 
           <Button type="submit" disabled={isSubmitting} className="mt-2">
