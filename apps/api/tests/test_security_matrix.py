@@ -108,6 +108,8 @@ def test_security_matrix_no_token_returns_400(client):
 
 def test_security_matrix_computes_rows_and_summary(client):
     def _request_side_effect(method, path, params=None):
+        if path.endswith("/branches/main/protection"):
+            return {"allow_force_pushes": {"enabled": False}}
         if path.endswith("/branches/main"):
             return {"protected": True, "protection": {"allow_force_pushes": {"enabled": False}}}
         if path.endswith("/dependabot/alerts"):
@@ -199,6 +201,8 @@ def test_security_matrix_403_on_dependabot_is_unknown_not_clean(client):
     def _request_side_effect(method, path, params=None):
         if path.endswith("/dependabot/alerts"):
             raise forbidden
+        if path.endswith("/branches/main/protection"):
+            return {"allow_force_pushes": {"enabled": False}}
         if path.endswith("/branches/main"):
             return {"protected": True, "protection": {"allow_force_pushes": {"enabled": False}}}
         if path.endswith("/code-scanning/alerts"):
@@ -226,6 +230,8 @@ def test_security_matrix_404_on_dependabot_is_genuinely_disabled(client):
     def _request_side_effect(method, path, params=None):
         if path.endswith("/dependabot/alerts"):
             raise not_found
+        if path.endswith("/branches/main/protection"):
+            return {"allow_force_pushes": {"enabled": False}}
         if path.endswith("/branches/main"):
             return {"protected": True, "protection": {"allow_force_pushes": {"enabled": False}}}
         if path.endswith("/code-scanning/alerts"):
@@ -380,6 +386,8 @@ def test_security_matrix_uses_aggregate_when_installation_connected(connected_cl
     )
 
     def _request_side_effect(method, path, params=None):
+        if path.endswith("/branches/main/protection"):
+            return {"allow_force_pushes": {"enabled": False}}
         if path.endswith("/branches/main"):
             return {"protected": True, "protection": {"allow_force_pushes": {"enabled": False}}}
         raise AssertionError(f"unexpected live GitHub call for a connected org: {path}")
@@ -424,6 +432,8 @@ def test_security_matrix_aggregate_dependabot_enabled_with_only_dismissed_alerts
 def test_security_matrix_falls_back_to_live_for_a_repo_with_no_ingested_alert_rows(connected_client, db, acme_org_with_installation):
     """No security_alerts rows is ambiguous (clean vs. not yet ingested), so fall back to live GitHub."""
     def _request_side_effect(method, path, params=None):
+        if path.endswith("/branches/main/protection"):
+            return {"allow_force_pushes": {"enabled": False}}
         if path.endswith("/branches/main"):
             return {"protected": True, "protection": {"allow_force_pushes": {"enabled": False}}}
         if path.endswith("/dependabot/alerts"):
@@ -453,6 +463,8 @@ def test_security_matrix_uses_aggregate_only_for_repos_with_ingested_rows(connec
     )
 
     def _request_side_effect(method, path, params=None):
+        if path.endswith("/branches/main/protection"):
+            return {"allow_force_pushes": {"enabled": False}}
         if path.endswith("/branches/main"):
             return {"protected": True, "protection": {"allow_force_pushes": {"enabled": False}}}
         if path.endswith("/dependabot/alerts"):
@@ -487,6 +499,8 @@ def test_security_matrix_gates_dependabot_and_code_scanning_independently(connec
     )
 
     def _request_side_effect(method, path, params=None):
+        if path.endswith("/branches/main/protection"):
+            return {"allow_force_pushes": {"enabled": False}}
         if path.endswith("/branches/main"):
             return {"protected": True, "protection": {"allow_force_pushes": {"enabled": False}}}
         if path.endswith("/dependabot/alerts"):
@@ -526,6 +540,8 @@ def test_security_matrix_falls_back_to_github_when_caller_lacks_membership(clien
     )
 
     def _request_side_effect(method, path, params=None):
+        if path.endswith("/branches/main/protection"):
+            return {"allow_force_pushes": {"enabled": False}}
         if path.endswith("/branches/main"):
             return {"protected": True, "protection": {"allow_force_pushes": {"enabled": False}}}
         if path.endswith("/dependabot/alerts") or path.endswith("/code-scanning/alerts"):
@@ -548,6 +564,8 @@ def test_security_matrix_falls_back_to_github_when_org_has_no_installation(conne
     org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
 
     def _request_side_effect(method, path, params=None):
+        if path.endswith("/branches/main/protection"):
+            return {"allow_force_pushes": {"enabled": False}}
         if path.endswith("/branches/main"):
             return {"protected": True, "protection": {"allow_force_pushes": {"enabled": False}}}
         if path.endswith("/dependabot/alerts") or path.endswith("/code-scanning/alerts"):
@@ -567,6 +585,8 @@ def test_security_matrix_falls_back_to_github_when_org_has_no_installation(conne
 def test_security_matrix_unconnected_org_still_uses_live_github(client, db):
     """No installation for this owner: the matrix uses the live-GitHub path."""
     def _request_side_effect(method, path, params=None):
+        if path.endswith("/branches/main/protection"):
+            return {"allow_force_pushes": {"enabled": False}}
         if path.endswith("/branches/main"):
             return {"protected": True, "protection": {"allow_force_pushes": {"enabled": False}}}
         if path.endswith("/dependabot/alerts"):
@@ -691,6 +711,8 @@ def test_repo_security_row_returns_just_that_repo_without_listing_the_org(client
     def _request(method, path, params=None):
         if path == "/repos/acme/api":
             return {"name": "api", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}}
+        if path.endswith("/branches/main/protection"):
+            return {"allow_force_pushes": {"enabled": True}}
         if path.endswith("/branches/main"):
             return {"protected": True, "protection": {"allow_force_pushes": {"enabled": True}}}
         if path.endswith("/dependabot/alerts"):
@@ -708,7 +730,8 @@ def test_repo_security_row_returns_just_that_repo_without_listing_the_org(client
     assert (row["repo"], row["dependabot_critical_count"], row["dependabot_high_count"]) == ("api", 1, 1)
     assert row["code_scanning"] is False
     assert row["force_push_allowed"] is True
-    mock_client.return_value.request_paginated.assert_not_called()
+    # The only paginated read is the ruleset lookup; the org's repo list is never fetched.
+    assert [c.args[0] for c in mock_client.return_value.request_paginated.call_args_list] == ["/repos/acme/api/rules/branches/main"]
 
 
 def test_repo_security_row_uses_aggregate_alerts_when_connected(connected_client, db, acme_org_with_installation):
@@ -720,6 +743,8 @@ def test_repo_security_row_uses_aggregate_alerts_when_connected(connected_client
     def _request(method, path, params=None):
         if path == "/repos/acme/api":
             return {"name": "api", "default_branch": "main"}
+        if path.endswith("/branches/main/protection"):
+            return {}
         if path.endswith("/branches/main"):
             return {"protected": True, "protection": {}}
         if path.endswith("/code-scanning/alerts"):
@@ -756,3 +781,44 @@ def test_repo_security_row_rejects_path_like_names_and_odd_github_metadata(clien
         mock_client.return_value.request.return_value = ["not", "a", "repo"]
         resp = client.get("/me/analytics/security-matrix/acme/api", headers={"X-GitHub-Token": "ghp_test"})
     assert resp.status_code == 502
+
+
+def _protection_stub(protection, rules=()):
+    def _request(method, path, params=None):
+        if path.endswith("/branches/main/protection"):
+            if isinstance(protection, Exception):
+                raise protection
+            return protection
+        if path.endswith("/branches/main"):
+            return {"protected": True, "protection": {"enabled": True}}
+        if path.endswith("/dependabot/alerts") or path.endswith("/code-scanning/alerts"):
+            return []
+        return {}
+
+    return _request
+
+
+@pytest.mark.parametrize(
+    "protection, rules, allowed, unknown",
+    [
+        ({"allow_force_pushes": {"enabled": True}}, [], True, False),
+        ({"allow_force_pushes": {"enabled": False}}, [], False, False),
+        ({"allow_force_pushes": {"enabled": True}}, [{"type": "non_fast_forward"}], False, False),
+        (_branch_error(404), [], True, False),  # no classic protection: force pushes allowed
+        (_branch_error(404), [{"type": "non_fast_forward"}], False, False),  # a ruleset can still block
+        (_branch_error(403), [], False, True),
+        (httpx.RequestError("boom"), [], False, True),
+    ],
+)
+def test_security_matrix_force_push_reads_the_protection_endpoint_and_rulesets(client, protection, rules, allowed, unknown):
+    """The branch payload never carries allow_force_pushes, so the dimension comes from /protection + rulesets."""
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.side_effect = lambda path, params=None, items_key=None: (
+            [{"name": "api", "default_branch": "main"}] if path.endswith("/repos") or "/orgs/" in path or path.startswith("/user") else rules
+        )
+        mock_client.return_value.request.side_effect = _protection_stub(protection)
+        resp = client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
+
+    row = resp.json()["repos"][0]
+    assert row["force_push_allowed"] is allowed
+    assert ("force_push" in row["unknown_dimensions"]) is unknown
