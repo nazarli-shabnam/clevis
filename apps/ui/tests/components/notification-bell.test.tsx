@@ -58,6 +58,18 @@ describe("NotificationBell", () => {
      expect(screen.getByRole("link", { name: "View all notifications" })).toHaveAttribute("href", "/notifications");
   });
 
+  it("closes the popover when the View all notifications link is followed", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "critical_alert")]));
+    wrap(<NotificationBell />);
+    fireEvent.click(await screen.findByRole("button", { name: /Notifications, 1 unread/ }));
+    const link = await screen.findByRole("link", { name: "View all notifications" });
+    link.addEventListener("click", (e) => e.preventDefault());
+
+    fireEvent.click(link);
+
+    await waitFor(() => expect(screen.queryByRole("link", { name: "View all notifications" })).not.toBeInTheDocument());
+  });
+
   it("exposes unread items to assistive tech as text, not an aria-label on a plain span", async () => {
     feedMock.mockResolvedValue(feed([item("a", "critical_alert"), item("b", "score_drop", true)]));
     wrap(<NotificationBell />);

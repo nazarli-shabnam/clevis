@@ -13,7 +13,7 @@ import { KIND_LABEL, KIND_ORDER } from "@/lib/notification-kinds"
 import { useNotifications } from "@/lib/use-notifications"
 import type { NotificationKind } from "@/lib/api/types"
 
-// Mirrors the API's cap for the full feed (`limit` / `days`); at it, older items exist that this page can't list.
+// Mirrors the API's cap for the full feed (`limit` / `days`).
 const FULL_FEED_LIMIT = 200
 const FULL_FEED_DAYS = 90
 
@@ -73,7 +73,7 @@ export default function NotificationsPage() {
         )}
         {dismiss.isError && (
           <p role="alert" className="px-4 py-2 text-xs text-destructive border-b border-border">
-            Couldn&apos;t mark that notification as read: {dismiss.error.message}
+            Couldn&apos;t mark &ldquo;{items.find((n) => n.id === dismiss.variables)?.title ?? "that notification"}&rdquo; as read: {dismiss.error.message}
           </p>
         )}
         {!org ? (
@@ -112,7 +112,7 @@ export default function NotificationsPage() {
                     size="sm"
                     variant="ghost"
                     aria-label={`Mark "${n.title}" as read`}
-                    disabled={dismiss.isPending}
+                    disabled={dismiss.isPending && dismiss.variables === n.id}
                     onClick={() => dismiss.mutate(n.id)}
                   >
                     Mark read
@@ -124,7 +124,7 @@ export default function NotificationsPage() {
         )}
         {items.length >= FULL_FEED_LIMIT && (
           <p className="px-4 py-2 text-xs text-muted-foreground border-t border-border">
-            Showing the newest {FULL_FEED_LIMIT} notifications; older ones are not listed.
+            This page lists at most {FULL_FEED_LIMIT} notifications.
           </p>
         )}
       </div>

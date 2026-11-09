@@ -293,6 +293,30 @@ describe("AuditPage", () => {
     expect(screen.queryByRole("button", { name: /load more/i })).not.toBeInTheDocument();
   });
 
+  it("keeps the applied filters and the first page's rows when loading more", async () => {
+    const fullPage = Array.from({ length: 100 }, (_, i) => ({
+      id: 200 - i, actor: "ada@example.com", action: "installation.connected", target: "acme", payload: "{}", created_at: "2026-03-02T00:00:00Z",
+    }));
+    auditListMock.mockResolvedValueOnce([]); // the initial, unfiltered load
+    auditListMock.mockResolvedValueOnce(fullPage);
+    auditListMock.mockResolvedValueOnce([
+      { id: 100, actor: "ada@example.com", action: "older.event", target: "acme", payload: "{}", created_at: "2026-03-01T00:00:00Z" },
+    ]);
+    renderPage();
+    await waitFor(() => expect(auditListMock).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByLabelText("Actor"), { target: { value: "ada@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+    await waitFor(() => expect(screen.getByText("100 entries")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: /load more/i }));
+
+    await waitFor(() =>
+      expect(auditListMock).toHaveBeenLastCalledWith(expect.objectContaining({ actor: "ada@example.com", before_id: 101, limit: 100 })),
+    );
+    await waitFor(() => expect(screen.getByText("101 entries")).toBeInTheDocument());
+    expect(screen.getAllByText("installation.connected")).toHaveLength(100); // page one is still shown
+  });
+
   it("keeps the loaded rows on screen and shows 'Loading…' on the button while the next page fetches (#768)", async () => {
     const fullPage = Array.from({ length: 100 }, (_, i) => ({
       id: 200 - i,
