@@ -7,6 +7,7 @@ import type { JobOut } from "@/lib/api/types"
 const statusStyle: Record<JobOut["status"], string> = {
   queued:     "text-muted-foreground",
   processing: "text-yellow-400 animate-pulse",
+  running:    "text-yellow-400 animate-pulse",
   done:       "text-green-400",
   failed:     "text-red-400",
 }

@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 
 from src.core.app_config import get_config
 from src.core.db import set_session_tenant
+from src.services import api_job_runner
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +137,13 @@ def _purge_repo_events(db: Session, cutoff: datetime) -> int:
 
 def run_retention_sweep(db: Session) -> None:
     now = datetime.now(timezone.utc)
+    try:
+        reaped = api_job_runner.reap_orphans(db)
+        if reaped:
+            logger.info("failed %d API job(s) orphaned by a restart", reaped)
+    except Exception:
+        db.rollback()
+        logger.exception("reaping orphaned API jobs failed")
     purges = (
         (WEBHOOK_DELIVERIES, _purge_deliveries),
         (JOBS, _purge_jobs),
