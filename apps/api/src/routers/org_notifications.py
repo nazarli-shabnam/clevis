@@ -41,7 +41,6 @@ MAX_WINDOW_DAYS = 90
 MAX_ITEMS = 50
 MAX_LIMIT = 200
 _PER_SOURCE = 40
-_SCANS_CONSIDERED = 30
 # The stable ids the feed hands out: a kind plus the source row's integer id.
 _ITEM_ID = re.compile(r"^(critical_alert|score_drop|job_failed|permission_drift|waiver_expired):[0-9]{1,18}$")
 
@@ -96,11 +95,13 @@ def _score_drop_items(
         # Scans at or after the cursor are left out; a drop is dated by its newer scan, so each remaining
         # pair is still compared with the scan before it.
         q = q.filter(ScanResult.created_at < before)
-    rows = (
-        q.order_by(ScanResult.created_at.desc(), ScanResult.id.desc())
-        .limit(max(_SCANS_CONSIDERED, per_source))
-        .all()
-    )
+    # Every scan in the window, so a drop is not hidden behind many non-dropping scans, plus the one
+    # before it (possibly outside the window) for the oldest in-window scan to be compared with.
+    ordered = q.order_by(ScanResult.created_at.desc(), ScanResult.id.desc())
+    rows = ordered.filter(ScanResult.created_at >= since).all()
+    predecessor = ordered.filter(ScanResult.created_at < since).first()
+    if predecessor is not None:
+        rows.append(predecessor)
     items: list[dict] = []
     # rows are newest first: each scan is compared with the one before it in time.
     for newer, older in zip(rows, rows[1:]):

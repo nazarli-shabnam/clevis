@@ -45,7 +45,9 @@ export function useNotifications({ full = false }: { full?: boolean } = {}) {
   const items = full ? (pages?.flatMap((p) => p.items) ?? []) : (short.data?.items ?? [])
   const unread = full ? (pages?.[0]?.unread_count ?? 0) : (short.data?.unread_count ?? 0)
   const { isError, error, isLoading, isFetching, refetch } = full ? long : short
-  const query = { isError, error: error as Error, isLoading, isFetching, refetch }
+  // A failed "Load more" keeps the loaded list on screen; it is reported separately from a failed first load.
+  const loadMoreFailed = full && long.isFetchNextPageError
+  const query = { isError: isError && !loadMoreFailed, error: error as Error, isLoading, isFetching, refetch }
 
   const markRead = useMutation({
     // Items are newest first; mark up to the newest one this feed actually showed.
@@ -59,7 +61,7 @@ export function useNotifications({ full = false }: { full?: boolean } = {}) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: notificationsKey(org) }),
   })
 
-  const more = { hasMore: !!long.hasNextPage, loadingMore: long.isFetchingNextPage, loadMore: () => long.fetchNextPage() }
+  const more = { hasMore: !!long.hasNextPage, loadingMore: long.isFetchingNextPage, loadMoreFailed, loadMore: () => long.fetchNextPage() }
   return { org, query, markRead, dismiss, items, unread, ...more }
 }
 

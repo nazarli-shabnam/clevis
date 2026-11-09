@@ -19,7 +19,7 @@ const FULL_FEED_DAYS = 90
 
 export default function NotificationsPage() {
   const { scope } = useActiveScope()
-  const { org, query, markRead, dismiss, items, unread, hasMore, loadingMore, loadMore } = useNotifications({ full: true })
+  const { org, query, markRead, dismiss, items, unread, hasMore, loadingMore, loadMoreFailed, loadMore } = useNotifications({ full: true })
   const [customizing, setCustomizing] = useState(false)
   // Kinds shown; all by default. Client-side: the feed is already one bounded request, and the per-user
   // mute preferences (in the bell) are what hide a kind server-side.
@@ -67,7 +67,7 @@ export default function NotificationsPage() {
                 Preferences
               </Button>
             )}
-            <Button size="sm" variant="outline" disabled={unread === 0 || markRead.isPending} onClick={() => markRead.mutate()}>
+            <Button size="sm" variant="outline" disabled={unread === 0 || items.length === 0 || markRead.isPending} onClick={() => markRead.mutate()}>
               Mark all read
             </Button>
           </div>
@@ -130,10 +130,16 @@ export default function NotificationsPage() {
           </ul>
         )}
         {hasMore && (
-          <div className="px-4 py-3 border-t border-border">
-            <Button size="sm" variant="outline" disabled={loadingMore} onClick={loadMore}>
-              {loadingMore ? "Loading…" : "Load more"}
+          <div className="px-4 py-3 border-t border-border flex items-center gap-3">
+            {/* Disabled while a mark-read refetch is in flight so the next page is read after it. */}
+            <Button size="sm" variant="outline" disabled={loadingMore || markRead.isPending || dismiss.isPending} onClick={loadMore}>
+              {loadingMore ? "Loading…" : loadMoreFailed ? "Retry" : "Load more"}
             </Button>
+            {loadMoreFailed && (
+              <p role="alert" className="text-xs text-destructive">
+                Couldn&apos;t load more notifications.
+              </p>
+            )}
           </div>
         )}
       </div>

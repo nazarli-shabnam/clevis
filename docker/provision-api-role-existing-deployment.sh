@@ -231,6 +231,10 @@ BEGIN
   IF to_regprocedure('public.audit_logs_for_admin_filtered(text, text, text, timestamptz, timestamptz, integer, integer)') IS NOT NULL THEN
     GRANT EXECUTE ON FUNCTION public.audit_logs_for_admin_filtered(text, text, text, timestamptz, timestamptz, integer, integer) TO clevis_api;
   END IF;
+  -- Migration 0078's action-prefix overload of the same function (also PUBLIC-revoked).
+  IF to_regprocedure('public.audit_logs_for_admin_filtered(text, text, text, text, timestamptz, timestamptz, integer, integer)') IS NOT NULL THEN
+    GRANT EXECUTE ON FUNCTION public.audit_logs_for_admin_filtered(text, text, text, text, timestamptz, timestamptz, integer, integer) TO clevis_api;
+  END IF;
 END
 $do$;
 
