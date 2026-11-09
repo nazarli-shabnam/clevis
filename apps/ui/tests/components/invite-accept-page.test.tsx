@@ -26,7 +26,7 @@ vi.mock("@/lib/api/client", () => ({
 }));
 
 import InviteAcceptPage from "@/app/invite/[token]/page";
-import { AuthProvider } from "@/lib/auth-context";
+import { AuthProvider, useAuth } from "@/lib/auth-context";
 
 const TOKEN_KEY = "clevis:token";
 
@@ -54,6 +54,25 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function PendingProbe() {
+  const { pendingInvitations, setSession } = useAuth();
+  return (
+    <>
+      <span data-testid="pending-orgs">{pendingInvitations.map((i) => i.org_login).join(",")}</span>
+      <button
+        onClick={() =>
+          setSession(makeJwt(), { id: 1, email: "user@example.com", name: null, is_workspace_admin: false } as never, [
+            { org_login: "acme" } as never,
+            { org_login: "globex" } as never,
+          ])
+        }
+      >
+        seed
+      </button>
+    </>
+  );
 }
 
 function renderPage() {
@@ -177,5 +196,29 @@ describe("InviteAcceptPage", () => {
 
     await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["my-orgs"] }));
     invalidate.mockRestore();
+  });
+
+  it("drops only the accepted org from the pending-invite banner state", async () => {
+    previewMock.mockResolvedValue({ org_login: "acme", status: "pending" });
+    acceptMock.mockResolvedValue({ org_login: "acme", role: "member" });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <PendingProbe />
+          <InviteAcceptPage />
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "seed" }));
+    await waitFor(() => expect(screen.getByTestId("pending-orgs")).toHaveTextContent("acme,globex"));
+
+    fireEvent.click(await screen.findByRole("button", { name: /accept invitation/i }));
+
+    await waitFor(() => expect(screen.getByTestId("pending-orgs")).toHaveTextContent(/^globex$/));
   });
 });

@@ -28,6 +28,8 @@ interface AuthContextValue {
   updateUser(u: Partial<AuthUser>): void
   setSession(jwtToken: string, authUser: AuthUser, pendingInvitations?: PendingInvitationSummary[]): void
   dismissPendingInvitations(): void
+  /** Drop the pending invite for one org (GitHub logins are case-insensitive), e.g. once it is accepted. */
+  removePendingInvitation(orgLogin: string): void
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -80,6 +82,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const dismissPendingInvitations = useCallback(() => {
     setPendingInvitations([])
+  }, [])
+
+  const removePendingInvitation = useCallback((orgLogin: string) => {
+    const login = orgLogin.toLowerCase()
+    setPendingInvitations((prev) => prev.filter((inv) => inv.org_login.toLowerCase() !== login))
   }, [])
 
   const bumpSessionEpoch = useCallback(() => {
@@ -275,6 +282,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         updateUser,
         setSession,
         dismissPendingInvitations,
+        removePendingInvitation,
       }}
     >
       {children}
