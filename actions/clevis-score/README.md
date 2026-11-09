@@ -27,6 +27,12 @@ lasts until revoked. Scans a token triggers are audit-logged under `api_token:<i
 score-drop alerts. Scans run one at a time per org, and if one finished within the last minute that result is returned
 instead of scanning again, so `refresh: "true"` in a tight loop doesn't burn the org's GitHub rate limit.
 
+## Waived checks
+
+Each entry in the score response's `checks` array carries `waived` (the check has an active waiver) and `scored` (it counted
+toward `score`, `total_checks` and `failed_checks`; `false` for waived and informational checks). A waived check keeps its real
+`status` (`fail`), so a custom gate should skip entries with `waived: true`, as `fail-on-checks` here does.
+
 ## Exit codes
 
 | Code | Meaning |

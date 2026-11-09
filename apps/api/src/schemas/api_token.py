@@ -38,10 +38,13 @@ class ScoreCheck(BaseModel):
     id: str
     title: str
     status: str
+    # A waived check keeps its real status; these let a gate tell it was excluded from the score and counts.
+    waived: bool = False
+    scored: bool = True
 
 
 class ScoreOut(BaseModel):
-    """Machine-readable score: no per-check detail values, only id/title/status."""
+    """Machine-readable score: no per-check detail values, only id/title/status and whether the check is waived/scored."""
 
     org: str
     score: int | None

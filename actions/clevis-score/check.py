@@ -52,6 +52,8 @@ def evaluate(data: dict, threshold: int, required_checks: list[str]) -> list[str
         check = by_id.get(check_id)
         if check is None:
             problems.append(f"required check '{check_id}' was not found in the scan")
+        elif check.get("waived"):
+            continue  # waived checks are excluded from the score; the gate must agree with it
         elif check.get("status") in _FAILING:
             problems.append(f"check '{check_id}' ({check.get('title', '')}) is {check['status']}")
     return problems

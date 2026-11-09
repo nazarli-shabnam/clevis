@@ -142,7 +142,13 @@ def _score_out(org_login: str, scan: dict) -> ScoreOut:
         failed_checks=scan["failed_checks"],
         scanned_at=scan["scanned_at"],
         checks=[
-            ScoreCheck(id=str(c.get("id", "")), title=str(c.get("title", "")), status=str(c.get("status", "")))
+            ScoreCheck(
+                id=str(c.get("id", "")),
+                title=str(c.get("title", "")),
+                status=str(c.get("status", "")),
+                waived=bool(c.get("waived")),
+                scored=c.get("scored", True) is not False,
+            )
             for c in scan["checks"]
             if isinstance(c, dict)
         ],
