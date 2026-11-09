@@ -6,6 +6,7 @@ Personal-scoped (`/me/...`); the Security page scans an arbitrary owner by name,
 token resolution goes through `resolve_owner_token` rather than `require_org_role`.
 """
 
+import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -269,6 +270,40 @@ def personal_security_matrix(
     try:
         account_type = get_account_type(owner, token)
         return _build_matrix(owner, token, db=db, tenant_id=tenant_id, account_type=account_type)
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        raise _github_error(exc) from exc
+
+
+# GitHub logins and repo names; "." and ".." are path segments, not names, so they must not reach the URL.
+_GH_NAME_RE = re.compile(r"^(?!\.\.?$)[A-Za-z0-9._-]{1,100}$")
+
+
+@router.get("/me/analytics/security-matrix/{owner}/{repo}", response_model=RepoSecurityRow)
+def personal_repo_security_row(
+    owner: str,
+    repo: str,
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+    x_github_token: str | None = Header(default=None),
+):
+    """One matrix row for a single repo -- what the org matrix shows for that cell, without
+    scanning every repo in the org to get it. Same token resolution and aggregate-vs-live rules."""
+    if not _GH_NAME_RE.match(owner) or not _GH_NAME_RE.match(repo):
+        raise HTTPException(status_code=422, detail="Invalid owner or repository name")
+    try:
+        token = resolve_owner_token(db, user_id=user.id, owner=owner, client_token=x_github_token)
+    except NoGitHubTokenAvailable as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    tenant_id = _security_connected_tenant(db, user.id, owner)
+    client = GitHubClient(token)
+    try:
+        repo_meta = client.request("GET", f"/repos/{owner}/{repo}")
+        if not isinstance(repo_meta, dict) or not isinstance(repo_meta.get("name"), str):
+            raise HTTPException(status_code=502, detail="Unexpected response from GitHub")
+        alerts_by_repo = None
+        if tenant_id is not None:
+            alerts_by_repo = _open_alerts_by_repo(db, tenant_id, [f"{owner}/{repo_meta['name']}"])
+        return _repo_row(client, owner, repo_meta, alerts_by_repo)
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise _github_error(exc) from exc
 

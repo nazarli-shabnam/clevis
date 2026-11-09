@@ -12,6 +12,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { SectionError } from "@/components/section-error"
 import { GitPullRequest, ArrowSquareOut, Star, GitFork, Eye, ShieldCheck, ShieldWarning, Shield } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
+import type { CheckWaiver, RepoSecurityRow } from "@/lib/api/types"
+import { githubWebUrl } from "@/lib/github-web"
 import { setActiveScope } from "@/lib/active-scope"
 import { parseOwnerRepo } from "@/lib/repo-segment"
 import { shouldApplyResolvedToken } from "@/lib/token-resolve"
@@ -43,16 +45,29 @@ const TONE_STYLES: Record<Tone, { Icon: typeof ShieldCheck; color: string }> = {
   unknown: { Icon: Shield, color: "text-muted-foreground" },
 }
 
+// The active waiver (if any) covering this repo for a check; a repo-scoped waiver names bare repo
+// names and the server compares them case-insensitively.
+function activeWaiver(waivers: CheckWaiver[] | undefined, checkId: string, repo: string): CheckWaiver | undefined {
+  const name = repo.toLowerCase()
+  return waivers?.find(
+    (w) => w.active && w.check_id === checkId && (w.repos === null || w.repos.some((r) => r.toLowerCase() === name)),
+  )
+}
+
 function SecurityStatusRow({
   label,
   tone,
   goodLabel,
   badLabel,
+  waiver,
+  link,
 }: {
   label: string
   tone: Tone
   goodLabel: string
   badLabel: string
+  waiver?: CheckWaiver
+  link?: { href: string; text: string; external?: boolean; onClick?: () => void }
 }) {
   const { Icon, color } = TONE_STYLES[tone]
   const text = tone === "good" ? goodLabel : tone === "bad" ? badLabel : "Unknown"
@@ -60,8 +75,77 @@ function SecurityStatusRow({
     <div className="flex items-center gap-2 text-xs">
       <Icon className={`size-4 shrink-0 ${color}`} />
       <span className="text-foreground">{label}</span>
+      {link && (link.external ? (
+        <a
+          href={link.href}
+          target="_blank"
+          rel="noreferrer"
+          className="text-muted-foreground hover:text-foreground underline underline-offset-2"
+        >
+          {link.text}
+        </a>
+      ) : (
+        <Link
+          href={link.href}
+          onClick={link.onClick}
+          className="text-muted-foreground hover:text-foreground underline underline-offset-2"
+        >
+          {link.text}
+        </Link>
+      ))}
+      {waiver && tone === "bad" && (
+        <span
+          className="rounded bg-muted px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground"
+          title={`${waiver.reason} (owner: ${waiver.owner})`}
+        >
+          Waived until {new Date(waiver.expires_at).toLocaleDateString()}
+        </span>
+      )}
       <span className={`ml-auto font-medium ${color}`}>{text}</span>
     </div>
+  )
+}
+
+function MatrixRows({
+  row,
+  owner,
+  repo,
+  waivers,
+}: {
+  row: RepoSecurityRow
+  owner: string
+  repo: string
+  waivers: CheckWaiver[] | undefined
+}) {
+  const tone = (dimension: string, ok: boolean): Tone =>
+    row.unknown_dimensions.includes(dimension) ? "unknown" : ok ? "good" : "bad"
+  const scopeToOrg = () => setActiveScope({ kind: "org", login: owner })
+  return (
+    <>
+      <SecurityStatusRow
+        label="Dependabot alerts"
+        tone={tone("dependabot", row.dependabot_critical_count === 0 && row.dependabot_high_count === 0)}
+        goodLabel="No critical/high"
+        badLabel={`${row.dependabot_critical_count} critical, ${row.dependabot_high_count} high`}
+        waiver={activeWaiver(waivers, "repository_dependabot_alerts_clear", repo)}
+        link={{ href: "/security/burndown", text: "Burndown", onClick: scopeToOrg }}
+      />
+      <SecurityStatusRow
+        label="Code scanning alerts"
+        tone={tone("code_scanning", row.code_scanning)}
+        goodLabel="Clear"
+        badLabel="Open alerts"
+        waiver={activeWaiver(waivers, "repository_code_scanning_alerts_clear", repo)}
+        link={{ href: githubWebUrl(`${owner}/${repo}/security/code-scanning`), text: "On GitHub", external: true }}
+      />
+      <SecurityStatusRow
+        label="Force pushes to default branch"
+        tone={tone("force_push", !row.force_push_allowed)}
+        goodLabel="Blocked"
+        badLabel="Allowed"
+        waiver={activeWaiver(waivers, "repository_default_branch_no_force_push", repo)}
+      />
+    </>
   )
 }
 
@@ -131,6 +215,22 @@ export default function RepoDetailPage() {
     queryKey: ["repo-detail-security", owner, repo, token],
     queryFn: () => api.repos.security(owner, owner, repo, token),
     enabled: tab === "security" && !!owner && !!repo,
+  })
+
+  // The org matrix's cell for this repo (Dependabot, code scanning, force push), fetched for just this repo.
+  const securityRowQuery = useQuery({
+    queryKey: ["repo-detail-security-row", owner, repo, token],
+    queryFn: () => api.security.repoRow(owner, repo, token),
+    // Wait for the saved-token lookup to settle (either way) so a repo that needs it isn't fetched tokenless first.
+    enabled: tab === "security" && !!owner && !!repo && (resolveMutation.isSuccess || resolveMutation.isError),
+  })
+
+  // Waivers are org-scoped; a personal account has none, and a failed lookup just means no badge.
+  const waiversQuery = useQuery({
+    queryKey: ["repo-detail-waivers", owner],
+    queryFn: () => api.waivers.list(owner),
+    enabled: tab === "security" && !!owner,
+    retry: false,
   })
 
   if (!parsed) {
@@ -364,8 +464,7 @@ export default function RepoDetailPage() {
         </div>
         <div className="p-4">
           <p className="text-xs text-muted-foreground mb-3">
-            Default-branch protection and secret scanning for <span className="font-mono">{owner}/{repo}</span>{" "}
-            specifically.
+            Security checks for <span className="font-mono">{owner}/{repo}</span> specifically.
           </p>
           {securityQuery.isLoading ? (
             <Skeleton className="h-16 w-full" />
@@ -388,6 +487,7 @@ export default function RepoDetailPage() {
                 }
                 goodLabel="Protected"
                 badLabel="Unprotected"
+                waiver={activeWaiver(waiversQuery.data, "repository_default_branch_protection_enabled", repo)}
               />
               <SecurityStatusRow
                 label="Secret scanning"
@@ -400,7 +500,25 @@ export default function RepoDetailPage() {
                 }
                 goodLabel="Enabled"
                 badLabel="Disabled"
+                waiver={activeWaiver(waiversQuery.data, "repository_secret_scanning_enabled", repo)}
+                link={{ href: "/security", text: "Alerts", onClick: () => setActiveScope({ kind: "org", login: owner }) }}
               />
+            </div>
+          ) : null}
+          {/* Independent of the status query above: either can fail without hiding the other. */}
+          {securityRowQuery.isLoading ? (
+            <Skeleton className="mt-2 h-16 w-full" />
+          ) : securityRowQuery.isError ? (
+            <div className="mt-2">
+              <SectionError
+                message={securityRowQuery.error.message}
+                onRetry={() => securityRowQuery.refetch()}
+                retrying={securityRowQuery.isFetching}
+              />
+            </div>
+          ) : securityRowQuery.data ? (
+            <div className="mt-2 flex flex-col gap-2">
+              <MatrixRows row={securityRowQuery.data} owner={owner} repo={repo} waivers={waiversQuery.data} />
             </div>
           ) : null}
         </div>

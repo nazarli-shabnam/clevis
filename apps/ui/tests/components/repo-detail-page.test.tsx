@@ -10,6 +10,8 @@ const reposStatsMock = vi.fn();
 const reposPullsMock = vi.fn();
 const reposSecurityMock = vi.fn();
 const reposFlowMetricsMock = vi.fn();
+const securityRepoRowMock = vi.fn();
+const waiversListMock = vi.fn();
 const installationsListMock = vi.fn();
 const installationsListForOrgMock = vi.fn();
 
@@ -38,6 +40,12 @@ vi.mock("@/lib/api/client", () => ({
       pulls: (...args: unknown[]) => reposPullsMock(...args),
       security: (...args: unknown[]) => reposSecurityMock(...args),
       flowMetrics: (...args: unknown[]) => reposFlowMetricsMock(...args),
+    },
+    security: {
+      repoRow: (...args: unknown[]) => securityRepoRowMock(...args),
+    },
+    waivers: {
+      list: (...args: unknown[]) => waiversListMock(...args),
     },
     installations: {
       list: (...args: unknown[]) => installationsListMock(...args),
@@ -69,6 +77,35 @@ function renderPage() {
   };
 }
 
+const cleanRow = {
+  repo: "demo",
+  branch_protection: true,
+  secret_scanning: true,
+  dependabot_enabled: true,
+  dependabot_critical_count: 0,
+  dependabot_high_count: 0,
+  code_scanning: true,
+  force_push_allowed: false,
+  score: 100,
+  unknown_dimensions: [],
+  alerts_source: "github",
+};
+
+function waiver(over: Record<string, unknown>) {
+  return {
+    id: 1,
+    check_id: "repository_dependabot_alerts_clear",
+    repos: null,
+    reason: "vendor fix pending",
+    owner: "sec-team",
+    expires_at: "2099-01-01T00:00:00Z",
+    created_by: "a@b.c",
+    created_at: "2026-01-01T00:00:00Z",
+    active: true,
+    ...over,
+  };
+}
+
 describe("RepoDetailPage", () => {
   beforeEach(() => {
     currentRepoParam = "acme~demo";
@@ -80,6 +117,10 @@ describe("RepoDetailPage", () => {
     reposPullsMock.mockReset();
     reposSecurityMock.mockReset();
     reposFlowMetricsMock.mockReset();
+    securityRepoRowMock.mockReset();
+    securityRepoRowMock.mockResolvedValue(cleanRow);
+    waiversListMock.mockReset();
+    waiversListMock.mockResolvedValue([]);
     installationsListMock.mockReset();
     installationsListMock.mockResolvedValue([]);
     installationsListForOrgMock.mockReset();
@@ -399,6 +440,97 @@ describe("RepoDetailPage", () => {
     renderPage();
 
     expect(await screen.findByText(/github api unreachable/i)).toBeInTheDocument();
+  });
+
+  it("fetches the repo's matrix row only once the Security tab is opened and shows its three checks", async () => {
+    securityRepoRowMock.mockResolvedValue({
+      ...cleanRow,
+      dependabot_critical_count: 2,
+      dependabot_high_count: 1,
+      code_scanning: false,
+      force_push_allowed: true,
+    });
+    reposSecurityMock.mockResolvedValue({ repository: "acme/demo", branch_protection: "protected", secret_scanning: "enabled" });
+
+    renderPage();
+    await waitFor(() => expect(reposStatsMock).toHaveBeenCalled());
+    expect(securityRepoRowMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("tab", { name: /security/i }));
+
+    expect(await screen.findByText("2 critical, 1 high")).toBeInTheDocument();
+    expect(securityRepoRowMock).toHaveBeenCalledWith("acme", "demo", "");
+    expect(screen.getByText("Open alerts")).toBeInTheDocument();
+    expect(screen.getByText("Allowed")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "On GitHub" })).toHaveAttribute(
+      "href",
+      "https://github.com/acme/demo/security/code-scanning",
+    );
+    expect(screen.getByRole("link", { name: "Burndown" })).toHaveAttribute("href", "/security/burndown");
+    // The secret-scanning row's "Alerts" link points the security page at this org before navigating.
+    const alerts = screen.getAllByRole("link", { name: "Alerts" }).find((a) => a.getAttribute("href") === "/security")!
+    fireEvent.click(alerts)
+  });
+
+  it("shows unknown, not a pass, for a dimension the token could not evaluate", async () => {
+    securityRepoRowMock.mockResolvedValue({ ...cleanRow, code_scanning: true, unknown_dimensions: ["code_scanning"] });
+
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /security/i }));
+
+    const row = (await screen.findByText("Code scanning alerts")).parentElement!;
+    expect(row).toHaveTextContent("Unknown");
+    expect(row).not.toHaveTextContent("Clear");
+  });
+
+  it("badges a failing check covered by an active waiver, repo-scoped case-insensitively", async () => {
+    securityRepoRowMock.mockResolvedValue({ ...cleanRow, dependabot_critical_count: 1 });
+    waiversListMock.mockResolvedValue([waiver({ repos: ["DEMO"] })]);
+
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /security/i }));
+
+    expect(await screen.findByText(/^Waived until/)).toBeInTheDocument();
+    expect(waiversListMock).toHaveBeenCalledWith("acme");
+  });
+
+  it("does not badge expired waivers, waivers for other repos, other checks, or a passing check", async () => {
+    securityRepoRowMock.mockResolvedValue({ ...cleanRow, dependabot_critical_count: 1 });
+    waiversListMock.mockResolvedValue([
+      waiver({ id: 1, active: false }),
+      waiver({ id: 2, repos: ["other"] }),
+      waiver({ id: 3, check_id: "repository_code_scanning_alerts_clear" }),
+    ]);
+
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /security/i }));
+
+    await screen.findByText("1 critical, 0 high");
+    expect(screen.queryByText(/^Waived until/)).not.toBeInTheDocument();
+  });
+
+  it("still shows the checks when the waivers lookup fails", async () => {
+    securityRepoRowMock.mockResolvedValue({ ...cleanRow, dependabot_critical_count: 1 });
+    waiversListMock.mockRejectedValue(new Error("not an org"));
+
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /security/i }));
+
+    expect(await screen.findByText("1 critical, 0 high")).toBeInTheDocument();
+    expect(screen.queryByText(/^Waived until/)).not.toBeInTheDocument();
+  });
+
+  it("shows an inline error with retry when the matrix row request fails", async () => {
+    securityRepoRowMock.mockRejectedValueOnce(new Error("GitHub rate limited"));
+    reposSecurityMock.mockResolvedValue({ repository: "acme/demo", branch_protection: "protected", secret_scanning: "enabled" });
+
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /security/i }));
+
+    await screen.findByText(/github rate limited/i);
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+
+    expect(await screen.findByText("Dependabot alerts")).toBeInTheDocument();
   });
 
   it("shows an inline error when the security status request fails", async () => {
