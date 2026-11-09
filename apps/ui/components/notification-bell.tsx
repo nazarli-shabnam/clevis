@@ -10,7 +10,7 @@ import { useNotificationPreferences, useNotifications } from "@/lib/use-notifica
 import { KIND_HINT, KIND_LABEL, KIND_ORDER } from "@/lib/notification-kinds"
 
 /** Per-user switches for which kinds appear in the bell. Loads (and saves) only while shown. */
-function PreferencesPanel({ org }: { org: string }) {
+export function PreferencesPanel({ org }: { org: string }) {
   const { query, save, muted } = useNotificationPreferences(org, true)
   const toggle = (kind: NotificationKind, show: boolean) =>
     save.mutate(show ? muted.filter((k) => k !== kind) : [...muted, kind])

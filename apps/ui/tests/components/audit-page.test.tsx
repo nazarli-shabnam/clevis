@@ -373,12 +373,22 @@ describe("AuditPage", () => {
     expect(screen.getByLabelText("Actor")).toHaveValue("");
   });
 
-  it("filters by exact action only; the action-prefix field is the org view's", async () => {
+  it("offers both the exact-action dropdown and the action-prefix field, and sends the prefix", async () => {
     auditListMock.mockResolvedValue([]);
     renderPage();
     await waitFor(() => expect(auditListMock).toHaveBeenCalled());
-    expect(screen.queryByLabelText("Action starts with")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Filter by action")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Action starts with"), { target: { value: "token." } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+    await waitFor(() =>
+      expect(auditListMock).toHaveBeenLastCalledWith({
+        action_prefix: "token.",
+        action: undefined,
+        before_id: undefined,
+        limit: 100,
+      }),
+    );
   });
 
   it("does not show a Load more button when fewer rows than the limit come back", async () => {

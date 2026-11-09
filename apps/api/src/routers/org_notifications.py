@@ -64,11 +64,14 @@ def _failed_job_filters(tenant_id: int, since: datetime) -> list:
     return [Job.tenant_id == tenant_id, Job.status == "failed", Job.updated_at >= since]
 
 
-def _critical_alert_items(db: Session, tenant_id: int, since: datetime, per_source: int) -> list[dict]:
+def _critical_alert_items(
+    db: Session, tenant_id: int, since: datetime, per_source: int, before: datetime | None = None
+) -> list[dict]:
+    q = db.query(SecurityAlert).filter(*_critical_alert_filters(tenant_id, since))
+    if before is not None:
+        q = q.filter(SecurityAlert.ingested_at < before)
     rows = (
-        db.query(SecurityAlert)
-        .filter(*_critical_alert_filters(tenant_id, since))
-        .order_by(SecurityAlert.ingested_at.desc())
+        q.order_by(SecurityAlert.ingested_at.desc())
         .limit(per_source)
         .all()
     )
@@ -85,11 +88,16 @@ def _critical_alert_items(db: Session, tenant_id: int, since: datetime, per_sour
     ]
 
 
-def _score_drop_items(db: Session, org_login: str, tenant_id: int, since: datetime, per_source: int) -> list[dict]:
+def _score_drop_items(
+    db: Session, org_login: str, tenant_id: int, since: datetime, per_source: int, before: datetime | None = None
+) -> list[dict]:
+    q = db.query(ScanResult).filter(func.lower(ScanResult.owner) == org_login.lower(), ScanResult.tenant_id == tenant_id)
+    if before is not None:
+        # Scans at or after the cursor are left out; a drop is dated by its newer scan, so each remaining
+        # pair is still compared with the scan before it.
+        q = q.filter(ScanResult.created_at < before)
     rows = (
-        db.query(ScanResult)
-        .filter(func.lower(ScanResult.owner) == org_login.lower(), ScanResult.tenant_id == tenant_id)
-        .order_by(ScanResult.created_at.desc(), ScanResult.id.desc())
+        q.order_by(ScanResult.created_at.desc(), ScanResult.id.desc())
         .limit(max(_SCANS_CONSIDERED, per_source))
         .all()
     )
@@ -118,11 +126,14 @@ def _score_drop_items(db: Session, org_login: str, tenant_id: int, since: dateti
     return items[:per_source]
 
 
-def _failed_job_items(db: Session, org_login: str, tenant_id: int, since: datetime, per_source: int) -> list[dict]:
+def _failed_job_items(
+    db: Session, org_login: str, tenant_id: int, since: datetime, per_source: int, before: datetime | None = None
+) -> list[dict]:
+    q = db.query(Job).filter(*_failed_job_filters(tenant_id, since))
+    if before is not None:
+        q = q.filter(Job.updated_at < before)
     rows = (
-        db.query(Job)
-        .filter(*_failed_job_filters(tenant_id, since))
-        .order_by(Job.updated_at.desc())
+        q.order_by(Job.updated_at.desc())
         .limit(per_source)
         .all()
     )
@@ -205,12 +216,18 @@ def get_notifications(
     org_login: str,
     days: int = Query(default=WINDOW_DAYS, ge=1, le=MAX_WINDOW_DAYS, description="How far back to look"),
     limit: int = Query(default=MAX_ITEMS, ge=1, le=MAX_LIMIT, description="Most items to return"),
+    before: datetime | None = Query(
+        default=None,
+        description="Cursor: only items dated before this time (the `at` of the last item already loaded). "
+        "`unread_count` is 0 on such a page; take it from the first page.",
+    ),
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
     tenant_id = ctx.org.tenant_id
     since = datetime.now(timezone.utc) - timedelta(days=days)
+    before = _aware(before) if before is not None else None
     per_source = max(_PER_SOURCE, limit)
     last_read = notification_read_repo.get_last_read(db, user.id, tenant_id)
     dismissed = notification_dismissal_repo.get_dismissed(db, user.id, tenant_id)
@@ -221,16 +238,19 @@ def get_notifications(
 
     raw: list[dict] = []
     if "critical_alert" not in muted:
-        raw += _critical_alert_items(db, tenant_id, since, per_source)
+        raw += _critical_alert_items(db, tenant_id, since, per_source, before)
     if "score_drop" not in muted:
-        raw += _score_drop_items(db, org_login, tenant_id, since, per_source)
+        raw += _score_drop_items(db, org_login, tenant_id, since, per_source, before)
     if is_admin and "job_failed" not in muted:
-        raw += _failed_job_items(db, org_login, tenant_id, since, per_source)
+        raw += _failed_job_items(db, org_login, tenant_id, since, per_source, before)
     if is_admin and "permission_drift" not in muted:
         raw += _permission_drift_items(db, ctx, org_login, since)
     if is_admin and "waiver_expired" not in muted:
         raw += _waiver_expired_items(db, org_login, tenant_id, since)
 
+    if before is not None:
+        # permission drift and waivers are not row-limited, so they are cut here instead of in a query.
+        raw = [i for i in raw if _aware(i["at"]) < before]
     raw.sort(key=lambda i: _aware(i["at"]), reverse=True)
     items = [
         NotificationItem(
@@ -243,6 +263,9 @@ def get_notifications(
     # Counted before the list is cut to MAX_ITEMS, and (for the sources that are cut to _PER_SOURCE
     # rows) including the unread rows that cut left out, so a long list never under-reports.
     unread_count = sum(1 for i in items if not i.read)
+    if before is not None:
+        # A later page lists older items only; the unread badge is the first page's job.
+        return NotificationFeed(org=org_login, unread_count=0, items=items[:limit], last_read_at=last_read)
     if "critical_alert" not in muted:
         unread_count += _unread_beyond_limit(db, _critical_alert_filters(tenant_id, since), SecurityAlert.ingested_at, last_read, items, "critical_alert", dismissed)
     if is_admin and "job_failed" not in muted:

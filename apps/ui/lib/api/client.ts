@@ -244,11 +244,13 @@ function normalizeCheckValue(id: string, raw: unknown): CheckValue {
 
 export const api = {
   notifications: {
-    // `days`/`limit` widen the window past the bell's defaults (14 days, 50 items) for the full page.
-    feed: (org: string, opts: { days?: number; limit?: number } = {}) => {
+    // `days` widens the window past the bell's default (14 days); `before` (the `at` of the last item
+    // already loaded) pages to older items. The server then reports `unread_count` 0.
+    feed: (org: string, opts: { days?: number; limit?: number; before?: string } = {}) => {
       const params = new URLSearchParams()
       if (opts.days) params.set("days", String(opts.days))
       if (opts.limit) params.set("limit", String(opts.limit))
+      if (opts.before) params.set("before", opts.before)
       const qs = params.toString()
       return get<NotificationFeed>(`/orgs/${encodeURIComponent(org)}/notifications${qs ? `?${qs}` : ""}`)
     },
