@@ -1344,6 +1344,54 @@ describe("waivers, notification preferences and evidence endpoints", () => {
   });
 });
 
+describe("request timeouts", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  // A fetch that only settles when its signal aborts, like a server that never answers.
+  function hangingFetch() {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise((_, reject) => {
+            init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+          }),
+      ),
+    );
+  }
+
+  it("aborts an ordinary request after 15s and says the server may still be working", async () => {
+    vi.useFakeTimers();
+    hangingFetch();
+    const pending = expect(api.analytics.changes("acme")).rejects.toThrow(/after 15s.*may still be working/);
+    await vi.advanceTimersByTimeAsync(15_000);
+    await pending;
+  });
+
+  it.each([
+    ["scan", () => api.analytics.overview("acme", "")],
+    ["bulk remediation", () => api.security.remediateBulk("acme", { check_id: "c", repos: ["r"], dry_run: false })],
+    ["bulk branch protection", () => api.branchProtection.bulk("acme", { repos: ["r"], dry_run: false })],
+    ["Dependabot triage", () => api.dependabotTriage.run("acme", { dry_run: false })],
+  ])("gives %s a longer ceiling than 15s", async (_name, call) => {
+    vi.useFakeTimers();
+    hangingFetch();
+    let settled = false;
+    const pending = call().then(
+      () => { settled = true; },
+      () => { settled = true; },
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await pending;
+    expect(settled).toBe(true);
+  });
+});
+
 describe("api.notifications feed window and dismiss", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
