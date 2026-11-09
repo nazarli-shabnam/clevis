@@ -293,6 +293,30 @@ describe("AuditPage", () => {
     expect(screen.queryByRole("button", { name: /load more/i })).not.toBeInTheDocument();
   });
 
+  it("keeps the loaded rows on screen and shows 'Loading…' on the button while the next page fetches (#768)", async () => {
+    const fullPage = Array.from({ length: 100 }, (_, i) => ({
+      id: 200 - i,
+      actor: "u@e.com",
+      action: "installation.connected",
+      target: "acme",
+      payload: "{}",
+      created_at: "2026-01-01T00:00:00Z",
+    }));
+    let resolveNext: (rows: typeof fullPage) => void = () => {};
+    auditListMock.mockResolvedValueOnce(fullPage);
+    auditListMock.mockImplementationOnce(() => new Promise((resolve) => { resolveNext = resolve }));
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText("100 entries")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /load more/i }));
+
+    expect(await screen.findByRole("button", { name: /loading/i })).toBeDisabled();
+    expect(screen.getByText("100 entries")).toBeInTheDocument();
+
+    resolveNext([]);
+    await waitFor(() => expect(screen.queryByRole("button", { name: /loading/i })).not.toBeInTheDocument());
+  });
+
   it("applies the actor, target and date filters on submit, not per keystroke", async () => {
     auditListMock.mockResolvedValue([]);
     renderPage();
