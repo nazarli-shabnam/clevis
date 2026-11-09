@@ -23,6 +23,10 @@ _FN = (
 
 
 def upgrade() -> None:
+    # Serialises with docker/provision-api-role-existing-deployment.sh, which takes the same lock: each
+    # side checks for the other's output (the function / the clevis_api role) before granting, so without
+    # this an overlapping run could have both see nothing and skip the grant.
+    op.execute("SELECT pg_advisory_xact_lock(hashtext('clevis:api-role-grants'))")
     op.execute(
         r"""
         CREATE FUNCTION audit_logs_for_admin_filtered(
