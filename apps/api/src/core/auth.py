@@ -5,11 +5,12 @@ logout) against the DB on every request so revoked sessions end immediately.
 """
 
 import hashlib
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import jwt
-from fastapi import Cookie, Depends, HTTPException, Response, status
+from fastapi import Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy import delete
@@ -18,6 +19,9 @@ from sqlalchemy.orm import Session
 
 from src.core.config import settings
 from src.core.db import RevokedToken, User, get_db, set_session_user
+from src.repositories import session_repo
+
+logger = logging.getLogger(__name__)
 
 _ALGORITHM = "HS256"
 _TOKEN_EXPIRE_DAYS = 30
@@ -81,6 +85,32 @@ def create_access_token(
     return jwt.encode(payload, settings.auth_secret.get_secret_value(), algorithm=_ALGORITHM)
 
 
+def start_session(db: Session, request: Request, user: User) -> str:
+    """Issue a session JWT for ``user`` and record it (with the client's IP and user agent) so it shows up in
+    their active-sessions list.
+
+    The record is bookkeeping: if it cannot be written the sign-in still succeeds (the session is valid, just
+    not listed), and the failure is logged. Commits.
+    """
+    user_id = user.id  # read before any insert: a failed flush expires ``user`` and reading it then would raise
+    token = create_access_token(user_id, user.email, user.is_workspace_admin, user.name, user.token_version)
+    try:
+        payload = jwt.decode(token, settings.auth_secret.get_secret_value(), algorithms=[_ALGORITHM])
+        session_repo.record(
+            db,
+            jti=payload["jti"],
+            user_id=user_id,
+            expires_at=datetime.fromtimestamp(payload["exp"], tz=timezone.utc),
+            user_agent=request.headers.get("user-agent"),
+            ip=request.client.host if request.client else None,
+        )
+        db.commit()
+    except Exception:
+        logger.exception("could not record the new session for user %s", user_id)
+        db.rollback()
+    return token
+
+
 def decode_access_token(token: str) -> dict:
     try:
         return jwt.decode(
@@ -120,6 +150,7 @@ def require_auth(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked")
     if db.get(RevokedToken, _revocation_key(token, payload)) is not None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked")
+    _touch_session(db, payload.get("jti"))
     # Set app.user_id for RLS self-access checks on routes that never resolve a tenant
     # (see migration 0031).
     set_session_user(db, user_id)
@@ -132,6 +163,35 @@ def require_auth(
         is_workspace_admin=db_user.is_workspace_admin,
         github_login=db_user.github_login,
     )
+
+
+def _touch_session(db: Session, jti: str | None) -> None:
+    """Keep the session's "last seen" fresh, written at most once a minute. Never blocks authentication."""
+    if not jti:
+        return
+    try:
+        if session_repo.touch(db, jti):
+            db.commit()
+    except Exception:
+        logger.warning("could not update last_seen_at for a session", exc_info=True)
+        db.rollback()
+
+
+def current_session_id(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+    session: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+) -> str | None:
+    """The ``jti`` of the token this request authenticated with (None for a legacy token without one).
+
+    Mirrors require_auth's choice of token (Bearer header, else cookie); use it only on a route that also
+    depends on require_auth, which has already verified the token."""
+    token = credentials.credentials if credentials else session
+    if not token:
+        return None
+    try:
+        return jwt.decode(token, settings.auth_secret.get_secret_value(), algorithms=[_ALGORITHM]).get("jti")
+    except jwt.InvalidTokenError:
+        return None
 
 
 def _revocation_key(token: str, payload: dict) -> str:
@@ -155,6 +215,7 @@ def revoke_presented_tokens(db: Session, *tokens: str | None) -> None:
     exists are all no-ops. Expired denylist rows are purged here since they can no longer matter.
     """
     revoked_any = False
+    ended: list[str] = []
     for token in dict.fromkeys(t for t in tokens if t):
         try:
             payload = jwt.decode(token, settings.auth_secret.get_secret_value(), algorithms=[_ALGORITHM])
@@ -171,7 +232,9 @@ def revoke_presented_tokens(db: Session, *tokens: str | None) -> None:
             .on_conflict_do_nothing(index_elements=["jti"])
         )
         revoked_any = True
+        ended.append(jti)
     if revoked_any:
+        session_repo.forget(db, ended)
         db.execute(delete(RevokedToken).where(RevokedToken.expires_at < datetime.now(timezone.utc)))
         db.commit()
 

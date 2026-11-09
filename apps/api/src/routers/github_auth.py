@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.app_config import registration_enabled
-from src.core.auth import SETUP_LOCK_KEY, create_access_token, set_session_cookie
+from src.core.auth import SETUP_LOCK_KEY, set_session_cookie, start_session
 from src.core.config import settings
 from src.core.db import User, get_db, set_session_user
 from src.core.rate_limit import rate_limit
@@ -190,7 +190,7 @@ def github_callback(
         _clear_state_cookie(error_response)
         return error_response
     org_provisioning.sync_org_admin_memberships(db, user, user_token)
-    token = create_access_token(user.id, user.email, user.is_workspace_admin, user.name, user.token_version)
+    token = start_session(db, request, user)
     redirect_target = f"{_ui_redirect_target()}{next_path}" if next_path else _ui_redirect_target()
     response = RedirectResponse(redirect_target, status_code=303)
     set_session_cookie(response, token)

@@ -4,22 +4,25 @@ Nothing is stored per notification. The feed is derived on demand, tenant-scoped
 already keeps: new critical Dependabot alerts (``security_alerts``), score drops between comparable
 scans (``scan_results``), and, for org admins only, failed background jobs (``jobs``) and GitHub App
 permission drift (``github_installations``). The one piece of stored state is each user's "read up
-to" time (``notification_reads``), so read status follows them across devices.
+to" time (``notification_reads``) and the individual items they dismissed (``notification_dismissals``), so
+read status follows them across devices.
 """
 
+import re
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from src.core._sanitize import sanitize_error
 from src.core.auth import UserOut, require_auth
-from src.core.db import Job, ScanResult, SecurityAlert, get_db
+from src.core.db import CheckWaiver, Job, ScanResult, SecurityAlert, get_db
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import (
     installation_repo,
+    notification_dismissal_repo,
     notification_preference_repo,
     notification_read_repo,
     scan_results_repo,
@@ -31,11 +34,16 @@ from src.services.scan_service import comparable_scans
 
 router = APIRouter()
 
-# Older changes are history, not notifications.
+# Older changes are history, not notifications. The bell uses these defaults; the full notifications
+# page asks for a longer window and more items (up to the caps) through ``days`` and ``limit``.
 WINDOW_DAYS = 14
+MAX_WINDOW_DAYS = 90
 MAX_ITEMS = 50
+MAX_LIMIT = 200
 _PER_SOURCE = 40
 _SCANS_CONSIDERED = 30
+# The stable ids the feed hands out: a kind plus the source row's integer id.
+_ITEM_ID = re.compile(r"^(critical_alert|score_drop|job_failed|permission_drift|waiver_expired):[0-9]{1,18}$")
 
 
 def _aware(value: datetime) -> datetime:
@@ -56,12 +64,12 @@ def _failed_job_filters(tenant_id: int, since: datetime) -> list:
     return [Job.tenant_id == tenant_id, Job.status == "failed", Job.updated_at >= since]
 
 
-def _critical_alert_items(db: Session, tenant_id: int, since: datetime) -> list[dict]:
+def _critical_alert_items(db: Session, tenant_id: int, since: datetime, per_source: int) -> list[dict]:
     rows = (
         db.query(SecurityAlert)
         .filter(*_critical_alert_filters(tenant_id, since))
         .order_by(SecurityAlert.ingested_at.desc())
-        .limit(_PER_SOURCE)
+        .limit(per_source)
         .all()
     )
     return [
@@ -77,12 +85,12 @@ def _critical_alert_items(db: Session, tenant_id: int, since: datetime) -> list[
     ]
 
 
-def _score_drop_items(db: Session, org_login: str, tenant_id: int, since: datetime) -> list[dict]:
+def _score_drop_items(db: Session, org_login: str, tenant_id: int, since: datetime, per_source: int) -> list[dict]:
     rows = (
         db.query(ScanResult)
         .filter(func.lower(ScanResult.owner) == org_login.lower(), ScanResult.tenant_id == tenant_id)
         .order_by(ScanResult.created_at.desc(), ScanResult.id.desc())
-        .limit(_SCANS_CONSIDERED)
+        .limit(max(_SCANS_CONSIDERED, per_source))
         .all()
     )
     items: list[dict] = []
@@ -107,15 +115,15 @@ def _score_drop_items(db: Session, org_login: str, tenant_id: int, since: dateti
                 "href": "/security",
             }
         )
-    return items[:_PER_SOURCE]
+    return items[:per_source]
 
 
-def _failed_job_items(db: Session, org_login: str, tenant_id: int, since: datetime) -> list[dict]:
+def _failed_job_items(db: Session, org_login: str, tenant_id: int, since: datetime, per_source: int) -> list[dict]:
     rows = (
         db.query(Job)
         .filter(*_failed_job_filters(tenant_id, since))
         .order_by(Job.updated_at.desc())
-        .limit(_PER_SOURCE)
+        .limit(per_source)
         .all()
     )
     return [
@@ -170,26 +178,42 @@ def _waiver_expired_items(db: Session, org_login: str, tenant_id: int, since: da
     ]
 
 
-def _unread_beyond_limit(db: Session, filters: list, at_column, last_read, items: list, kind: str) -> int:
-    """Unread rows of one source that the per-source LIMIT kept out of ``items``."""
-    q = db.query(func.count()).select_from(at_column.class_).filter(*filters)
+def _unread_beyond_limit(db: Session, filters: list, at_column, last_read, items: list, kind: str, dismissed) -> int:
+    """Unread rows of one source past the read cursor that the per-source LIMIT kept out of ``items``.
+
+    Rows the user dismissed are left out of both sides, so a dismissed row the limit cut is not counted
+    as unread and a dismissed row that is listed does not make a cut row look listed."""
+    model = at_column.class_
+    prefix = f"{kind}:"
+    dismissed_ids = [int(d[len(prefix):]) for d in dismissed if d.startswith(prefix)]
+    q = db.query(func.count()).select_from(model).filter(*filters)
+    if dismissed_ids:
+        q = q.filter(model.id.notin_(dismissed_ids))
     if last_read is not None:
         q = q.filter(at_column > last_read)
-    unread_total = q.scalar() or 0
-    unread_listed = sum(1 for i in items if i.kind == kind and not i.read)
-    return max(0, unread_total - unread_listed)
+    past_cursor_total = q.scalar() or 0
+    past_cursor_listed = sum(
+        1
+        for i in items
+        if i.kind == kind and i.id not in dismissed and (last_read is None or _aware(i.at) > _aware(last_read))
+    )
+    return max(0, past_cursor_total - past_cursor_listed)
 
 
 @router.get("/orgs/{org_login}/notifications", response_model=NotificationFeed)
 def get_notifications(
     org_login: str,
+    days: int = Query(default=WINDOW_DAYS, ge=1, le=MAX_WINDOW_DAYS, description="How far back to look"),
+    limit: int = Query(default=MAX_ITEMS, ge=1, le=MAX_LIMIT, description="Most items to return"),
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
     tenant_id = ctx.org.tenant_id
-    since = datetime.now(timezone.utc) - timedelta(days=WINDOW_DAYS)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    per_source = max(_PER_SOURCE, limit)
     last_read = notification_read_repo.get_last_read(db, user.id, tenant_id)
+    dismissed = notification_dismissal_repo.get_dismissed(db, user.id, tenant_id)
     # Muted kinds are left out of the list and of the unread count here, once, so the bell badge and the
     # Overview "since last visit" card (both read this feed) always agree.
     muted = notification_preference_repo.get_muted(db, user.id, tenant_id)
@@ -197,11 +221,11 @@ def get_notifications(
 
     raw: list[dict] = []
     if "critical_alert" not in muted:
-        raw += _critical_alert_items(db, tenant_id, since)
+        raw += _critical_alert_items(db, tenant_id, since, per_source)
     if "score_drop" not in muted:
-        raw += _score_drop_items(db, org_login, tenant_id, since)
+        raw += _score_drop_items(db, org_login, tenant_id, since, per_source)
     if is_admin and "job_failed" not in muted:
-        raw += _failed_job_items(db, org_login, tenant_id, since)
+        raw += _failed_job_items(db, org_login, tenant_id, since, per_source)
     if is_admin and "permission_drift" not in muted:
         raw += _permission_drift_items(db, ctx, org_login, since)
     if is_admin and "waiver_expired" not in muted:
@@ -209,19 +233,24 @@ def get_notifications(
 
     raw.sort(key=lambda i: _aware(i["at"]), reverse=True)
     items = [
-        NotificationItem(**i, read=last_read is not None and _aware(i["at"]) <= _aware(last_read)) for i in raw
+        NotificationItem(
+            **i,
+            read=(i["id"] in dismissed and _aware(dismissed[i["id"]]) >= _aware(i["at"]))
+            or (last_read is not None and _aware(i["at"]) <= _aware(last_read)),
+        )
+        for i in raw
     ]
     # Counted before the list is cut to MAX_ITEMS, and (for the sources that are cut to _PER_SOURCE
     # rows) including the unread rows that cut left out, so a long list never under-reports.
     unread_count = sum(1 for i in items if not i.read)
     if "critical_alert" not in muted:
-        unread_count += _unread_beyond_limit(db, _critical_alert_filters(tenant_id, since), SecurityAlert.ingested_at, last_read, items, "critical_alert")
+        unread_count += _unread_beyond_limit(db, _critical_alert_filters(tenant_id, since), SecurityAlert.ingested_at, last_read, items, "critical_alert", dismissed)
     if is_admin and "job_failed" not in muted:
-        unread_count += _unread_beyond_limit(db, _failed_job_filters(tenant_id, since), Job.updated_at, last_read, items, "job_failed")
+        unread_count += _unread_beyond_limit(db, _failed_job_filters(tenant_id, since), Job.updated_at, last_read, items, "job_failed", dismissed)
     return NotificationFeed(
         org=org_login,
         unread_count=unread_count,
-        items=items[:MAX_ITEMS],
+        items=items[:limit],
         last_read_at=last_read,
     )
 
@@ -247,6 +276,54 @@ def set_notification_preferences(
     """Replace the caller's muted kinds for this org. Per user: it never changes what anyone else sees."""
     stored = notification_preference_repo.set_muted(db, user.id, ctx.org.tenant_id, body.muted_kinds)
     return NotificationPreferences(muted_kinds=stored)
+
+
+_MAX_ROW_ID = 2_147_483_647  # the source tables use 32-bit integer ids
+
+
+def _item_exists(db: Session, ctx: OrgContext, org_login: str, kind: str, row_id: int) -> bool:
+    """Whether ``kind:row_id`` names a row this caller's feed can show, so dismissals only ever hold real items
+    (not arbitrary ids a client invents, or admin-only ones a member cannot see)."""
+    if row_id > _MAX_ROW_ID:
+        return False
+    tenant_id = ctx.org.tenant_id
+    is_admin = ctx.membership.role == "admin"
+    if kind == "critical_alert":
+        model = SecurityAlert
+    elif kind == "score_drop":
+        model = ScanResult
+    elif not is_admin:
+        return False
+    elif kind == "job_failed":
+        return db.query(Job.id).filter(Job.id == row_id, *_failed_job_filters_any_age(tenant_id)).first() is not None
+    elif kind == "permission_drift":
+        install = installation_repo.get_for_org(db, org_id=ctx.org.id, account_login=org_login)
+        return install is not None and install.id == row_id
+    else:
+        model = CheckWaiver
+    return db.query(model.id).filter(model.id == row_id, model.tenant_id == tenant_id).first() is not None
+
+
+def _failed_job_filters_any_age(tenant_id: int) -> list:
+    return [Job.tenant_id == tenant_id, Job.status == "failed"]
+
+
+@router.post("/orgs/{org_login}/notifications/{item_id}/dismiss", status_code=204)
+def dismiss_notification(
+    org_login: str,
+    item_id: str,
+    ctx: OrgContext = Depends(require_org_role(min_role="member")),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Mark one notification read for the caller only, without moving the read-up-to marker. ``item_id`` is
+    an id from the feed; anything else is rejected so the table only ever holds ids the feed can produce."""
+    if not _ITEM_ID.match(item_id):
+        raise HTTPException(status_code=422, detail="Not a notification id")
+    kind, _, raw_id = item_id.partition(":")
+    if not _item_exists(db, ctx, org_login, kind, int(raw_id)):
+        raise HTTPException(status_code=404, detail="No such notification")
+    notification_dismissal_repo.dismiss(db, user.id, ctx.org.tenant_id, item_id)
 
 
 class MarkReadBody(BaseModel):

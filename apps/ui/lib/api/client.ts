@@ -14,6 +14,7 @@ import type {
   ActionsUsageResponse,
   AnalyticsHistoryResponse,
   AnalyticsOverviewResponse,
+  AdminAuditFilters,
   AuditLogOut,
   OrgAuditFilters,
   BranchProtectionBulkResponse,
@@ -63,6 +64,7 @@ import type {
   ScanExportResponse,
   SecretScanningResponse,
   SecurityMatrixResponse,
+  UserSessionOut,
   SyncInstallationsResponse,
   WorkflowLintResponse,
   WorkflowsResponse,
@@ -241,7 +243,17 @@ function normalizeCheckValue(id: string, raw: unknown): CheckValue {
 
 export const api = {
   notifications: {
-    feed: (org: string) => get<NotificationFeed>(`/orgs/${encodeURIComponent(org)}/notifications`),
+    // `days`/`limit` widen the window past the bell's defaults (14 days, 50 items) for the full page.
+    feed: (org: string, opts: { days?: number; limit?: number } = {}) => {
+      const params = new URLSearchParams()
+      if (opts.days) params.set("days", String(opts.days))
+      if (opts.limit) params.set("limit", String(opts.limit))
+      const qs = params.toString()
+      return get<NotificationFeed>(`/orgs/${encodeURIComponent(org)}/notifications${qs ? `?${qs}` : ""}`)
+    },
+    // 204: marks one item (an id from the feed) read for the caller, without moving the read-up-to marker.
+    dismiss: (org: string, itemId: string) =>
+      post<null>(`/orgs/${encodeURIComponent(org)}/notifications/${encodeURIComponent(itemId)}/dismiss`, {}),
     // 204: marks everything currently in the feed as read for the caller.
     // `upTo` = the newest item shown, so an item that arrived after the feed loaded stays unread.
     markRead: (org: string, upTo?: string) =>
@@ -508,12 +520,15 @@ export const api = {
       }),
   },
   audit: {
-    // No offset/cursor on the backend (it returns the N most recent rows, cap 500);
-    // callers raise limit to page further back.
-    list: (action?: string, limit = 100) => {
-      const params = new URLSearchParams({ limit: String(limit) })
-      if (action) params.set("action", action)
-      return get<AuditLogOut[]>(`/audit?${params.toString()}`)
+    // The instance-wide log, newest first. Workspace-admin only. Pages with `before_id` (the id of the
+    // last row already loaded); `since`/`until` are ISO timestamps.
+    list: (filters: AdminAuditFilters = {}) => {
+      const params = new URLSearchParams()
+      for (const [key, value] of Object.entries(filters)) {
+        if (value !== undefined && value !== "") params.set(key, String(value))
+      }
+      const qs = params.toString()
+      return get<AuditLogOut[]>(`/audit${qs ? `?${qs}` : ""}`)
     },
     // One org's own audit rows, newest first. Org-admin only. Pages with `before_id` (the id of the
     // last row already loaded); `since`/`until` are ISO timestamps.
@@ -732,6 +747,10 @@ export const api = {
     patchMe: (name: string) =>
       patch<{ id: number; email: string; name: string | null; is_workspace_admin: boolean }>("/auth/me", { name }),
     revokeSessions: () => post<{ ok: boolean }>("/auth/me/revoke-sessions", {}),
+    // Sessions Clevis has a record of, most recently used first.
+    sessions: () => get<UserSessionOut[]>("/auth/me/sessions"),
+    // Ends one other session; 204. The current session is refused (use logout).
+    revokeSession: (id: string) => del(`/auth/me/sessions/${encodeURIComponent(id)}`),
     verifyEmail: (token: string) => post<{ ok: boolean }>("/auth/verify-email", { token }),
     resendVerification: () =>
       post<{ ok: boolean; already_verified: boolean }>("/auth/resend-verification", {}),

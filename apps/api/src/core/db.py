@@ -164,7 +164,9 @@ class RepoEvent(Base):
         Index("ix_repo_events_tenant_id_occurred_at", "tenant_id", "occurred_at"),
         # Inactive members: each login's newest push (DISTINCT ON (actor) ... ORDER BY actor, occurred_at DESC).
         Index("ix_repo_events_tenant_id_event_type_actor_occurred_at", "tenant_id", "event_type", "actor", "occurred_at"),
-        UniqueConstraint("delivery_id", name="uq_repo_events_delivery_id"),
+        # Per tenant: backfill ids ("backfill:<GitHub event id>") are global, so the same real event can
+        # legitimately be stored once for each tenant whose feed contains it.
+        UniqueConstraint("tenant_id", "delivery_id", name="uq_repo_events_tenant_delivery"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -415,6 +417,20 @@ class NotificationRead(Base):
     last_read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class NotificationDismissal(Base):
+    """One in-app notification a user has marked read on its own (one row per user, tenant and item).
+
+    Keyed by the feed's stable item id (``kind:source_row_id``). Separate from NotificationRead's cursor
+    so reading one item neither moves the cursor nor affects any other item."""
+
+    __tablename__ = "notification_dismissals"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True)
+    item_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    dismissed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class NotificationPreference(Base):
     """Which in-app notification kinds a user has muted for an org (one row per user and tenant).
 
@@ -597,6 +613,27 @@ class RevokedToken(Base):
     jti: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class UserSession(Base):
+    """One issued session JWT, keyed by its ``jti``, so a user can list their sessions and end one.
+
+    Not tenant data (no RLS), like RevokedToken: require_auth touches it before any tenant context exists,
+    and every query filters by the authenticated user. Holds an IP and user-agent hint (personal data).
+    Ending a session writes its jti to ``revoked_tokens`` (what require_auth actually checks) and deletes
+    the row here.
+    """
+
+    __tablename__ = "user_sessions"
+    __table_args__ = (Index("ix_user_sessions_user_id", "user_id"),)
+
+    jti: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    user_agent: Mapped[str | None] = mapped_column(String, nullable=True)
+    ip: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 # Pool sizing. require_auth opens a transaction at the start of every request, so a connection stays
