@@ -395,7 +395,7 @@ export interface ReleaseTimelineResponse {
 export interface JobOut {
   id: number
   job_type: string
-  status: "queued" | "processing" | "done" | "failed"
+  status: "queued" | "processing" | "running" | "done" | "failed"
   result: string | null
   created_at: string
   updated_at: string

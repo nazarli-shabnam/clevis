@@ -96,9 +96,10 @@ export function openActivityStream(org: string, days: number, signal: AbortSigna
 
 // Hard ceiling so a hanging API surfaces an error instead of leaving callers loading forever.
 const REQUEST_TIMEOUT_MS = 15000
-// Endpoints that do their GitHub work inside the request (scans, bulk remediation, bulk branch protection,
-// Dependabot triage) loop over every repo, so on a large org they legitimately outlast the default ceiling.
-const LONG_REQUEST_TIMEOUT_MS = 120_000
+// Scans and bulk automations loop over every repo, so the API runs them as jobs (`?async=1` answers 202 with a
+// job id straight away) and `postJob` polls the job. Each request stays short; only the wait is long.
+const JOB_POLL_MS = 2000
+const JOB_GIVE_UP_MS = 30 * 60_000
 
 export async function fetchWithTimeout(
   url: string,
@@ -161,18 +162,32 @@ async function post<T>(
   path: string,
   body: unknown,
   extraHeaders?: Record<string, string>,
-  timeoutMs?: number,
 ): Promise<T> {
-  const res = await fetchWithTimeout(
-    `${BASE}${path}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...getAuthHeaders(), ...extraHeaders },
-      body: JSON.stringify(body),
-    },
-    timeoutMs,
-  )
+  const res = await fetchWithTimeout(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getAuthHeaders(), ...extraHeaders },
+    body: JSON.stringify(body),
+  })
   return handleResponse<T>(res)
+}
+
+// Starts a long server-side operation as a job and resolves with the same body the synchronous endpoint
+// returns. Validation and permission errors still reject immediately (they answer before the job exists);
+// a job that fails rejects with its message.
+async function postJob<T>(path: string, body: unknown): Promise<T> {
+  const { job_id } = await post<{ job_id: number }>(`${path}?async=1`, body)
+  const deadline = Date.now() + JOB_GIVE_UP_MS
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, JOB_POLL_MS))
+    const job = await get<JobOut>(`/jobs/${job_id}`)
+    if (job.status === "done") return JSON.parse(job.result ?? "null") as T
+    if (job.status === "failed") throw new Error(job.result || "The operation failed")
+    if (Date.now() > deadline) {
+      throw new Error(
+        "This is taking longer than expected. The server may still be working on it, so check the result before trying again.",
+      )
+    }
+  }
 }
 
 // Carries an optional client-supplied PAT to GET endpoints via a header (never
@@ -293,12 +308,10 @@ export const api = {
     changes: (orgLogin: string) => get<ScanChanges>(`/orgs/${encodeURIComponent(orgLogin)}/analytics/changes`),
     // token is optional — the API falls back to a connected GitHub App installation.
     overview: async (owner: string, token: string): Promise<AnalyticsOverviewResponse> => {
-      const data = await post<AnalyticsOverviewResponse>(
-        "/me/analytics/overview",
-        { owner, token: token || undefined },
-        undefined,
-        LONG_REQUEST_TIMEOUT_MS,
-      )
+      const data = await postJob<AnalyticsOverviewResponse>("/me/analytics/overview", {
+        owner,
+        token: token || undefined,
+      })
       return {
         ...data,
         checks: data.checks.map((c) => ({ ...c, value: normalizeCheckValue(c.id, c.value) })),
@@ -373,12 +386,10 @@ export const api = {
       org: string,
       body: { check_id: string; repos: string[]; dry_run: boolean; token?: string },
     ) =>
-      post<BulkRemediateResponse>(
-        `/orgs/${encodeURIComponent(org)}/security/remediate/bulk`,
-        { ...body, token: body.token || undefined },
-        undefined,
-        LONG_REQUEST_TIMEOUT_MS,
-      ),
+      postJob<BulkRemediateResponse>(`/orgs/${encodeURIComponent(org)}/security/remediate/bulk`, {
+        ...body,
+        token: body.token || undefined,
+      }),
     // Needs a write-scoped token; a GitHub 403 comes back as a 400 with a permission hint.
     // Admin-gated when `owner` is a connected Clevis org.
     remediate: (owner: string, repo: string, checkId: string, token?: string) =>
@@ -499,12 +510,10 @@ export const api = {
         token?: string
       },
     ) =>
-      post<BranchProtectionBulkResponse>(
-        `/orgs/${encodeURIComponent(org)}/branch-protection/bulk`,
-        { ...body, token: body.token || undefined },
-        undefined,
-        LONG_REQUEST_TIMEOUT_MS,
-      ),
+      postJob<BranchProtectionBulkResponse>(`/orgs/${encodeURIComponent(org)}/branch-protection/bulk`, {
+        ...body,
+        token: body.token || undefined,
+      }),
   },
   workflowLint: {
     // A scan needs only membership (or a PAT); open_pr needs org-admin for a connected org and
@@ -533,12 +542,10 @@ export const api = {
         body,
       ),
     run: (org: string, body: { repos?: string[]; dry_run: boolean }, token?: string) =>
-      post<DependabotTriageResponse>(
-        `/orgs/${encodeURIComponent(org)}/dependabot-triage`,
-        { ...body, token: token || undefined },
-        undefined,
-        LONG_REQUEST_TIMEOUT_MS,
-      ),
+      postJob<DependabotTriageResponse>(`/orgs/${encodeURIComponent(org)}/dependabot-triage`, {
+        ...body,
+        token: token || undefined,
+      }),
   },
   github: {
     events: (org: string, token: string, perPage = 30) =>
