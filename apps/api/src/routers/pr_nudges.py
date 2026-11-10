@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, SecretStr
 from sqlalchemy.orm import Session
 
+from src.core.path_params import Owner, Repo
 from src.core.app_config import get_config
 from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
@@ -116,8 +117,8 @@ def _run_audited(
 
 @router.post("/me/repos/{owner}/{repo}/pr-nudges", response_model=NudgeResponse)
 def nudge_stale_prs(
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     body: NudgeRequest,
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
@@ -141,8 +142,8 @@ def nudge_stale_prs(
 )
 def nudge_stale_prs_for_org(
     org_login: str,
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     body: NudgeRequest,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     user: UserOut = Depends(require_auth),

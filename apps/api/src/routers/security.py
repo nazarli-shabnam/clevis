@@ -14,6 +14,7 @@ import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
+from src.core.path_params import Owner, Repo
 from src.core.app_config import get_config
 from src.core.auth import UserOut, require_auth
 from src.core.db import SecurityAlert, get_db
@@ -280,7 +281,7 @@ def _build_matrix(
 
 @router.get("/me/analytics/security-matrix/{owner}", response_model=SecurityMatrixResponse)
 def personal_security_matrix(
-    owner: str,
+    owner: Owner,
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),
@@ -303,8 +304,8 @@ _GH_NAME_RE = re.compile(r"^(?!\.\.?$)[A-Za-z0-9._-]{1,100}$")
 
 @router.get("/me/analytics/security-matrix/{owner}/{repo}", response_model=RepoSecurityRow)
 def personal_repo_security_row(
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),
@@ -362,8 +363,8 @@ def _secret_scanning_alerts_from_aggregate(db: Session, tenant_id: int, owner: s
 
 @router.get("/me/repos/{owner}/{repo}/secret-scanning", response_model=SecretScanningResponse)
 def personal_secret_scanning(
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),

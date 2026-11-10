@@ -317,6 +317,25 @@ def test_process_job_rejects_empty_string_fields():
     assert conn.committed is True
 
 
+import pytest
+
+
+@pytest.mark.parametrize("owner,repo", [
+    ("acme", "x?"), ("acme", "x#y"), ("acme", "a/b"), ("acme", "x%2F"), ("acme", ".."), ("acme", "."),
+    ("ac me", "demo"), ("acme/other", "demo"), ("-acme", "demo"),
+])
+def test_process_job_rejects_owner_or_repo_that_would_change_the_url(owner, repo):
+    conn = _FakeConn()
+    bad_payload = json.dumps({"owner": owner, "repo": repo, "token": "x"})
+
+    with patch("worker.httpx.Client") as mock_client_cls:
+        process_job(conn, 11, "github.clear_actions_cache", bad_payload)
+        mock_client_cls.assert_not_called()
+
+    sql, _ = conn._cursor.calls[0]
+    assert "status='failed'" in sql
+
+
 def test_process_job_terminal_write_is_a_noop_if_reclaimed_out_from_under_it(worker_db):
     """A reclaim while this call is in flight must turn the terminal write into a no-op."""
     conn, created_ids = worker_db
