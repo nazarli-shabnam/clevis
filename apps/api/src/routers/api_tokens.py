@@ -35,6 +35,7 @@ from src.schemas.api_token import (
     ScoreOut,
 )
 from src.services.analytics_service import org_scores_hygiene
+from src.services.stored_identity import load_stored_identity
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token
 
 router = APIRouter()
@@ -189,7 +190,10 @@ async def _scan_and_record(token: ResolvedToken, db: Session) -> ScoreOut:
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     org = await anyio.to_thread.run_sync(lambda: org_repo.get_by_id(db, token.org_id))
-    result = await _run_overview(token.org_login, github_token, score_hygiene=org_scores_hygiene(org))
+    stored_identity = await anyio.to_thread.run_sync(lambda: load_stored_identity(db, token.tenant_id))
+    result = await _run_overview(
+        token.org_login, github_token, score_hygiene=org_scores_hygiene(org), stored_identity=stored_identity
+    )
 
     # Attributes the scan, and any alert it triggers, to this token rather than to "system".
     actor = f"api_token:{token.token_id}"

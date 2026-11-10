@@ -27,6 +27,7 @@ from src.core.db import Org, set_session_tenant
 from src.repositories import audit_repo, scan_results_repo
 from src.services import scan_service
 from src.services.analytics_service import get_overview, org_scores_hygiene
+from src.services.stored_identity import load_stored_identity
 from src.services.scan_schedule import CADENCE_INTERVAL, effective_cadence, instance_cadence
 from src.services.sweep_lock import try_acquire_sweep_slot
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token
@@ -105,7 +106,11 @@ def _scan_one(db: Session, org_id: int, tenant_id: int, org_login: str, cadence:
     audit_repo.write(db, actor=ACTOR, action="scan.scheduled_started", target=org_login, payload={}, tenant_id=tenant_id)
     try:
         result = get_overview(
-            owner=org_login, token=token, account_type="Organization", score_hygiene=org_scores_hygiene(org)
+            owner=org_login,
+            token=token,
+            account_type="Organization",
+            score_hygiene=org_scores_hygiene(org),
+            stored_identity=load_stored_identity(db, tenant_id),
         )
         previous = scan_service.persist_scan_and_alert(db, org, result, tenant_id, actor=ACTOR)
         audit_repo.write(

@@ -59,15 +59,27 @@ def tally(checks: list[dict]) -> tuple[int, int, int | None]:
 
 
 def get_overview(
-    owner: str, token: str, account_type: str = "Organization", score_hygiene: bool | None = None
+    owner: str,
+    token: str,
+    account_type: str = "Organization",
+    score_hygiene: bool | None = None,
+    stored_identity: dict | None = None,
 ) -> dict:
-    """`score_hygiene` None = the instance-wide setting; callers scanning a Clevis org pass the org's."""
+    """`score_hygiene` None = the instance-wide setting; callers scanning a Clevis org pass the org's.
+
+    `stored_identity` (see services.stored_identity) adds the identity checks built from Clevis's own member and
+    collaborator data; callers pass it only for a Clevis org, never for an arbitrary login."""
     base_url = settings.github_api_base
     if score_hygiene is None:
         score_hygiene = instance_scores_hygiene()
     # Unscored hygiene checks cost hundreds of GitHub calls per scan for a result that changes nothing.
     report = run_all_checks(
-        owner=owner, token=token, base_url=base_url, account_type=account_type, include_hygiene=score_hygiene
+        owner=owner,
+        token=token,
+        base_url=base_url,
+        account_type=account_type,
+        include_hygiene=score_hygiene,
+        stored_identity=stored_identity,
     )
     checks = report["checks"]
     # Stamp the policy onto each check: it is persisted with the scan, so later readers (the digest)
