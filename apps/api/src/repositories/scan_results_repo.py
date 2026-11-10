@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.orm import Session
@@ -30,6 +30,10 @@ def insert(
             checks_json=json.dumps(checks),
             tenant_id=tenant_id,
             scanned_by_user_id=scanned_by_user_id,
+            # Stamped here, not by the column's now() default: that is the *transaction* start, and a
+            # scan's transaction opens before its GitHub calls, so a long scan would be dated as
+            # starting, not finishing (which also eats the API-token scan reuse window).
+            created_at=datetime.now(timezone.utc),
         )
     )
     db.commit()
