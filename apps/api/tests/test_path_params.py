@@ -23,7 +23,7 @@ def test_every_owner_and_repo_path_param_is_validated():
     assert unvalidated == []
 
 
-@pytest.mark.parametrize("repo", ["x?", "x#", "a/b", "x%2F", "..", ".", "", "a b", "x" * 101])
+@pytest.mark.parametrize("repo", ["x?", "x#", "a/b", "x%2F", "..", ".", "", "a b", "x" * 101, "demo\n"])
 def test_repo_pattern_rejects(repo):
     assert REPO_NAME_RE.match(repo) is None
 
@@ -33,7 +33,7 @@ def test_repo_pattern_accepts(repo):
     assert REPO_NAME_RE.match(repo)
 
 
-@pytest.mark.parametrize("owner", ["acme?", "a/b", "-acme", "", "x" * 40, "a b"])
+@pytest.mark.parametrize("owner", ["acme?", "a/b", "-acme", "", "x" * 40, "a b", "acme\n"])
 def test_owner_pattern_rejects(owner):
     assert OWNER_RE.match(owner) is None
 

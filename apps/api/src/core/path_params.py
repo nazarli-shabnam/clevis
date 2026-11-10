@@ -11,10 +11,11 @@ from typing import Annotated
 
 from pydantic import AfterValidator
 
+# ``\Z``, not ``$``: ``$`` also matches before a trailing newline, so a name ending in one would pass.
 # GitHub logins: alphanumerics, ``-`` and ``_`` (managed-user suffixes); up to 39 chars.
-OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,38}$")
+OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,38}\Z")
 # GitHub repo names: letters, digits, ``.  _  -``; 1-100 chars; never "." or "..".
-REPO_NAME_RE = re.compile(r"^(?!\.\.?$)[A-Za-z0-9._-]{1,100}$")
+REPO_NAME_RE = re.compile(r"^(?!\.\.?$)[A-Za-z0-9._-]{1,100}\Z")
 
 
 def _matching(pattern: re.Pattern[str], what: str):
