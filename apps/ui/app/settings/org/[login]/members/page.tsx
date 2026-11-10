@@ -18,6 +18,7 @@ import { SectionError } from "@/components/section-error"
 import { HygieneScoringCard } from "@/components/hygiene-scoring-card"
 import { ScheduledScansCard } from "@/components/scheduled-scans-card"
 import { WaiversCard } from "@/components/waivers-card"
+import { ClevisMembersCard } from "@/components/clevis-members-card"
 import { EvidenceExportCard } from "@/components/evidence-export-card"
 import { MemberAccessSheet } from "@/components/member-access-sheet"
 import { NotificationDestinationsCard } from "@/components/notification-destinations-card"
@@ -649,6 +650,7 @@ export default function OrgMembersPage() {
         <>
         <HygieneScoringCard orgLogin={orgLogin} />
         <ScheduledScansCard orgLogin={orgLogin} />
+        <ClevisMembersCard orgLogin={orgLogin} />
         <WaiversCard orgLogin={orgLogin} />
         <EvidenceExportCard orgLogin={orgLogin} />
         <div className="grid gap-4 lg:grid-cols-3">

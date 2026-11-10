@@ -180,6 +180,18 @@ export interface AnalyticsOverviewResponse {
   checks: CheckResult[]
 }
 
+/** A Clevis membership of an org (GET /orgs/{org}/members). Only invite-sourced ones can be changed here. */
+export interface OrgMembership {
+  user_id: number
+  email: string
+  name: string | null
+  github_login: string | null
+  role: "member" | "admin"
+  /** "github" mirrors GitHub org status (read-only); "invite" is an accepted invitation. */
+  source: string
+  editable: boolean
+}
+
 export interface ScanHistoryEntry {
   id: number
   owner: string
