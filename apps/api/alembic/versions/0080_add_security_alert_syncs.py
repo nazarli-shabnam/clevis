@@ -10,7 +10,8 @@ It also redefines ``purge_tenant_github_data`` (0069) to delete this table's row
 installation clears the completeness record along with the alerts it vouched for: a reinstall must not trust a
 record whose rows were purged. Otherwise additive (nothing existing is touched, nothing is backfilled by the
 migration; the job does that). Tenant-isolated with the usual RLS policy, like the other sync cursor tables. The worker writes it and
-the API reads it, so each gets only what it needs. Downgrade drops the table: the matrix then falls back to
+the API reads it; like the other sync cursor tables (0041) the API role also gets INSERT/UPDATE, which the API
+tests need to seed it under the restricted role (no DELETE: the uninstall purge is the SECURITY DEFINER function). Downgrade drops the table: the matrix then falls back to
 its live GitHub reads, as before.
 
 Revision ID: 0080
@@ -90,7 +91,7 @@ def upgrade() -> None:
                 GRANT SELECT, INSERT, UPDATE ON security_alert_syncs TO clevis_worker;
             END IF;
             IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'clevis_api') THEN
-                GRANT SELECT ON security_alert_syncs TO clevis_api;
+                GRANT SELECT, INSERT, UPDATE ON security_alert_syncs TO clevis_api;
             END IF;
         END
         $$;
@@ -110,7 +111,7 @@ def downgrade() -> None:
                 REVOKE SELECT, INSERT, UPDATE ON security_alert_syncs FROM clevis_worker;
             END IF;
             IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'clevis_api') THEN
-                REVOKE SELECT ON security_alert_syncs FROM clevis_api;
+                REVOKE SELECT, INSERT, UPDATE ON security_alert_syncs FROM clevis_api;
             END IF;
         END
         $$;
