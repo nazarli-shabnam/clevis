@@ -16,7 +16,8 @@ import { shouldApplyResolvedToken } from "@/lib/token-resolve"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
 import { CHART_COLORS } from "@/lib/charts/theme"
 import { formatBytes, relativeTime, classifyStaleness, stalenessColor } from "@/lib/format"
-import type { CacheEntry, InstallationMeta, JobOut } from "@/lib/api/types"
+import { isOrgMemberOnly } from "@/lib/members-href"
+import type { CacheEntry, InstallationMeta, JobOut, MyOrgMembership } from "@/lib/api/types"
 
 interface CachePanelProps {
   owner: string
@@ -49,6 +50,14 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
     enabled: !!owner,
     retry: false,
   })
+  // Clearing (even a dry run) needs org admin on the API. Treated as not allowed until the memberships
+  // load, like the org-wide caches page; Load caches is read-only and stays available to members.
+  const { data: memberships } = useQuery<MyOrgMembership[]>({
+    queryKey: ["my-orgs"],
+    queryFn: () => api.orgs.mine(),
+  })
+  const canClear = !!memberships && !isOrgMemberOnly(memberships, owner)
+  const memberOnly = !!memberships && isOrgMemberOnly(memberships, owner)
   const hasInstallationForOwner =
     installs.some((i) => i.account_login === owner) || (orgInstallsQuery.data?.length ?? 0) > 0
 
@@ -246,29 +255,36 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
               {listMutation.error.message}
             </p>
           )}
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setClearTarget(null)
-                clearMutation.mutate(true)
-                // The preview lists what a clear would delete, so fetch the current caches.
-                listMutation.mutate()
-              }}
-              disabled={isLoading}
-            >
-              <Eye className="size-3.5" />
-              Dry run
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => { setClearTarget(null); setConfirmOpen(true) }}
-              disabled={isLoading}
-            >
-              <Trash className="size-3.5" />
-              Clear
-            </Button>
-          </div>
+          {canClear && (
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setClearTarget(null)
+                  clearMutation.mutate(true)
+                  // The preview lists what a clear would delete, so fetch the current caches.
+                  listMutation.mutate()
+                }}
+                disabled={isLoading}
+              >
+                <Eye className="size-3.5" />
+                Dry run
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => { setClearTarget(null); setConfirmOpen(true) }}
+                disabled={isLoading}
+              >
+                <Trash className="size-3.5" />
+                Clear
+              </Button>
+            </div>
+          )}
+          {memberOnly && (
+            <p className="text-xs text-muted-foreground">
+              Clearing caches needs an admin of {owner}. Ask an org admin to run a dry run or a clear.
+            </p>
+          )}
           {clearMutation.isError && (
             <p className="text-xs text-destructive flex items-center gap-1.5">
               <Warning className="size-3 shrink-0" />
@@ -367,15 +383,17 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
                         </span>
                       </td>
                       <td className="px-4 py-2.5 text-right">
-                        <Button
-                          variant="outline"
-                          className="h-6 px-2 text-[0.6875rem]"
-                          disabled={isLoading}
-                          onClick={() => { setClearTarget({ key: c.key, ref: c.ref }); setConfirmOpen(true) }}
-                        >
-                          <Trash className="size-3" />
-                          Clear key
-                        </Button>
+                        {canClear && (
+                          <Button
+                            variant="outline"
+                            className="h-6 px-2 text-[0.6875rem]"
+                            disabled={isLoading}
+                            onClick={() => { setClearTarget({ key: c.key, ref: c.ref }); setConfirmOpen(true) }}
+                          >
+                            <Trash className="size-3" />
+                            Clear key
+                          </Button>
+                        )}
                       </td>
                     </tr>
                   )
