@@ -225,4 +225,7 @@ def test_the_enqueueing_services_attribute_their_jobs(db, world):
         assert db.query(Job).filter(Job.id == job_id).one().tenant_id == t
     # ...and they are exactly what the org's admins can list
     listed = {j["id"] for j in _client(db, world["users"]["acme_admin"]).get("/orgs/acme/jobs").json()}
-    assert listed == {backfill, reconcile, clear}
+    # backfill_service.enqueue also queues the tenant's one-off security-alert backfill, attributed the same way
+    alerts = db.query(Job).filter(Job.job_type == "github.backfill_security_alerts").one()
+    assert alerts.tenant_id == t
+    assert listed == {backfill, reconcile, clear, alerts.id}
