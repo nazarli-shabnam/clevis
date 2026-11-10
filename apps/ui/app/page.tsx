@@ -200,7 +200,8 @@ export default function OverviewPage() {
         </div>
       )}
 
-      {org && (
+      {/* Role-dependent steps: hold the checklist back until membership is known (and skip it if the lookup failed). */}
+      {org && (scope?.kind !== "org" || membershipsLoaded) && (
         <FirstRunChecklist
           scope={scope}
           userId={user?.id ?? null}
