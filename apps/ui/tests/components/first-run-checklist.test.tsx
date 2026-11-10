@@ -100,6 +100,26 @@ describe("FirstRunChecklist", () => {
     )
   })
 
+  it("tells a plain org member to ask an admin instead of offering install, permissions or automation steps", async () => {
+    listForOrgMock.mockResolvedValue([])
+    renderChecklist({ isOrgMember: true, hasAutomationRun: false, hasScan: false })
+
+    expect(await screen.findByText("Ask an org admin to install the GitHub App")).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: /Install the GitHub App/ })).toBeNull()
+    expect(screen.queryByText(/Run your first automation/)).toBeNull()
+    // What a member can do themselves is still offered.
+    expect(screen.getByRole("link", { name: /Run your first security scan/ })).toBeInTheDocument()
+  })
+
+  it("does not show a member the permissions step when the App is installed but not fully granted", async () => {
+    listForOrgMock.mockResolvedValue([install({ blocked_features: [{ feature: "fix_this", label: "Fix this", missing: { administration: "write" } }] })])
+    renderChecklist({ isOrgMember: true })
+
+    await waitFor(() => expect(listForOrgMock).toHaveBeenCalled())
+    expect(screen.queryByText(/Grant the permissions/)).toBeNull()
+    expect(screen.queryByText(/Ask an org admin/)).toBeNull()
+  })
+
   it("renders nothing when everything is complete", async () => {
     listForOrgMock.mockResolvedValue([install()])
     invitationsListMock.mockResolvedValue([{ id: 1 }])
