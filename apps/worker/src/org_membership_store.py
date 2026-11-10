@@ -106,7 +106,15 @@ def remove_org_member(cur: psycopg.Cursor, *, tenant_id: int, login: str, event_
     )
 
 
-def revoke_github_membership(cur: psycopg.Cursor, *, tenant_id: int, github_user_id: int, login: str) -> None:
+def revoke_github_membership(
+    cur: psycopg.Cursor,
+    *,
+    tenant_id: int,
+    github_user_id: int,
+    login: str,
+    actor: str = "github-webhook",
+    reason: str = "member_removed",
+) -> None:
     """Delete the GitHub-sourced Clevis membership of a user GitHub just removed from the org,
     auditing it in the same transaction (same action the OAuth-login reconcile writes).
 
@@ -120,8 +128,8 @@ def revoke_github_membership(cur: psycopg.Cursor, *, tenant_id: int, github_user
     for (role,) in cur.fetchall():
         cur.execute(
             "INSERT INTO audit_logs (actor, action, target, payload, tenant_id, created_at) "
-            "VALUES ('github-webhook', 'membership.github_revoked', %s, %s, %s, NOW())",
-            (login, json.dumps({"previous_role": role, "reason": "member_removed"}), tenant_id),
+            "VALUES (%s, 'membership.github_revoked', %s, %s, %s, NOW())",
+            (actor, login, json.dumps({"previous_role": role, "reason": reason}), tenant_id),
         )
 
 
@@ -229,3 +237,57 @@ def reconcile_repo_collaborator_outside_status(
             "WHERE tenant_id = %(tenant_id)s AND login = ANY(%(logins)s)",
             {"tenant_id": tenant_id, "logins": list(direct_members)},
         )
+
+
+def reconcile_github_memberships(cur: psycopg.Cursor, *, tenant_id: int, members: list[dict]) -> None:
+    """Apply the full roster to the org's GitHub-sourced Clevis memberships: revoke the access of a user
+    GitHub no longer lists, and demote an admin that GitHub now lists as a plain member.
+
+    This is the safety net for a missed ``organization.member_removed`` webhook; it reuses the webhook
+    path's revoke (and its ``membership.github_revoked`` audit row, reason ``reconcile``) and mirrors the
+    sign-in reconcile (``org_provisioning.sync_org_admin_memberships``), which also never promotes.
+    Invite-sourced memberships are Clevis's own grant and are left alone. Matching is by
+    ``users.github_user_id``; users without one can't be matched and are left alone.
+
+    Fails closed: an empty roster, one with no admin (an org always has an owner, so it was probably a
+    public-only listing), or one with an entry lacking a GitHub id changes nothing, since a wrong answer
+    here locks real people out. Caller must have set app.tenant_id."""
+    ids_by_role: dict[str, list[int]] = {"admin": [], "member": []}
+    for member in members:
+        github_id = member.get("github_user_id")
+        if not isinstance(github_id, int):
+            return
+        ids_by_role.get(member["role"], ids_by_role["member"]).append(github_id)
+    if not ids_by_role["admin"]:
+        return
+    roster_ids = ids_by_role["admin"] + ids_by_role["member"]
+
+    cur.execute(
+        "SELECT DISTINCT u.github_user_id FROM memberships m JOIN users u ON u.id = m.user_id "
+        "WHERE m.tenant_id = %(tenant_id)s AND m.source = 'github' AND u.github_user_id IS NOT NULL "
+        "AND NOT (u.github_user_id = ANY(%(roster_ids)s))",
+        {"tenant_id": tenant_id, "roster_ids": roster_ids},
+    )
+    for (github_user_id,) in cur.fetchall():
+        revoke_github_membership(
+            cur,
+            tenant_id=tenant_id,
+            github_user_id=github_user_id,
+            login=f"github_user:{github_user_id}",
+            actor="github-reconcile",
+            reason="reconcile",
+        )
+
+    if ids_by_role["member"]:
+        cur.execute(
+            "UPDATE memberships m SET role = 'member' FROM users u "
+            "WHERE u.id = m.user_id AND m.tenant_id = %(tenant_id)s AND m.source = 'github' "
+            "AND m.role = 'admin' AND u.github_user_id = ANY(%(member_ids)s) RETURNING u.github_user_id",
+            {"tenant_id": tenant_id, "member_ids": ids_by_role["member"]},
+        )
+        for (github_user_id,) in cur.fetchall():
+            cur.execute(
+                "INSERT INTO audit_logs (actor, action, target, payload, tenant_id, created_at) "
+                "VALUES ('github-reconcile', 'membership.github_demoted', %s, %s, %s, NOW())",
+                (f"github_user:{github_user_id}", json.dumps({"role": "member", "reason": "reconcile"}), tenant_id),
+            )
