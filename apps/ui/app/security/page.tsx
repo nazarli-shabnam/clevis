@@ -76,10 +76,12 @@ function ScoreGauge({ score, failed, total }: { score: number | null; failed: nu
 
 const SEVERITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 }
 
+// An errored check counts against the score like a failure, so it sorts right after the failures.
+const STATUS_ORDER: Record<CheckResult["status"], number> = { fail: 0, error: 1, pass: 2, not_applicable: 3 }
+
 function sortChecks(checks: CheckResult[]): CheckResult[] {
   return [...checks].sort((a, b) => {
-    // Failed before passed
-    if (a.status !== b.status) return a.status === "fail" ? -1 : 1
+    if (a.status !== b.status) return STATUS_ORDER[a.status] - STATUS_ORDER[b.status]
     // Within same status: high → medium → low
     return (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9)
   })

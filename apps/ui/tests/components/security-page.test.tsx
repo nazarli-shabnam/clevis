@@ -550,6 +550,29 @@ describe("SecurityPage", () => {
     expect(await screen.findByText(/capped at 5000 scans/i)).toBeInTheDocument();
   });
 
+  it("lists failed checks first, then errored ones, then passing, whatever order the API returns", async () => {
+    const check = (id: string, status: string) => ({
+      id, title: `Title ${id}`, severity: "medium", remediation: "n/a", status, value: null,
+    });
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 50, total_checks: 6, failed_checks: 3, repo_count: 1,
+      checks: [
+        check("p1", "pass"), check("e1", "error"), check("p2", "pass"),
+        check("f1", "fail"), check("e2", "error"), check("p3", "pass"),
+      ],
+    });
+
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+
+    await screen.findByText("Title f1");
+    const order = screen.getAllByText(/^Title [fpe]\d$/).map((el) => el.textContent);
+    expect(order).toEqual(["Title f1", "Title e1", "Title e2", "Title p1", "Title p2", "Title p3"]);
+  });
+
   it("filters checks down to failed only via the Failed tab", async () => {
     analyticsOverviewMock.mockResolvedValue({
       owner: "acme",
