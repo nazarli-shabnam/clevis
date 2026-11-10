@@ -180,6 +180,16 @@ export interface AnalyticsOverviewResponse {
   checks: CheckResult[]
 }
 
+/** The org's newest stored scan (GET /orgs/{org}/analytics/latest-scan): the overview minus repo_count. */
+export interface LatestScanResponse {
+  owner: string
+  score: number | null
+  total_checks: number
+  failed_checks: number
+  scanned_at: string
+  checks: CheckResult[]
+}
+
 export interface ScanHistoryEntry {
   id: number
   owner: string

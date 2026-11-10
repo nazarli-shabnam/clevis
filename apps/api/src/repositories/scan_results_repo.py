@@ -109,23 +109,29 @@ def list_recent(
     ]
 
 
-def latest_with_checks(db: Session, owner: str, tenant_id: int) -> dict | None:
-    """Newest scan for ``owner`` within ``tenant_id``, with per-check results, or None."""
-    row = (
-        db.query(ScanResult)
-        .filter(func.lower(ScanResult.owner) == owner.lower(), ScanResult.tenant_id == tenant_id)
-        .order_by(ScanResult.created_at.desc(), ScanResult.id.desc())
-        .first()
-    )
+def _newest_with_checks(db: Session, *criteria) -> dict | None:
+    row = db.query(ScanResult).filter(*criteria).order_by(ScanResult.created_at.desc(), ScanResult.id.desc()).first()
     if row is None:
         return None
     return {
+        "owner": row.owner,
         "score": row.score,
         "total_checks": row.total_checks,
         "failed_checks": row.failed_checks,
         "scanned_at": row.created_at.isoformat() if row.created_at else None,
         "checks": _parse_checks(row.checks_json),
     }
+
+
+def latest_with_checks(db: Session, owner: str, tenant_id: int) -> dict | None:
+    """Newest scan for ``owner`` within ``tenant_id``, with per-check results, or None."""
+    return _newest_with_checks(db, func.lower(ScanResult.owner) == owner.lower(), ScanResult.tenant_id == tenant_id)
+
+
+def latest_for_org(db: Session, owner: str, org_tenant_id: int) -> dict | None:
+    """Newest scan of a Clevis org with per-check results, or None. Same scope as the org's history
+    (``org_scope_filter``): rows under the org's tenant, plus scans a current member ran themselves."""
+    return _newest_with_checks(db, org_scope_filter(owner, org_tenant_id))
 
 
 def _parse_checks(checks_json: str | None) -> list[dict]:

@@ -34,6 +34,7 @@ from src.schemas.analytics import (
     AtRiskRepo,
     CockpitResponse,
     IssueSummary,
+    LatestScanOut,
     MilestoneSummary,
     MyIssueListResponse,
     MyPrListResponse,
@@ -374,6 +375,18 @@ def org_analytics_history(
     return scan_results_repo.list_recent(
         db, owner=ctx.org.github_login, limit=30, org_tenant_id=ctx.org.tenant_id
     )
+
+
+@router.get("/orgs/{org_login}/analytics/latest-scan", response_model=LatestScanOut)
+def org_latest_scan(
+    ctx: OrgContext = Depends(require_org_role(min_role="member")),
+    db: Session = Depends(get_db),
+):
+    """The newest stored scan with every check, so the Security page can show results without a rescan."""
+    scan = scan_results_repo.latest_for_org(db, ctx.org.github_login, ctx.org.tenant_id)
+    if scan is None or scan["scanned_at"] is None:
+        raise HTTPException(status_code=404, detail="No scan yet")
+    return scan
 
 
 def _billing_num(value: object) -> float:

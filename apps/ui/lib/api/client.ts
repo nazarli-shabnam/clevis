@@ -14,6 +14,7 @@ import type {
   ActionsUsageResponse,
   AnalyticsHistoryResponse,
   AnalyticsOverviewResponse,
+  LatestScanResponse,
   AdminAuditFilters,
   AuditLogOut,
   OrgAuditFilters,
@@ -304,6 +305,11 @@ export const api = {
       put<NotificationPreferences>(`/orgs/${encodeURIComponent(org)}/notifications/preferences`, { muted_kinds }),
   },
   analytics: {
+    // The org's newest stored scan with every check (404 = never scanned), so results show without a rescan.
+    latestScan: async (orgLogin: string): Promise<LatestScanResponse> => {
+      const data = await get<LatestScanResponse>(`/orgs/${encodeURIComponent(orgLogin)}/analytics/latest-scan`)
+      return { ...data, checks: data.checks.map((c) => ({ ...c, value: normalizeCheckValue(c.id, c.value) })) }
+    },
     // The org's latest scan compared with the one before it, check by check.
     changes: (orgLogin: string) => get<ScanChanges>(`/orgs/${encodeURIComponent(orgLogin)}/analytics/changes`),
     // token is optional — the API falls back to a connected GitHub App installation.
