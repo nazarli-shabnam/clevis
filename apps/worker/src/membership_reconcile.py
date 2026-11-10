@@ -117,6 +117,8 @@ def fetch_org_roster(client: httpx.Client, base: str, headers: dict, org_login: 
             "login": m["login"],
             "avatar_url": m.get("avatar_url", ""),
             "role": "admin" if m["login"] in admin_logins else "member",
+            # Lets the reconcile match a roster entry to a Clevis user (users.github_user_id).
+            "github_user_id": m.get("id"),
         }
         for m in all_raw
         if "login" in m

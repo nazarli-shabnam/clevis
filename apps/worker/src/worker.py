@@ -465,6 +465,14 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
                 # Session context for RLS, same as event_consumer.py's _process_entry.
                 cur.execute(f"SET app.tenant_id = {int(payload.tenant_id)}")
                 org_membership_store.reconcile_org_members(cur, tenant_id=payload.tenant_id, members=members, synced_at=synced_at)
+                # Revoking access on a wrong roster locks people out. Without the 2FA overlay (which only an
+                # owner-level token can read) the member list may be the public-only one, so leave access alone.
+                if two_factor_disabled is not None:
+                    org_membership_store.reconcile_github_memberships(cur, tenant_id=payload.tenant_id, members=members)
+                else:
+                    log.warning(
+                        "job %d: 2FA overlay unavailable, so the roster may be incomplete; not changing Clevis memberships", job_id
+                    )
                 # None = outside_collaborators was refused (missing permission): marking everyone
                 # outside from a missing list would be wrong, so leave the flags as they are.
                 if roster["outside_logins"] is not None:

@@ -698,3 +698,135 @@ def test_a_message_only_secondary_rate_limit_is_not_slept_on_in_line():
     assert resp is limited
     mock_sleep.assert_not_called()
     assert membership_reconcile._is_secondary_rate_limit(resp) is True
+
+
+# --- applying the roster to Clevis memberships (#805) ---
+
+def _roster_member(login, github_id, role="member"):
+    return {"login": login, "avatar_url": "", "role": role, "github_user_id": github_id}
+
+
+@pytest.fixture()
+def gh_users(pg_conn, tenant_id):
+    """Three users with GitHub ids, memberships in the tenant: gh-admin (github), gh-gone (github),
+    inv-gone (invite); cleaned up afterwards."""
+    suffix = uuid.uuid4().hex[:8]
+    base = 960_000 + int(suffix[:4], 16)
+    ids = {}
+    with pg_conn.cursor() as cur:
+        for key, offset in (("admin", 1), ("gone", 2), ("invited", 3)):
+            cur.execute(
+                "INSERT INTO users (email, github_user_id) VALUES (%s, %s) RETURNING id",
+                (f"s805-{key}-{suffix}@example.com", base + offset),
+            )
+            ids[key] = (cur.fetchone()[0], base + offset)
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        cur.execute(
+            "INSERT INTO memberships (tenant_id, user_id, role, source) VALUES "
+            "(%s, %s, 'admin', 'github'), (%s, %s, 'admin', 'github'), (%s, %s, 'admin', 'invite')",
+            (tenant_id, ids["admin"][0], tenant_id, ids["gone"][0], tenant_id, ids["invited"][0]),
+        )
+    pg_conn.commit()
+    try:
+        yield ids
+    finally:
+        pg_conn.rollback()
+        user_ids = [v[0] for v in ids.values()]
+        with pg_conn.cursor() as cur:
+            cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+            cur.execute("DELETE FROM memberships WHERE user_id = ANY(%s)", (user_ids,))
+            cur.execute(
+                "DELETE FROM audit_logs WHERE tenant_id = %s AND target = ANY(%s)",
+                (tenant_id, [f"github_user:{v[1]}" for v in ids.values()]),
+            )
+            cur.execute("DELETE FROM users WHERE id = ANY(%s)", (user_ids,))
+        pg_conn.commit()
+
+
+def _memberships(pg_conn, tenant_id, user_ids):
+    with pg_conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        cur.execute("SELECT user_id, role, source FROM memberships WHERE user_id = ANY(%s)", (user_ids,))
+        return {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+
+
+def test_reconcile_revokes_github_membership_of_a_user_missing_from_the_roster(pg_conn, tenant_id, gh_users):
+    members = [_roster_member("gh-admin", gh_users["admin"][1], "admin")]
+    with pg_conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        org_membership_store.reconcile_github_memberships(cur, tenant_id=tenant_id, members=members)
+    pg_conn.commit()
+
+    left = _memberships(pg_conn, tenant_id, [v[0] for v in gh_users.values()])
+    # the removed github-sourced member is gone; the roster member and the invite-sourced one stay
+    assert set(left) == {gh_users["admin"][0], gh_users["invited"][0]}
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            "SELECT actor, payload FROM audit_logs WHERE action = 'membership.github_revoked' AND target = %s AND tenant_id = %s",
+            (f"github_user:{gh_users['gone'][1]}", tenant_id),
+        )
+        actor, audit_payload = cur.fetchone()
+    assert actor == "github-reconcile"
+    assert json.loads(audit_payload)["reason"] == "reconcile"
+
+
+def test_reconcile_demotes_a_github_admin_that_github_lists_as_member(pg_conn, tenant_id, gh_users):
+    members = [
+        _roster_member("someone-else", 1, "admin"),
+        _roster_member("gh-admin", gh_users["admin"][1], "member"),
+        _roster_member("gh-gone", gh_users["gone"][1], "admin"),
+        _roster_member("inv", gh_users["invited"][1], "member"),
+    ]
+    with pg_conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        org_membership_store.reconcile_github_memberships(cur, tenant_id=tenant_id, members=members)
+    pg_conn.commit()
+
+    left = _memberships(pg_conn, tenant_id, [v[0] for v in gh_users.values()])
+    assert left[gh_users["admin"][0]] == ("member", "github")
+    assert left[gh_users["gone"][0]] == ("admin", "github")  # still an admin on GitHub: untouched
+    assert left[gh_users["invited"][0]] == ("admin", "invite")  # invite-sourced rows are never touched
+
+
+@pytest.mark.parametrize(
+    "members",
+    [
+        [],  # empty roster
+        [{"login": "m", "avatar_url": "", "role": "member", "github_user_id": 1}],  # no admin: likely public-only
+        [{"login": "a", "avatar_url": "", "role": "admin", "github_user_id": None}],  # entry without a GitHub id
+    ],
+)
+def test_reconcile_changes_nothing_on_an_untrustworthy_roster(pg_conn, tenant_id, gh_users, members):
+    before = _memberships(pg_conn, tenant_id, [v[0] for v in gh_users.values()])
+    with pg_conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        org_membership_store.reconcile_github_memberships(cur, tenant_id=tenant_id, members=members)
+    pg_conn.commit()
+    assert _memberships(pg_conn, tenant_id, [v[0] for v in gh_users.values()]) == before
+
+
+def test_fetch_org_roster_keeps_the_github_user_id():
+    client = _FakeClient(
+        {
+            "/orgs/acme/members": [
+                _FakeResponse([{**_member("owner1"), "id": 11}]),
+                _FakeResponse([{**_member("owner1"), "id": 11}, {**_member("plain"), "id": 22}]),
+                _FakeResponse([]),
+            ],
+            "/orgs/acme/outside_collaborators": [_FakeResponse([])],
+        }
+    )
+    roster = membership_reconcile.fetch_org_roster(client, "https://api.github.com", {}, "acme")
+    assert {m["login"]: m["github_user_id"] for m in roster["members"]} == {"owner1": 11, "plain": 22}
+
+
+def test_handler_leaves_memberships_alone_when_the_2fa_overlay_failed():
+    conn = _FakeConn()
+    roster = {"members": [_roster_member("a", 1, "admin")], "two_factor_disabled_logins": None, "outside_logins": set()}
+    with patch("worker.membership_reconcile.fetch_org_roster", return_value=roster), patch("worker.httpx.Client"), patch(
+        "worker.org_membership_store.acquire_tenant_lock"
+    ), patch("worker.org_membership_store.release_tenant_lock"), patch(
+        "worker.org_membership_store.reconcile_github_memberships"
+    ) as mock_apply:
+        worker._handle_reconcile_org_membership(conn, 9, _payload(), 0)
+    mock_apply.assert_not_called()
