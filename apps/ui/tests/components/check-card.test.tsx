@@ -173,6 +173,40 @@ describe("CheckCard — text value", () => {
   });
 });
 
+describe("CheckCard — errored check (#795)", () => {
+  afterEach(cleanup);
+
+  const errored = (value: CheckResult["value"]): CheckResult => ({ ...baseCheck, status: "error", value });
+
+  it("labels the check as not evaluated instead of drawing it like a failure", () => {
+    const { container } = render(<CheckCard check={errored(null)} />);
+    expect(screen.getByText("Could not be evaluated")).toBeInTheDocument();
+    expect(container.querySelector(".text-destructive")).toBeNull(); // the red failure icon is not used
+  });
+
+  it("does not claim 'No open alerts' for zero-filled Dependabot counts", () => {
+    render(<CheckCard check={errored({ type: "severity_counts", critical: 0, high: 0, medium: 0, low: 0 })} />);
+    expect(screen.queryByText(/No open alerts/)).not.toBeInTheDocument();
+    expect(screen.getByText("Could not be evaluated")).toBeInTheDocument();
+  });
+
+  it("does not show a 100% bar for a zero-filled code-scanning ratio", () => {
+    render(<CheckCard check={errored({ type: "ratio", numerator: 3, denominator: 3 })} />);
+    expect(screen.queryByText(/100%/)).not.toBeInTheDocument();
+  });
+
+  it("does not offer Fix or File as issue, which only apply to a check that ran and failed", () => {
+    renderWithClient(<CheckCard check={errored(null)} owner="acme" />);
+    expect(screen.queryByRole("button", { name: /file as issue/i })).not.toBeInTheDocument();
+  });
+
+  it("a failed check is still drawn as a failure with no 'not evaluated' chip", () => {
+    const { container } = render(<CheckCard check={{ ...baseCheck, status: "fail" }} />);
+    expect(screen.queryByText("Could not be evaluated")).not.toBeInTheDocument();
+    expect(container.querySelector(".text-destructive")).not.toBeNull();
+  });
+});
+
 describe("CheckCard — file as issue (#286)", () => {
   beforeEach(() => {
     createIssueMock.mockReset();

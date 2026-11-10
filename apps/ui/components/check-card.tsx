@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { useMutation } from "@tanstack/react-query"
-import { CheckCircle, MinusCircle, XCircle, ArrowSquareOut, Wrench } from "@phosphor-icons/react"
+import { CheckCircle, MinusCircle, WarningCircle, XCircle, ArrowSquareOut, Wrench } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -261,6 +261,9 @@ export function CheckCard({ check, owner, token, onRemediated }: CheckCardProps)
   const pass = check.status === "pass"
   const notApplicable = check.status === "not_applicable"
   const fail = check.status === "fail"
+  // Could not be evaluated (e.g. the token or App lacks permission). Counts against the score like a failure,
+  // but is not drawn as one, and its numbers are not shown: the API zero-fills them ("No open alerts", "3 / 3").
+  const errored = check.status === "error"
   return (
     <div
       className={`bg-card border rounded-md p-3.5 flex items-start gap-3 transition-colors duration-200 ease-(--ease-out) ${
@@ -268,13 +271,17 @@ export function CheckCard({ check, owner, token, onRemediated }: CheckCardProps)
           ? "border-border/40 hover:border-border/60"
           : pass
             ? "border-accent/20 hover:border-accent/35"
-            : "border-destructive/25 hover:border-destructive/45"
+            : errored
+              ? "border-yellow-500/25 hover:border-yellow-500/45"
+              : "border-destructive/25 hover:border-destructive/45"
       }`}
     >
       {notApplicable ? (
         <MinusCircle className="size-4 shrink-0 mt-0.5 text-muted-foreground" />
       ) : pass ? (
         <CheckCircle className="size-4 shrink-0 mt-0.5 text-accent" />
+      ) : errored ? (
+        <WarningCircle className="size-4 shrink-0 mt-0.5 text-yellow-400" />
       ) : (
         <XCircle className="size-4 shrink-0 mt-0.5 text-destructive" />
       )}
@@ -288,6 +295,7 @@ export function CheckCard({ check, owner, token, onRemediated }: CheckCardProps)
               {check.severity}
             </span>
           )}
+          {errored && <span className="stat-chip text-yellow-400 border-yellow-500/30">Could not be evaluated</span>}
           {/* Only while the check is excluded from the score: once hygiene scoring is on it counts like any other. */}
           {check.informational && !check.scored && !notApplicable && <span className="stat-chip">Informational</span>}
           {check.waived && (
@@ -300,7 +308,10 @@ export function CheckCard({ check, owner, token, onRemediated }: CheckCardProps)
           )}
         </div>
         <p className="text-xs text-muted-foreground leading-relaxed">{check.remediation}</p>
-        <CheckValueDisplay value={check.value} />
+        {/* An errored check keeps its explanation, or a ratio that reports how many repos it could not inspect. */}
+        {(!errored || check.value?.type === "text" || (check.value?.type === "ratio" && !!check.value.unknown)) && (
+          <CheckValueDisplay value={check.value} />
+        )}
         {fail && owner && REMEDIABLE_CHECK_IDS.has(check.id) && (
           <FixThisButton check={check} owner={owner} token={token} onRemediated={onRemediated} />
         )}
