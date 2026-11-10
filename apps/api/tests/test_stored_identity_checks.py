@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.core.auth import UserOut, require_auth
-from src.core.db import OrgMember, RepoCollaborator, User, get_db
+from src.core.db import OrgMember, RepoCollaborator, User, get_db, set_session_tenant
 from src.repositories import org_membership_repo, org_repo
 from src.routers.analytics import router
 from src.services import analytics_service
@@ -29,6 +29,7 @@ _NOW = datetime(2026, 11, 1, tzinfo=timezone.utc)
 
 
 def _seed(db, org):
+    set_session_tenant(db, org.tenant_id)  # org_members / repo_collaborators are tenant-isolated
     db.add(OrgMember(tenant_id=org.tenant_id, login="alice", avatar_url="", role="member", two_factor_enabled=False, added_at=_NOW))
     db.add(OrgMember(tenant_id=org.tenant_id, login="bob", avatar_url="", role="admin", two_factor_enabled=None, added_at=_NOW))
     db.add(RepoCollaborator(
@@ -54,6 +55,7 @@ def org(db):
 def test_loader_returns_this_orgs_members_and_collaborators_only(db, org):
     other = org_repo.get_or_create(db, github_login="other-org")
     _seed(db, org)
+    set_session_tenant(db, other.tenant_id)  # org_members is tenant-isolated: write the other org's row in its context
     db.add(OrgMember(tenant_id=other.tenant_id, login="intruder", avatar_url="", role="member", two_factor_enabled=False, added_at=_NOW))
     db.commit()
 

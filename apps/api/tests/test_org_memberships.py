@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.core.auth import UserOut, require_auth
-from src.core.db import AuditLog, Membership, User, get_db, set_session_user
+from src.core.db import AuditLog, Membership, User, get_db, set_session_tenant, set_session_user
 from src.repositories import org_membership_repo, org_repo
 from src.routers.org_memberships import router
 
@@ -49,6 +49,8 @@ def contractor(db, org):
 
 
 def _role(db, org, user):
+    # memberships is tenant-isolated: read it in that org's context, whichever org the request just used
+    set_session_tenant(db, org.tenant_id)
     m = db.query(Membership).filter(Membership.tenant_id == org.tenant_id, Membership.user_id == user.id).first()
     return m.role if m else None
 

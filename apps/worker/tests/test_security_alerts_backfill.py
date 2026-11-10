@@ -1,6 +1,7 @@
 """Backfill of already-open Dependabot / code scanning alerts, and the per-(repo, kind) completeness record (#814)."""
 
 import json
+import uuid
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -114,23 +115,14 @@ def pg_conn():
 
 @pytest.fixture()
 def tenant_id(pg_conn):
-    email = "s814-alert-backfill@example.com"
+    """A fresh tenant per test, so no cleanup is needed (the restricted role these tests run as in CI cannot
+    DELETE from security_alerts or security_alert_syncs)."""
+    email = f"s814-alert-backfill-{uuid.uuid4().hex}@example.com"
     with pg_conn.cursor() as cur:
-        cur.execute("SELECT id FROM users WHERE lower(email) = lower(%s)", (email,))
-        row = cur.fetchone()
-        user_id = row[0] if row else None
-        if user_id is None:
-            cur.execute("INSERT INTO users (email) VALUES (%s) RETURNING id", (email,))
-            user_id = cur.fetchone()[0]
-        cur.execute("SELECT id FROM tenants WHERE personal_user_id = %s", (user_id,))
-        row = cur.fetchone()
-        result = row[0] if row else None
-        if result is None:
-            cur.execute("INSERT INTO tenants (kind, personal_user_id) VALUES ('personal', %s) RETURNING id", (user_id,))
-            result = cur.fetchone()[0]
-        cur.execute(f"SET app.tenant_id = {int(result)}")
-        cur.execute("DELETE FROM security_alerts WHERE tenant_id = %s", (result,))
-        cur.execute("DELETE FROM security_alert_syncs WHERE tenant_id = %s", (result,))
+        cur.execute("INSERT INTO users (email) VALUES (%s) RETURNING id", (email,))
+        user_id = cur.fetchone()[0]
+        cur.execute("INSERT INTO tenants (kind, personal_user_id) VALUES ('personal', %s) RETURNING id", (user_id,))
+        result = cur.fetchone()[0]
     pg_conn.commit()
     return result
 
