@@ -1493,3 +1493,18 @@ def test_a_redelivered_entry_already_deferred_is_not_queued_twice(pg_conn, tenan
     finally:
         holder.close()
         event_consumer._deferred.clear()
+
+
+def test_consumer_name_is_unique_per_process():
+    """Every container runs the worker as PID 1, so the name cannot be derived from the PID."""
+    import importlib
+
+    import event_consumer
+
+    first = event_consumer._CONSUMER_NAME
+    try:
+        second = importlib.reload(event_consumer)._CONSUMER_NAME
+    finally:
+        importlib.reload(event_consumer)
+    assert first.startswith("worker-") and second.startswith("worker-")
+    assert first != second
