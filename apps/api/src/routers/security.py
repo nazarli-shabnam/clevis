@@ -189,15 +189,16 @@ def _repo_row(client: GitHubClient, owner: str, repo: dict, alerts_by_repo: dict
         critical_count = 0
         high_count = 0
         try:
-            alerts = client.request("GET", f"/repos/{owner}/{name}/dependabot/alerts", params={"state": "open"})
+            # Every page: a single request is GitHub's default 30 alerts, and a critical one on page 2
+            # would otherwise read as a clean repo.
+            alerts = client.request_paginated(f"/repos/{owner}/{name}/dependabot/alerts", params={"state": "open"})
             dependabot_enabled = True
-            if isinstance(alerts, list):
-                for alert in alerts:
-                    severity = (alert.get("security_advisory") or {}).get("severity")
-                    if severity == "critical":
-                        critical_count += 1
-                    elif severity == "high":
-                        high_count += 1
+            for alert in alerts:
+                severity = (alert.get("security_advisory") or {}).get("severity")
+                if severity == "critical":
+                    critical_count += 1
+                elif severity == "high":
+                    high_count += 1
         except httpx.HTTPStatusError as exc:
             # 404 means Dependabot alerts are genuinely disabled -- a real "no alerts"
             # answer. Any other status means the count is unknown, not zero.
