@@ -321,7 +321,7 @@ def _handle_backfill_repo_events(conn: psycopg.Connection, job_id: int, payload_
 
     try:
         with httpx.Client(timeout=20) as client:
-            raw_events = backfill.fetch_events(client, base, headers, payload.account_login, payload.account_type)
+            raw_events = backfill.fetch_all_events(client, base, headers, payload.account_login, payload.account_type)
     except httpx.HTTPStatusError as error:
         # Still failing after fetch_events' own retries: a 5xx or a rate limit is requeued with the job
         # backoff, a genuine 4xx fails the job.
