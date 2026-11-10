@@ -81,7 +81,10 @@ def _saved_token(db: Session, account_login: str) -> str | None:
         return None
     if not db.query(User.is_workspace_admin).filter(User.id == user_id).scalar():
         return None
-    row = db.query(SavedToken).filter(func.lower(SavedToken.org) == account_login.lower()).first()
+    # Exact key first (what the reveal endpoint uses); case-insensitive only if there is none.
+    row = db.query(SavedToken).filter(SavedToken.org == account_login).first() or (
+        db.query(SavedToken).filter(func.lower(SavedToken.org) == account_login.lower()).first()
+    )
     if row is None:
         return None
     try:

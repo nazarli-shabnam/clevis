@@ -102,3 +102,18 @@ def test_resolving_via_fallback_writes_no_audit_row(db, acme):
     before = db.query(AuditLog).filter(AuditLog.action == "token.resolve").count()
     resolve_org_token(db, org_id=acme["org"].id, account_login="acme", client_token=None)
     assert db.query(AuditLog).filter(AuditLog.action == "token.resolve").count() == before
+
+
+def test_a_connection_level_user_id_is_not_proof_of_a_session_user(db, acme):
+    """A pooled connection can still carry a previous request's app.user_id; only the session's own record counts."""
+    _save(db)
+    db.execute(text(f"SET app.user_id = {acme['admin'].id}"))
+    with pytest.raises(NoGitHubTokenAvailable):
+        resolve_org_token(db, org_id=acme["org"].id, account_login="acme", client_token=None)
+
+
+def test_exact_case_saved_token_wins_over_a_case_variant(db, acme):
+    _save(db, org="Acme", token="ghp_variant")
+    _save(db, org="acme", token="ghp_exact")
+    set_session_user(db, acme["admin"].id)
+    assert resolve_org_token(db, org_id=acme["org"].id, account_login="acme", client_token=None) == "ghp_exact"
