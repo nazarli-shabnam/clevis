@@ -9,7 +9,7 @@ REST alert objects have the same fields as the webhook payloads' ``alert``, so t
 consumer's own normalizer and the same upsert.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -97,9 +97,18 @@ def normalize(kind: str, full_name: str, alert: dict, received_at: datetime) -> 
     )
 
 
+# An alert created more recently than this is left for the alert sweep to announce: its webhook may simply not
+# have been processed yet, and stamping it here would suppress the one notification it deserves.
+_RECENT = timedelta(hours=1)
+
+
+def is_old(created_at: datetime, received_at: datetime) -> bool:
+    return created_at <= received_at - _RECENT
+
+
 def mark_announced(cur, *, tenant_id: int, repo: str, kind: str, number: int) -> None:
-    """Stamp a backfilled alert as already announced. These alerts are old, not new: without this the alert
-    sweep would message every destination about each pre-existing critical/high alert at once."""
+    """Stamp a backfilled, pre-existing alert as already announced. Without this the alert sweep would message
+    every destination about each old critical/high alert at once. Only for alerts old enough (is_old)."""
     cur.execute(
         "UPDATE security_alerts SET alert_notified_at = NOW() "
         "WHERE tenant_id = %s AND repo = %s AND kind = %s AND number = %s AND alert_notified_at IS NULL",

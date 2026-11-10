@@ -29,6 +29,7 @@ from src.schemas.security import (
     VulnCounts,
 )
 from src.services import dependabot_burndown
+from src.services.backfill_service import ALERT_SYNC_TTL
 from src.services.analytics_service import get_account_type
 from src.services.github_client import GitHubClient, github_error as _github_error, list_owner_repos
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_owner_token
@@ -72,15 +73,17 @@ def _open_alerts_by_repo(db: Session, tenant_id: int, repo_full_names: list[str]
     SQLAlchemy Session across threads: _repo_row runs concurrently, so this pre-fetches
     everything up front and hands each worker a plain dict slice instead of `db` itself.
 
-    Only (repo, kind) pairs the alert backfill read in full (security_alert_syncs) are returned: before
-    that, the rows are whatever webhooks happened to deliver, so a repo with a few of them is not a
+    Only (repo, kind) pairs the alert backfill read in full, within ALERT_SYNC_TTL (security_alert_syncs),
+    are returned: before that, the rows are whatever webhooks happened to deliver, so a repo with a few of them is not a
     repo whose alerts are all known, and the caller must ask GitHub instead."""
     if not repo_full_names:
         return {}
     synced = {
         (s.repo, s.kind)
         for s in db.query(SecurityAlertSync.repo, SecurityAlertSync.kind).filter(
-            SecurityAlertSync.tenant_id == tenant_id, SecurityAlertSync.repo.in_(repo_full_names)
+            SecurityAlertSync.tenant_id == tenant_id,
+            SecurityAlertSync.repo.in_(repo_full_names),
+            SecurityAlertSync.synced_at >= datetime.now(timezone.utc) - ALERT_SYNC_TTL,
         )
     }
     rows = (

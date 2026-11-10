@@ -22,8 +22,9 @@ _INSERTS = (
     "INSERT INTO security_alerts (tenant_id, repo, kind, number, state, created_at, updated_at)"
     " VALUES (:t, 'r', 'dependabot', 1, 'open', now(), now())",
     "INSERT INTO org_membership_sync_cursors (tenant_id, org_login) VALUES (:t, 'acme')",
+    "INSERT INTO security_alert_syncs (tenant_id, repo, kind) VALUES (:t, 'r', 'dependabot')",
 )
-_TABLES = ("repo_events", "repo_event_daily_counts", "activity_sync_cursors", "security_alerts", "org_membership_sync_cursors")
+_TABLES = ("repo_events", "repo_event_daily_counts", "activity_sync_cursors", "security_alerts", "org_membership_sync_cursors", "security_alert_syncs")
 
 
 @pytest.fixture

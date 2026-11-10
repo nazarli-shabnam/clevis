@@ -6,8 +6,10 @@ few rows. The new ``github.backfill_security_alerts`` worker job reads each repo
 scanning and secret scanning alerts and records here, per repo and kind, that the list was read completely;
 the matrix uses the stored rows only for (repo, kind) pairs recorded here and otherwise asks GitHub live.
 
-Pure additive create_table (nothing existing is touched, nothing is backfilled by the migration; the job does
-that). Tenant-isolated with the usual RLS policy, like the other sync cursor tables. The worker writes it and
+It also redefines ``purge_tenant_github_data`` (0069) to delete this table's rows too, so removing the last
+installation clears the completeness record along with the alerts it vouched for: a reinstall must not trust a
+record whose rows were purged. Otherwise additive (nothing existing is touched, nothing is backfilled by the
+migration; the job does that). Tenant-isolated with the usual RLS policy, like the other sync cursor tables. The worker writes it and
 the API reads it, so each gets only what it needs. Downgrade drops the table: the matrix then falls back to
 its live GitHub reads, as before.
 
@@ -25,6 +27,43 @@ branch_labels = None
 depends_on = None
 
 _TENANT_FILTER = "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::int"
+
+# 0069's table list; the purge function is replaced (keeping its grants) with and without this migration's table.
+_PURGED = (
+    "security_alerts",
+    "org_members",
+    "repo_collaborators",
+    "activity_sync_cursors",
+    "org_membership_sync_cursors",
+    "automation_repo_settings",
+    "repo_event_daily_counts",
+    "repo_events",
+)
+
+
+def _replace_purge_function(tables: tuple[str, ...]) -> None:
+    deletes = "\n".join(f"    DELETE FROM {t} WHERE tenant_id = p_tenant_id;" for t in tables)
+    op.execute(
+        f"""
+        CREATE OR REPLACE FUNCTION purge_tenant_github_data(p_tenant_id integer)
+        RETURNS void
+        LANGUAGE plpgsql
+        SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $$
+        BEGIN
+            IF p_tenant_id IS DISTINCT FROM NULLIF(current_setting('app.tenant_id', true), '')::int THEN
+                RAISE EXCEPTION 'purge_tenant_github_data: session tenant does not match %', p_tenant_id
+                    USING ERRCODE = '42501';
+            END IF;
+            IF EXISTS (SELECT 1 FROM github_installations WHERE tenant_id = p_tenant_id) THEN
+                RETURN;
+            END IF;
+{deletes}
+        END
+        $$;
+        """
+    )
 
 
 def upgrade() -> None:
@@ -57,9 +96,12 @@ def upgrade() -> None:
         $$;
         """
     )
+    # SECURITY DEFINER: the function runs as its owner, so it needs no DELETE grant on the new table.
+    _replace_purge_function((*_PURGED, "security_alert_syncs"))
 
 
 def downgrade() -> None:
+    _replace_purge_function(_PURGED)
     op.execute(
         """
         DO $$

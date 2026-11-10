@@ -48,6 +48,23 @@ def test_not_enqueued_once_alerts_have_been_synced(db):
     assert _alert_jobs(db) == []
 
 
+def test_enqueued_again_once_the_sync_record_has_aged_out(db):
+    org = org_repo.get_or_create(db, github_login="acme")
+    db.execute(text(f"SET app.tenant_id = {int(org.tenant_id)}"))
+    db.execute(
+        text(
+            "INSERT INTO security_alert_syncs (tenant_id, repo, kind, synced_at) "
+            "VALUES (:t, 'acme/api', 'dependabot', now() - interval '31 days')"
+        ),
+        {"t": org.tenant_id},
+    )
+    db.commit()
+
+    _enqueue(db, org)
+
+    assert len(_alert_jobs(db)) == 1
+
+
 def test_not_retried_right_after_a_run_that_recorded_nothing_or_failed(db):
     org = org_repo.get_or_create(db, github_login="acme")
     _enqueue(db, org)

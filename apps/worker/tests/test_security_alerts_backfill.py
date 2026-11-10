@@ -186,6 +186,19 @@ def test_backfilled_alerts_are_marked_announced_so_the_alert_sweep_does_not_floo
     assert all(announced is not None for *_rest, announced in alerts)
 
 
+def test_an_alert_created_within_the_last_hour_is_left_for_the_alert_sweep_to_announce(pg_conn, tenant_id):
+    from datetime import datetime, timedelta, timezone
+
+    fresh = (datetime.now(timezone.utc) - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    routes = _routes(**{"acme/api/dependabot/alerts": _Resp([_alert(1, created_at=fresh), _alert(2)])})
+
+    _run(pg_conn, _Client(routes), tenant_id)
+
+    announced = {n: a for repo, kind, n, _s, a in _rows(pg_conn, tenant_id)[0] if (repo, kind) == ("acme/api", "dependabot")}
+    assert announced[1] is None  # created minutes ago: its webhook may not have been processed yet
+    assert announced[2] is not None  # long-standing: not "new"
+
+
 def test_rerunning_is_idempotent_and_leaves_an_existing_alerts_announced_state_alone(pg_conn, tenant_id):
     _run(pg_conn, _Client(_routes()), tenant_id)
     first, _ = _rows(pg_conn, tenant_id)

@@ -458,7 +458,7 @@ def _handle_backfill_security_alerts(conn: psycopg.Connection, job_id: int, payl
                     normalized = security_alerts_backfill.normalize(kind, full_name, alert, received_at)
                     if normalized is not None:
                         inserted = security_alerts_store.upsert_security_alert(cur, tenant_id=payload.tenant_id, **normalized)
-                        if inserted:
+                        if inserted and security_alerts_backfill.is_old(normalized["created_at"], received_at):
                             security_alerts_backfill.mark_announced(
                                 cur, tenant_id=payload.tenant_id, repo=full_name, kind=kind, number=normalized["number"]
                             )

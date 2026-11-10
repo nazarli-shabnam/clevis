@@ -17,6 +17,9 @@ from src.repositories import job_repo
 from src.services.sweep_lock import has_blocking_job
 
 ALERTS_JOB_TYPE = "github.backfill_security_alerts"
+# How long a security_alert_syncs record is trusted. Webhooks keep a synced repo current, so this only bounds
+# the damage of a missed one: past it the matrix asks GitHub live again and the next gap-heal re-reads the alerts.
+ALERT_SYNC_TTL = timedelta(days=30)
 # An alert backfill that failed, or finished without recording anything, is not re-enqueued for this long (it
 # would otherwise mint a new job and token on every install/gap-heal pass).
 _ALERTS_RETRY_AFTER = timedelta(hours=24)
@@ -46,13 +49,14 @@ def enqueue(db: Session, *, tenant_id: int, account_login: str, account_type: st
 def _enqueue_security_alerts_if_needed(
     db: Session, *, tenant_id: int, account_login: str, account_type: str, encrypted_token: str
 ) -> None:
-    """One-shot: skipped once any (repo, kind) is recorded as read (security_alert_syncs), while a job is queued
-    or running, or after a recent failure. New alerts arrive by webhook, so this only has to run until the
-    first success."""
+    """Skipped while a (repo, kind) is recorded as read recently (security_alert_syncs, within ALERT_SYNC_TTL),
+    while a job is queued or running, or after a recent failed/empty run. New alerts arrive by webhook, so it
+    runs on first install and again only once the record has aged out."""
     # security_alert_syncs is tenant-isolated: set the context for this read (SET LOCAL, ends with the commit).
     db.execute(text(f"SET LOCAL app.tenant_id = {int(tenant_id)}"))
     already = db.execute(
-        text("SELECT 1 FROM security_alert_syncs WHERE tenant_id = :t LIMIT 1"), {"t": tenant_id}
+        text("SELECT 1 FROM security_alert_syncs WHERE tenant_id = :t AND synced_at >= :fresh LIMIT 1"),
+        {"t": tenant_id, "fresh": datetime.now(timezone.utc) - ALERT_SYNC_TTL},
     ).fetchone()
     if already is not None:
         return
