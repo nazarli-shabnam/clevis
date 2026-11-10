@@ -128,9 +128,9 @@ describe("AuditPage", () => {
     expect(filename).toMatch(/^clevis-audit-\d{4}-\d{2}-\d{2}\.csv$/);
     expect(mime).toBe("text/csv");
     expect(csv.split("\r\n")).toEqual([
-      "Actor,Action,Target,Job status,Time",
-      "u@e.com,cache.clear.queued,acme/api,done,2026-01-01T00:00:00Z",
-      "v@e.com,token.save,acme,,2026-01-02T00:00:00Z",
+      "Actor,Action,Target,Details,Job status,Time",
+      'u@e.com,cache.clear.queued,acme/api,"{""job_id"":7}",done,2026-01-01T00:00:00Z',
+      "v@e.com,token.save,acme,{},,2026-01-02T00:00:00Z",
     ]);
   });
 
@@ -144,7 +144,28 @@ describe("AuditPage", () => {
     expect(await screen.findByText(/Exports the 1 loaded events\./)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /export csv/i }));
 
-    expect(downloadTextFileMock.mock.calls[0][1].split("\r\n")[1]).toBe("u@e.com,cache.clear.queued,acme/api,unknown,2026-01-01T00:00:00Z");
+    expect(downloadTextFileMock.mock.calls[0][1].split("\r\n")[1]).toBe('u@e.com,cache.clear.queued,acme/api,"{""job_id"":99}",unknown,2026-01-01T00:00:00Z');
+  });
+
+  it("expands a row to show its payload as key/value pairs, and offers no toggle for an empty payload", async () => {
+    auditListMock.mockResolvedValue([
+      { id: 1, actor: "u@e.com", action: "waiver.create", target: "acme", payload: JSON.stringify({ check_id: "branch_protection", reason: "legacy repo" }), created_at: "2026-01-01T00:00:00Z" },
+      { id: 2, actor: "u@e.com", action: "token.resolve", target: "acme", payload: "{}", created_at: "2026-01-02T00:00:00Z" },
+    ]);
+    renderPage();
+
+    const toggles = await screen.findAllByRole("button", { name: "Show details" });
+    expect(toggles).toHaveLength(1); // the {} row has nothing to show
+    expect(screen.queryByText("legacy repo")).not.toBeInTheDocument();
+
+    fireEvent.click(toggles[0]);
+
+    expect(screen.getByText("check_id")).toBeInTheDocument();
+    expect(screen.getByText("legacy repo")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy audit entry details" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide details" }));
+    expect(screen.queryByText("legacy repo")).not.toBeInTheDocument();
   });
 
   it("shows a retry option instead of a fake empty state when the query fails", async () => {
