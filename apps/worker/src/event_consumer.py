@@ -7,9 +7,9 @@ entries from a crashed consumer, and poison pills past _MAX_DELIVERY_ATTEMPTS ar
 
 import json
 import logging
-import os
 import threading
 import time
+import uuid
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -29,7 +29,9 @@ _DB_URL = plain_db_url(settings.database_url.get_secret_value())
 # Must match apps/api/src/routers/webhooks.py's _WEBHOOK_STREAM_KEY (no shared code).
 _STREAM_KEY = "webhook_events"
 _GROUP_NAME = "event_processors"
-_CONSUMER_NAME = f"worker-{os.getpid()}"
+# Unique per process, not per PID: every container runs the worker as PID 1, so replicas would otherwise
+# share one consumer name and _sweep_pending could not tell their own deferred entries from a peer's.
+_CONSUMER_NAME = f"worker-{uuid.uuid4().hex[:12]}"
 
 # Security alert events normalize into security_alerts (upsert-on-state-change), not repo_events.
 _SECURITY_ALERT_EVENT_TYPES = {"dependabot_alert", "code_scanning_alert", "secret_scanning_alert"}
