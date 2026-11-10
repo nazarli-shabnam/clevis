@@ -26,30 +26,42 @@ test.describe("Security scan", () => {
   test("runs a scan happy path without a real GitHub org (API mocked)", async ({ page }) => {
     await loginAsAdmin(page)
 
-    await page.route(`${E2E_API_BASE}/me/analytics/overview`, async (route) => {
+    const overview = {
+      owner: "acme",
+      score: 100,
+      total_checks: 1,
+      failed_checks: 0,
+      repo_count: 3,
+      checks: [
+        {
+          id: "organization_members_mfa_required",
+          title: "MFA required for org members",
+          status: "pass",
+          severity: "high",
+          value: true,
+          remediation: "Require two-factor authentication for all organization members.",
+        },
+      ],
+    }
+    // The scan runs as a job: the POST answers 202 with an id (the URL carries ?async=1), then the UI polls it.
+    await page.route(`${E2E_API_BASE}/me/analytics/overview?async=1`, async (route) => {
       if (route.request().method() !== "POST") {
         await route.continue()
         return
       }
+      await route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify({ job_id: 1 }) })
+    })
+    await page.route(`${E2E_API_BASE}/jobs/1`, async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          owner: "acme",
-          score: 100,
-          total_checks: 1,
-          failed_checks: 0,
-          repo_count: 3,
-          checks: [
-            {
-              id: "organization_members_mfa_required",
-              title: "MFA required for org members",
-              status: "pass",
-              severity: "high",
-              value: true,
-              remediation: "Require two-factor authentication for all organization members.",
-            },
-          ],
+          id: 1,
+          job_type: "api.analytics_overview",
+          status: "done",
+          result: JSON.stringify(overview),
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
         }),
       })
     })
@@ -60,7 +72,8 @@ test.describe("Security scan", () => {
     await page.getByPlaceholder("e.g. octocat").fill("acme")
     await page.getByRole("button", { name: "Run scan" }).click()
 
-    await expect(page.getByText("Results — acme")).toBeVisible()
+    // The first poll comes 2 s after the job starts.
+    await expect(page.getByText("Results — acme")).toBeVisible({ timeout: 15_000 })
     await expect(page.getByText("MFA required for org members")).toBeVisible()
     await expect(page.getByLabel(/Security score: 100/i)).toBeVisible()
   })
