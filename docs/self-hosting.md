@@ -52,8 +52,9 @@ This is the infrastructure/ops guide — getting the Clevis stack itself running
    ```bash
    # 1. docker compose up -d db recreates the db container so it picks up
    #    WORKER_DB_PASSWORD from .env, then re-runs the same init script the
-   #    fresh-volume path uses (safe to re-run; it's a no-op if the role
-   #    already exists) — this avoids retyping the password into a raw SQL
+   #    fresh-volume path uses (safe to re-run; if the role already exists it
+   #    only sets its password to the current WORKER_DB_PASSWORD) — this
+   #    avoids retyping the password into a raw SQL
    #    literal and avoids relying on host-shell vars .env doesn't export.
    docker compose up -d db
    docker compose exec db sh /docker-entrypoint-initdb.d/01-create-worker-role.sh
@@ -76,7 +77,22 @@ This is the infrastructure/ops guide — getting the Clevis stack itself running
    docker compose exec db sh /tmp/provision-api-role.sh
    ```
 
-   Unlike the worker (which only ever needs `SELECT`/`UPDATE` on `jobs` and `SELECT` on `app_config`), the API needs schema `USAGE`, table privileges on every table, and sequence privileges for every serial primary key — this script creates the role and applies all three grant kinds in a single `psql` invocation wrapped in one transaction, so an operator never ends up with a role that has `CONNECT` but no table/schema/sequence privileges (which a failure partway through two separate commands could otherwise leave behind). It's deliberately not placed under `docker/postgres-init/` — that directory auto-runs on every fresh volume, at a point before Alembic has created any tables yet, so its `GRANT ... ON users, orgs, ...` statements would fail on a genuinely fresh volume. Safe to re-run. Restart the `api` container afterwards to pick up the new credential.
+   Unlike the worker (which needs only the tables its job handlers and event consumer use: `jobs`, `app_config`, the event, alert and roster tables and the sync cursors — the grants in migrations `0020`, `0036`–`0041` and `0047`), the API needs schema `USAGE`, table privileges on every table, and sequence privileges for every serial primary key — this script creates the role and applies all three grant kinds in a single `psql` invocation wrapped in one transaction, so an operator never ends up with a role that has `CONNECT` but no table/schema/sequence privileges (which a failure partway through two separate commands could otherwise leave behind). It's deliberately not placed under `docker/postgres-init/` — that directory auto-runs on every fresh volume, at a point before Alembic has created any tables yet, so its `GRANT ... ON users, orgs, ...` statements would fail on a genuinely fresh volume. Safe to re-run. Restart the `api` container afterwards to pick up the new credential.
+
+   **Rotating `WORKER_DB_PASSWORD` or `API_DB_PASSWORD`.** The password lives in two places that must agree: `.env` (what the container connects with) and the Postgres role (what the database accepts). Changing only `.env` makes the service fail with `password authentication failed for user "clevis_worker"` (or `"clevis_api"`). To rotate:
+
+   ```bash
+   # 1. Put the new value in .env, then recreate db so it sees it.
+   docker compose up -d db
+   # 2. Set the role's password to match (both scripts end with ALTER ROLE ... PASSWORD, so re-running is safe).
+   docker compose exec db sh /docker-entrypoint-initdb.d/01-create-worker-role.sh    # worker
+   docker compose cp docker/provision-api-role-existing-deployment.sh db:/tmp/provision-api-role.sh
+   docker compose exec db sh /tmp/provision-api-role.sh                             # api
+   # 3. Restart the service(s) so they pick up the new password.
+   docker compose up -d worker api
+   ```
+
+   Run only the step-2 command for the credential you changed. Expect a short blip: recreating `db` in step 1 restarts Postgres, and between step 2 and the restart in step 3 the running service still holds the old password, so any *new* connection it opens is refused until it restarts. Do it in a quiet moment.
 
 7. Start the stack:
 

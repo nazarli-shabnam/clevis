@@ -35,5 +35,9 @@ END
 $do$;
 $fmt$, :'api_password') \gexec
 
+-- The role may already exist (re-run on a live volume, or the password in .env changed): make the
+-- stored password match, so re-running this script is also how the credential is rotated.
+SELECT format('ALTER ROLE clevis_api WITH PASSWORD %L', :'api_password') \gexec
+
 GRANT CONNECT ON DATABASE :"db_name" TO clevis_api;
 EOSQL
