@@ -116,6 +116,18 @@ def mark_announced(cur, *, tenant_id: int, repo: str, kind: str, number: int) ->
     )
 
 
+def close_missing(cur, *, tenant_id: int, repo: str, kind: str, open_numbers: list[int], fetched_before) -> None:
+    """Close stored ``open`` alerts that a complete listing no longer contains (a close webhook was missed), so
+    the stored rows the matrix trusts do not keep a stale open finding. Only rows Clevis stored before the
+    listing began: one ingested since is newer than what was read and must not be closed from it."""
+    cur.execute(
+        "UPDATE security_alerts SET state = 'fixed', updated_at = NOW() "
+        "WHERE tenant_id = %s AND repo = %s AND kind = %s AND state = 'open' "
+        "AND NOT (number = ANY(%s)) AND ingested_at < %s",
+        (tenant_id, repo, kind, open_numbers, fetched_before),
+    )
+
+
 def mark_synced(cur, *, tenant_id: int, repo: str, kind: str) -> None:
     """Record that (repo, kind)'s open alerts were read in full just now."""
     cur.execute(

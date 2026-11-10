@@ -435,6 +435,7 @@ def _handle_backfill_security_alerts(conn: psycopg.Connection, job_id: int, payl
 
     # (repo, kind) -> alerts, for every list that was read in full; anything unreadable is simply absent.
     complete: dict[tuple[str, str], list[dict]] = {}
+    fetch_started = security_alerts_backfill.now()
     try:
         with httpx.Client(timeout=20) as client:
             repos = security_alerts_backfill.list_repos(client, base, headers, payload.account_login, payload.account_type)
@@ -472,6 +473,12 @@ def _handle_backfill_security_alerts(conn: psycopg.Connection, job_id: int, payl
                                 cur, tenant_id=payload.tenant_id, repo=full_name, kind=kind, number=normalized["number"]
                             )
                         stored += 1
+                # A complete listing is the whole truth for open alerts: close the stored ones it lacks.
+                security_alerts_backfill.close_missing(
+                    cur, tenant_id=payload.tenant_id, repo=full_name, kind=kind,
+                    open_numbers=[a["number"] for a in alerts if isinstance(a.get("number"), int)],
+                    fetched_before=fetch_started,
+                )
                 # After the alerts, in the same transaction: a rollback never leaves a repo marked complete
                 # without its rows.
                 security_alerts_backfill.mark_synced(cur, tenant_id=payload.tenant_id, repo=full_name, kind=kind)

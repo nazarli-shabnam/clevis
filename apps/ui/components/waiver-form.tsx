@@ -20,6 +20,8 @@ export const WAIVABLE_CHECKS: Record<string, string> = {
   repository_license_present: "License present",
   repository_no_stale_branches: "No stale branches",
   repository_actions_pinned_to_sha: "Actions pinned to a commit SHA",
+  organization_members_2fa_enabled: "All organization members have 2FA enabled",
+  repository_no_outside_collaborator_admins: "No outside collaborators have admin access",
 }
 
 /** Checks that never report which repos fail, so the API only accepts an org-wide waiver for them. */
@@ -30,6 +32,8 @@ export const ORG_WIDE_ONLY_CHECKS = new Set([
   "repository_license_present",
   "repository_no_stale_branches",
   "repository_actions_pinned_to_sha",
+  "organization_members_2fa_enabled",
+  "repository_no_outside_collaborator_admins",
 ])
 
 export const MAX_WAIVER_DAYS = 90

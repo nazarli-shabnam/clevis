@@ -759,6 +759,23 @@ def test_fetch_private_repo_events_uses_installation_repositories_for_personal_i
     assert client.calls[0][0] == "https://api.github.com/installation/repositories"
 
 
+def test_a_personal_install_reads_every_repo_page_before_picking_the_newest_private_ones():
+    page1 = _FakeResponse(
+        {"repositories": [_repo("octocat/old", pushed_at="2026-01-01T00:00:00Z")]},
+        links={"next": {"url": "https://api.github.com/installation/repositories?page=2"}},
+    )
+    page2 = _FakeResponse({"repositories": [_repo("octocat/newest", pushed_at="2026-08-30T00:00:00Z")]})
+    client = _FakeClient([page1, page2, _FakeResponse([_raw_event(id="n1")]), _FakeResponse([_raw_event(id="o1")])])
+
+    events = backfill.fetch_private_repo_events(client, "https://api.github.com", {}, "octocat", "User")
+
+    assert [e["id"] for e in events] == ["n1", "o1"]  # the repo on page 2 was seen, and sorts first
+    assert [c[0] for c in client.calls[2:]] == [
+        "https://api.github.com/repos/octocat/newest/events",
+        "https://api.github.com/repos/octocat/old/events",
+    ]
+
+
 def test_fetch_private_repo_events_caps_the_number_of_repos():
     repos = [_repo(f"acme/r{i}", pushed_at=f"2026-08-{i % 28 + 1:02d}T00:00:00Z") for i in range(backfill._MAX_PRIVATE_REPOS + 10)]
     client = _FakeClient([_FakeResponse(repos)] + [_FakeResponse([]) for _ in repos])

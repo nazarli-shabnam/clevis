@@ -670,6 +670,19 @@ def test_setup_and_register_reject_overlong_name(auth_client):
     assert resp.status_code == 422
 
 
+def test_session_token_bounds_the_name_claim_whatever_its_source():
+    """A GitHub profile name (or one stored before the request limit) must not bloat the session JWT."""
+    import jwt
+
+    from src.core.auth import _ALGORITHM, create_access_token
+    from src.core.config import settings
+
+    token = create_access_token(1, "a@example.com", False, "N" * 5000, 0)
+    claims = jwt.decode(token, settings.auth_secret.get_secret_value(), algorithms=[_ALGORITHM])
+    assert claims["name"] == "N" * 100 and len(token) < 1000
+    assert jwt.decode(create_access_token(1, "a@example.com", False, None, 0), settings.auth_secret.get_secret_value(), algorithms=[_ALGORITHM])["name"] is None
+
+
 # revoke-sessions
 
 def test_revoke_sessions_unauthenticated(auth_client):

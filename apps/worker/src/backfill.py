@@ -112,6 +112,9 @@ def fetch_events(client: httpx.Client, base: str, headers: dict, account_login: 
 # backfill (at install, and on every gap-heal) costs at most 1 + this many extra requests per tenant;
 # the most recently pushed private repos are taken first and each contributes one page of events.
 _MAX_PRIVATE_REPOS = 50
+# A personal install's repos cannot be sorted server-side, so up to this many 100-repo pages are read first
+# (the extra listing requests are on top of the 1 + _MAX_PRIVATE_REPOS bound above).
+_MAX_INSTALLATION_PAGES = 5
 
 
 def _is_skippable(error: httpx.HTTPStatusError) -> bool:
@@ -125,16 +128,30 @@ def _list_private_repos(client: httpx.Client, base: str, headers: dict, account_
     """Full names of the most recently pushed private repos the token can read (installation tokens only
     see repos the App was granted, which is what we want)."""
     if account_type == "User":
-        # A personal install has no /users/{login}/repos view of private repos for an installation token.
-        path, params = "/installation/repositories", {"per_page": 100}
+        # A personal install has no /users/{login}/repos view of private repos for an installation token, and
+        # /installation/repositories has no server-side sort: read every page (capped), then sort by push time.
+        repos = []
+        url, params = f"{base}/installation/repositories", {"per_page": 100}
+        for _ in range(_MAX_INSTALLATION_PAGES):
+            resp = _get_with_retry(client, url, headers, params)
+            resp.raise_for_status()
+            body = resp.json()
+            page = body.get("repositories", []) if isinstance(body, dict) else body
+            if not isinstance(page, list):
+                break
+            repos.extend(page)
+            next_link = resp.links.get("next")
+            if not next_link:
+                break
+            url, params = next_link["url"], None
     else:
         path, params = f"/orgs/{account_login}/repos", {"type": "private", "sort": "pushed", "direction": "desc", "per_page": _MAX_PRIVATE_REPOS}
-    resp = _get_with_retry(client, f"{base}{path}", headers, params)
-    resp.raise_for_status()
-    body = resp.json()
-    repos = body.get("repositories", []) if isinstance(body, dict) else body
-    if not isinstance(repos, list):
-        return []
+        resp = _get_with_retry(client, f"{base}{path}", headers, params)
+        resp.raise_for_status()
+        body = resp.json()
+        repos = body.get("repositories", []) if isinstance(body, dict) else body
+        if not isinstance(repos, list):
+            return []
     private = [r for r in repos if isinstance(r, dict) and r.get("private") is True and isinstance(r.get("full_name"), str)]
     private.sort(key=lambda r: r.get("pushed_at") or "", reverse=True)
     return [r["full_name"] for r in private[:_MAX_PRIVATE_REPOS]]

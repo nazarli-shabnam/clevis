@@ -296,6 +296,23 @@ describe("CheckCard waived badge", () => {
     expect(await screen.findByText(/Waiver added/)).toBeInTheDocument()
   })
 
+  it.each(["organization_members_2fa_enabled", "repository_no_outside_collaborator_admins"])(
+    "offers Waive for the identity check %s, which only takes an org-wide waiver",
+    (id) => {
+      const queryClient = new QueryClient()
+      render(
+        <QueryClientProvider client={queryClient}>
+          <CheckCard
+            check={{ id, title: "t", severity: "medium", remediation: "r", status: "fail", value: null }}
+            waiveOrg="acme"
+          />
+        </QueryClientProvider>,
+      )
+      fireEvent.click(screen.getByRole("button", { name: "Waive…" }))
+      expect(screen.queryByLabelText(/Repositories/)).not.toBeInTheDocument()
+    },
+  )
+
   it("offers no Waive action without an org to waive for, or on a passing check", () => {
     const base = { id: "repository_license_present", title: "License present", severity: "low", remediation: "x", value: null }
     const queryClient = new QueryClient()

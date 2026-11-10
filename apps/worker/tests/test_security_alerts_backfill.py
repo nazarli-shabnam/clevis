@@ -191,6 +191,44 @@ def test_an_alert_created_within_the_last_hour_is_left_for_the_alert_sweep_to_an
     assert announced[2] is not None  # long-standing: not "new"
 
 
+def _insert_open_alert(conn, tenant_id, number, ingested_offset_sql):
+    with conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        cur.execute(
+            "INSERT INTO security_alerts (tenant_id, repo, kind, number, state, severity, created_at, updated_at, ingested_at) "
+            f"VALUES (%s, 'acme/api', 'dependabot', %s, 'open', 'critical', now(), now(), {ingested_offset_sql})",
+            (tenant_id, number),
+        )
+    conn.commit()
+
+
+def _state(conn, tenant_id, number):
+    with conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        cur.execute("SELECT state FROM security_alerts WHERE tenant_id = %s AND repo = 'acme/api' AND kind = 'dependabot' AND number = %s", (tenant_id, number))
+        return cur.fetchone()[0]
+
+
+def test_a_complete_listing_closes_stored_open_alerts_it_no_longer_contains(pg_conn, tenant_id):
+    _insert_open_alert(pg_conn, tenant_id, 99, "now() - interval '1 day'")  # stored long ago; its close webhook was missed
+    _insert_open_alert(pg_conn, tenant_id, 98, "now() + interval '1 hour'")  # stored after the listing began
+
+    _run(pg_conn, _Client(_routes()), tenant_id)  # api/dependabot lists only #1 and #2
+
+    assert _state(pg_conn, tenant_id, 99) == "fixed"
+    assert _state(pg_conn, tenant_id, 98) == "open"  # newer than what was read: left alone
+    assert _state(pg_conn, tenant_id, 1) == "open"  # still listed
+
+
+def test_a_list_that_could_not_be_read_closes_nothing(pg_conn, tenant_id):
+    _insert_open_alert(pg_conn, tenant_id, 99, "now() - interval '1 day'")
+    routes = _routes(**{"acme/api/dependabot/alerts": _Resp({}, status_code=403)})  # unreadable: not a complete listing
+
+    _run(pg_conn, _Client(routes), tenant_id)
+
+    assert _state(pg_conn, tenant_id, 99) == "open"
+
+
 def test_rerunning_is_idempotent_and_leaves_an_existing_alerts_announced_state_alone(pg_conn, tenant_id):
     _run(pg_conn, _Client(_routes()), tenant_id)
     first, _ = _rows(pg_conn, tenant_id)
