@@ -120,7 +120,7 @@ def test_run_holds_the_job_lock_while_processing_and_releases_it_after(worker_db
                 _release_job_lock(other, jid)
 
     monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 1)
-    monkeypatch.setattr(worker.time, "sleep", MagicMock(side_effect=_StopLoop))
+    monkeypatch.setattr(worker, "_wait", MagicMock(side_effect=_StopLoop))
     monkeypatch.setattr(worker, "process_job", fake_process)
     try:
         worker.run()
@@ -138,7 +138,7 @@ def test_run_does_not_process_a_job_another_live_worker_holds(worker_db, monkeyp
     job_id = _insert_job(conn, created_ids, status="queued", updated_at=datetime.now(timezone.utc))
     process = MagicMock()
     monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 1)
-    monkeypatch.setattr(worker.time, "sleep", MagicMock(side_effect=_StopLoop))
+    monkeypatch.setattr(worker, "_wait", MagicMock(side_effect=_StopLoop))
     monkeypatch.setattr(worker, "process_job", process)
 
     with psycopg.connect(_DB_URL) as owner:
@@ -161,7 +161,7 @@ def test_run_releases_the_lock_even_when_processing_raises(worker_db, monkeypatc
     conn, created_ids = worker_db
     job_id = _insert_job(conn, created_ids, status="queued", updated_at=datetime.now(timezone.utc))
     monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 1)
-    monkeypatch.setattr(worker.time, "sleep", MagicMock(side_effect=_StopLoop))
+    monkeypatch.setattr(worker, "_wait", MagicMock(side_effect=_StopLoop))
     monkeypatch.setattr(worker, "process_job", MagicMock(side_effect=RuntimeError("handler blew up")))
     try:
         worker.run()
