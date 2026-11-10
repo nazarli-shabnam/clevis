@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation"
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { EmptyStateInline } from "@/components/empty-state"
+import { AuditPayload } from "@/components/audit-payload"
 import { SectionError } from "@/components/section-error"
 import { AuditFilterForm } from "@/components/audit-filter-form"
 import { Button } from "@/components/ui/button"
@@ -12,6 +13,7 @@ import { DataTable, type DataTableColumn } from "@/components/ui/data-table"
 import { api } from "@/lib/api/client"
 import { useAuth } from "@/lib/auth-context"
 import { EMPTY_FORM, toAuditFilters, type FilterForm } from "@/lib/audit-filters"
+import { payloadEntries, payloadSummary } from "@/lib/audit-payload"
 import type { AdminAuditFilters, AuditLogOut, JobOut } from "@/lib/api/types"
 
 const JOB_STATUS_COLOR: Record<JobOut["status"], string> = {
@@ -124,6 +126,14 @@ export default function AuditPage() {
       render: (log) => log.target,
     },
     {
+      key: "details",
+      header: "Details",
+      // The whole stored payload, so the export carries what the table can only abbreviate.
+      csvValue: (log) => log.payload,
+      cellClassName: "text-muted-foreground font-mono max-w-[18rem] truncate",
+      render: (log) => payloadSummary(log.payload),
+    },
+    {
       key: "job_status",
       header: "Job status",
       csvValue: (log) => {
@@ -220,6 +230,7 @@ export default function AuditPage() {
               columns={columns}
               data={logs}
               getRowKey={(log) => log.id}
+              renderExpanded={(log) => (payloadEntries(log.payload).length ? <AuditPayload payload={log.payload} /> : null)}
               exportCsv={{
                 name: actionFilter ? `audit-${actionFilter}` : "audit",
                 // The table only holds the events loaded so far (see "Load more"), not the whole log.
