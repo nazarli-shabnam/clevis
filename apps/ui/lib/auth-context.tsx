@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react"
 import type { PendingInvitationSummary } from "@/lib/api/types"
 import { clearActiveScope } from "@/lib/active-scope"
+import { clearActivityLastSeen } from "@/lib/activity-last-seen"
 import { clearDismissals } from "@/lib/first-run-dismissal"
 import { errorDetail, fetchWithTimeout } from "@/lib/api/client"
 
@@ -44,11 +45,7 @@ const _LOGOUT_WARNING =
 function clearPerUserBrowserState(): void {
   clearActiveScope()
   clearDismissals()
-  try {
-    localStorage.removeItem("activity_last_seen_at")
-  } catch {
-    // best-effort; nothing to do if storage is unavailable
-  }
+  clearActivityLastSeen()
 }
 
 function parseJwtPayload(token: string): AuthUser | null {
