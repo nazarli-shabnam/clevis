@@ -792,6 +792,8 @@ export const api = {
         user: { id: number; email: string; name: string | null; is_workspace_admin: boolean }
         pending_invitations: PendingInvitationSummary[]
       }>("/auth/register", { email, password, name }),
+    me: () =>
+      get<{ id: number; email: string; name: string | null; is_workspace_admin: boolean; email_verified: boolean }>("/auth/me"),
     patchMe: (name: string) =>
       patch<{ id: number; email: string; name: string | null; is_workspace_admin: boolean }>("/auth/me", { name }),
     revokeSessions: () => post<{ ok: boolean }>("/auth/me/revoke-sessions", {}),
