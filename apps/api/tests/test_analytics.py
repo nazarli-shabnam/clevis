@@ -154,7 +154,7 @@ def test_personal_overview_runs_checks_for_user_account(http):
         )
     assert resp.status_code == 200
     mock_account_type.assert_called_once()
-    mock_overview.assert_called_once_with(owner="octocat", token="ghp_test", account_type="User", score_hygiene=None)
+    mock_overview.assert_called_once_with(owner="octocat", token="ghp_test", account_type="User", score_hygiene=None, stored_identity=None)
 
 
 def test_personal_overview_account_type_http_error_returns_400(http):

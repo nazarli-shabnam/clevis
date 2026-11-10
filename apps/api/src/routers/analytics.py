@@ -46,6 +46,7 @@ from src.schemas.analytics import (
     ScanHistoryEntry,
 )
 from src.services import api_job_runner, notifications, scan_limiter, scan_service
+from src.services.stored_identity import load_stored_identity
 from src.services.analytics_service import (
     get_account_type,
     get_overview,
@@ -82,12 +83,19 @@ _cockpit_cache: dict[tuple[int, str, str], tuple[float, CockpitResponse]] = {}
 
 
 def _overview_blocking(
-    owner: str, token: str, account_type: str = "Organization", score_hygiene: bool | None = None
+    owner: str,
+    token: str,
+    account_type: str = "Organization",
+    score_hygiene: bool | None = None,
+    stored_identity: dict | None = None,
 ) -> AnalyticsResponse:
     """The scan itself (hundreds of GitHub calls), with GitHub failures mapped to HTTP errors. Blocking:
     callers run it on a worker thread, either the request's or an async job's."""
     try:
-        return get_overview(owner=owner, token=token, account_type=account_type, score_hygiene=score_hygiene)
+        return get_overview(
+            owner=owner, token=token, account_type=account_type, score_hygiene=score_hygiene,
+            stored_identity=stored_identity,
+        )
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=400, detail=f"GitHub API error: {exc.response.status_code}")
     except httpx.RequestError:
@@ -98,9 +106,15 @@ def _overview_blocking(
 
 
 async def _run_overview(
-    owner: str, token: str, account_type: str = "Organization", score_hygiene: bool | None = None
+    owner: str,
+    token: str,
+    account_type: str = "Organization",
+    score_hygiene: bool | None = None,
+    stored_identity: dict | None = None,
 ) -> AnalyticsResponse:
-    return await anyio.to_thread.run_sync(lambda: _overview_blocking(owner, token, account_type, score_hygiene))
+    return await anyio.to_thread.run_sync(
+        lambda: _overview_blocking(owner, token, account_type, score_hygiene, stored_identity)
+    )
 
 
 async def _get_account_type(owner: str, token: str) -> str:
@@ -224,6 +238,19 @@ def _hygiene_setting_for_member(db: Session, user: UserOut, owner: str) -> bool 
     return org_scores_hygiene(org)
 
 
+def _stored_identity_for_member(db: Session, user: UserOut, owner: str) -> dict | None:
+    """The org's stored member/collaborator data when `owner` is a Clevis org the user belongs to (the same
+    condition as _hygiene_setting_for_member: their scan is stored under the org); None for any other login,
+    which has no such data and must not see another tenant's."""
+    org = org_repo.get_by_login_ci(db, owner)
+    if org is None:
+        return None
+    org = org_repo.ensure_tenant_linked(db, org)
+    if tenant_repo.get_membership(db, org.tenant_id, user.id) is None:
+        return None
+    return load_stored_identity(db, org.tenant_id)
+
+
 @router.get("/orgs/{org_login}/hygiene-scoring", response_model=HygieneScoringSettings)
 def get_hygiene_scoring(ctx: OrgContext = Depends(require_org_role(min_role="admin"))):
     return HygieneScoringSettings(
@@ -285,13 +312,15 @@ async def org_analytics_overview(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     score_hygiene = org_scores_hygiene(ctx.org)
+    # Read before the scan (and before the connection is released): the scan runs on other threads.
+    stored_identity = await anyio.to_thread.run_sync(lambda: load_stored_identity(db, ctx.org.tenant_id))
     if run_async:
         # Plain values only: the request session (and `ctx.org` with it) is gone by the time the job runs.
         org_id, tenant_id, owner = ctx.org.id, ctx.org.tenant_id, payload.owner
 
         def work(session: Session) -> dict:
             with scan_limiter.scan_slot(f"org:{tenant_id}"):
-                result = _overview_blocking(owner, token, score_hygiene=score_hygiene)
+                result = _overview_blocking(owner, token, score_hygiene=score_hygiene, stored_identity=stored_identity)
             org = org_repo.get_by_id(session, org_id)
             scan_service.persist_scan_and_alert(session, org, result, tenant_id)
             return result
@@ -309,7 +338,7 @@ async def org_analytics_overview(
     tenant_id, user_id = ctx.org.tenant_id, ctx.membership.user_id
     release_connection(db)
     with scan_limiter.scan_slot(f"org:{tenant_id}"):
-        result = await _run_overview(payload.owner, token, score_hygiene=score_hygiene)
+        result = await _run_overview(payload.owner, token, score_hygiene=score_hygiene, stored_identity=stored_identity)
     set_tenant_session_context(db, tenant_id, user_id)
     await anyio.to_thread.run_sync(lambda: scan_service.persist_scan_and_alert(db, ctx.org, result, tenant_id))
     return result
@@ -334,6 +363,7 @@ async def personal_analytics_overview(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     score_hygiene = await anyio.to_thread.run_sync(lambda: _hygiene_setting_for_member(db, user, payload.owner))
+    stored_identity = await anyio.to_thread.run_sync(lambda: _stored_identity_for_member(db, user, payload.owner))
     # No DB connection is held across the GitHub calls below (see release_connection).
     release_connection(db)
     account_type = await _get_account_type(payload.owner, token)
@@ -344,7 +374,9 @@ async def personal_analytics_overview(
 
         def work(session: Session) -> dict:
             with scan_limiter.scan_slot(f"user:{user.id}"):
-                result = _overview_blocking(owner, token, account_type=account_type, score_hygiene=score_hygiene)
+                result = _overview_blocking(
+                    owner, token, account_type=account_type, score_hygiene=score_hygiene, stored_identity=stored_identity
+                )
             _persist_personal_scan(session, user, result)
             return result
 
@@ -358,7 +390,9 @@ async def personal_analytics_overview(
             )
         )
     with scan_limiter.scan_slot(f"user:{user.id}"):
-        result = await _run_overview(payload.owner, token, account_type=account_type, score_hygiene=score_hygiene)
+        result = await _run_overview(
+            payload.owner, token, account_type=account_type, score_hygiene=score_hygiene, stored_identity=stored_identity
+        )
     set_session_user(db, user.id)
     # owner can be any account the user has a token for (BYO-token); where the scan is stored depends
     # on whether they belong to that org (see _persist_personal_scan).
