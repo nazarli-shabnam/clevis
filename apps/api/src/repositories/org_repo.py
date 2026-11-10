@@ -4,7 +4,7 @@ from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from src.core.db import GitHubInstallation, Org, ScanResult
+from src.core.db import ActivitySyncCursor, GitHubInstallation, Org, OrgMembershipSyncCursor, ScanResult
 from src.repositories import tenant_repo
 
 logger = logging.getLogger(__name__)
@@ -62,11 +62,12 @@ def _apply_rename(db: Session, org: Org, new_login: str) -> None:
 
     Installation lookups (token resolution) match ``account_login`` and scan history, export, digest
     and the public badge match ``scan_results.owner``, so leaving either on the old login orphans
-    them after a rename. Scans an org member ran from their personal tenant keep the old owner."""
+    them after a rename. The sync cursors cache the login too, and the gap-heal and membership-reconcile
+    sweeps resolve a token from it. Scans an org member ran from their personal tenant keep the old owner."""
     old_login = org.github_login
     org.github_login = new_login
     if org.tenant_id is not None:
-        # Both tables' RLS WITH CHECK needs app.tenant_id = the org's tenant. SET LOCAL so the
+        # These tables' RLS WITH CHECK needs app.tenant_id = the org's tenant. SET LOCAL so the
         # context ends with this commit (same pattern as ensure_tenant_linked).
         db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
         db.query(GitHubInstallation).filter(GitHubInstallation.org_id == org.id).update(
@@ -76,6 +77,12 @@ def _apply_rename(db: Session, org: Org, new_login: str) -> None:
         db.query(ScanResult).filter(
             ScanResult.tenant_id == org.tenant_id, func.lower(ScanResult.owner) == old_login.lower()
         ).update({ScanResult.owner: new_login}, synchronize_session=False)
+        db.query(ActivitySyncCursor).filter(ActivitySyncCursor.tenant_id == org.tenant_id).update(
+            {ActivitySyncCursor.account_login: new_login}, synchronize_session=False
+        )
+        db.query(OrgMembershipSyncCursor).filter(OrgMembershipSyncCursor.tenant_id == org.tenant_id).update(
+            {OrgMembershipSyncCursor.org_login: new_login}, synchronize_session=False
+        )
     db.commit()
     db.refresh(org)
 

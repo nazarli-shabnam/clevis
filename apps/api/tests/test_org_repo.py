@@ -99,6 +99,22 @@ def test_org_rename_moves_installation_and_scan_history_to_the_new_login(db):
     assert db.query(ScanResult).filter(ScanResult.tenant_id == personal_tenant_id).one().owner == "old-name"
 
 
+def test_org_rename_moves_the_sync_cursors_to_the_new_login(db):
+    # The gap-heal and membership-reconcile sweeps resolve a token from the login cached on the cursor,
+    # so a stale one finds no installation and never backfills.
+    from src.core.db import ActivitySyncCursor, OrgMembershipSyncCursor
+
+    org = org_repo.get_or_create(db, github_login="old-cursor", github_org_id=97)
+    db.add(ActivitySyncCursor(tenant_id=org.tenant_id, account_login="old-cursor", account_type="Organization"))
+    db.add(OrgMembershipSyncCursor(tenant_id=org.tenant_id, org_login="old-cursor"))
+    db.commit()
+
+    org_repo.get_or_create(db, github_login="new-cursor", github_org_id=97)
+
+    assert db.get(ActivitySyncCursor, org.tenant_id).account_login == "new-cursor"
+    assert db.get(OrgMembershipSyncCursor, org.tenant_id).org_login == "new-cursor"
+
+
 def test_get_or_create_falls_back_to_org_id_lookup_on_concurrent_insert_race(db):
     # Simulates a concurrent get_or_create: the insert collides on github_org_id, get_by_login
     # misses (different login), so recovery must fall back to get_by_org_id.
