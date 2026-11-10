@@ -1,5 +1,6 @@
 import json
 import logging
+import signal
 import threading
 import time
 from pathlib import Path
@@ -29,6 +30,10 @@ HEARTBEAT_FILE = Path("/tmp/worker_heartbeat")
 _MAX_POLL_SECONDS = 30
 
 _DB_URL = plain_db_url(settings.database_url.get_secret_value())
+
+# Set by SIGTERM/SIGINT (a `docker stop` or redeploy). The loop stops claiming new jobs, the job in flight is
+# left to finish, and the process then exits; see `_request_shutdown` and the compose `stop_grace_period`.
+_shutdown = threading.Event()
 
 # Shared cap on retry_count for both reclaim-after-crash and transient-failure requeue.
 MAX_RETRIES = 5
@@ -130,6 +135,20 @@ def _mark_failed(conn: psycopg.Connection, job_id: int, error_text: str, expecte
         "UPDATE jobs SET status='failed', result=%s, payload=jobs_scrub_token(payload), updated_at=NOW() "
         "WHERE id=%s AND status='processing' AND retry_count=%s",
         (error_text, job_id, expected_retry_count),
+    )
+
+
+def _hand_back_unstarted(conn: psycopg.Connection, job_id: int, retry_count: int) -> bool:
+    """Return a job claimed just as shutdown began to the queue without consuming a retry.
+
+    updated_at is backdated by the backoff cap so the next worker can claim it at once instead of waiting
+    out a retry backoff the job never earned (the job did not run)."""
+    return _fenced_update(
+        conn,
+        job_id,
+        "UPDATE jobs SET status='queued', updated_at=NOW() - make_interval(secs => %s) "
+        "WHERE id=%s AND status='processing' AND retry_count=%s",
+        (_RETRY_BACKOFF_CAP_SECONDS, job_id, retry_count),
     )
 
 
@@ -639,11 +658,21 @@ def _warn_if_rls_bypassed() -> bool:
     return True
 
 
+def _request_shutdown(signum: int, _frame) -> None:
+    log.info("received signal %d: finishing the current job, then exiting", signum)
+    _shutdown.set()
+
+
+def _wait(seconds: float) -> None:
+    """Idle between polls, waking at once if shutdown is requested."""
+    _shutdown.wait(seconds)
+
+
 def run() -> None:
     _warn_if_rls_bypassed()
     poll_seconds = _read_poll_seconds()
     log.info("worker started, polling every %ds", poll_seconds)
-    while True:
+    while not _shutdown.is_set():
         _touch_heartbeat()
         processed_a_job = False
         try:
@@ -672,7 +701,11 @@ def run() -> None:
                 if row:
                     conn.commit()
                     job_id = row[0]
-                    if not _acquire_job_lock(conn, job_id):
+                    if _shutdown.is_set():
+                        # Claimed in the instant shutdown began: don't start it; give it back untouched.
+                        log.info("job %d claimed during shutdown; returning it to the queue", job_id)
+                        _hand_back_unstarted(conn, job_id, row[3])
+                    elif not _acquire_job_lock(conn, job_id):
                         # Only reachable if a live worker holds this job (reclaim skips locked jobs, so a
                         # second claim should be impossible). Never run it twice: hand it back to the queue
                         # (fenced on the retry_count we claimed, so it can't clobber the holder's own writes)
@@ -698,7 +731,8 @@ def run() -> None:
             continue
         # Read only when about to sleep (it opens its own connection), and each time so a settings change
         # takes effect without a restart.
-        time.sleep(_read_poll_seconds())
+        _wait(_read_poll_seconds())
+    log.info("worker stopped")
 
 
 if __name__ == "__main__":
@@ -706,4 +740,8 @@ if __name__ == "__main__":
 
     # Event consumer on its own daemon thread; does not fail the container healthcheck on its own.
     event_consumer.start_background_thread()
+    # PID 1 in the container: without handlers a SIGTERM is ignored and Docker SIGKILLs the process, losing
+    # the job in flight to the 30-minute reclaim.
+    signal.signal(signal.SIGTERM, _request_shutdown)
+    signal.signal(signal.SIGINT, _request_shutdown)
     run()

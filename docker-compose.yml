@@ -105,6 +105,9 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    # On stop/redeploy the worker finishes the job it is running before exiting (SIGTERM); Docker's default
+    # 10 s would SIGKILL it first. Size this for the longest job you expect to run.
+    stop_grace_period: 120s
     healthcheck:
       # worker.py's jobs-poll-loop thread and event_consumer.py's Redis-Streams-consumer thread
       # each touch a heartbeat file -- the job poller every loop iteration, the event consumer after every
