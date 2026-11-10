@@ -12,6 +12,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 from fastapi import FastAPI
+from sqlalchemy import text
 from fastapi.testclient import TestClient
 
 from src.core.auth import UserOut, require_auth
@@ -32,7 +33,14 @@ class _Inline:
 def inline_jobs(db, monkeypatch):
     @contextmanager
     def shared_session():
+        # The real job gets its own session, so the RLS context the runner sets and resets must not
+        # disturb the request session this test keeps using: restore it afterwards.
+        keys = ("app.tenant_id", "app.user_id")
+        saved = {k: db.execute(text(f"SELECT current_setting('{k}', true)")).scalar() for k in keys}
         yield db
+        for k, v in saved.items():
+            if v:
+                db.execute(text(f"SET {k} = {int(v)}"))
 
     monkeypatch.setattr(api_job_runner, "_executor", _Inline())
     monkeypatch.setattr(api_job_runner, "_open_session", shared_session)
