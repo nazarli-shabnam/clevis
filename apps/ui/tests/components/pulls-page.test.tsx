@@ -40,7 +40,7 @@ function renderPage() {
   );
 }
 
-function pull(overrides: Partial<{ number: number; title: string; user: string | null; created_at: string; html_url: string }> = {}) {
+function pull(overrides: Partial<{ number: number; title: string; user: string | null; created_at: string; updated_at: string | null; draft: boolean; html_url: string }> = {}) {
   return {
     number: 1,
     title: "Fix the thing",
@@ -417,9 +417,85 @@ describe("PullRequestsPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Export CSV/ }));
     const [filename, csv] = downloadTextFileMock.mock.calls[0];
     expect(filename).toMatch(/^clevis-pull-requests-acme-\d{4}-\d{2}-\d{2}\.csv$/);
-    expect(csv).toContain("Repo,Pull Request,Author,Opened,Link");
+    expect(csv).toContain("Repo,Pull Request,Author,Opened,Updated,Status,Link");
     expect(csv).toContain("unknown");
     expect(csv).toContain("https://github.com/acme/api/pull/2");
     expect(csv).not.toMatch(/(^|,)"?=HYPERLINK/m);
+  });
+
+  // --- triage (#812) ---
+  const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+
+  function mockTriageRepo(pulls: ReturnType<typeof pull>[], stale_days = 3) {
+    localStorage.setItem("default_org", "acme");
+    reposListMock.mockResolvedValue({
+      org: "acme",
+      total: 1,
+      repos: [
+        { name: "api", full_name: "acme/api", private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: "https://github.com/acme/api" },
+      ],
+    });
+    reposPullsMock.mockResolvedValue({ repository: "acme/api", total: pulls.length, pulls, stale_days });
+  }
+
+  const titlesInOrder = () =>
+    screen.getAllByRole("link", { name: /^#\d+ / }).map((a) => a.textContent?.replace(/^#\d+ /, ""));
+
+  it("sorts oldest first, newest first or by recent activity", async () => {
+    mockTriageRepo([
+      pull({ number: 1, title: "Mid", created_at: daysAgo(10), updated_at: daysAgo(1) }),
+      pull({ number: 2, title: "Oldest", created_at: daysAgo(30), updated_at: daysAgo(20) }),
+      pull({ number: 3, title: "Newest", created_at: daysAgo(2), updated_at: daysAgo(2) }),
+    ]);
+    renderPage();
+    await screen.findByText(/Mid/);
+    expect(titlesInOrder()).toEqual(["Newest", "Mid", "Oldest"]); // default: newest first, as before
+
+    const sort = screen.getByLabelText("Sort pull requests");
+    fireEvent.change(sort, { target: { value: "oldest" } });
+    expect(titlesInOrder()).toEqual(["Oldest", "Mid", "Newest"]);
+
+    fireEvent.change(sort, { target: { value: "updated" } });
+    expect(titlesInOrder()).toEqual(["Mid", "Newest", "Oldest"]);
+  });
+
+  it("marks draft, stale and open PRs, using the instance's stale threshold", async () => {
+    mockTriageRepo(
+      [
+        pull({ number: 1, title: "Quiet", created_at: daysAgo(10), updated_at: daysAgo(9) }),
+        pull({ number: 2, title: "Draft one", created_at: daysAgo(30), updated_at: daysAgo(30), draft: true }),
+        pull({ number: 3, title: "Active", created_at: daysAgo(30), updated_at: daysAgo(1) }),
+        pull({ number: 4, title: "Young", created_at: daysAgo(2), updated_at: daysAgo(2) }),
+      ],
+      7,
+    );
+    renderPage();
+    await screen.findByText(/Quiet/);
+
+    const status = (title: string) => screen.getByText(new RegExp(title)).closest("tr")!.textContent;
+    expect(status("Quiet")).toContain("Stale");
+    expect(status("Draft one")).toContain("Draft"); // a draft is never stale
+    expect(status("Active")).toContain("Open"); // old, but touched within the threshold
+    expect(status("Young")).toContain("Open");
+    expect(screen.getByText("Stale")).toHaveClass("text-warning");
+  });
+
+  it("is not stale under a longer threshold, and exports the status", async () => {
+    mockTriageRepo([pull({ number: 1, title: "Quiet", created_at: daysAgo(10), updated_at: daysAgo(9) })], 30);
+    renderPage();
+    await screen.findByText(/Quiet/);
+    expect(screen.queryByText("Stale")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Export CSV/ }));
+    expect(downloadTextFileMock.mock.calls[0][1]).toContain(",Open,");
+  });
+
+  it("shows draft and age in the by-author view too", async () => {
+    mockTriageRepo([pull({ number: 2, title: "Draft one", created_at: daysAgo(30), updated_at: daysAgo(30), draft: true })]);
+    renderPage();
+    await screen.findByText(/Draft one/);
+    fireEvent.click(screen.getByRole("button", { name: "by author" }));
+    expect(screen.getByText("Draft")).toBeInTheDocument();
+    expect(screen.getByText(/month ago/)).toBeInTheDocument();
   });
 });

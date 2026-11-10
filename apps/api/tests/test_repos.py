@@ -561,6 +561,37 @@ def test_list_pulls_returns_summaries(repos_client):
     )
 
 
+def test_list_pulls_reports_draft_state_updated_at_and_the_stale_threshold(repos_client):
+    with patch("src.routers.repos.GitHubClient") as mock_client, patch(
+        "src.services.pr_nudge.get_config", return_value="9"
+    ):
+        mock_client.return_value.request_paginated.return_value = [
+            {
+                "number": 8, "title": "WIP", "user": {"login": "octocat"}, "draft": True,
+                "created_at": "2026-07-01T00:00:00Z", "updated_at": "2026-07-03T00:00:00Z",
+                "html_url": "https://github.com/acme/demo/pull/8",
+            },
+            {
+                "number": 9, "title": "Ready", "user": None,
+                "created_at": "2026-07-01T00:00:00Z", "html_url": "https://github.com/acme/demo/pull/9",
+            },
+        ]
+        resp = repos_client.post(
+            "/orgs/acme/repos/acme/demo/pulls", json={"token": "ghp_testtoken123456789012345678901234"}
+        )
+    body = resp.json()
+    assert [(p["draft"], p["updated_at"]) for p in body["pulls"]] == [(True, "2026-07-03T00:00:00Z"), (False, None)]
+    assert body["stale_days"] == 9
+
+
+def test_configured_stale_days_falls_back_and_clamps():
+    from src.services import pr_nudge
+
+    for raw, expected in (("7", 7), ("0", 1), ("100000", 365), ("not a number", pr_nudge.DEFAULT_STALE_DAYS)):
+        with patch("src.services.pr_nudge.get_config", return_value=raw):
+            assert pr_nudge.configured_stale_days() == expected
+
+
 def test_repo_security_returns_protected_and_enabled(repos_client):
     with (
         patch("src.routers.repos.GitHubClient") as mock_client,
