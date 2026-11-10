@@ -13,7 +13,7 @@ import { BarGroupChart } from "@/components/charts/bar-group-chart"
 import { ArrowRight, Warning } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
-import { membersHref } from "@/lib/members-href"
+import { isOrgMemberOnly, membersHref } from "@/lib/members-href"
 import { useAuth } from "@/lib/auth-context"
 import { CHART_COLORS } from "@/lib/charts/theme"
 import { dueTime, formatBytes, relativeTime } from "@/lib/format"
@@ -191,7 +191,8 @@ export default function OverviewPage() {
         </div>
       )}
 
-      {org && (
+      {/* Role-dependent steps: hold the checklist back until membership is known (and skip it if the lookup failed). */}
+      {org && (scope?.kind !== "org" || membershipsLoaded) && (
         <FirstRunChecklist
           scope={scope}
           userId={user?.id ?? null}
@@ -201,6 +202,7 @@ export default function OverviewPage() {
           hasOrg={membershipsLoaded ? memberships.length > 0 : null}
           hasAutomationRun={cockpit?.has_automation_run ?? null}
           canInvite={scope?.kind === "org" && memberships.some((m) => m.org_login === scope.login && m.role === "admin")}
+          isOrgMember={scope?.kind === "org" && isOrgMemberOnly(memberships, scope.login)}
           membersUrl={membersUrl}
         />
       )}

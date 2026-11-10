@@ -689,7 +689,7 @@ describe("OverviewPage cockpit", () => {
   });
 
   describe("getting-started checklist wiring", () => {
-    const MEMBERSHIP = { org_login: "acme", role: "member" };
+    const MEMBERSHIP = { org_login: "acme", role: "admin" };
 
     function setUpOrg(cockpit: Record<string, unknown>) {
       localStorage.setItem("default_org", "acme");
