@@ -13,7 +13,8 @@ interface Step {
   id: string
   label: string
   hint: string
-  href: string
+  // Absent for a step the user cannot act on themselves (it only tells them who can).
+  href?: string
 }
 
 /**
@@ -30,6 +31,7 @@ export function FirstRunChecklist({
   hasOrg = null,
   hasAutomationRun = null,
   canInvite,
+  isOrgMember = false,
   membersUrl,
 }: {
   scope: ActiveScope | null
@@ -44,6 +46,9 @@ export function FirstRunChecklist({
   // Whether an automation has really run; `null` when unknown (the step is then hidden, not shown).
   hasAutomationRun?: boolean | null
   canInvite: boolean
+  // A plain member of the active org (not an admin). Installing the App, granting permissions and running
+  // automations are admin actions, so they are replaced by a pointer to an admin.
+  isOrgMember?: boolean
   membersUrl: string
 }) {
   const key = scope && userId != null ? dismissalKey(userId, scope.kind, scope.login) : null
@@ -105,7 +110,15 @@ export function FirstRunChecklist({
       href: "/settings",
     })
   }
-  if (!installed) {
+  if (isOrgMember) {
+    if (!installed) {
+      steps.push({
+        id: "ask-admin",
+        label: "Ask an org admin to install the GitHub App",
+        hint: "Only an admin of the organization can install it and grant its permissions.",
+      })
+    }
+  } else if (!installed) {
     steps.push({
       id: "install",
       label: "Install the GitHub App",
@@ -128,7 +141,7 @@ export function FirstRunChecklist({
       href: "/security",
     })
   }
-  if (hasAutomationRun === false) {
+  if (hasAutomationRun === false && !isOrgMember) {
     steps.push({
       id: "automation",
       label: "Run your first automation",
@@ -167,13 +180,20 @@ export function FirstRunChecklist({
       <ul className="divide-y divide-border">
         {steps.map((s) => (
           <li key={s.id}>
-            <Link href={s.href} className="px-4 py-3 flex items-center justify-between gap-3 hover:bg-muted/30">
-              <span className="flex flex-col gap-0.5">
+            {s.href ? (
+              <Link href={s.href} className="px-4 py-3 flex items-center justify-between gap-3 hover:bg-muted/30">
+                <span className="flex flex-col gap-0.5">
+                  <span className="text-sm text-foreground">{s.label}</span>
+                  <span className="text-xs text-muted-foreground">{s.hint}</span>
+                </span>
+                <ArrowRight className="size-3.5 text-muted-foreground shrink-0" />
+              </Link>
+            ) : (
+              <div className="px-4 py-3 flex flex-col gap-0.5">
                 <span className="text-sm text-foreground">{s.label}</span>
                 <span className="text-xs text-muted-foreground">{s.hint}</span>
-              </span>
-              <ArrowRight className="size-3.5 text-muted-foreground shrink-0" />
-            </Link>
+              </div>
+            )}
           </li>
         ))}
       </ul>
