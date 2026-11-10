@@ -13,6 +13,7 @@ from checks.github_checks import (
     shared_client,
 )
 from checks.hygiene_checks import HYGIENE_CHECKS
+from checks.identity_checks import identity_checks
 
 logger = logging.getLogger(__name__)
 
@@ -40,16 +41,22 @@ def run_all_checks(
     base_url: str = "https://api.github.com",
     account_type: str = "Organization",
     include_hygiene: bool = True,
+    stored_identity: dict | None = None,
 ) -> dict:
     """Run every check and return the per-check results.
 
     `include_hygiene=False` skips the repo-hygiene checks entirely: they are the expensive ones
-    (a tree, branch and file lookups per repo), so callers that wouldn't score them shouldn't pay."""
+    (a tree, branch and file lookups per repo), so callers that wouldn't score them shouldn't pay.
+
+    ``stored_identity`` (``{"members": [...], "collaborators": [...]}``, read from Clevis's own tables by the caller)
+    adds the identity checks, which make no GitHub calls; omit it for an account Clevis holds no such data for."""
     with shared_client():
-        return _run_checks(owner, token, base_url, account_type, include_hygiene)
+        return _run_checks(owner, token, base_url, account_type, include_hygiene, stored_identity)
 
 
-def _run_checks(owner: str, token: str, base_url: str, account_type: str, include_hygiene: bool) -> dict:
+def _run_checks(
+    owner: str, token: str, base_url: str, account_type: str, include_hygiene: bool, stored_identity: dict | None = None
+) -> dict:
     checks = [
         OrgMFARequired(),
         BranchProtectionEnabled(),
@@ -58,6 +65,7 @@ def _run_checks(owner: str, token: str, base_url: str, account_type: str, includ
         CodeScanningCheck(),
         DefaultBranchNoForcePushCheck(),
         *(cls() for cls in HYGIENE_CHECKS if include_hygiene),
+        *(identity_checks(stored_identity) if stored_identity is not None else []),
     ]
 
     # The prefetch feeds the per-repo checks. If it fails they degrade to per-check "error" results,
