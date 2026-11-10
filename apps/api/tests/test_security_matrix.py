@@ -60,8 +60,18 @@ def acme_org_with_installation(db, mock_user):
     return org
 
 
-def _insert_security_alert(db, tenant_id, *, repo, kind, number, state, severity, details):
+def _insert_security_alert(db, tenant_id, *, repo, kind, number, state, severity, details, synced=True, synced_days_ago=0):
+    """`synced` also records that the alert backfill read this (repo, kind) in full, which is what lets the
+    matrix use the stored rows; pass False for rows that only arrived by webhook."""
     db.execute(text(f"SET app.tenant_id = {int(tenant_id)}"))
+    if synced:
+        db.execute(
+            text(
+                "INSERT INTO security_alert_syncs (tenant_id, repo, kind, synced_at) "
+                "VALUES (:tenant_id, :repo, :kind, now() - make_interval(days => :ago)) ON CONFLICT DO NOTHING"
+            ),
+            {"tenant_id": tenant_id, "repo": repo, "kind": kind, "ago": synced_days_ago},
+        )
     db.execute(
         text(
             "INSERT INTO security_alerts (tenant_id, repo, kind, number, state, severity, details, created_at, updated_at) "
@@ -420,6 +430,96 @@ def test_security_matrix_uses_aggregate_when_installation_connected(connected_cl
     assert row["dependabot_high_count"] == 0
     assert row["code_scanning"] is False  # an open code_scanning alert exists
     assert row["unknown_dimensions"] == []
+
+
+def test_security_matrix_asks_github_for_a_repo_whose_alerts_were_only_partly_ingested(connected_client, db, acme_org_with_installation):
+    """A repo with an old critical alert that predates the App, plus one new low alert that arrived by webhook,
+    must not be reported from the one stored row: its alerts were never read in full (#814)."""
+    _insert_security_alert(
+        db, acme_org_with_installation.tenant_id, repo="acme/api", kind="dependabot", number=9,
+        state="open", severity="low", details={"dependency": {}}, synced=False,
+    )
+
+    def _request_side_effect(method, path, params=None):
+        if path.endswith("/branches/main/protection"):
+            return {"allow_force_pushes": {"enabled": False}}
+        if path.endswith("/branches/main"):
+            return {"protected": True, "protection": {"allow_force_pushes": {"enabled": False}}}
+        if path.endswith("/dependabot/alerts"):
+            return [{"security_advisory": {"severity": "critical"}}, {"security_advisory": {"severity": "low"}}]
+        if path.endswith("/code-scanning/alerts"):
+            return []
+        return {}
+
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.return_value = [
+            {"name": "api", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
+        ]
+        mock_client.return_value.request.side_effect = _request_side_effect
+        resp = connected_client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
+
+    row = resp.json()["repos"][0]
+    assert row["alerts_source"] == "github"
+    assert row["dependabot_critical_count"] == 1
+
+
+def test_security_matrix_asks_github_again_once_a_sync_record_has_aged_out(connected_client, db, acme_org_with_installation):
+    _insert_security_alert(
+        db, acme_org_with_installation.tenant_id, repo="acme/api", kind="dependabot", number=1,
+        state="open", severity="low", details={"dependency": {}}, synced_days_ago=31,
+    )
+
+    def _request_side_effect(method, path, params=None):
+        if path.endswith("/dependabot/alerts"):
+            return [{"security_advisory": {"severity": "critical"}}]
+        if path.endswith("/branches/main"):
+            return {"protected": True}
+        return {}
+
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.return_value = [
+            {"name": "api", "default_branch": "main", "security_and_analysis": {}},
+        ]
+        mock_client.return_value.request.side_effect = _request_side_effect
+        resp = connected_client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
+
+    row = resp.json()["repos"][0]
+    assert row["alerts_source"] == "github" and row["dependabot_critical_count"] == 1
+
+
+def test_security_matrix_trusts_stored_alerts_per_kind_once_that_kind_is_synced(connected_client, db, acme_org_with_installation):
+    tenant = acme_org_with_installation.tenant_id
+    _insert_security_alert(
+        db, tenant, repo="acme/api", kind="dependabot", number=1, state="open", severity="critical", details={"dependency": {}},
+    )  # dependabot synced
+    _insert_security_alert(
+        db, tenant, repo="acme/api", kind="code_scanning", number=2, state="open", severity="error", details={"rule": {}}, synced=False,
+    )  # code scanning only seen by webhook
+
+    seen = []
+
+    def _request_side_effect(method, path, params=None):
+        seen.append(path)
+        if path.endswith("/branches/main/protection"):
+            return {"allow_force_pushes": {"enabled": False}}
+        if path.endswith("/branches/main"):
+            return {"protected": True, "protection": {"allow_force_pushes": {"enabled": False}}}
+        if path.endswith("/code-scanning/alerts"):
+            return []
+        return {}
+
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.return_value = [
+            {"name": "api", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
+        ]
+        mock_client.return_value.request.side_effect = _request_side_effect
+        resp = connected_client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
+
+    row = resp.json()["repos"][0]
+    assert row["dependabot_critical_count"] == 1  # from the synced stored rows
+    assert not any(p.endswith("/dependabot/alerts") for p in seen)  # no live Dependabot call
+    assert any(p.endswith("/code-scanning/alerts") for p in seen)  # the unsynced kind was asked live
+    assert row["code_scanning"] is True  # live answer: no open alerts
 
 
 def test_security_matrix_aggregate_dependabot_enabled_with_only_dismissed_alerts(connected_client, db, acme_org_with_installation):

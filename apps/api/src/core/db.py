@@ -229,6 +229,19 @@ class SecurityAlert(Base):
     alert_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class SecurityAlertSync(Base):
+    """That a repo's open alerts of one kind were read in full from GitHub (the alert backfill), so the
+    security_alerts rows for it can be trusted as complete. No row = only webhook events populate it, and a
+    repo with few or zero rows is ambiguous ("no alerts" vs "not yet ingested")."""
+
+    __tablename__ = "security_alert_syncs"
+
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), primary_key=True)
+    repo: Mapped[str] = mapped_column(String, primary_key=True)
+    kind: Mapped[str] = mapped_column(String, primary_key=True)
+    synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class OrgMember(Base):
     """Current org membership (row deleted on member_removed), populated from `organization` webhooks.
 
