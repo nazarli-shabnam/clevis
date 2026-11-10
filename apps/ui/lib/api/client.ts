@@ -14,6 +14,7 @@ import type {
   ActionsUsageResponse,
   AnalyticsHistoryResponse,
   AnalyticsOverviewResponse,
+  IngestionHealth,
   AdminAuditFilters,
   AuditLogOut,
   OrgAuditFilters,
@@ -713,6 +714,7 @@ export const api = {
     setBadge: (orgLogin: string, enabled: boolean) =>
       put<{ enabled: boolean }>(`/orgs/${encodeURIComponent(orgLogin)}/badge`, { enabled }),
   },
+  ingestionHealth: (orgLogin: string) => get<IngestionHealth>(`/orgs/${encodeURIComponent(orgLogin)}/ingestion-health`),
   invitations: {
     create: (orgLogin: string, email: string) =>
       post<InvitationCreateResponse>(`/orgs/${encodeURIComponent(orgLogin)}/invitations`, { email }),

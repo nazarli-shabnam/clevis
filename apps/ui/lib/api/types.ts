@@ -180,6 +180,21 @@ export interface AnalyticsOverviewResponse {
   checks: CheckResult[]
 }
 
+/** GET /orgs/{org}/ingestion-health: whether GitHub data is reaching Clevis. */
+export interface IngestionHealth {
+  has_deliveries: boolean
+  last_received_at: string | null
+  last_processed_at: string | null
+  window_hours: number
+  received: number
+  queue_failed: number
+  queue_abandoned: number
+  dropped: number
+  pending: number
+  last_backfill_at: string | null
+  last_membership_reconcile_at: string | null
+}
+
 export interface ScanHistoryEntry {
   id: number
   owner: string
