@@ -687,6 +687,21 @@ def set_session_tenant(db: Session, tenant_id: int) -> None:
     db.execute(text(f"SET app.tenant_id = {int(tenant_id)}"))
 
 
+def release_connection(db: Session) -> None:
+    """Hand the request's pooled connection back before a slow external call (a scan is hundreds of GitHub
+    calls) instead of holding it, in an open transaction, for the whole call.
+
+    The RLS context set by the auth dependencies is a plain SET on the physical connection, so it is cleared
+    here or the next borrower would inherit it. The session reconnects on its next use; re-apply the
+    context (`set_tenant_session_context` / `set_session_user`) before touching tenant data again, and read
+    anything needed from ORM objects first: committing expires them.
+    """
+    db.commit()
+    db.execute(text("RESET app.tenant_id"))
+    db.execute(text("RESET app.user_id"))
+    db.commit()
+
+
 def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
