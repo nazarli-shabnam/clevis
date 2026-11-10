@@ -15,6 +15,7 @@ import type {
   AnalyticsHistoryResponse,
   AnalyticsOverviewResponse,
   LatestScanResponse,
+  OrgMembership,
   AdminAuditFilters,
   AuditLogOut,
   OrgAuditFilters,
@@ -721,6 +722,12 @@ export const api = {
     badge: (orgLogin: string) => get<{ enabled: boolean }>(`/orgs/${encodeURIComponent(orgLogin)}/badge`),
     setBadge: (orgLogin: string, enabled: boolean) =>
       put<{ enabled: boolean }>(`/orgs/${encodeURIComponent(orgLogin)}/badge`, { enabled }),
+  },
+  orgMemberships: {
+    list: (orgLogin: string) => get<OrgMembership[]>(`/orgs/${encodeURIComponent(orgLogin)}/members`),
+    setRole: (orgLogin: string, userId: number, role: "member" | "admin") =>
+      put<OrgMembership>(`/orgs/${encodeURIComponent(orgLogin)}/members/${userId}`, { role }),
+    remove: (orgLogin: string, userId: number) => del(`/orgs/${encodeURIComponent(orgLogin)}/members/${userId}`),
   },
   invitations: {
     create: (orgLogin: string, email: string) =>

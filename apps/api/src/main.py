@@ -33,6 +33,7 @@ from src.routers import (
     jobs,
     notifications,
     org_activity,
+    org_memberships,
     org_notifications,
     orgs,
     pr_nudges,
@@ -125,6 +126,7 @@ app.include_router(github_auth.router, prefix="/auth/github", tags=["github-auth
 app.include_router(installations.router, tags=["installations"])
 app.include_router(orgs.router, tags=["orgs"])
 app.include_router(invitations.router, tags=["invitations"])
+app.include_router(org_memberships.router, tags=["orgs"])
 app.include_router(analytics.router, tags=["analytics"])
 app.include_router(actions_cache.router, tags=["actions-cache"])
 app.include_router(repos.router, tags=["repos"])
