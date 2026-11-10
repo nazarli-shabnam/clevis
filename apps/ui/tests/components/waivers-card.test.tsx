@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 const listMock = vi.fn()
 const createMock = vi.fn()
 const revokeMock = vi.fn()
+const updateMock = vi.fn()
 
 vi.mock("@/lib/api/client", () => ({
   api: {
@@ -12,6 +13,7 @@ vi.mock("@/lib/api/client", () => ({
       list: (...a: unknown[]) => listMock(...a),
       create: (...a: unknown[]) => createMock(...a),
       revoke: (...a: unknown[]) => revokeMock(...a),
+      update: (...a: unknown[]) => updateMock(...a),
     },
   },
 }))
@@ -45,6 +47,7 @@ beforeEach(() => {
   listMock.mockReset()
   createMock.mockReset()
   revokeMock.mockReset()
+  updateMock.mockReset()
 })
 afterEach(() => {
   cleanup()
@@ -210,5 +213,120 @@ describe("CheckCard waived badge", () => {
       />,
     )
     expect(screen.getByText(/^Waived until/)).toHaveAttribute("title", expect.stringContaining("repos: api, web"))
+  })
+
+  it("shows the days left on an active waiver", async () => {
+    listMock.mockResolvedValue([waiver()]) // expires in 10 days
+    renderCard()
+    expect(await screen.findByText(/10 days left/)).toBeInTheDocument()
+  })
+
+  it("edits a waiver in place with PUT, prefilled from it, and returns to the add form", async () => {
+    listMock.mockResolvedValue([waiver({ repos: ["legacy-api"] })])
+    updateMock.mockResolvedValue(waiver())
+    renderCard()
+    fireEvent.click(await screen.findByRole("button", { name: /Renew or edit waiver for Default branch has protection rules/ }))
+
+    expect(screen.getByRole("button", { name: "Save waiver" })).toBeInTheDocument()
+    expect((screen.getByLabelText("Reason") as HTMLInputElement).value).toBe("legacy repo")
+    expect((screen.getByLabelText("Owner") as HTMLInputElement).value).toBe("platform")
+    expect((screen.getByLabelText(/Repositories/) as HTMLInputElement).value).toBe("legacy-api")
+
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "still legacy" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save waiver" }))
+
+    await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(1))
+    const [org, id, body] = updateMock.mock.calls[0]
+    expect([org, id]).toEqual(["acme", 1])
+    expect(body).toMatchObject({ reason: "still legacy", owner: "platform", repos: ["legacy-api"] })
+    expect(createMock).not.toHaveBeenCalled()
+    expect(await screen.findByRole("button", { name: "Add waiver" })).toBeInTheDocument()
+  })
+
+  it("renews an expired waiver, defaulting its new expiry to 30 days out, and can be cancelled", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] })
+    vi.setSystemTime(new Date(2026, 5, 15, 12, 0, 0))
+    listMock.mockResolvedValue([waiver({ active: false, expires_at: new Date(2026, 5, 1, 12, 0, 0).toISOString() })])
+    renderCard()
+
+    fireEvent.click(await screen.findByRole("button", { name: /Renew or edit waiver/ }))
+    expect((screen.getByLabelText("Expires") as HTMLInputElement).value).toBe("2026-07-15")
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+    expect(screen.getByRole("button", { name: "Add waiver" })).toBeInTheDocument()
+  })
+
+  it("shows the server's error when saving an edit fails", async () => {
+    listMock.mockResolvedValue([waiver()])
+    updateMock.mockRejectedValue(new Error("Unknown check"))
+    renderCard()
+    fireEvent.click(await screen.findByRole("button", { name: /Renew or edit waiver/ }))
+    fireEvent.click(screen.getByRole("button", { name: "Save waiver" }))
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't save the waiver: Unknown check")
+  })
+
+  it("lets an org admin waive a failing check from its card, prefilled with that check", async () => {
+    listMock.mockResolvedValue([])
+    createMock.mockResolvedValue(waiver())
+    const check = {
+      id: "repository_license_present",
+      title: "License present",
+      severity: "low",
+      remediation: "Add a license",
+      status: "fail" as const,
+      value: null,
+    }
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <CheckCard check={check} waiveOrg="acme" />
+      </QueryClientProvider>,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Waive…" }))
+    expect(screen.queryByLabelText("Check")).not.toBeInTheDocument() // the check is fixed
+    expect(screen.queryByLabelText(/Repositories/)).not.toBeInTheDocument() // org-wide-only check
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "no license needed" } })
+    fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "legal" } })
+    fireEvent.click(screen.getByRole("button", { name: "Add waiver" }))
+
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+    expect(createMock.mock.calls[0][0]).toBe("acme")
+    expect(createMock.mock.calls[0][1]).toMatchObject({ check_id: "repository_license_present", repos: [], reason: "no license needed" })
+    expect(await screen.findByText(/Waiver added/)).toBeInTheDocument()
+  })
+
+  it.each(["organization_members_2fa_enabled", "repository_no_outside_collaborator_admins"])(
+    "offers Waive for the identity check %s, which only takes an org-wide waiver",
+    (id) => {
+      const queryClient = new QueryClient()
+      render(
+        <QueryClientProvider client={queryClient}>
+          <CheckCard
+            check={{ id, title: "t", severity: "medium", remediation: "r", status: "fail", value: null }}
+            waiveOrg="acme"
+          />
+        </QueryClientProvider>,
+      )
+      fireEvent.click(screen.getByRole("button", { name: "Waive…" }))
+      expect(screen.queryByLabelText(/Repositories/)).not.toBeInTheDocument()
+    },
+  )
+
+  it("offers no Waive action without an org to waive for, or on a passing check", () => {
+    const base = { id: "repository_license_present", title: "License present", severity: "low", remediation: "x", value: null }
+    const queryClient = new QueryClient()
+    const { rerender } = render(
+      <QueryClientProvider client={queryClient}>
+        <CheckCard check={{ ...base, status: "fail" }} />
+      </QueryClientProvider>,
+    )
+    expect(screen.queryByRole("button", { name: "Waive…" })).not.toBeInTheDocument()
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <CheckCard check={{ ...base, status: "pass" }} waiveOrg="acme" />
+      </QueryClientProvider>,
+    )
+    expect(screen.queryByRole("button", { name: "Waive…" })).not.toBeInTheDocument()
   })
 })

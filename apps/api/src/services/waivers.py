@@ -22,6 +22,7 @@ from checks.github_checks import (
     SecretScanningEnabled,
 )
 from checks.hygiene_checks import HYGIENE_CHECKS
+from checks.identity_checks import MembersWithout2FA, OutsideCollaboratorsWithAdmin
 
 from src.core.db import CheckWaiver
 from src.repositories import waiver_repo
@@ -34,7 +35,7 @@ MAX_WAIVERS_PER_TENANT = 100
 # Checks whose result never names the failing repos (org-level MFA; the hygiene checks only report counters),
 # so a repo-scoped waiver for one can never match and would silently do nothing: only org-wide ones are accepted.
 ORG_WIDE_ONLY_CHECK_IDS = frozenset(
-    cls.metadata.check_id for cls in (OrgMFARequired, *HYGIENE_CHECKS)
+    cls.metadata.check_id for cls in (OrgMFARequired, *HYGIENE_CHECKS, MembersWithout2FA, OutsideCollaboratorsWithAdmin)
 )
 
 KNOWN_CHECK_IDS = frozenset(
@@ -47,6 +48,8 @@ KNOWN_CHECK_IDS = frozenset(
         CodeScanningCheck,
         DefaultBranchNoForcePushCheck,
         *HYGIENE_CHECKS,
+        MembersWithout2FA,
+        OutsideCollaboratorsWithAdmin,
     )
 )
 

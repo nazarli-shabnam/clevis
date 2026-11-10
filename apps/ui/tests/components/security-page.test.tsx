@@ -9,6 +9,7 @@ const analyticsOverviewMock = vi.fn();
 const analyticsHistoryMock = vi.fn();
 const analyticsExportMock = vi.fn();
 const analyticsChangesMock = vi.fn();
+const analyticsLatestScanMock = vi.fn();
 const downloadTextFileMock = vi.fn();
 
 vi.mock("@/lib/download", () => ({
@@ -59,6 +60,7 @@ vi.mock("@/lib/api/client", () => ({
       history: (...args: unknown[]) => analyticsHistoryMock(...args),
       exportHistory: (...args: unknown[]) => analyticsExportMock(...args),
       changes: (...args: unknown[]) => analyticsChangesMock(...args),
+      latestScan: (...args: unknown[]) => analyticsLatestScanMock(...args),
     },
     security: {
       matrix: (...args: unknown[]) => securityMatrixMock(...args),
@@ -101,6 +103,8 @@ describe("SecurityPage", () => {
     tokensResolveMock.mockRejectedValue(new Error("no saved token"));
     analyticsHistoryMock.mockResolvedValue([]);
     analyticsChangesMock.mockReset();
+    analyticsLatestScanMock.mockReset();
+    analyticsLatestScanMock.mockRejectedValue(new Error("No scan yet"));
     analyticsChangesMock.mockResolvedValue({ org: "acme", has_previous: false, scanned_at: null, score: null, comparable: true, changes: [] });
     securityMatrixMock.mockResolvedValue({
       owner: "acme",
@@ -269,6 +273,63 @@ describe("SecurityPage", () => {
 
     // The donut's centre is the sum of its slices: pass + fail + error = all 3 checks.
     await waitFor(() => expect(screen.getByText("checks").previousElementSibling).toHaveTextContent("3"));
+  });
+
+  const STORED_SCAN = {
+    owner: "acme", score: 67, total_checks: 3, failed_checks: 1,
+    scanned_at: new Date(Date.now() - 3 * 3_600_000).toISOString(),
+    checks: [{ id: "c1", title: "Stored failing check", severity: "high", remediation: "", status: "fail", value: { type: "boolean", enabled: false } }],
+  };
+
+  it("shows the org's last stored scan on load, with when it ran and a Rescan button", async () => {
+    analyticsLatestScanMock.mockResolvedValue(STORED_SCAN);
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+
+    expect(await screen.findByText("Stored failing check")).toBeInTheDocument();
+    expect(screen.getByText(/Last scanned 3 hours ago/)).toBeInTheDocument();
+    expect(analyticsLatestScanMock).toHaveBeenCalledWith("acme");
+    expect(analyticsOverviewMock).not.toHaveBeenCalled(); // no GitHub calls just to look
+    expect(screen.getByRole("button", { name: "Rescan" })).toBeInTheDocument();
+  });
+
+  it("replaces the stored results with the fresh ones when a rescan finishes", async () => {
+    analyticsLatestScanMock.mockResolvedValue(STORED_SCAN);
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 100, total_checks: 1, failed_checks: 0, repo_count: 1,
+      checks: [{ id: "c2", title: "Fresh passing check", severity: "low", remediation: "", status: "pass", value: null }],
+    });
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    await screen.findByText("Stored failing check");
+
+    fireEvent.click(screen.getByRole("button", { name: "Rescan" }));
+
+    expect(await screen.findByText("Fresh passing check")).toBeInTheDocument();
+    expect(screen.queryByText("Stored failing check")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Last scanned/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the stored results visible while a rescan runs", async () => {
+    analyticsLatestScanMock.mockResolvedValue(STORED_SCAN);
+    analyticsOverviewMock.mockReturnValue(new Promise(() => {}));
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    await screen.findByText("Stored failing check");
+
+    fireEvent.click(screen.getByRole("button", { name: "Rescan" }));
+
+    expect(await screen.findByText(/Rescanning…/)).toBeInTheDocument();
+    expect(screen.getByText("Stored failing check")).toBeInTheDocument();
+  });
+
+  it("shows no results area, and still offers Run scan, when nothing is stored", async () => {
+    renderPage(); // latestScan rejects: never scanned, or not an org the caller belongs to
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    await waitFor(() => expect(analyticsLatestScanMock).toHaveBeenCalled());
+
+    expect(screen.queryByText(/Results —/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run scan" })).toBeInTheDocument();
   });
 
   it("drops the previous owner's scan results and stops querying for them when the owner changes (#549)", async () => {

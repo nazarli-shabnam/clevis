@@ -250,9 +250,11 @@ def test_a_repo_scoped_waiver_is_refused_for_checks_that_never_name_repos(db, wo
     assert admin.post("/orgs/acme-w/waivers", json=_body(check_id=check_id)).status_code == 201
 
 
-def test_the_org_wide_only_checks_are_mfa_and_the_five_hygiene_checks():
-    assert len(waiver_service.ORG_WIDE_ONLY_CHECK_IDS) == 6
+def test_the_org_wide_only_checks_are_mfa_the_five_hygiene_checks_and_the_two_identity_checks():
+    assert len(waiver_service.ORG_WIDE_ONLY_CHECK_IDS) == 8
     assert "organization_members_mfa_required" in waiver_service.ORG_WIDE_ONLY_CHECK_IDS
+    assert "organization_members_2fa_enabled" in waiver_service.ORG_WIDE_ONLY_CHECK_IDS
+    assert "repository_no_outside_collaborator_admins" in waiver_service.ORG_WIDE_ONLY_CHECK_IDS
     assert BP not in waiver_service.ORG_WIDE_ONLY_CHECK_IDS
 
 

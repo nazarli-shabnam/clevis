@@ -71,12 +71,17 @@ class PullSummary(BaseModel):
     user: str | None = None
     created_at: str
     html_url: str
+    # Last push or comment; with created_at and draft it is what the stale-PR nudge calls stale.
+    updated_at: str | None = None
+    draft: bool = False
 
 
 class RepoPullsResponse(BaseModel):
     repository: str
     total: int
     pulls: list[PullSummary]
+    # The instance's pr_nudge_stale_days, so the UI can flag the same PRs the nudge would act on.
+    stale_days: int = 3
 
 
 class FlowPrMetrics(BaseModel):

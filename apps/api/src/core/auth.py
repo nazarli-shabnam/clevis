@@ -68,6 +68,11 @@ class UserOut(BaseModel):
     github_login: str | None = None
 
 
+# The name is copied into every session JWT; bounded here, where the token is issued, so a long name from any
+# source (GitHub profile, an account stored before the request limit) cannot make the token too big for cookies.
+_MAX_JWT_NAME_CHARS = 100
+
+
 def create_access_token(
     user_id: int, email: str, is_workspace_admin: bool, name: str | None = None, token_version: int = 0
 ) -> str:
@@ -76,7 +81,7 @@ def create_access_token(
         "sub": str(user_id),
         "email": email,
         "is_workspace_admin": is_workspace_admin,
-        "name": name,
+        "name": name[:_MAX_JWT_NAME_CHARS] if name else name,
         "token_version": token_version,
         # Unique per token so logout can revoke this one session without touching the user's others.
         "jti": uuid.uuid4().hex,

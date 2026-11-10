@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
+from src.core.app_config import get_config
 from src.services.github_client import GitHubClient
 
 # app_config keys (registered in src.core.app_config._ACCEPTED_KEYS)
@@ -36,6 +37,17 @@ class NudgeResult:
     number: int
     title: str
     action: str  # "commented" | "labeled" | "skipped-recent-nudge" | "skipped-not-stale"
+
+
+def configured_stale_days() -> int:
+    """The instance's ``pr_nudge_stale_days``, falling back to the default on a malformed value and clamped
+    to [1, 365]: the value is DB-editable and only the PUT route bounds it at 1, and an absurd upper value
+    would waste a full paginated PR crawl."""
+    try:
+        stale_days = int(get_config(STALE_DAYS_KEY, str(DEFAULT_STALE_DAYS)))
+    except ValueError:
+        stale_days = DEFAULT_STALE_DAYS
+    return min(365, max(1, stale_days))
 
 
 def _parse_ts(value: str | None) -> datetime | None:

@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
-import { CaretUp, CaretDown, CaretUpDown, DownloadSimple } from "@phosphor-icons/react"
+import { Fragment, useEffect, useMemo, useState } from "react"
+import { CaretUp, CaretDown, CaretUpDown, CaretRight, DownloadSimple } from "@phosphor-icons/react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -38,6 +38,9 @@ interface DataTableProps<T> {
    * `clevis-<name>-<yyyy-mm-dd>.csv` (`name` is slugified). `note` is shown beside the button, for
    * tables whose `data` is only a window onto a larger set. */
   exportCsv?: { name: string; note?: string }
+  /** Makes rows expandable: returns the detail shown under a row, or null/undefined for a row that has
+   * none (it gets no toggle). An extra leading column holds the toggle. */
+  renderExpanded?: (row: T) => React.ReactNode
 }
 
 /** A shared sortable, paginated table -- built on the same raw `<table>` markup/classes
@@ -53,10 +56,20 @@ export function DataTable<T>({
   rowClassName,
   getRowRef,
   exportCsv,
+  renderExpanded,
 }: DataTableProps<T>) {
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc")
   const [page, setPage] = useState(1)
+  const [expanded, setExpanded] = useState<Set<string | number>>(new Set())
+
+  function toggleExpanded(key: string | number) {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(key)) next.add(key)
+      return next
+    })
+  }
 
   const sorted = useMemo(() => {
     const col = columns.find((c) => c.key === sortKey)
@@ -113,6 +126,11 @@ export function DataTable<T>({
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-border">
+              {renderExpanded && (
+                <th className="w-8 px-2 py-2">
+                  <span className="sr-only">Details</span>
+                </th>
+              )}
               {columns.map((col) => {
                 const isSorted = col.sortValue && sortKey === col.key
                 return (
@@ -149,18 +167,47 @@ export function DataTable<T>({
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {pageRows.map((row) => (
-              <tr key={getRowKey(row)} ref={getRowRef?.(row)} className={rowClassName?.(row)}>
-                {columns.map((col) => (
-                  <td
-                    key={col.key}
-                    className={cn("px-4 py-2.5", col.align === "right" && "text-right", col.cellClassName)}
-                  >
-                    {col.render(row)}
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {pageRows.map((row) => {
+              const key = getRowKey(row)
+              const detail = renderExpanded?.(row)
+              const isOpen = detail != null && expanded.has(key)
+              return (
+                <Fragment key={key}>
+                  <tr ref={getRowRef?.(row)} className={rowClassName?.(row)}>
+                    {renderExpanded && (
+                      <td className="w-8 px-2 py-2.5">
+                        {detail != null && (
+                          <button
+                            type="button"
+                            onClick={() => toggleExpanded(key)}
+                            aria-expanded={isOpen}
+                            aria-label={isOpen ? "Hide details" : "Show details"}
+                            className="inline-flex cursor-pointer items-center text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          >
+                            <CaretRight className={cn("size-3.5 transition-transform", isOpen && "rotate-90")} />
+                          </button>
+                        )}
+                      </td>
+                    )}
+                    {columns.map((col) => (
+                      <td
+                        key={col.key}
+                        className={cn("px-4 py-2.5", col.align === "right" && "text-right", col.cellClassName)}
+                      >
+                        {col.render(row)}
+                      </td>
+                    ))}
+                  </tr>
+                  {isOpen && (
+                    <tr className="bg-elevated/40">
+                      <td colSpan={columns.length + 1} className="px-4 py-3">
+                        {detail}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              )
+            })}
           </tbody>
         </table>
       </div>

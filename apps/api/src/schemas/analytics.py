@@ -103,6 +103,18 @@ class ScanHistoryEntry(BaseModel):
     created_at: datetime
 
 
+class LatestScanOut(BaseModel):
+    """The org's newest stored scan, for showing results before anyone rescans. ``checks`` is a permissive
+    ``list[dict]`` for the same reason as ``ScanExportEntry.checks``: it replays stored rows."""
+
+    owner: str
+    score: int | None
+    total_checks: int
+    failed_checks: int
+    scanned_at: datetime
+    checks: list[dict]
+
+
 class ScanExportEntry(ScanHistoryEntry):
     """A scan-history row plus its full per-check breakdown, for the compliance export.
     ``checks`` is left as a permissive ``list[dict]`` on purpose: this replays historical

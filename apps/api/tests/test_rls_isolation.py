@@ -129,6 +129,7 @@ _EXPECTED_FORCE_RLS_TABLES = {
     "notification_dismissals",
     "check_waivers",
     "api_tokens",
+    "security_alert_syncs",
 }
 
 

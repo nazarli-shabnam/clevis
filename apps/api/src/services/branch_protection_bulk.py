@@ -14,7 +14,6 @@ repo is reported as an error and left alone.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from urllib.parse import quote
 
@@ -25,12 +24,12 @@ from src.services.check_remediation import (
     RemediationConflict,
     _preserving_put_body,
 )
+from src.core.path_params import REPO_NAME_RE
 from src.services.github_client import GitHubClient
 
-# GitHub repo names: letters, digits, ``.  _  -``; 1–100 chars; never "." or "..".
 # ``repos[]`` is caller-supplied, so a name with a slash or ".." could otherwise walk
 # the API path to another repo/org.
-_REPO_NAME_RE = re.compile(r"^(?!\.\.?$)[A-Za-z0-9._-]{1,100}$")
+_REPO_NAME_RE = REPO_NAME_RE
 
 # The knob keys a preset controls (flattened form). Everything else is preserved.
 _KNOB_KEYS = ("required_approving_review_count", "enforce_admins", "allow_force_pushes", "allow_deletions")

@@ -31,6 +31,19 @@ def _make_user(db, email: str) -> UserOut:
     return UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=False)
 
 
+
+def _set_repos(mock_client, repos):
+    """Make the mocked client's request_paginated return `repos` for the repo listing and delegate the
+    per-repo Dependabot alert listing to the test's own `request` side effect, as one call returns it all."""
+    inst = mock_client.return_value
+
+    def paginated(path, params=None, items_key=None):
+        if path.endswith("/dependabot/alerts"):
+            return inst.request("GET", path, params)
+        return repos
+
+    inst.request_paginated.side_effect = paginated
+
 @pytest.fixture()
 def mock_user(db):
     return _make_user(db, "security-matrix@example.com")
@@ -47,8 +60,18 @@ def acme_org_with_installation(db, mock_user):
     return org
 
 
-def _insert_security_alert(db, tenant_id, *, repo, kind, number, state, severity, details):
+def _insert_security_alert(db, tenant_id, *, repo, kind, number, state, severity, details, synced=True, synced_days_ago=0):
+    """`synced` also records that the alert backfill read this (repo, kind) in full, which is what lets the
+    matrix use the stored rows; pass False for rows that only arrived by webhook."""
     db.execute(text(f"SET app.tenant_id = {int(tenant_id)}"))
+    if synced:
+        db.execute(
+            text(
+                "INSERT INTO security_alert_syncs (tenant_id, repo, kind, synced_at) "
+                "VALUES (:tenant_id, :repo, :kind, now() - make_interval(days => :ago)) ON CONFLICT DO NOTHING"
+            ),
+            {"tenant_id": tenant_id, "repo": repo, "kind": kind, "ago": synced_days_ago},
+        )
     db.execute(
         text(
             "INSERT INTO security_alerts (tenant_id, repo, kind, number, state, severity, details, created_at, updated_at) "
@@ -119,9 +142,9 @@ def test_security_matrix_computes_rows_and_summary(client):
         return {}
 
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request_paginated.return_value = [
+        _set_repos(mock_client, [
             {"name": "api", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
-        ]
+        ])
         mock_client.return_value.request.side_effect = _request_side_effect
         resp = client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
 
@@ -147,9 +170,9 @@ def test_security_matrix_excludes_unknown_dimensions_from_score(client):
     Every GitHub call fails, so only secret_scanning (from the repo list) is evaluable.
     """
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request_paginated.return_value = [
+        _set_repos(mock_client, [
             {"name": "api", "default_branch": "main", "security_and_analysis": {}},
-        ]
+        ])
         mock_client.return_value.request.side_effect = httpx.RequestError("boom")
         resp = client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
 
@@ -173,7 +196,7 @@ def test_security_matrix_branch_protection_only_404_is_unprotected(client, statu
         return {}
 
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request_paginated.return_value = [{"name": "api", "default_branch": "main"}]
+        _set_repos(mock_client, [{"name": "api", "default_branch": "main"}])
         mock_client.return_value.request.side_effect = _request_side_effect
         resp = client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
 
@@ -184,7 +207,7 @@ def test_security_matrix_branch_protection_only_404_is_unprotected(client, statu
 
 def test_security_matrix_repo_without_default_branch_skips_branch_call(client):
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request_paginated.return_value = [{"name": "empty", "default_branch": None}]
+        _set_repos(mock_client, [{"name": "empty", "default_branch": None}])
         mock_client.return_value.request.return_value = {}
         resp = client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
 
@@ -210,9 +233,9 @@ def test_security_matrix_403_on_dependabot_is_unknown_not_clean(client):
         return {}
 
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request_paginated.return_value = [
+        _set_repos(mock_client, [
             {"name": "api", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
-        ]
+        ])
         mock_client.return_value.request.side_effect = _request_side_effect
         resp = client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
 
@@ -239,9 +262,9 @@ def test_security_matrix_404_on_dependabot_is_genuinely_disabled(client):
         return {}
 
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request_paginated.return_value = [
+        _set_repos(mock_client, [
             {"name": "api", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
-        ]
+        ])
         mock_client.return_value.request.side_effect = _request_side_effect
         resp = client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
 
@@ -265,9 +288,9 @@ def _matrix_for_branch_response(client, branch_result):
         return {}
 
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request_paginated.return_value = [
+        _set_repos(mock_client, [
             {"name": "api", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
-        ]
+        ])
         mock_client.return_value.request.side_effect = _request_side_effect
         resp = client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
     assert resp.status_code == 200
@@ -305,9 +328,9 @@ def test_security_matrix_repo_without_default_branch_skips_branch_lookup(client,
         return []
 
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request_paginated.return_value = [
+        _set_repos(mock_client, [
             {"name": "empty", "default_branch": default_branch, "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
-        ]
+        ])
         mock_client.return_value.request.side_effect = _request_side_effect
         resp = client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
 
@@ -393,9 +416,9 @@ def test_security_matrix_uses_aggregate_when_installation_connected(connected_cl
         raise AssertionError(f"unexpected live GitHub call for a connected org: {path}")
 
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request_paginated.return_value = [
+        _set_repos(mock_client, [
             {"name": "api", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
-        ]
+        ])
         mock_client.return_value.request.side_effect = _request_side_effect
         resp = connected_client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
 
@@ -409,6 +432,96 @@ def test_security_matrix_uses_aggregate_when_installation_connected(connected_cl
     assert row["unknown_dimensions"] == []
 
 
+def test_security_matrix_asks_github_for_a_repo_whose_alerts_were_only_partly_ingested(connected_client, db, acme_org_with_installation):
+    """A repo with an old critical alert that predates the App, plus one new low alert that arrived by webhook,
+    must not be reported from the one stored row: its alerts were never read in full (#814)."""
+    _insert_security_alert(
+        db, acme_org_with_installation.tenant_id, repo="acme/api", kind="dependabot", number=9,
+        state="open", severity="low", details={"dependency": {}}, synced=False,
+    )
+
+    def _request_side_effect(method, path, params=None):
+        if path.endswith("/branches/main/protection"):
+            return {"allow_force_pushes": {"enabled": False}}
+        if path.endswith("/branches/main"):
+            return {"protected": True, "protection": {"allow_force_pushes": {"enabled": False}}}
+        if path.endswith("/dependabot/alerts"):
+            return [{"security_advisory": {"severity": "critical"}}, {"security_advisory": {"severity": "low"}}]
+        if path.endswith("/code-scanning/alerts"):
+            return []
+        return {}
+
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        _set_repos(mock_client, [
+            {"name": "api", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
+        ])
+        mock_client.return_value.request.side_effect = _request_side_effect
+        resp = connected_client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
+
+    row = resp.json()["repos"][0]
+    assert row["alerts_source"] == "github"
+    assert row["dependabot_critical_count"] == 1
+
+
+def test_security_matrix_asks_github_again_once_a_sync_record_has_aged_out(connected_client, db, acme_org_with_installation):
+    _insert_security_alert(
+        db, acme_org_with_installation.tenant_id, repo="acme/api", kind="dependabot", number=1,
+        state="open", severity="low", details={"dependency": {}}, synced_days_ago=31,
+    )
+
+    def _request_side_effect(method, path, params=None):
+        if path.endswith("/dependabot/alerts"):
+            return [{"security_advisory": {"severity": "critical"}}]
+        if path.endswith("/branches/main"):
+            return {"protected": True}
+        return {}
+
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        _set_repos(mock_client, [
+            {"name": "api", "default_branch": "main", "security_and_analysis": {}},
+        ])
+        mock_client.return_value.request.side_effect = _request_side_effect
+        resp = connected_client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
+
+    row = resp.json()["repos"][0]
+    assert row["alerts_source"] == "github" and row["dependabot_critical_count"] == 1
+
+
+def test_security_matrix_trusts_stored_alerts_per_kind_once_that_kind_is_synced(connected_client, db, acme_org_with_installation):
+    tenant = acme_org_with_installation.tenant_id
+    _insert_security_alert(
+        db, tenant, repo="acme/api", kind="dependabot", number=1, state="open", severity="critical", details={"dependency": {}},
+    )  # dependabot synced
+    _insert_security_alert(
+        db, tenant, repo="acme/api", kind="code_scanning", number=2, state="open", severity="error", details={"rule": {}}, synced=False,
+    )  # code scanning only seen by webhook
+
+    seen = []
+
+    def _request_side_effect(method, path, params=None):
+        seen.append(path)
+        if path.endswith("/branches/main/protection"):
+            return {"allow_force_pushes": {"enabled": False}}
+        if path.endswith("/branches/main"):
+            return {"protected": True, "protection": {"allow_force_pushes": {"enabled": False}}}
+        if path.endswith("/code-scanning/alerts"):
+            return []
+        return {}
+
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.return_value = [
+            {"name": "api", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
+        ]
+        mock_client.return_value.request.side_effect = _request_side_effect
+        resp = connected_client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
+
+    row = resp.json()["repos"][0]
+    assert row["dependabot_critical_count"] == 1  # from the synced stored rows
+    assert not any(p.endswith("/dependabot/alerts") for p in seen)  # no live Dependabot call
+    assert any(p.endswith("/code-scanning/alerts") for p in seen)  # the unsynced kind was asked live
+    assert row["code_scanning"] is True  # live answer: no open alerts
+
+
 def test_security_matrix_aggregate_dependabot_enabled_with_only_dismissed_alerts(connected_client, db, acme_org_with_installation):
     """dependabot_enabled considers every state: a repo with only dismissed alerts still has Dependabot enabled."""
     _insert_security_alert(
@@ -417,9 +530,9 @@ def test_security_matrix_aggregate_dependabot_enabled_with_only_dismissed_alerts
     )
 
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request_paginated.return_value = [
+        _set_repos(mock_client, [
             {"name": "api", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
-        ]
+        ])
         mock_client.return_value.request.return_value = {"protected": True, "protection": {"allow_force_pushes": {"enabled": False}}}
         resp = connected_client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
 
@@ -443,9 +556,9 @@ def test_security_matrix_falls_back_to_live_for_a_repo_with_no_ingested_alert_ro
         raise AssertionError(f"unexpected call: {path}")
 
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request_paginated.return_value = [
+        _set_repos(mock_client, [
             {"name": "clean-repo", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
-        ]
+        ])
         mock_client.return_value.request.side_effect = _request_side_effect
         resp = connected_client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
 
@@ -474,10 +587,10 @@ def test_security_matrix_uses_aggregate_only_for_repos_with_ingested_rows(connec
         raise AssertionError(f"unexpected call: {path}")
 
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request_paginated.return_value = [
+        _set_repos(mock_client, [
             {"name": "api", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
             {"name": "new-repo", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
-        ]
+        ])
         mock_client.return_value.request.side_effect = _request_side_effect
         resp = connected_client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
 
@@ -510,9 +623,9 @@ def test_security_matrix_gates_dependabot_and_code_scanning_independently(connec
         raise AssertionError(f"unexpected call: {path}")
 
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request_paginated.return_value = [
+        _set_repos(mock_client, [
             {"name": "api", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
-        ]
+        ])
         mock_client.return_value.request.side_effect = _request_side_effect
         resp = connected_client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
 
@@ -525,7 +638,7 @@ def test_security_matrix_gates_dependabot_and_code_scanning_independently(connec
 def test_security_matrix_connected_org_with_no_repos_is_empty(connected_client, db, acme_org_with_installation):
     """No repos: _open_alerts_by_repo must not error on an empty IN (...) query."""
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request_paginated.return_value = []
+        _set_repos(mock_client, [])
         resp = connected_client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
 
     assert resp.status_code == 200
@@ -549,9 +662,9 @@ def test_security_matrix_falls_back_to_github_when_caller_lacks_membership(clien
         return {}
 
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request_paginated.return_value = [
+        _set_repos(mock_client, [
             {"name": "api", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
-        ]
+        ])
         mock_client.return_value.request.side_effect = _request_side_effect
         resp = client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
 
@@ -573,9 +686,9 @@ def test_security_matrix_falls_back_to_github_when_org_has_no_installation(conne
         return {}
 
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request_paginated.return_value = [
+        _set_repos(mock_client, [
             {"name": "api", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
-        ]
+        ])
         mock_client.return_value.request.side_effect = _request_side_effect
         resp = connected_client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
 
@@ -596,9 +709,9 @@ def test_security_matrix_unconnected_org_still_uses_live_github(client, db):
         return {}
 
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request_paginated.return_value = [
+        _set_repos(mock_client, [
             {"name": "api", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
-        ]
+        ])
         mock_client.return_value.request.side_effect = _request_side_effect
         resp = client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
 
@@ -659,15 +772,15 @@ def test_security_matrix_personal_account_uses_installation_repos_endpoint(clien
         patch("src.routers.security.get_account_type", return_value="User"),
         patch("src.routers.security.GitHubClient") as mock_client,
     ):
-        mock_client.return_value.request_paginated.return_value = [
+        _set_repos(mock_client, [
             {"name": "dotfiles", "default_branch": "main", "security_and_analysis": {}},
-        ]
+        ])
         mock_client.return_value.request.return_value = {}
         resp = client.get("/me/analytics/security-matrix/octocat", headers={"X-GitHub-Token": "ghp_test"})
 
     assert resp.status_code == 200
     assert resp.json()["repos"][0]["repo"] == "dotfiles"
-    mock_client.return_value.request_paginated.assert_called_once_with(
+    mock_client.return_value.request_paginated.assert_any_call(
         "/installation/repositories", items_key="repositories"
     )
 
@@ -723,6 +836,7 @@ def test_repo_security_row_returns_just_that_repo_without_listing_the_org(client
 
     with patch("src.routers.security.GitHubClient") as mock_client:
         mock_client.return_value.request.side_effect = _request
+        mock_client.return_value.request_paginated.side_effect = lambda path, params=None, items_key=None: _request("GET", path, params)
         resp = client.get("/me/analytics/security-matrix/acme/api", headers={"X-GitHub-Token": "ghp_test"})
 
     assert resp.status_code == 200
@@ -730,8 +844,11 @@ def test_repo_security_row_returns_just_that_repo_without_listing_the_org(client
     assert (row["repo"], row["dependabot_critical_count"], row["dependabot_high_count"]) == ("api", 1, 1)
     assert row["code_scanning"] is False
     assert row["force_push_allowed"] is True
-    # The only paginated read is the ruleset lookup; the org's repo list is never fetched.
-    assert [c.args[0] for c in mock_client.return_value.request_paginated.call_args_list] == ["/repos/acme/api/rules/branches/main"]
+    # The paginated reads are the ruleset lookup and the Dependabot alerts; the org's repo list is never fetched.
+    assert sorted(c.args[0] for c in mock_client.return_value.request_paginated.call_args_list) == [
+        "/repos/acme/api/dependabot/alerts",
+        "/repos/acme/api/rules/branches/main",
+    ]
 
 
 def test_repo_security_row_uses_aggregate_alerts_when_connected(connected_client, db, acme_org_with_installation):
@@ -822,3 +939,32 @@ def test_security_matrix_force_push_reads_the_protection_endpoint_and_rulesets(c
     row = resp.json()["repos"][0]
     assert row["force_push_allowed"] is allowed
     assert ("force_push" in row["unknown_dimensions"]) is unknown
+
+
+def test_security_matrix_counts_dependabot_alerts_beyond_the_first_page(client):
+    """Alerts come from request_paginated (every page), not one 30-alert request: a critical alert far
+    down the list must still be counted."""
+    alerts = [{"security_advisory": {"severity": "low"}}] * 44 + [{"security_advisory": {"severity": "critical"}}]
+    seen = []
+
+    def _request(method, path, params=None):
+        seen.append(path)
+        if path.endswith("/branches/main"):
+            return {"protected": True}
+        return {}
+
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        inst = mock_client.return_value
+
+        def paginated(path, params=None, items_key=None):
+            if path.endswith("/dependabot/alerts"):
+                return alerts
+            return [{"name": "api", "default_branch": "main", "security_and_analysis": {}}]
+
+        inst.request_paginated.side_effect = paginated
+        inst.request.side_effect = _request
+        resp = client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
+
+    row = resp.json()["repos"][0]
+    assert row["dependabot_critical_count"] == 1
+    assert not any(p.endswith("/dependabot/alerts") for p in seen)

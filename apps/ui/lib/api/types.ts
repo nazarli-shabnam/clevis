@@ -180,6 +180,43 @@ export interface AnalyticsOverviewResponse {
   checks: CheckResult[]
 }
 
+/** The org's newest stored scan (GET /orgs/{org}/analytics/latest-scan): the overview minus repo_count. */
+export interface LatestScanResponse {
+  owner: string
+  score: number | null
+  total_checks: number
+  failed_checks: number
+  scanned_at: string
+  checks: CheckResult[]
+}
+
+/** A Clevis membership of an org (GET /orgs/{org}/members). Only invite-sourced ones can be changed here. */
+export interface OrgMembership {
+  user_id: number
+  email: string
+  name: string | null
+  github_login: string | null
+  role: "member" | "admin"
+  /** "github" mirrors GitHub org status (read-only); "invite" is an accepted invitation. */
+  source: string
+  editable: boolean
+}
+
+/** GET /orgs/{org}/ingestion-health: whether GitHub data is reaching Clevis. */
+export interface IngestionHealth {
+  has_deliveries: boolean
+  last_received_at: string | null
+  last_processed_at: string | null
+  window_hours: number
+  received: number
+  queue_failed: number
+  queue_abandoned: number
+  dropped: number
+  pending: number
+  last_backfill_at: string | null
+  last_membership_reconcile_at: string | null
+}
+
 export interface ScanHistoryEntry {
   id: number
   owner: string
@@ -316,12 +353,17 @@ export interface PullSummary {
   user: string | null
   created_at: string
   html_url: string
+  /** Last push or comment; absent on responses from an API that predates it. */
+  updated_at?: string | null
+  draft?: boolean
 }
 
 export interface RepoPullsResponse {
   repository: string
   total: number
   pulls: PullSummary[]
+  /** The instance's stale-PR threshold (pr_nudge_stale_days), in days. */
+  stale_days?: number
 }
 
 export interface RepoSecurityResponse {

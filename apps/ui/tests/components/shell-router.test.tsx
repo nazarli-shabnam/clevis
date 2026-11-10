@@ -15,6 +15,8 @@ vi.mock("@/components/breadcrumb", () => ({ Breadcrumb: () => <span data-testid=
 vi.mock("@/components/notification-bell", () => ({ NotificationBell: () => <button data-testid="bell" /> }))
 // The palette needs the router, auth and query client; its own test covers it.
 vi.mock("@/components/command-palette", () => ({ CommandPalette: () => <button data-testid="palette" /> }))
+// The banner needs the query client and auth; its own test covers it.
+vi.mock("@/components/email-verification-banner", () => ({ EmailVerificationBanner: () => <div data-testid="verify-banner" /> }))
 
 import { ShellRouter } from "@/components/shell-router"
 import { isPublicRoute } from "@/lib/public-routes"

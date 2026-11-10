@@ -185,9 +185,19 @@ export default function SecurityPage() {
     enabled: hasOrgLogin(lookupOwner),
   })
 
+  // The org's newest stored scan, shown until a fresh scan replaces it. A 403/404 (not a Clevis org of the
+  // caller's, or never scanned) just means there is nothing stored to show.
+  const storedScanQuery = useQuery({
+    queryKey: ["analytics.latest-scan", lookupOwner],
+    queryFn: () => api.analytics.latestScan(lookupOwner),
+    enabled: hasOrgLogin(lookupOwner),
+    retry: false,
+  })
+
   const scan = useMutation({
     mutationFn: (forOwner: string) => api.analytics.overview(forOwner, token),
     onSuccess: (_data, forOwner) => {
+      queryClient.invalidateQueries({ queryKey: ["analytics.latest-scan", forOwner] })
       queryClient.invalidateQueries({ queryKey: ["analytics.history", forOwner] })
       queryClient.invalidateQueries({ queryKey: scanChangesKey(forOwner) })
     },
@@ -226,6 +236,12 @@ export default function SecurityPage() {
   // The render right after an owner change still holds the previous owner's results until the reset
   // effect below runs; these keep them off the screen for that render instead of relying on the effect.
   const scanIsForOwner = scan.variables === owner
+  // What the results area shows: a scan run here wins; until then, the org's stored one (only while it is
+  // for the owner in the box, since the query follows the debounced lookup owner).
+  const storedScan = storedScanQuery.data && lookupOwner === owner.trim() ? storedScanQuery.data : undefined
+  const shown = scanIsForOwner && scan.data ? scan.data : storedScan
+  const shownScannedAt = scanIsForOwner && scan.data ? null : (storedScan?.scanned_at ?? null)
+  const shownOwner = shown?.owner ?? ""
   const matrixIsForOwner = matrixMutation.variables === owner
 
   // Results belong to the owner they were scanned for: drop them (and the repo picked from them)
@@ -293,9 +309,9 @@ export default function SecurityPage() {
     matrixMutation.mutate(owner)
   }
 
-  const filteredChecks = scan.data
+  const filteredChecks = shown
     ? sortChecks(
-        scan.data.checks.filter((c) => {
+        shown.checks.filter((c) => {
           // "Failed" matches the gauge: an errored check also counts against the score.
           if (statusFilter === "fail" && c.status !== "fail" && c.status !== "error") return false
           if (tab === "severity" && severityFilter !== "all" && c.severity !== severityFilter) return false
@@ -304,7 +320,7 @@ export default function SecurityPage() {
       )
     : []
 
-  const allChecks = scan.data?.checks ?? []
+  const allChecks = shown?.checks ?? []
   const statusBreakdown = [
     { name: "Passed", value: allChecks.filter((c) => c.status === "pass").length, color: "#34d399" },
     { name: "Failed · high", value: allChecks.filter((c) => c.status === "fail" && c.severity === "high").length, color: "#f87171" },
@@ -381,7 +397,7 @@ export default function SecurityPage() {
               disabled={scan.isPending || !owner}
               className="mt-1"
             >
-              {scan.isPending ? "Scanning…" : "Run scan"}
+              {scan.isPending ? "Scanning…" : storedScan ? "Rescan" : "Run scan"}
             </Button>
             {canSaveToken && !tokenSaved && token && owner && (
               <Button
@@ -455,20 +471,25 @@ export default function SecurityPage() {
 
         {scopeOrgLogin !== "" && owner === scopeOrgLogin && <ScanChangesCard org={scopeOrgLogin} />}
 
-        {scanIsForOwner && (scan.data || scan.isPending) && (
+        {(shown || (scanIsForOwner && scan.isPending)) && (
           <div className="card lg:col-span-2">
-            {scan.data && (
-              <div className="px-4 py-3 border-b border-border">
-                <span className="section-title">Results — {scan.data.owner}</span>
+            {shown && (
+              <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
+                <span className="section-title">Results — {shown.owner}</span>
+                {shownScannedAt && (
+                  <span className="text-xs text-muted-foreground" title={new Date(shownScannedAt).toLocaleString()}>
+                    {scan.isPending ? "Rescanning… " : ""}Last scanned {relativeTime(shownScannedAt)}
+                  </span>
+                )}
               </div>
             )}
 
-            {scan.data && (
+            {shown && (
               <div className="grid sm:grid-cols-2 border-b border-border">
                 <ScoreGauge
-                  score={scan.data.score}
-                  failed={scan.data.failed_checks}
-                  total={scan.data.total_checks}
+                  score={shown.score}
+                  failed={shown.failed_checks}
+                  total={shown.total_checks}
                 />
                 {statusBreakdown.length > 0 && (
                   <div className="px-4 py-4 sm:border-l border-border">
@@ -487,7 +508,7 @@ export default function SecurityPage() {
               </div>
             )}
 
-            {scan.data && (
+            {shown && (
               <div className="px-4 py-2.5 border-b border-border flex items-center gap-3 flex-wrap">
                 <div className="flex items-center gap-1.5">
                   {TABS.map((t) => {
@@ -522,13 +543,13 @@ export default function SecurityPage() {
                   </select>
                 )}
                 <span className="text-xs text-muted-foreground ml-auto">
-                  {filteredChecks.length} of {scan.data.checks.length}
+                  {filteredChecks.length} of {shown.checks.length}
                 </span>
               </div>
             )}
 
             <div className="p-4 grid gap-3 sm:grid-cols-2">
-              {scan.isPending ? (
+              {scan.isPending && !shown ? (
                 Array.from({ length: 3 }).map((_, i) => (
                   <div
                     key={i}
@@ -551,7 +572,12 @@ export default function SecurityPage() {
                   <CheckCard
                     key={c.id}
                     check={c}
-                    owner={isOrgMemberOnly(memberships, scan.data.owner) ? undefined : scan.data.owner}
+                    owner={isOrgMemberOnly(memberships, shownOwner) ? undefined : shownOwner}
+                    // Waivers are an org-admin action on a connected Clevis org (the API 403/404s otherwise).
+                    waiveOrg={
+                      memberships.find((m) => m.role === "admin" && m.org_login.toLowerCase() === shownOwner.toLowerCase())
+                        ?.org_login
+                    }
                     token={token}
                     onRemediated={() => runScan()}
                   />

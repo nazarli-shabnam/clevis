@@ -106,6 +106,17 @@ BEGIN
 END
 $do$;
 
+-- security_alert_syncs (migration 0080): the Security matrix reads it, the tests seed it, and CI runs
+-- apps/worker's tests as clevis_api too. Upserted like the cursor tables above (composite PK, no sequence);
+-- no DELETE: the uninstall purge goes through purge_tenant_github_data().
+DO $do$
+BEGIN
+  IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'security_alert_syncs') THEN
+    GRANT SELECT, INSERT, UPDATE ON security_alert_syncs TO clevis_api;
+  END IF;
+END
+$do$;
+
 -- org_members + repo_collaborators (migration 0040): same reasoning as security_alerts
 -- above -- both upsert AND delete (a row is removed on member_removed/removed, not
 -- soft-marked), so DELETE is needed alongside SELECT/INSERT/UPDATE; both have a

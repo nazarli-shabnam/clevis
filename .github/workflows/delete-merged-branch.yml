@@ -1,4 +1,4 @@
-name: Delete merged branch
+name: Delete merged or abandoned branch
 
 on:
   # pull_request_target runs this file from the base branch and never checks out PR code,
@@ -11,8 +11,9 @@ permissions: {}
 
 jobs:
   delete-branch:
-    # Closed-without-merge PRs keep their branch; only merges into main are cleaned up.
-    if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
+    # Merges into main and PRs closed without merging are cleaned up; a PR merged into another
+    # branch (a stacked PR) keeps its branch, since the parent PR may still be building on it.
+    if: github.event.pull_request.merged != true || github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
     permissions:
       contents: write # delete the head ref
@@ -30,6 +31,8 @@ jobs:
             const KEEP_EXACT = new Set([defaultBranch, "main", "master", "develop", "gh-pages"]);
             const KEEP_PREFIXES = ["release/"];
 
+            const outcome = pr.merged ? `merged into ${pr.base.ref}` : "closed without merging";
+
             const skip = (reason) => core.info(`Keeping "${branch}": ${reason}`);
 
             // 1. Only this repo's own branches (a fork's branch isn't ours to delete).
@@ -43,7 +46,7 @@ jobs:
               return skip("long-lived branch");
             }
 
-            // 3. Protected branch, and 4. tip moved after the merge (someone kept working on it).
+            // 3. Protected branch, and 4. tip moved after the PR closed (someone kept working on it).
             let info;
             try {
               info = await github.rest.repos.getBranch({ ...repo, branch });
@@ -53,7 +56,7 @@ jobs:
             }
             if (info.data.protected) return skip("branch is protected");
             if (info.data.commit.sha !== pr.head.sha) {
-              return skip(`it has new commits after the merge (${info.data.commit.sha.slice(0, 7)} != ${pr.head.sha.slice(0, 7)})`);
+              return skip(`it has new commits after the PR closed (${info.data.commit.sha.slice(0, 7)} != ${pr.head.sha.slice(0, 7)})`);
             }
 
             // 5. Deleting the base of an open PR closes that PR (stacked PRs), so leave it.
@@ -64,9 +67,18 @@ jobs:
               return skip(`open PR(s) are based on it: ${stacked.map((p) => `#${p.number}`).join(", ")}`);
             }
 
+            // 6. Another open PR still uses this branch as its head (e.g. re-targeted to another
+            //    base). Only an abandoned PR can leave this behind; a merged one rarely does.
+            const reusing = await github.paginate(github.rest.pulls.list, {
+              ...repo, state: "open", head: `${repo.owner}:${branch}`, per_page: 100,
+            });
+            if (reusing.length) {
+              return skip(`open PR(s) still use it as their head: ${reusing.map((p) => `#${p.number}`).join(", ")}`);
+            }
+
             try {
               await github.rest.git.deleteRef({ ...repo, ref: `heads/${branch}` });
-              core.info(`Deleted branch "${branch}" after PR #${pr.number} merged into ${pr.base.ref}.`);
+              core.info(`Deleted branch "${branch}" after PR #${pr.number} was ${outcome}.`);
             } catch (e) {
               // Already removed, e.g. by the repo's "Automatically delete head branches" setting.
               if (e.status === 404 || e.status === 422) {

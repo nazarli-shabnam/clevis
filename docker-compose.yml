@@ -95,8 +95,19 @@ services:
       context: .
       dockerfile: apps/worker/Dockerfile
     mem_limit: 512m
-    env_file:
-      - .env
+    # An explicit list, not env_file: the worker parses GitHub-controlled webhook payloads and reads only
+    # these values (see apps/worker/src/config.py and entrypoint.sh), so AUTH_SECRET, the GitHub App
+    # secrets and the Postgres superuser password must not be in its environment.
+    environment:
+      DB_NAME: ${DB_NAME}
+      JOB_SECRET_KEY: ${JOB_SECRET_KEY}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      GITHUB_API_BASE: ${GITHUB_API_BASE:-https://api.github.com}
+      WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD:-}
+      # Fallback credential for deployments without a dedicated worker role: entrypoint.sh only uses
+      # DB_USER/DB_PASSWORD when WORKER_DB_PASSWORD is empty, so the superuser password is passed only then.
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${WORKER_DB_PASSWORD:-${DB_PASSWORD}}
     depends_on:
       db:
         condition: service_healthy

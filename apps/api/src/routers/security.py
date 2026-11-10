@@ -14,9 +14,10 @@ import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
+from src.core.path_params import Owner, Repo
 from src.core.app_config import get_config
 from src.core.auth import UserOut, require_auth
-from src.core.db import SecurityAlert, get_db
+from src.core.db import SecurityAlert, SecurityAlertSync, get_db
 from src.core.rbac import OrgContext, require_org_role, set_tenant_session_context
 from src.repositories import installation_repo, org_repo, tenant_repo
 from src.schemas.security import (
@@ -29,6 +30,7 @@ from src.schemas.security import (
     VulnCounts,
 )
 from src.services import dependabot_burndown
+from src.services.backfill_service import ALERT_SYNC_TTL
 from src.services.analytics_service import get_account_type
 from src.services.github_client import GitHubClient, github_error as _github_error, list_owner_repos
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_owner_token
@@ -70,9 +72,21 @@ def _open_alerts_by_repo(db: Session, tenant_id: int, repo_full_names: list[str]
     """One query for every scanned repo's dependabot/code_scanning security_alerts rows
     (every state, not just open), not one query per repo. Also avoids sharing the
     SQLAlchemy Session across threads: _repo_row runs concurrently, so this pre-fetches
-    everything up front and hands each worker a plain dict slice instead of `db` itself."""
+    everything up front and hands each worker a plain dict slice instead of `db` itself.
+
+    Only (repo, kind) pairs the alert backfill read in full, within ALERT_SYNC_TTL (security_alert_syncs),
+    are returned: before that, the rows are whatever webhooks happened to deliver, so a repo with a few of them is not a
+    repo whose alerts are all known, and the caller must ask GitHub instead."""
     if not repo_full_names:
         return {}
+    synced = {
+        (s.repo, s.kind)
+        for s in db.query(SecurityAlertSync.repo, SecurityAlertSync.kind).filter(
+            SecurityAlertSync.tenant_id == tenant_id,
+            SecurityAlertSync.repo.in_(repo_full_names),
+            SecurityAlertSync.synced_at >= datetime.now(timezone.utc) - ALERT_SYNC_TTL,
+        )
+    }
     rows = (
         db.query(SecurityAlert.repo, SecurityAlert.kind, SecurityAlert.severity, SecurityAlert.state)
         .filter(
@@ -84,7 +98,8 @@ def _open_alerts_by_repo(db: Session, tenant_id: int, repo_full_names: list[str]
     )
     by_repo: dict[str, list] = {}
     for row in rows:
-        by_repo.setdefault(row.repo, []).append(row)
+        if (row.repo, row.kind) in synced:
+            by_repo.setdefault(row.repo, []).append(row)
     return by_repo
 
 
@@ -94,10 +109,11 @@ def _dependabot_from_aggregate(dependabot_rows: list) -> dict:
     whose alerts are all dismissed still has Dependabot enabled. critical_count/high_count
     only count 'open' rows, since only a currently-open alert is a live finding.
 
-    Caller only reaches this with a non-empty dependabot_rows -- a repo with zero ingested
-    rows falls back to the live GitHub path instead, since security_alerts has no
-    completeness cursor to distinguish "no alerts ever" from "not yet ingested". Gated
-    independently of code_scanning rows, since one kind can be ingested while the other isn't."""
+    Caller only reaches this with a non-empty dependabot_rows, which _open_alerts_by_repo returns only for a
+    repo whose Dependabot alerts the backfill read in full (security_alert_syncs); any other repo falls back to
+    the live GitHub path. A repo with zero rows also takes it: zero rows cannot tell "Dependabot off" from
+    "enabled, no alerts". Gated independently of code_scanning rows, since one kind can be synced while the
+    other isn't."""
     open_rows = [r for r in dependabot_rows if r.state == "open"]
     return {
         "dependabot_enabled": len(dependabot_rows) > 0,
@@ -170,9 +186,8 @@ def _repo_row(client: GitHubClient, owner: str, repo: dict, alerts_by_repo: dict
     ).get("status") == "enabled"
 
     alerts_source = "github"
-    # security_alerts has no backfill/sync-cursor -- only webhook events populate it, so a
-    # repo with zero rows here is ambiguous ("no alerts ever" vs. "not yet ingested"). Gated
-    # per-repo AND per-kind: one kind can be ingested for a repo while the other isn't yet.
+    # Rows arrive here only for a (repo, kind) the alert backfill read in full (see _open_alerts_by_repo);
+    # otherwise the repo is asked live. Gated per-repo AND per-kind: one kind can be synced while the other isn't.
     repo_alert_rows = alerts_by_repo.get(f"{owner}/{name}", []) if alerts_by_repo is not None else []
     dependabot_alert_rows = [r for r in repo_alert_rows if r.kind == "dependabot"]
     code_scanning_alert_rows = [r for r in repo_alert_rows if r.kind == "code_scanning"]
@@ -188,15 +203,16 @@ def _repo_row(client: GitHubClient, owner: str, repo: dict, alerts_by_repo: dict
         critical_count = 0
         high_count = 0
         try:
-            alerts = client.request("GET", f"/repos/{owner}/{name}/dependabot/alerts", params={"state": "open"})
+            # Every page: a single request is GitHub's default 30 alerts, and a critical one on page 2
+            # would otherwise read as a clean repo.
+            alerts = client.request_paginated(f"/repos/{owner}/{name}/dependabot/alerts", params={"state": "open"})
             dependabot_enabled = True
-            if isinstance(alerts, list):
-                for alert in alerts:
-                    severity = (alert.get("security_advisory") or {}).get("severity")
-                    if severity == "critical":
-                        critical_count += 1
-                    elif severity == "high":
-                        high_count += 1
+            for alert in alerts:
+                severity = (alert.get("security_advisory") or {}).get("severity")
+                if severity == "critical":
+                    critical_count += 1
+                elif severity == "high":
+                    high_count += 1
         except httpx.HTTPStatusError as exc:
             # 404 means Dependabot alerts are genuinely disabled -- a real "no alerts"
             # answer. Any other status means the count is unknown, not zero.
@@ -280,7 +296,7 @@ def _build_matrix(
 
 @router.get("/me/analytics/security-matrix/{owner}", response_model=SecurityMatrixResponse)
 def personal_security_matrix(
-    owner: str,
+    owner: Owner,
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),
@@ -303,8 +319,8 @@ _GH_NAME_RE = re.compile(r"^(?!\.\.?$)[A-Za-z0-9._-]{1,100}$")
 
 @router.get("/me/analytics/security-matrix/{owner}/{repo}", response_model=RepoSecurityRow)
 def personal_repo_security_row(
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),
@@ -362,8 +378,8 @@ def _secret_scanning_alerts_from_aggregate(db: Session, tenant_id: int, owner: s
 
 @router.get("/me/repos/{owner}/{repo}/secret-scanning", response_model=SecretScanningResponse)
 def personal_secret_scanning(
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),

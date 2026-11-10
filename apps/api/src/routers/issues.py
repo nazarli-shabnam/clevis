@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy.orm import Session
 
+from src.core.path_params import Owner, Repo
 from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
 from src.core.rbac import audit_tenant
@@ -38,8 +39,8 @@ class CreateIssueResponse(BaseModel):
 
 @router.post("/me/repos/{owner}/{repo}/issues", response_model=CreateIssueResponse, status_code=201)
 def create_issue(
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     body: CreateIssueRequest,
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),

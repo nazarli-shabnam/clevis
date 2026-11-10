@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, SecretStr
 from sqlalchemy.orm import Session
 
+from src.core.path_params import Owner, Repo
 from src.core.app_config import get_config
 from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
@@ -50,16 +51,10 @@ class NudgeResponse(BaseModel):
 
 
 def _settings() -> tuple[int, str]:
-    try:
-        stale_days = int(get_config(pr_nudge.STALE_DAYS_KEY, str(pr_nudge.DEFAULT_STALE_DAYS)))
-    except ValueError:
-        stale_days = pr_nudge.DEFAULT_STALE_DAYS
     mode = get_config(pr_nudge.MODE_KEY, pr_nudge.DEFAULT_MODE)
     if mode not in pr_nudge.MODES:
         mode = pr_nudge.DEFAULT_MODE
-    # Clamp: the value is DB-editable and only the PUT route bounds it at 1 -- an
-    # absurd upper value would waste a full paginated PR crawl.
-    return min(365, max(1, stale_days)), mode
+    return pr_nudge.configured_stale_days(), mode
 
 
 def _run(client: GitHubClient, owner: str, repo: str) -> NudgeResponse:
@@ -116,8 +111,8 @@ def _run_audited(
 
 @router.post("/me/repos/{owner}/{repo}/pr-nudges", response_model=NudgeResponse)
 def nudge_stale_prs(
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     body: NudgeRequest,
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
@@ -141,8 +136,8 @@ def nudge_stale_prs(
 )
 def nudge_stale_prs_for_org(
     org_login: str,
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     body: NudgeRequest,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     user: UserOut = Depends(require_auth),

@@ -7,85 +7,21 @@ import { api } from "@/lib/api/client"
 import { dueTime } from "@/lib/format"
 import { SectionError } from "@/components/section-error"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { MAX_WAIVER_DAYS, WAIVABLE_CHECKS, WaiverForm, daysRemaining } from "@/components/waiver-form"
 import type { CheckWaiver } from "@/lib/api/types"
-
-/** Checks an admin can waive: id -> title. Mirrors the API's known checks; an unknown id is refused there. */
-export const WAIVABLE_CHECKS: Record<string, string> = {
-  organization_members_mfa_required: "Organization requires 2FA/MFA",
-  repository_default_branch_protection_enabled: "Default branch has protection rules",
-  repository_secret_scanning_enabled: "Secret scanning enabled",
-  repository_dependabot_alerts_clear: "No open critical/high Dependabot alerts",
-  repository_code_scanning_alerts_clear: "No open code scanning alerts",
-  repository_default_branch_no_force_push: "Default branch disallows force pushes",
-  repository_codeowners_present: "CODEOWNERS present",
-  repository_security_policy_present: "SECURITY.md present",
-  repository_license_present: "License present",
-  repository_no_stale_branches: "No stale branches",
-  repository_actions_pinned_to_sha: "Actions pinned to a commit SHA",
-}
-
-/** Checks that never report which repos fail, so the API only accepts an org-wide waiver for them. */
-export const ORG_WIDE_ONLY_CHECKS = new Set([
-  "organization_members_mfa_required",
-  "repository_codeowners_present",
-  "repository_security_policy_present",
-  "repository_license_present",
-  "repository_no_stale_branches",
-  "repository_actions_pinned_to_sha",
-])
-
-const MAX_DAYS = 90
-
-/** A local calendar day as the YYYY-MM-DD an <input type="date"> uses (not the UTC day toISOString gives). */
-const localDay = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
-const dayInput = (days: number) => localDay(new Date(Date.now() + days * 86_400_000))
-
-/** The latest day an admin can pick: the waiver expires at 23:59:59 local on the chosen day and the API
- * allows at most MAX_DAYS from now, so take the limit's local day, or the day before if its end is past it. */
-function latestExpiryDay(): string {
-  const limit = new Date(Date.now() + MAX_DAYS * 86_400_000)
-  const endOfLimitDay = new Date(limit.getFullYear(), limit.getMonth(), limit.getDate(), 23, 59, 59)
-  return endOfLimitDay.getTime() <= limit.getTime() ? localDay(limit) : localDay(new Date(limit.getTime() - 86_400_000))
-}
 
 /** Org admins record accepted risks: a failing check is kept out of the score until the waiver expires. */
 export function WaiversCard({ orgLogin }: { orgLogin: string }) {
   const queryClient = useQueryClient()
   const queryKey = ["waivers", orgLogin]
   const query = useQuery<CheckWaiver[]>({ queryKey, queryFn: () => api.waivers.list(orgLogin), retry: false })
+  // The waiver being renewed or edited; the form below switches from "add" to "save" for it.
+  const [editing, setEditing] = useState<CheckWaiver | null>(null)
 
-  const [checkId, setCheckId] = useState(Object.keys(WAIVABLE_CHECKS)[1])
-  const [repos, setRepos] = useState("")
-  const [reason, setReason] = useState("")
-  const [owner, setOwner] = useState("")
-  const [until, setUntil] = useState(dayInput(30))
-
-  const orgWideOnly = ORG_WIDE_ONLY_CHECKS.has(checkId)
-
-  const create = useMutation({
-    mutationFn: () =>
-      api.waivers.create(orgLogin, {
-        check_id: checkId,
-        repos: orgWideOnly ? [] : repos.split(",").map((r) => r.trim()).filter(Boolean),
-        reason,
-        owner,
-        // End of the chosen day, local time.
-        expires_at: new Date(`${until}T23:59:59`).toISOString(),
-      }),
-    onSuccess: () => {
-      setReason("")
-      setRepos("")
-      return queryClient.invalidateQueries({ queryKey })
-    },
-  })
   const revoke = useMutation({
     mutationFn: (id: number) => api.waivers.revoke(orgLogin, id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey }),
   })
-
-  const canSubmit = reason.trim() !== "" && owner.trim() !== "" && until !== "" && !create.isPending
 
   return (
     <div className="card mb-4">
@@ -94,7 +30,7 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
       </div>
       <p className="px-4 pt-3 text-xs text-muted-foreground">
         Record an accepted risk: the failing check stays visible but is left out of the score until the waiver expires
-        (at most {MAX_DAYS} days). Every change is written to the audit log.
+        (at most {MAX_WAIVER_DAYS} days). Every change is written to the audit log.
       </p>
       {query.isLoading ? (
         <div className="px-4 py-4 flex items-center gap-2 text-sm text-muted-foreground">
@@ -110,29 +46,49 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
         <p className="px-4 py-3 text-xs text-muted-foreground">No waivers.</p>
       ) : (
         <ul className="divide-y divide-border">
-          {query.data.map((w) => (
-            <li key={w.id} className="px-4 py-2 flex items-start justify-between gap-3 text-xs">
-              <div className="min-w-0">
-                <p className="font-medium text-foreground">
-                  {WAIVABLE_CHECKS[w.check_id] ?? w.check_id}
-                  <span className="ml-2 text-muted-foreground font-normal">{w.repos ? w.repos.join(", ") : "whole organization"}</span>
-                </p>
-                <p className="text-muted-foreground">
-                  {w.reason} · owner {w.owner} ·{" "}
-                  {w.active ? `expires ${dueTime(w.expires_at)}` : <span className="text-destructive">expired {dueTime(w.expires_at)}</span>}
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={revoke.isPending}
-                onClick={() => revoke.mutate(w.id)}
-                aria-label={`Revoke waiver for ${WAIVABLE_CHECKS[w.check_id] ?? w.check_id}`}
-              >
-                Revoke
-              </Button>
-            </li>
-          ))}
+          {query.data.map((w) => {
+            const title = WAIVABLE_CHECKS[w.check_id] ?? w.check_id
+            const days = daysRemaining(w.expires_at)
+            return (
+              <li key={w.id} className="px-4 py-2 flex items-start justify-between gap-3 text-xs">
+                <div className="min-w-0">
+                  <p className="font-medium text-foreground">
+                    {title}
+                    <span className="ml-2 text-muted-foreground font-normal">{w.repos ? w.repos.join(", ") : "whole organization"}</span>
+                  </p>
+                  <p className="text-muted-foreground">
+                    {w.reason} · owner {w.owner} ·{" "}
+                    {w.active ? (
+                      <>
+                        expires {dueTime(w.expires_at)} · {days} {days === 1 ? "day" : "days"} left
+                      </>
+                    ) : (
+                      <span className="text-destructive">expired {dueTime(w.expires_at)}</span>
+                    )}
+                  </p>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setEditing(w)}
+                    aria-label={`Renew or edit waiver for ${title}`}
+                  >
+                    {w.active ? "Edit" : "Renew"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={revoke.isPending}
+                    onClick={() => revoke.mutate(w.id)}
+                    aria-label={`Revoke waiver for ${title}`}
+                  >
+                    Revoke
+                  </Button>
+                </div>
+              </li>
+            )
+          })}
         </ul>
       )}
       {revoke.isError && (
@@ -141,57 +97,13 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
         </p>
       )}
 
-      <form
-        className="border-t border-border p-4 grid gap-3 sm:grid-cols-2"
-        onSubmit={(e) => {
-          e.preventDefault()
-          if (canSubmit) create.mutate()
-        }}
-      >
-        <div>
-          <label htmlFor="waiver-check" className="text-xs font-medium block mb-1.5">Check</label>
-          <select
-            id="waiver-check"
-            value={checkId}
-            onChange={(e) => setCheckId(e.target.value)}
-            className="text-xs card text-foreground px-2 py-1.5 w-full focus:outline-none focus:ring-1 focus:ring-ring"
-          >
-            {Object.entries(WAIVABLE_CHECKS).map(([id, title]) => (
-              <option key={id} value={id}>{title}</option>
-            ))}
-          </select>
-        </div>
-        {orgWideOnly ? (
-          <p className="text-xs text-muted-foreground">This check does not report which repositories fail, so the waiver covers the whole organization.</p>
-        ) : (
-          <div>
-            <label htmlFor="waiver-repos" className="text-xs font-medium block mb-1.5">Repositories (optional)</label>
-            <Input id="waiver-repos" placeholder="legacy-api, old-site — blank = whole organization" value={repos} onChange={(e) => setRepos(e.target.value)} />
-          </div>
-        )}
-        <div>
-          <label htmlFor="waiver-reason" className="text-xs font-medium block mb-1.5">Reason</label>
-          <Input id="waiver-reason" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
-        </div>
-        <div>
-          <label htmlFor="waiver-owner" className="text-xs font-medium block mb-1.5">Owner</label>
-          <Input id="waiver-owner" placeholder="person or team accountable" maxLength={100} value={owner} onChange={(e) => setOwner(e.target.value)} />
-        </div>
-        <div>
-          <label htmlFor="waiver-until" className="text-xs font-medium block mb-1.5">Expires</label>
-          <Input id="waiver-until" type="date" min={dayInput(1)} max={latestExpiryDay()} value={until} onChange={(e) => setUntil(e.target.value)} />
-        </div>
-        <div className="flex items-end">
-          <Button type="submit" disabled={!canSubmit}>
-            {create.isPending ? "Adding…" : "Add waiver"}
-          </Button>
-        </div>
-        {create.isError && (
-          <p role="alert" className="sm:col-span-2 text-xs text-destructive">
-            Couldn&apos;t add the waiver: {create.error.message}
-          </p>
-        )}
-      </form>
+      <WaiverForm
+        key={editing?.id ?? "new"}
+        orgLogin={orgLogin}
+        editing={editing ?? undefined}
+        onSaved={() => setEditing(null)}
+        onCancel={editing ? () => setEditing(null) : undefined}
+      />
     </div>
   )
 }

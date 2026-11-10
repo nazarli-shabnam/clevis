@@ -8,6 +8,7 @@ from checks.github_checks import BranchProtectionEnabled, SecretScanningEnabled
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from src.core.path_params import Owner, Repo
 from src.core.db import RepoEventDailyCount, get_db
 from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role
 from src.repositories import installation_repo
@@ -22,7 +23,7 @@ from src.schemas.repos import (
     RepoStatsInput,
     RepoStatsResponse,
 )
-from src.services import flow_metrics
+from src.services import flow_metrics, pr_nudge
 from src.services.github_client import GitHubClient, github_error as _github_error
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token
 
@@ -195,10 +196,17 @@ def _list_pulls(owner: str, repo: str, token: str, state: str) -> RepoPullsRespo
             "user": (p.get("user") or {}).get("login"),
             "created_at": p["created_at"],
             "html_url": p["html_url"],
+            "updated_at": p.get("updated_at"),
+            "draft": bool(p.get("draft")),
         }
         for p in pulls
     ]
-    return {"repository": f"{owner}/{repo}", "total": len(summaries), "pulls": summaries}
+    return {
+        "repository": f"{owner}/{repo}",
+        "total": len(summaries),
+        "pulls": summaries,
+        "stale_days": pr_nudge.configured_stale_days(),
+    }
 
 
 @router.post("/orgs/{org_login}/repos", response_model=RepoListResponse)
@@ -218,8 +226,8 @@ def org_list_repos(
 @router.post("/orgs/{org_login}/repos/{owner}/{repo}/stats", response_model=RepoStatsResponse)
 def org_repo_stats(
     org_login: str,
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     payload: RepoStatsInput,
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     db: Session = Depends(get_db),
@@ -242,8 +250,8 @@ _flow_cache: dict[tuple[int, str, str, str], tuple[float, dict]] = {}
 @router.post("/orgs/{org_login}/repos/{owner}/{repo}/flow-metrics", response_model=RepoFlowMetricsResponse)
 def org_repo_flow_metrics(
     org_login: str,
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     payload: RepoStatsInput,
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     db: Session = Depends(get_db),
@@ -272,8 +280,8 @@ def org_repo_flow_metrics(
 @router.post("/orgs/{org_login}/repos/{owner}/{repo}/pulls", response_model=RepoPullsResponse)
 def org_repo_pulls(
     org_login: str,
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     payload: RepoPullsInput,
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     db: Session = Depends(get_db),
@@ -319,8 +327,8 @@ def _fetch_security(owner: str, repo: str, token: str) -> RepoSecurityResponse:
 @router.post("/orgs/{org_login}/repos/{owner}/{repo}/security", response_model=RepoSecurityResponse)
 def org_repo_security(
     org_login: str,
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     payload: RepoSecurityInput,
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     db: Session = Depends(get_db),

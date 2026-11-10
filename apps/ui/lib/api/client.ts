@@ -14,6 +14,9 @@ import type {
   ActionsUsageResponse,
   AnalyticsHistoryResponse,
   AnalyticsOverviewResponse,
+  LatestScanResponse,
+  OrgMembership,
+  IngestionHealth,
   AdminAuditFilters,
   AuditLogOut,
   OrgAuditFilters,
@@ -304,6 +307,11 @@ export const api = {
       put<NotificationPreferences>(`/orgs/${encodeURIComponent(org)}/notifications/preferences`, { muted_kinds }),
   },
   analytics: {
+    // The org's newest stored scan with every check (404 = never scanned), so results show without a rescan.
+    latestScan: async (orgLogin: string): Promise<LatestScanResponse> => {
+      const data = await get<LatestScanResponse>(`/orgs/${encodeURIComponent(orgLogin)}/analytics/latest-scan`)
+      return { ...data, checks: data.checks.map((c) => ({ ...c, value: normalizeCheckValue(c.id, c.value) })) }
+    },
     // The org's latest scan compared with the one before it, check by check.
     changes: (orgLogin: string) => get<ScanChanges>(`/orgs/${encodeURIComponent(orgLogin)}/analytics/changes`),
     // token is optional — the API falls back to a connected GitHub App installation.
@@ -670,6 +678,9 @@ export const api = {
     list: (orgLogin: string) => get<CheckWaiver[]>(`/orgs/${encodeURIComponent(orgLogin)}/waivers`),
     create: (orgLogin: string, body: CheckWaiverInput) =>
       post<CheckWaiver>(`/orgs/${encodeURIComponent(orgLogin)}/waivers`, body),
+    // Renew or edit: PUT replaces the waiver's check, repos, reason, owner and expiry.
+    update: (orgLogin: string, id: number, body: CheckWaiverInput) =>
+      put<CheckWaiver>(`/orgs/${encodeURIComponent(orgLogin)}/waivers/${id}`, body),
     revoke: (orgLogin: string, id: number) => del(`/orgs/${encodeURIComponent(orgLogin)}/waivers/${id}`),
   },
   notificationDestinations: {
@@ -713,6 +724,13 @@ export const api = {
     setBadge: (orgLogin: string, enabled: boolean) =>
       put<{ enabled: boolean }>(`/orgs/${encodeURIComponent(orgLogin)}/badge`, { enabled }),
   },
+  orgMemberships: {
+    list: (orgLogin: string) => get<OrgMembership[]>(`/orgs/${encodeURIComponent(orgLogin)}/members`),
+    setRole: (orgLogin: string, userId: number, role: "member" | "admin") =>
+      put<OrgMembership>(`/orgs/${encodeURIComponent(orgLogin)}/members/${userId}`, { role }),
+    remove: (orgLogin: string, userId: number) => del(`/orgs/${encodeURIComponent(orgLogin)}/members/${userId}`),
+  },
+  ingestionHealth: (orgLogin: string) => get<IngestionHealth>(`/orgs/${encodeURIComponent(orgLogin)}/ingestion-health`),
   invitations: {
     create: (orgLogin: string, email: string) =>
       post<InvitationCreateResponse>(`/orgs/${encodeURIComponent(orgLogin)}/invitations`, { email }),
@@ -792,6 +810,8 @@ export const api = {
         user: { id: number; email: string; name: string | null; is_workspace_admin: boolean }
         pending_invitations: PendingInvitationSummary[]
       }>("/auth/register", { email, password, name }),
+    me: () =>
+      get<{ id: number; email: string; name: string | null; is_workspace_admin: boolean; email_verified: boolean }>("/auth/me"),
     patchMe: (name: string) =>
       patch<{ id: number; email: string; name: string | null; is_workspace_admin: boolean }>("/auth/me", { name }),
     revokeSessions: () => post<{ ok: boolean }>("/auth/me/revoke-sessions", {}),

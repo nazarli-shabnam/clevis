@@ -1,6 +1,8 @@
 """Install-time backfill of recent activity into repo_events via the GitHub Events API.
 
-GitHub caps the Events API at ~90 days / ~300 events. Synthetic delivery_id
+GitHub caps the Events API at ~90 days / ~300 events. The org/user feed is public-only, so private repos
+are read separately and capped (see fetch_private_repo_events); history of private repos beyond that cap
+arrives only through webhooks. Synthetic delivery_id
 ("backfill:<event id>") keeps retries idempotent via ON CONFLICT (tenant_id, delivery_id)
 (per tenant: GitHub event ids are global, and one event can sit in several tenants' feeds).
 The webhook path uses GitHub's delivery GUID, so the same event can arrive both ways; the worker
@@ -104,6 +106,92 @@ def fetch_events(client: httpx.Client, base: str, headers: dict, account_login: 
         url = next_link["url"]
         params = None  # already encoded in the next link's URL
     return events
+
+
+# GitHub's org/user events feed is public-only, so private repositories are read one by one. Bounded so a
+# backfill (at install, and on every gap-heal) costs at most 1 + this many extra requests per tenant;
+# the most recently pushed private repos are taken first and each contributes one page of events.
+_MAX_PRIVATE_REPOS = 50
+# A personal install's repos cannot be sorted server-side, so up to this many 100-repo pages are read first
+# (the extra listing requests are on top of the 1 + _MAX_PRIVATE_REPOS bound above).
+_MAX_INSTALLATION_PAGES = 5
+
+
+def _is_skippable(error: httpx.HTTPStatusError) -> bool:
+    """A genuine 4xx (e.g. the token can't read that repo): not worth failing the whole backfill for.
+    Rate limits and 5xx are not skippable; they propagate so the job is requeued."""
+    resp = error.response
+    return 400 <= resp.status_code < 500 and resp.status_code != 429 and not _is_secondary_rate_limit(resp)
+
+
+def _list_private_repos(client: httpx.Client, base: str, headers: dict, account_login: str, account_type: str) -> list[str]:
+    """Full names of the most recently pushed private repos the token can read (installation tokens only
+    see repos the App was granted, which is what we want)."""
+    if account_type == "User":
+        # A personal install has no /users/{login}/repos view of private repos for an installation token, and
+        # /installation/repositories has no server-side sort: read every page (capped), then sort by push time.
+        repos = []
+        url, params = f"{base}/installation/repositories", {"per_page": 100}
+        for _ in range(_MAX_INSTALLATION_PAGES):
+            resp = _get_with_retry(client, url, headers, params)
+            resp.raise_for_status()
+            body = resp.json()
+            page = body.get("repositories", []) if isinstance(body, dict) else body
+            if not isinstance(page, list):
+                break
+            repos.extend(page)
+            next_link = resp.links.get("next")
+            if not next_link:
+                break
+            url, params = next_link["url"], None
+    else:
+        path, params = f"/orgs/{account_login}/repos", {"type": "private", "sort": "pushed", "direction": "desc", "per_page": _MAX_PRIVATE_REPOS}
+        resp = _get_with_retry(client, f"{base}{path}", headers, params)
+        resp.raise_for_status()
+        body = resp.json()
+        repos = body.get("repositories", []) if isinstance(body, dict) else body
+        if not isinstance(repos, list):
+            return []
+    private = [r for r in repos if isinstance(r, dict) and r.get("private") is True and isinstance(r.get("full_name"), str)]
+    private.sort(key=lambda r: r.get("pushed_at") or "", reverse=True)
+    return [r["full_name"] for r in private[:_MAX_PRIVATE_REPOS]]
+
+
+def fetch_private_repo_events(client: httpx.Client, base: str, headers: dict, account_login: str, account_type: str) -> list[dict]:
+    """Recent events of the account's private repos, which the org/user events feed never includes.
+
+    Best effort per call: a genuine 4xx (missing permission, repo gone) skips that call. Rate limits, 5xx
+    and network errors propagate like fetch_events's, so the job is retried."""
+    try:
+        repos = _list_private_repos(client, base, headers, account_login, account_type)
+    except httpx.HTTPStatusError as error:
+        if _is_skippable(error):
+            return []
+        raise
+    events: list[dict] = []
+    for full_name in repos:
+        try:
+            resp = _get_with_retry(client, f"{base}/repos/{full_name}/events", headers, {"per_page": _PER_PAGE})
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as error:
+            if _is_skippable(error):
+                continue
+            raise
+        page = resp.json()
+        if isinstance(page, list):
+            events.extend(page)
+    return events
+
+
+def fetch_all_events(client: httpx.Client, base: str, headers: dict, account_login: str, account_type: str) -> list[dict]:
+    """The public events feed plus private-repo events, one entry per GitHub event id."""
+    merged: dict[str, dict] = {}
+    for event in (
+        *fetch_events(client, base, headers, account_login, account_type),
+        *fetch_private_repo_events(client, base, headers, account_login, account_type),
+    ):
+        merged.setdefault(str(event.get("id")), event)
+    return list(merged.values())
 
 
 def _summarize(event_type: str, payload: dict) -> str:

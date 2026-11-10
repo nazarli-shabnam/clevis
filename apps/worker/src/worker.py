@@ -7,12 +7,14 @@ from pathlib import Path
 
 import httpx
 import psycopg
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 import backfill
 import membership_reconcile
 import org_membership_store
 import repo_events_store
+import security_alerts_backfill
+import security_alerts_store
 from _crypto import decrypt_job_token
 from _sanitize import sanitize_error
 from config import plain_db_url, settings
@@ -82,14 +84,30 @@ def _read_poll_seconds() -> int:
 
 
 class ClearActionsCachePayload(BaseModel):
-    owner: str = Field(min_length=1)
-    repo: str = Field(min_length=1)
+    # Interpolated into the GitHub URL below, so a queued payload must not be able to change its shape
+    # (``?``, ``#``, ``/``, ``%``, ``..``), whatever the API let through.
+    owner: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,38}$")
+    repo: str = Field(pattern=r"^[A-Za-z0-9._-]{1,100}$")
     token: str = Field(min_length=1)
     key: str | None = None
     ref: str | None = None
 
+    @field_validator("repo")
+    @classmethod
+    def _repo_not_a_dot_segment(cls, value: str) -> str:
+        if value in (".", ".."):
+            raise ValueError("repo must not be '.' or '..'")
+        return value
+
 
 class BackfillRepoEventsPayload(BaseModel):
+    tenant_id: int
+    account_login: str = Field(min_length=1)
+    account_type: str = Field(min_length=1)
+    token: str = Field(min_length=1)
+
+
+class BackfillSecurityAlertsPayload(BaseModel):
     tenant_id: int
     account_login: str = Field(min_length=1)
     account_type: str = Field(min_length=1)
@@ -312,7 +330,7 @@ def _handle_backfill_repo_events(conn: psycopg.Connection, job_id: int, payload_
 
     try:
         with httpx.Client(timeout=20) as client:
-            raw_events = backfill.fetch_events(client, base, headers, payload.account_login, payload.account_type)
+            raw_events = backfill.fetch_all_events(client, base, headers, payload.account_login, payload.account_type)
     except httpx.HTTPStatusError as error:
         # Still failing after fetch_events' own retries: a 5xx or a rate limit is requeued with the job
         # backoff, a genuine 4xx fails the job.
@@ -393,6 +411,88 @@ def _handle_backfill_repo_events(conn: psycopg.Connection, job_id: int, payload_
         )
 
 
+def _handle_backfill_security_alerts(conn: psycopg.Connection, job_id: int, payload_raw: str, retry_count: int) -> None:
+    try:
+        payload = BackfillSecurityAlertsPayload.model_validate_json(payload_raw)
+    except ValidationError as error:
+        log.error("job %d has an invalid payload: %s", job_id, error)
+        _mark_failed(conn, job_id, sanitize_error(error), retry_count)
+        return
+
+    try:
+        token = decrypt_job_token(payload.token, settings.job_secret_key.get_secret_value())
+    except Exception as error:
+        log.error("job %d failed to decrypt its token: %s", job_id, error)
+        _mark_failed(conn, job_id, sanitize_error(error), retry_count)
+        return
+
+    base = settings.github_api_base
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+    # (repo, kind) -> alerts, for every list that was read in full; anything unreadable is simply absent.
+    complete: dict[tuple[str, str], list[dict]] = {}
+    fetch_started = security_alerts_backfill.now()
+    try:
+        with httpx.Client(timeout=20) as client:
+            repos = security_alerts_backfill.list_repos(client, base, headers, payload.account_login, payload.account_type)
+            for full_name in repos:
+                for kind in security_alerts_backfill._ALERT_PATHS:
+                    try:
+                        complete[(full_name, kind)] = security_alerts_backfill.fetch_open_alerts(
+                            client, base, headers, full_name, kind
+                        )
+                    except httpx.HTTPStatusError as error:
+                        if not security_alerts_backfill.is_unreadable(error):
+                            raise
+                    except security_alerts_backfill.IncompleteListing as error:
+                        log.warning("job %d: %s; not recording it as complete", job_id, error)
+    except httpx.HTTPStatusError as error:
+        _github_response_is_error(conn, job_id, retry_count, error.response)
+        return
+    except httpx.RequestError as error:
+        log.warning("job %d hit a network error (attempt %d): %s", job_id, retry_count + 1, error)
+        _requeue_for_retry(conn, job_id, retry_count, sanitize_error(error))
+        return
+
+    received_at = security_alerts_backfill.now()
+    stored = 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"SET app.tenant_id = {int(payload.tenant_id)}")
+            for (full_name, kind), alerts in complete.items():
+                for alert in alerts:
+                    normalized = security_alerts_backfill.normalize(kind, full_name, alert, received_at)
+                    if normalized is not None:
+                        inserted = security_alerts_store.upsert_security_alert(cur, tenant_id=payload.tenant_id, **normalized)
+                        if inserted and security_alerts_backfill.is_old(normalized["created_at"], received_at):
+                            security_alerts_backfill.mark_announced(
+                                cur, tenant_id=payload.tenant_id, repo=full_name, kind=kind, number=normalized["number"]
+                            )
+                        stored += 1
+                # A complete listing is the whole truth for open alerts: close the stored ones it lacks.
+                security_alerts_backfill.close_missing(
+                    cur, tenant_id=payload.tenant_id, repo=full_name, kind=kind,
+                    open_numbers=[a["number"] for a in alerts if isinstance(a.get("number"), int)],
+                    fetched_before=fetch_started,
+                )
+                # After the alerts, in the same transaction: a rollback never leaves a repo marked complete
+                # without its rows.
+                security_alerts_backfill.mark_synced(cur, tenant_id=payload.tenant_id, repo=full_name, kind=kind)
+        conn.commit()
+    except psycopg.Error as error:
+        conn.rollback()
+        log.warning("job %d failed to store backfilled alerts (attempt %d): %s", job_id, retry_count + 1, error)
+        _requeue_for_retry(conn, job_id, retry_count, sanitize_error(error))
+        return
+
+    if _mark_done(conn, job_id, {"ok": True, "alerts_stored": stored, "lists_complete": len(complete)}, retry_count):
+        log.info("job %d done: %d open alerts across %d lists for %s", job_id, stored, len(complete), payload.account_login)
+
+
 def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payload_raw: str, retry_count: int) -> None:
     try:
         payload = ReconcileOrgMembershipPayload.model_validate_json(payload_raw)
@@ -456,6 +556,14 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
                 # Session context for RLS, same as event_consumer.py's _process_entry.
                 cur.execute(f"SET app.tenant_id = {int(payload.tenant_id)}")
                 org_membership_store.reconcile_org_members(cur, tenant_id=payload.tenant_id, members=members, synced_at=synced_at)
+                # Revoking access on a wrong roster locks people out. Without the 2FA overlay (which only an
+                # owner-level token can read) the member list may be the public-only one, so leave access alone.
+                if two_factor_disabled is not None:
+                    org_membership_store.reconcile_github_memberships(cur, tenant_id=payload.tenant_id, members=members)
+                else:
+                    log.warning(
+                        "job %d: 2FA overlay unavailable, so the roster may be incomplete; not changing Clevis memberships", job_id
+                    )
                 # None = outside_collaborators was refused (missing permission): marking everyone
                 # outside from a missing list would be wrong, so leave the flags as they are.
                 if roster["outside_logins"] is not None:
@@ -493,6 +601,7 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
 JOB_HANDLERS = {
     "github.clear_actions_cache": _handle_clear_actions_cache,
     "github.backfill_repo_events": _handle_backfill_repo_events,
+    "github.backfill_security_alerts": _handle_backfill_security_alerts,
     "github.reconcile_org_membership": _handle_reconcile_org_membership,
 }
 
