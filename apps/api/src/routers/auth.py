@@ -13,7 +13,7 @@ import bcrypt
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -92,15 +92,20 @@ def _verify_password(password: str, password_hash: str | None) -> bool:
     return bcrypt.checkpw(password_bytes, password_hash.encode())
 
 
+# The name is embedded in every session JWT, so an unbounded one makes tokens too big for cookies
+# and proxy header limits.
+_MAX_NAME_LEN = 100
+
+
 class SetupRequest(BaseModel):
     email: EmailStr
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=_MAX_NAME_LEN)
     password: str
 
 
 class RegisterRequest(BaseModel):
     email: EmailStr
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=_MAX_NAME_LEN)
     password: str
 
 
@@ -135,7 +140,7 @@ class MeResponse(BaseModel):
 
 
 class PatchMeRequest(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=_MAX_NAME_LEN)
 
 
 class SetupRequiredResponse(BaseModel):

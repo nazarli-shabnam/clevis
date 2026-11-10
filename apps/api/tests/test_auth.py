@@ -650,6 +650,26 @@ def test_patch_me_updates_name(auth_client):
     assert resp.json()["name"] == "Alice"
 
 
+def test_patch_me_rejects_overlong_name(auth_client):
+    token = _setup_owner(auth_client)["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    assert auth_client.patch("/auth/me", json={"name": "A" * 101}, headers=headers).status_code == 422
+    assert auth_client.patch("/auth/me", json={"name": "A" * 100}, headers=headers).status_code == 200
+
+
+def test_setup_and_register_reject_overlong_name(auth_client):
+    long_name = "A" * 101
+    resp = auth_client.post(
+        "/auth/setup", json={"email": "o@example.com", "password": "supersecret1234", "name": long_name}
+    )
+    assert resp.status_code == 422
+    _setup_owner(auth_client)
+    resp = auth_client.post(
+        "/auth/register", json={"email": "u@example.com", "password": "supersecret1234", "name": long_name}
+    )
+    assert resp.status_code == 422
+
+
 # revoke-sessions
 
 def test_revoke_sessions_unauthenticated(auth_client):
