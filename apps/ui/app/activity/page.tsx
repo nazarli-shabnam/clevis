@@ -57,18 +57,10 @@ export default function ActivityPage() {
   // Events, failed runs and releases are org endpoints; a personal account would 404.
   const isOrg = scope?.kind === "org"
 
-  const resolveQuery = useQuery({
-    queryKey: ["tokens.resolve", org],
-    queryFn: () => api.tokens.resolve(org),
-    enabled: org.trim().length > 0,
-    retry: false,
-  })
-
-  const token = resolveQuery.data?.token ?? ""
-  // Fire once token resolution settles, PAT or not -- App-only orgs have no `token` here and
-  // the API resolves an installation token server-side.
+  // The API resolves the installation token (or a workspace admin's saved PAT) server-side.
+  const token = ""
   const hasOrg = org.trim().length > 0
-  const queriesEnabled = hasOrg && !resolveQuery.isLoading
+  const queriesEnabled = hasOrg
 
   const eventsQuery = useQuery({
     queryKey: ["github.events", org],

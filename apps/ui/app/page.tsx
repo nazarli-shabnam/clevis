@@ -99,28 +99,19 @@ export default function OverviewPage() {
     setOrgChecked(true)
   }, [])
 
-  // Fires in parallel with the cockpit query. A saved PAT is optional (GitHub App installs and plain
-  // members have none: /tokens/resolve is admin-only and 404s), so it only feeds the cockpit call.
-  const resolveQuery = useQuery({
-    queryKey: ["tokens.resolve", org],
-    queryFn: () => api.tokens.resolve(org),
-    enabled: org.trim().length > 0,
-    retry: false,
-  })
-
-  // Cockpit waits for resolveQuery to settle so a saved PAT isn't missed on the first request
-  // (queryKey excludes token, so a later-arriving token wouldn't trigger a refetch).
+  // No token is sent: the API resolves the org's GitHub App installation, or a workspace admin's saved PAT,
+  // server-side, so the secret never reaches the browser.
   const cockpitQuery = useQuery({
     queryKey: ["analytics.cockpit", org],
-    queryFn: () => api.analytics.cockpit(org, resolveQuery.data?.token),
-    enabled: org.trim().length > 0 && !resolveQuery.isLoading,
+    queryFn: () => api.analytics.cockpit(org),
+    enabled: org.trim().length > 0,
     retry: false,
     refetchInterval: 30_000,
   })
   const cockpit = cockpitQuery.data
-  // "Configure →" means there is no data source. The cockpit loading or succeeding proves there is one,
-  // PAT or not; only a failed (or never-started) cockpit with no PAT leaves the cards unconfigured.
-  const configured = !!resolveQuery.data?.token || resolveQuery.isLoading || cockpitQuery.isLoading || cockpitQuery.isSuccess
+  // "Configure →" means there is no data source. The cockpit loading or succeeding proves there is one
+  // (App installation or saved PAT); only a failed (or never-started) cockpit leaves the cards unconfigured.
+  const configured = cockpitQuery.isLoading || cockpitQuery.isSuccess
 
   // Best-effort: needs an App permission not requested by default, so retry: false and the card
   // renders only on success. Keyed by user because the QueryClient outlives logout/login, so keying
@@ -128,8 +119,8 @@ export default function OverviewPage() {
   const isOrgScope = scope?.kind === "org"
   const actionsUsageQuery = useQuery({
     queryKey: ["analytics.actions-usage", org, user?.id ?? "anon"],
-    queryFn: () => api.analytics.actionsUsage(org, resolveQuery.data?.token),
-    enabled: isOrgScope && org.trim().length > 0 && resolveQuery.isFetched,
+    queryFn: () => api.analytics.actionsUsage(org),
+    enabled: isOrgScope && org.trim().length > 0,
     retry: false,
   })
   const usage = actionsUsageQuery.data
@@ -137,8 +128,8 @@ export default function OverviewPage() {
   const [myViewTab, setMyViewTab] = useState<MyViewTabId>("prs")
   const myViewQuery = useQuery({
     queryKey: ["analytics.my-view", org],
-    queryFn: () => api.analytics.myView(org, resolveQuery.data?.token),
-    enabled: org.trim().length > 0 && !resolveQuery.isLoading,
+    queryFn: () => api.analytics.myView(org),
+    enabled: org.trim().length > 0,
     retry: false,
   })
   const myView = myViewQuery.data

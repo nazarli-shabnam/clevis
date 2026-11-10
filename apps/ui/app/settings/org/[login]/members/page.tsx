@@ -148,23 +148,13 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
     router.replace(`?${params.toString()}`, { scroll: false })
   }
 
-  // Falls back to a PAT saved for this org when no App installation covers it; a failed
-  // resolution just means the App installation (if any) is used.
-  const tokenQuery = useQuery({
-    queryKey: ["tokens.resolve", orgLogin],
-    queryFn: () => api.tokens.resolve(orgLogin),
-    retry: false,
-  })
-  const token = tokenQuery.data?.token
-
-  // Wait for token resolution to settle so a saved PAT isn't missed on the first request
-  // (queryKey excludes token, so a late token wouldn't trigger a refetch).
-  const tokenSettled = !tokenQuery.isLoading
+  // No token is sent: the API uses the org's App installation, or a workspace admin's saved PAT.
+  const token = undefined
 
   const membersQuery = useQuery({
     queryKey: ["collab", "members", orgLogin, roleFilter],
     queryFn: () => api.collab.members(orgLogin, roleFilter, token),
-    enabled: tab === "members" && tokenSettled,
+    enabled: tab === "members",
     // Keep the previous role filter's rows on screen while the new one loads instead of
     // flashing an empty table.
     placeholderData: keepPreviousData,
@@ -172,22 +162,22 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
   const outsideQuery = useQuery({
     queryKey: ["collab", "outside", orgLogin],
     queryFn: () => api.collab.outsideCollaborators(orgLogin, token),
-    enabled: tab === "outside" && tokenSettled,
+    enabled: tab === "outside",
   })
   const pendingQuery = useQuery({
     queryKey: ["collab", "pending", orgLogin],
     queryFn: () => api.collab.invitations(orgLogin, token),
-    enabled: tab === "pending" && tokenSettled,
+    enabled: tab === "pending",
   })
   const permissionAuditQuery = useQuery({
     queryKey: ["collab", "permission-audit", orgLogin],
     queryFn: () => api.collab.permissionAudit(orgLogin, token),
-    enabled: tab === "audit" && tokenSettled,
+    enabled: tab === "audit",
   })
   const inactiveMembersQuery = useQuery({
     queryKey: ["collab", "inactive-members", orgLogin],
     queryFn: () => api.collab.inactiveMembers(orgLogin, 30, token),
-    enabled: tab === "audit" && tokenSettled,
+    enabled: tab === "audit",
   })
 
   const activeQuery =

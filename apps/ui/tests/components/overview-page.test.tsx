@@ -134,6 +134,18 @@ describe("OverviewPage cockpit", () => {
     }
   });
 
+  it("does not show 'Nothing here right now' while My View is still pending (#796)", async () => {
+    localStorage.setItem("default_org", "acme");
+    cockpitMock.mockResolvedValue(EMPTY_COCKPIT);
+    myViewMock.mockReturnValue(new Promise(() => {})); // never settles
+
+    renderPage();
+
+    await waitFor(() => expect(myViewMock).toHaveBeenCalledWith("acme"));
+    expect(tokensResolveMock).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Nothing here right now/)).not.toBeInTheDocument();
+  });
+
   it("fires a single cockpit call (no waterfall) and renders real values for all 4 cards", async () => {
     localStorage.setItem("default_org", "acme");
     tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
@@ -149,7 +161,7 @@ describe("OverviewPage cockpit", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(cockpitMock).toHaveBeenCalledWith("acme", "ghp_test");
+      expect(cockpitMock).toHaveBeenCalledWith("acme");
     });
 
     await waitFor(() => {
@@ -200,7 +212,7 @@ describe("OverviewPage cockpit", () => {
     await waitFor(() => expect(screen.getByText("12")).toBeInTheDocument());
     expect(screen.getByText("87")).toBeInTheDocument();
     expect(screen.queryAllByText("Configure →")).toHaveLength(0);
-    expect(cockpitMock).toHaveBeenCalledWith("acme", undefined);
+    expect(cockpitMock).toHaveBeenCalledWith("acme");
   });
 
   it("still asks to configure when there is no PAT and the cockpit fails too", async () => {
@@ -611,7 +623,7 @@ describe("OverviewPage cockpit", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(myViewMock).toHaveBeenCalledWith("acme", "ghp_test");
+      expect(myViewMock).toHaveBeenCalledWith("acme");
     });
     await waitFor(() => {
       expect(screen.getByText("Fix bug")).toBeInTheDocument();

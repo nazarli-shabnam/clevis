@@ -3,8 +3,9 @@ installation over a client-supplied personal access token.
 
 If the target org/account has a `github_installations` row with an `installation_id`,
 mint a short-lived installation token via `github_app.get_installation_token()`. Otherwise
-fall back to whatever token the caller supplied (the legacy PAT path). Raises
-`NoGitHubTokenAvailable` when neither is available.
+fall back to whatever token the caller supplied (the legacy PAT path), and last to the PAT a workspace
+admin saved in Settings for that login (`saved_tokens`), so the browser never has to fetch it. Raises
+`NoGitHubTokenAvailable` when none is available.
 """
 
 from __future__ import annotations
@@ -14,10 +15,12 @@ from typing import Literal
 
 import httpx
 from pydantic import SecretStr
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from src.core.config import settings
-from src.core.db import GitHubInstallation
+from src.core.db import GitHubInstallation, SavedToken, User, session_user_id
+from src.core._crypto import decrypt_job_token
 from src.repositories import installation_repo, org_repo, tenant_repo
 from src.services import github_app
 
@@ -66,6 +69,32 @@ def _from_installation(installation: GitHubInstallation | None) -> str | None:
         return None
 
 
+def _saved_token(db: Session, account_login: str) -> str | None:
+    """The PAT saved for `account_login` in Settings, but only for a workspace admin.
+
+    Saving and revealing tokens is workspace-admin-only (`routers/tokens.py`), so the fallback keeps that
+    boundary: it applies only when the request's session user (the `app.user_id` that `require_auth` set
+    on this session) is a workspace admin. Anyone else, and the background sweeps, which have no session
+    user, never get it. Not audited: unlike `POST /tokens/resolve` nothing is revealed to the caller."""
+    user_id = session_user_id(db)
+    if user_id is None:
+        return None
+    if not db.query(User.is_workspace_admin).filter(User.id == user_id).scalar():
+        return None
+    # Exact key first (what the reveal endpoint uses); case-insensitive only if there is none.
+    row = db.query(SavedToken).filter(SavedToken.org == account_login).first() or (
+        db.query(SavedToken).filter(func.lower(SavedToken.org) == account_login.lower()).first()
+    )
+    if row is None:
+        return None
+    try:
+        return decrypt_job_token(row.encrypted_token, settings.job_secret_key.get_secret_value())
+    except Exception:
+        # A token saved under a rotated JOB_SECRET_KEY: treat as absent rather than failing the request.
+        logger.warning("Saved token for %s could not be decrypted", account_login)
+        return None
+
+
 def _github_app_configured() -> bool:
     return settings.github_app_id is not None and settings.github_app_private_key is not None
 
@@ -111,6 +140,9 @@ def resolve_org_token(
                 "Connect the GitHub App for the organization, or ask an admin."
             )
         return client_token
+    # Same trust as a pasted token: refuse it where a client token is refused.
+    if allow_client_token and (saved := _saved_token(db, account_login)):
+        return saved
     raise _no_token_error(account_login, installation is not None, personal=False)
 
 
@@ -125,6 +157,8 @@ def resolve_personal_token(db: Session, *, owner_user_id: int, account_login: st
         return token
     if client_token:
         return client_token
+    if saved := _saved_token(db, account_login):
+        return saved
     raise _no_token_error(account_login, installation is not None, personal=True)
 
 

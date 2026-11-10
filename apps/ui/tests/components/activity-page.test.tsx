@@ -144,9 +144,20 @@ describe("ActivityPage", () => {
 
     renderPage();
 
-    await waitFor(() => expect(tokensResolveMock).toHaveBeenCalledWith("hp"));
-    await waitFor(() => expect(githubEventsMock).toHaveBeenCalled());
+    await waitFor(() => expect(githubEventsMock).toHaveBeenCalledWith("hp", ""));
+    expect(tokensResolveMock).not.toHaveBeenCalled(); // the secret is never fetched for a routine read
     expect(await screen.findByText(/no events yet/)).toBeInTheDocument();
+  });
+
+  it("shows loading, not 'no events yet', while the events request is still pending (#796)", async () => {
+    localStorage.setItem("default_org", "acme");
+    githubEventsMock.mockReturnValue(new Promise(() => {})); // never settles
+
+    renderPage();
+
+    await waitFor(() => expect(githubEventsMock).toHaveBeenCalledWith("acme", ""));
+    expect(tokensResolveMock).not.toHaveBeenCalled();
+    expect(screen.queryByText(/no events yet/)).not.toBeInTheDocument();
   });
 
   it("still queries events when no PAT is saved, relying on the API's installation-token fallback (#251)", async () => {
@@ -234,7 +245,7 @@ describe("ActivityPage", () => {
 
     renderPage();
 
-    await waitFor(() => expect(githubFailedRunsMock).toHaveBeenCalledWith("acme", "ghp_test"));
+    await waitFor(() => expect(githubFailedRunsMock).toHaveBeenCalledWith("acme", ""));
     expect(await screen.findByText(/acme\/api · CI/)).toBeInTheDocument();
     expect(screen.getByText("×3")).toBeInTheDocument();
     expect(await screen.findByText(/acme\/api · v1.0.0/)).toBeInTheDocument();
@@ -252,7 +263,7 @@ describe("ActivityPage", () => {
 
     renderPage();
 
-    await waitFor(() => expect(analyticsCockpitMock).toHaveBeenCalledWith("acme", "ghp_test"));
+    await waitFor(() => expect(analyticsCockpitMock).toHaveBeenCalledWith("acme", ""));
     expect(await screen.findByText("Commit Heatmap (52w)")).toBeInTheDocument();
     expect(screen.queryByText("No commit activity in the last year")).not.toBeInTheDocument();
   });

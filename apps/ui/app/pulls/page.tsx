@@ -98,16 +98,9 @@ export default function PullRequestsPage() {
   })
   const canNudge = !isOrgMemberOnly(memberships, org)
 
-  const resolveQuery = useQuery({
-    queryKey: ["tokens.resolve", org],
-    queryFn: () => api.tokens.resolve(org),
-    enabled: hasOrg,
-    retry: false,
-  })
-  const token = resolveQuery.data?.token ?? ""
-  // Queries fire once token resolution settles either way, so an App-only org (no saved PAT)
-  // isn't permanently blocked.
-  const queriesEnabled = hasOrg && !resolveQuery.isLoading
+  // The API resolves the installation token (or a workspace admin's saved PAT) server-side.
+  const token = ""
+  const queriesEnabled = hasOrg
 
   const reposQuery = useQuery({
     queryKey: ["repos.list", org],

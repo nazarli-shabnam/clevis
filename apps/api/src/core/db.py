@@ -676,6 +676,14 @@ def set_session_user(db: Session, user_id: int) -> None:
     Satisfies the RLS self-access clause (user_id match) on memberships/github_installations.
     """
     db.execute(text(f"SET app.user_id = {int(user_id)}"))
+    # Kept on the Session too: the connection setting above can be inherited from a pooled connection
+    # (a sweep reusing a request's connection before cleanup), so it is not proof of who is acting.
+    db.info["user_id"] = int(user_id)
+
+
+def session_user_id(db: Session) -> int | None:
+    """The user `require_auth` recorded on this session, or None outside an authenticated request."""
+    return db.info.get("user_id")
 
 
 def set_session_tenant(db: Session, tenant_id: int) -> None:

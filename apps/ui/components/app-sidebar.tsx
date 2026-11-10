@@ -243,19 +243,11 @@ export function AppSidebar() {
   const membersNavHref = membershipsLoading ? "/settings" : membersHref(memberships, scope)
   const inviteNavHref = membershipsLoading ? "/settings" : inviteMembersHref(memberships, scope)
 
-  // Falls back to a saved PAT for orgs without a GitHub App installation.
-  const tokenQuery = useQuery({
-    queryKey: ["tokens.resolve", scopeLogin],
-    queryFn: () => api.tokens.resolve(scopeLogin),
-    enabled: scopeLogin.trim().length > 0,
-    retry: false,
-  })
-
   // Same query key as the Overview cockpit query so TanStack Query dedupes the request.
   const { data: cockpit } = useQuery({
     queryKey: ["analytics.cockpit", scopeLogin],
-    queryFn: () => api.analytics.cockpit(scopeLogin, tokenQuery.data?.token),
-    enabled: scopeLogin.trim().length > 0 && !tokenQuery.isLoading,
+    queryFn: () => api.analytics.cockpit(scopeLogin),
+    enabled: scopeLogin.trim().length > 0,
     retry: false,
     refetchInterval: 30_000,
   })

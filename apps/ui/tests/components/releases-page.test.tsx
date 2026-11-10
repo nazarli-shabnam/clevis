@@ -76,7 +76,7 @@ describe("ReleasesPage", () => {
     renderPage();
 
     await waitFor(() => expect(screen.getAllByText(/v1\.2\.0/).length).toBeGreaterThan(0));
-    expect(releaseTimelineMock).toHaveBeenCalledWith("acme", "ghp_test", 90);
+    expect(releaseTimelineMock).toHaveBeenCalledWith("acme", "", 90);
   });
 
   it("shows a pre-release badge for pre-release entries", async () => {
@@ -96,11 +96,11 @@ describe("ReleasesPage", () => {
 
     renderPage();
 
-    await waitFor(() => expect(releaseTimelineMock).toHaveBeenCalledWith("acme", "ghp_test", 90));
+    await waitFor(() => expect(releaseTimelineMock).toHaveBeenCalledWith("acme", "", 90));
 
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "30" } });
 
-    await waitFor(() => expect(releaseTimelineMock).toHaveBeenCalledWith("acme", "ghp_test", 30));
+    await waitFor(() => expect(releaseTimelineMock).toHaveBeenCalledWith("acme", "", 30));
   });
 
   it("shows a retry option instead of a fake empty state when the query fails", async () => {

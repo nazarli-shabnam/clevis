@@ -76,7 +76,7 @@ describe("MyWorkPage (tabbed /my)", () => {
     renderPage();
 
     await waitFor(() => expect(screen.getByText("Fix bug")).toBeInTheDocument());
-    expect(myPrsMock).toHaveBeenCalledWith("acme", 1, 25, "ghp_test");
+    expect(myPrsMock).toHaveBeenCalledWith("acme", 1, 25);
     expect(myReviewsMock).not.toHaveBeenCalled();
   });
 
@@ -87,7 +87,7 @@ describe("MyWorkPage (tabbed /my)", () => {
 
     renderPage();
 
-    await waitFor(() => expect(myReviewsMock).toHaveBeenCalledWith("acme", 1, 25, "ghp_test"));
+    await waitFor(() => expect(myReviewsMock).toHaveBeenCalledWith("acme", 1, 25));
     expect(screen.getByRole("button", { name: "My Reviews", pressed: true })).toBeInTheDocument();
     expect(myPrsMock).not.toHaveBeenCalled();
   });
