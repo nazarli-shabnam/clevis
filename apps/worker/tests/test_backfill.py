@@ -398,7 +398,7 @@ def test_handler_requeues_only_transient_github_errors(status_code, headers, bod
     conn = _FakeConn()
     error = _github_status_error(status_code, headers, body)
 
-    with patch("worker.backfill.fetch_events", side_effect=error):
+    with patch("worker.backfill.fetch_all_events", side_effect=error):
         worker._handle_backfill_repo_events(conn, 6, _payload(), 0)
 
     sql, _params = conn._cursor.calls[0]
@@ -410,7 +410,7 @@ def test_handler_fails_a_rate_limited_job_for_good_once_its_retries_are_spent():
     conn = _FakeConn()
     error = _github_status_error(429, {}, "")
 
-    with patch("worker.backfill.fetch_events", side_effect=error):
+    with patch("worker.backfill.fetch_all_events", side_effect=error):
         worker._handle_backfill_repo_events(conn, 7, _payload(), worker.MAX_RETRIES)
 
     sql, _params = conn._cursor.calls[0]
@@ -682,7 +682,7 @@ def test_handler_uses_the_user_events_path_for_personal_installs(pg_conn, tenant
     with patch("worker.httpx.Client", return_value=mock_client):
         worker._handle_backfill_repo_events(pg_conn, 104, _payload_for(tenant_id, account_login="octocat", account_type="User"), 0)
 
-    called_url = mock_client.get.call_args[0][0]
+    called_url = mock_client.get.call_args_list[0][0][0]
     assert "/users/octocat/events" in called_url
     assert _repo_events_count(pg_conn, tenant_id, repo) == 1
 
@@ -724,3 +724,80 @@ def test_handler_cursor_upsert_advances_last_synced_at_on_rerun(pg_conn, tenant_
         second_synced_at = _sync_cursor(pg_conn, tenant_id)[2]
 
     assert second_synced_at >= first_synced_at
+
+
+# --- private repositories (#806): the org/user feed is public-only ---
+
+def _repo(full_name, private=True, pushed_at="2026-08-20T00:00:00Z"):
+    return {"full_name": full_name, "private": private, "pushed_at": pushed_at}
+
+
+def test_fetch_private_repo_events_reads_each_private_repo_newest_first():
+    client = _FakeClient([
+        _FakeResponse([_repo("acme/old", pushed_at="2026-01-01T00:00:00Z"), _repo("acme/pub", private=False), _repo("acme/new")]),
+        _FakeResponse([_raw_event(id="n1")]),  # acme/new (pushed most recently)
+        _FakeResponse([_raw_event(id="o1")]),  # acme/old
+    ])
+
+    events = backfill.fetch_private_repo_events(client, "https://api.github.com", {}, "acme", "Organization")
+
+    assert [e["id"] for e in events] == ["n1", "o1"]
+    assert client.calls[0][0] == "https://api.github.com/orgs/acme/repos"
+    assert client.calls[0][1]["type"] == "private"
+    assert [c[0] for c in client.calls[1:]] == [
+        "https://api.github.com/repos/acme/new/events",
+        "https://api.github.com/repos/acme/old/events",
+    ]
+
+
+def test_fetch_private_repo_events_uses_installation_repositories_for_personal_installs():
+    client = _FakeClient([_FakeResponse({"repositories": [_repo("octocat/secret")]}), _FakeResponse([_raw_event(id="p1")])])
+
+    events = backfill.fetch_private_repo_events(client, "https://api.github.com", {}, "octocat", "User")
+
+    assert [e["id"] for e in events] == ["p1"]
+    assert client.calls[0][0] == "https://api.github.com/installation/repositories"
+
+
+def test_fetch_private_repo_events_caps_the_number_of_repos():
+    repos = [_repo(f"acme/r{i}", pushed_at=f"2026-08-{i % 28 + 1:02d}T00:00:00Z") for i in range(backfill._MAX_PRIVATE_REPOS + 10)]
+    client = _FakeClient([_FakeResponse(repos)] + [_FakeResponse([]) for _ in repos])
+
+    backfill.fetch_private_repo_events(client, "https://api.github.com", {}, "acme", "Organization")
+
+    assert len(client.calls) == 1 + backfill._MAX_PRIVATE_REPOS
+
+
+def test_fetch_private_repo_events_skips_a_repo_the_token_cannot_read():
+    client = _FakeClient([
+        _FakeResponse([_repo("acme/a"), _repo("acme/b", pushed_at="2026-07-01T00:00:00Z")]),
+        _FakeResponse({}, status_code=404),
+        _FakeResponse([_raw_event(id="b1")]),
+    ])
+
+    events = backfill.fetch_private_repo_events(client, "https://api.github.com", {}, "acme", "Organization")
+
+    assert [e["id"] for e in events] == ["b1"]
+
+
+def test_fetch_private_repo_events_returns_nothing_when_the_repo_list_is_forbidden():
+    client = _FakeClient([_FakeResponse({}, status_code=403)])
+    assert backfill.fetch_private_repo_events(client, "https://api.github.com", {}, "acme", "Organization") == []
+
+
+def test_fetch_private_repo_events_propagates_a_server_error_so_the_job_is_retried():
+    client = _FakeClient([_FakeResponse({}, status_code=502)] * 3)
+    with patch("backfill.time.sleep"), pytest.raises(httpx.HTTPStatusError):
+        backfill.fetch_private_repo_events(client, "https://api.github.com", {}, "acme", "Organization")
+
+
+def test_fetch_all_events_merges_public_and_private_without_duplicates():
+    client = _FakeClient([
+        _FakeResponse([_raw_event(id="pub1"), _raw_event(id="dup")]),  # public feed
+        _FakeResponse([_repo("acme/secret")]),
+        _FakeResponse([_raw_event(id="dup"), _raw_event(id="priv1")]),
+    ])
+
+    events = backfill.fetch_all_events(client, "https://api.github.com", {}, "acme", "Organization")
+
+    assert sorted(e["id"] for e in events) == ["dup", "priv1", "pub1"]
