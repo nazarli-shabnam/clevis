@@ -9,7 +9,13 @@ from src.core.db import Job
 
 
 def enqueue(
-    db: Session, job_type: str, payload: dict, tenant_id: int | None = None, *, commit: bool = True
+    db: Session,
+    job_type: str,
+    payload: dict,
+    tenant_id: int | None = None,
+    *,
+    commit: bool = True,
+    status: str = "queued",
 ) -> int:
     """`tenant_id` links the job to the tenant it was enqueued for (an org's admins list their own
     jobs by it); None leaves it unattributed.
@@ -17,7 +23,7 @@ def enqueue(
     commit=False flushes into the caller's transaction instead, so the job only becomes visible to
     the worker (which polls for queued rows) when the caller commits -- e.g. together with the audit
     row that records why it exists."""
-    job = Job(job_type=job_type, payload=json.dumps(payload), status="queued", tenant_id=tenant_id)
+    job = Job(job_type=job_type, payload=json.dumps(payload), status=status, tenant_id=tenant_id)
     db.add(job)
     if commit:
         db.commit()

@@ -14,6 +14,7 @@ const securityRepoRowMock = vi.fn();
 const waiversListMock = vi.fn();
 const installationsListMock = vi.fn();
 const installationsListForOrgMock = vi.fn();
+const orgsMineMock = vi.fn();
 
 let currentRepoParam = "acme~demo";
 
@@ -46,6 +47,9 @@ vi.mock("@/lib/api/client", () => ({
     },
     waivers: {
       list: (...args: unknown[]) => waiversListMock(...args),
+    },
+    orgs: {
+      mine: (...args: unknown[]) => orgsMineMock(...args),
     },
     installations: {
       list: (...args: unknown[]) => installationsListMock(...args),
@@ -110,6 +114,8 @@ describe("RepoDetailPage", () => {
   beforeEach(() => {
     currentRepoParam = "acme~demo";
     tokensResolveMock.mockReset();
+    orgsMineMock.mockReset();
+    orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "admin" }]);
     tokensUpsertMock.mockReset();
     cacheListMock.mockReset();
     cacheClearMock.mockReset();
@@ -316,6 +322,44 @@ describe("RepoDetailPage", () => {
 
     expect(screen.getByRole("button", { name: /load caches/i })).toBeInTheDocument();
     expect(container.querySelector("#repo-tabpanel-cache")).not.toHaveClass("hidden");
+  });
+
+  it("offers Dry run and Clear on the Actions Cache tab to an org admin", async () => {
+    cacheListMock.mockResolvedValue({ repository: "acme/demo", total: 0, actions_caches: [] });
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /actions cache/i }));
+
+    expect(await screen.findByRole("button", { name: /dry run/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^clear$/i })).toBeInTheDocument();
+  });
+
+  it("hides Dry run and Clear from a plain org member, keeps Load caches, and says who to ask", async () => {
+    orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "member" }]);
+    cacheListMock.mockResolvedValue({ repository: "acme/demo", total: 0, actions_caches: [] });
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /actions cache/i }));
+
+    expect(await screen.findByText(/needs an admin of acme/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /load caches/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /dry run/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^clear$/i })).not.toBeInTheDocument();
+  });
+
+  it("hides the per-row Clear key button from a plain org member", async () => {
+    orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "member" }]);
+    cacheListMock.mockResolvedValue({
+      repository: "acme/demo",
+      total: 1,
+      actions_caches: [
+        { id: 1, key: "npm-abc", ref: "refs/heads/main", size_in_bytes: 1024, created_at: "2026-07-20T00:00:00Z", last_accessed_at: "2026-07-20T00:00:00Z" },
+      ],
+    });
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /actions cache/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /load caches/i }));
+
+    expect(await screen.findByText("npm-abc")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /clear key/i })).not.toBeInTheDocument();
   });
 
   it("hides the GitHub Token field on the Actions Cache tab when an installation covers the repo's owner", async () => {

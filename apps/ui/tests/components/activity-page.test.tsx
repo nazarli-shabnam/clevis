@@ -92,14 +92,15 @@ describe("ActivityPage", () => {
   });
 
   it("re-stamps the last-seen time when the page is left, so events seen while open are not unread", async () => {
+    localStorage.setItem("default_org", "acme");
     const { unmount } = renderPage();
-    const onOpen = localStorage.getItem("activity_last_seen_at");
+    const onOpen = localStorage.getItem("activity_last_seen_at:org:acme");
     expect(onOpen).not.toBeNull();
 
     await new Promise((r) => setTimeout(r, 5));
     unmount();
 
-    expect(localStorage.getItem("activity_last_seen_at")! > onOpen!).toBe(true);
+    expect(localStorage.getItem("activity_last_seen_at:org:acme")! > onOpen!).toBe(true);
   });
 
   it("shows a configure prompt when no org is set", async () => {

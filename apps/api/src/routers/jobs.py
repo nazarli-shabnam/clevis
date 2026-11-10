@@ -7,12 +7,13 @@ from src.core.auth import UserOut, require_auth, require_workspace_admin
 from src.core.db import get_db
 from src.repositories import job_repo
 from src.schemas.job import JobOut
+from src.services.api_job_runner import API_JOB_TYPES
 
 router = APIRouter()
 
 # Job types a non-admin caller is allowed to poll by id, and which record the enqueuing
 # user's email in their payload (`actor`) so we can scope the read to its owner.
-_SELF_READABLE_JOB_TYPES = {"github.clear_actions_cache"}
+_SELF_READABLE_JOB_TYPES = {"github.clear_actions_cache"} | API_JOB_TYPES
 
 
 @router.get("", response_model=list[JobOut])

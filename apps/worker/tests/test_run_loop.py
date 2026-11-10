@@ -1,6 +1,6 @@
 """run()'s single-iteration behavior against real Postgres, incl. _JobHeartbeat wrapping.
 
-The loop is broken after one iteration by making time.sleep raise a sentinel.
+The loop is broken after one iteration by making worker._wait raise a sentinel.
 """
 
 import json
@@ -46,7 +46,7 @@ def test_run_wraps_a_claimed_job_in_a_job_heartbeat(worker_db, monkeypatch):
     job_id = _insert_queued_job(conn, created_ids)
 
     monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 1)
-    monkeypatch.setattr(worker.time, "sleep", MagicMock(side_effect=_StopLoop))
+    monkeypatch.setattr(worker, "_wait", MagicMock(side_effect=_StopLoop))
 
     mock_response = MagicMock()
     mock_response.status_code = 204
@@ -75,7 +75,7 @@ def test_run_logs_full_exception_on_generic_poll_error(monkeypatch, caplog):
     # The generic `except Exception` branch must log the full exception, not just its class name.
     monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 1)
     monkeypatch.setattr(worker, "_reclaim_stale_jobs", MagicMock(side_effect=RuntimeError("boom")))
-    monkeypatch.setattr(worker.time, "sleep", MagicMock(side_effect=_StopLoop))
+    monkeypatch.setattr(worker, "_wait", MagicMock(side_effect=_StopLoop))
 
     with caplog.at_level("ERROR", logger="worker"):
         try:
@@ -94,7 +94,7 @@ def test_run_does_not_claim_a_retried_job_before_its_backoff_elapses(worker_db, 
     conn.commit()
 
     monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 1)
-    monkeypatch.setattr(worker.time, "sleep", MagicMock(side_effect=_StopLoop))
+    monkeypatch.setattr(worker, "_wait", MagicMock(side_effect=_StopLoop))
     with patch.object(worker, "process_job") as process:
         try:
             worker.run()
@@ -113,7 +113,7 @@ def test_run_drains_a_backlog_without_sleeping_between_jobs(worker_db, monkeypat
     sleep = MagicMock(side_effect=_StopLoop)
     process = MagicMock()
     monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 5)
-    monkeypatch.setattr(worker.time, "sleep", sleep)
+    monkeypatch.setattr(worker, "_wait", sleep)
     monkeypatch.setattr(worker, "process_job", process)
 
     try:
@@ -130,7 +130,7 @@ def test_run_sleeps_when_the_queue_is_empty(worker_db, monkeypatch):
     sleep = MagicMock(side_effect=_StopLoop)
     process = MagicMock()
     monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 5)
-    monkeypatch.setattr(worker.time, "sleep", sleep)
+    monkeypatch.setattr(worker, "_wait", sleep)
     monkeypatch.setattr(worker, "process_job", process)
 
     try:
@@ -149,7 +149,7 @@ def test_run_still_backs_off_after_a_poll_error(worker_db, monkeypatch):
     sleep = MagicMock(side_effect=_StopLoop)
     process = MagicMock(side_effect=RuntimeError("handler blew up"))
     monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 5)
-    monkeypatch.setattr(worker.time, "sleep", sleep)
+    monkeypatch.setattr(worker, "_wait", sleep)
     monkeypatch.setattr(worker, "process_job", process)
 
     try:
@@ -165,7 +165,7 @@ def test_run_still_backs_off_after_a_poll_error(worker_db, monkeypatch):
 def test_run_backs_off_when_the_database_is_unreachable(monkeypatch, caplog):
     sleep = MagicMock(side_effect=_StopLoop)
     monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 7)
-    monkeypatch.setattr(worker.time, "sleep", sleep)
+    monkeypatch.setattr(worker, "_wait", sleep)
     monkeypatch.setattr(worker.psycopg, "connect", MagicMock(side_effect=worker.psycopg.OperationalError("down")))
 
     with caplog.at_level("ERROR", logger="worker"):
@@ -184,7 +184,7 @@ def test_run_reads_the_poll_interval_only_when_it_is_about_to_sleep(worker_db, m
         _insert_queued_job(conn, created_ids)
     read = MagicMock(return_value=5)
     monkeypatch.setattr(worker, "_read_poll_seconds", read)
-    monkeypatch.setattr(worker.time, "sleep", MagicMock(side_effect=_StopLoop))
+    monkeypatch.setattr(worker, "_wait", MagicMock(side_effect=_StopLoop))
     monkeypatch.setattr(worker, "process_job", MagicMock())
 
     try:
@@ -194,3 +194,89 @@ def test_run_reads_the_poll_interval_only_when_it_is_about_to_sleep(worker_db, m
 
     # Once at start-up for the log line, once for the single sleep: not once per job.
     assert read.call_count == 2
+
+
+# --- graceful shutdown (#800) ---------------------------------------------------------------------
+
+def _row(conn, job_id):
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, retry_count, updated_at <= NOW() - interval '480 seconds' FROM jobs WHERE id = %s", (job_id,))
+        return cur.fetchone()
+
+
+def test_run_returns_without_claiming_when_shutdown_is_already_requested(worker_db, monkeypatch):
+    conn, created_ids = worker_db
+    job_id = _insert_queued_job(conn, created_ids)
+    process = MagicMock()
+    monkeypatch.setattr(worker, "process_job", process)
+    worker._shutdown.set()
+    try:
+        worker.run()
+    finally:
+        worker._shutdown.clear()
+
+    process.assert_not_called()
+    assert _row(conn, job_id)[0] == "queued"
+
+
+def test_a_job_in_flight_finishes_and_then_the_loop_exits_without_sleeping(worker_db, monkeypatch):
+    conn, created_ids = worker_db
+    job_id = _insert_queued_job(conn, created_ids)
+    second = _insert_queued_job(conn, created_ids)
+    wait = MagicMock(side_effect=_StopLoop)  # would fail the test if the loop idled instead of exiting
+    monkeypatch.setattr(worker, "_wait", wait)
+    monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 5)
+
+    def finish_then_signal(c, jid, *args):
+        worker._mark_done(c, jid, {"ok": True}, args[-1] if args else 0)
+        worker._request_shutdown(15, None)  # SIGTERM arrives while the job is running
+
+    monkeypatch.setattr(worker, "process_job", finish_then_signal)
+    try:
+        worker.run()
+    finally:
+        worker._shutdown.clear()
+
+    wait.assert_not_called()
+    assert _row(conn, job_id)[0] == "done"
+    assert _row(conn, second)[0] == "queued"  # not claimed after the signal
+
+
+def test_a_job_claimed_as_shutdown_begins_goes_back_without_using_a_retry(worker_db, monkeypatch):
+    conn, created_ids = worker_db
+    job_id = _insert_queued_job(conn, created_ids)
+    process = MagicMock()
+    monkeypatch.setattr(worker, "process_job", process)
+    monkeypatch.setattr(worker, "_wait", MagicMock())  # returns at once, as the real wait does once shutdown is set
+    # Shutdown lands in the window between the loop check and the claim.
+    real_reclaim = worker._reclaim_stale_jobs
+    monkeypatch.setattr(worker, "_reclaim_stale_jobs", lambda c: (real_reclaim(c), worker._shutdown.set()))
+    try:
+        worker.run()
+    finally:
+        worker._shutdown.clear()
+
+    process.assert_not_called()
+    status, retry_count, backoff_cleared = _row(conn, job_id)
+    assert (status, retry_count) == ("queued", 0)
+    assert backoff_cleared  # claimable by the next worker at once
+
+
+def test_wait_wakes_immediately_when_shutdown_is_requested():
+    import time as _t
+
+    worker._shutdown.set()
+    try:
+        start = _t.monotonic()
+        worker._wait(30)
+        assert _t.monotonic() - start < 1
+    finally:
+        worker._shutdown.clear()
+
+
+def test_request_shutdown_sets_the_flag():
+    try:
+        worker._request_shutdown(15, None)
+        assert worker._shutdown.is_set()
+    finally:
+        worker._shutdown.clear()

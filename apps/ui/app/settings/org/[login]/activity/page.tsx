@@ -22,6 +22,7 @@ const JOBS_PAGE_SIZE = 50
 const JOB_STATUS_COLOR: Record<JobOut["status"], string> = {
   queued: "text-muted-foreground",
   processing: "text-yellow-400",
+  running: "text-yellow-400",
   done: "text-accent",
   failed: "text-destructive",
 }

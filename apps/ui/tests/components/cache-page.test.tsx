@@ -7,6 +7,7 @@ const tokensUpsertMock = vi.fn();
 const cacheListMock = vi.fn();
 const cacheClearMock = vi.fn();
 const jobsGetMock = vi.fn();
+const orgsMineMock = vi.fn();
 
 let currentRepoParam = "acme~demo";
 
@@ -32,6 +33,9 @@ vi.mock("@/lib/api/client", () => ({
     },
     jobs: {
       get: (...args: unknown[]) => jobsGetMock(...args),
+    },
+    orgs: {
+      mine: (...args: unknown[]) => orgsMineMock(...args),
     },
   },
 }));
@@ -66,6 +70,8 @@ describe("CachePage", () => {
     cacheListMock.mockReset();
     cacheClearMock.mockReset();
     jobsGetMock.mockReset();
+    orgsMineMock.mockReset();
+    orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "admin" }]);
     tokensResolveMock.mockRejectedValue(new Error("no saved token"));
     jobsGetMock.mockResolvedValue({
       id: 42,
@@ -90,7 +96,7 @@ describe("CachePage", () => {
     // No Actor field: the API attributes the action to the signed-in user.
     expect(screen.queryByPlaceholderText("actor")).not.toBeInTheDocument();
 
-    const dryRunButton = screen.getByRole("button", { name: /dry run/i });
+    const dryRunButton = await screen.findByRole("button", { name: /dry run/i });
     await waitFor(() => expect(dryRunButton).not.toBeDisabled());
 
     fireEvent.click(dryRunButton);
@@ -114,7 +120,7 @@ describe("CachePage", () => {
       ],
     });
     renderPage();
-    const dryRunButton = screen.getByRole("button", { name: /dry run/i });
+    const dryRunButton = await screen.findByRole("button", { name: /dry run/i });
     await waitFor(() => expect(dryRunButton).not.toBeDisabled());
     fireEvent.click(dryRunButton);
 
@@ -131,7 +137,7 @@ describe("CachePage", () => {
 
     renderPage();
 
-    const clearButton = screen.getByRole("button", { name: /^clear$/i });
+    const clearButton = await screen.findByRole("button", { name: /^clear$/i });
     await waitFor(() => expect(clearButton).not.toBeDisabled());
 
     fireEvent.click(clearButton);
@@ -158,7 +164,7 @@ describe("CachePage", () => {
 
     renderPage();
 
-    const clearButton = screen.getByRole("button", { name: /^clear$/i });
+    const clearButton = await screen.findByRole("button", { name: /^clear$/i });
     await waitFor(() => expect(clearButton).not.toBeDisabled());
     fireEvent.click(clearButton);
     const dialog = await screen.findByRole("alertdialog");
@@ -181,7 +187,7 @@ describe("CachePage", () => {
 
     renderPage();
 
-    const clearButton = screen.getByRole("button", { name: /^clear$/i });
+    const clearButton = await screen.findByRole("button", { name: /^clear$/i });
     await waitFor(() => expect(clearButton).not.toBeDisabled());
     fireEvent.click(clearButton);
     const dialog = await screen.findByRole("alertdialog");
@@ -204,7 +210,7 @@ describe("CachePage", () => {
 
     renderPage();
 
-    const clearButton = screen.getByRole("button", { name: /^clear$/i });
+    const clearButton = await screen.findByRole("button", { name: /^clear$/i });
     await waitFor(() => expect(clearButton).not.toBeDisabled());
     fireEvent.click(clearButton);
     const dialog = await screen.findByRole("alertdialog");
@@ -226,7 +232,7 @@ describe("CachePage", () => {
 
     renderPage();
 
-    const clearButton = screen.getByRole("button", { name: /^clear$/i });
+    const clearButton = await screen.findByRole("button", { name: /^clear$/i });
     await waitFor(() => expect(clearButton).not.toBeDisabled());
     fireEvent.click(clearButton);
     const dialog = await screen.findByRole("alertdialog");
@@ -248,7 +254,7 @@ describe("CachePage", () => {
 
     renderPage();
 
-    const clearButton = screen.getByRole("button", { name: /^clear$/i });
+    const clearButton = await screen.findByRole("button", { name: /^clear$/i });
     await waitFor(() => expect(clearButton).not.toBeDisabled());
     fireEvent.click(clearButton);
     const dialog = await screen.findByRole("alertdialog");
@@ -270,7 +276,7 @@ describe("CachePage", () => {
 
     renderPage();
 
-    const clearButton = screen.getByRole("button", { name: /^clear$/i });
+    const clearButton = await screen.findByRole("button", { name: /^clear$/i });
     await waitFor(() => expect(clearButton).not.toBeDisabled());
     fireEvent.click(clearButton);
     const dialog = await screen.findByRole("alertdialog");
@@ -285,7 +291,7 @@ describe("CachePage", () => {
 
     renderPage();
 
-    const clearButton = screen.getByRole("button", { name: /^clear$/i });
+    const clearButton = await screen.findByRole("button", { name: /^clear$/i });
     await waitFor(() => expect(clearButton).not.toBeDisabled());
     fireEvent.click(clearButton);
     const dialog = await screen.findByRole("alertdialog");
@@ -320,7 +326,7 @@ describe("CachePage", () => {
 
     renderPage();
 
-    const clearButton = screen.getByRole("button", { name: /^clear$/i });
+    const clearButton = await screen.findByRole("button", { name: /^clear$/i });
     await waitFor(() => expect(clearButton).not.toBeDisabled());
     fireEvent.click(clearButton);
     const dialog = await screen.findByRole("alertdialog");
@@ -332,7 +338,7 @@ describe("CachePage", () => {
   it("closes the confirm dialog without clearing when Cancel is clicked", async () => {
     renderPage();
 
-    const clearButton = screen.getByRole("button", { name: /^clear$/i });
+    const clearButton = await screen.findByRole("button", { name: /^clear$/i });
     await waitFor(() => expect(clearButton).not.toBeDisabled());
 
     fireEvent.click(clearButton);
@@ -347,7 +353,7 @@ describe("CachePage", () => {
   it("closes the confirm dialog when the route's repo param changes", async () => {
     const { rerenderSamePage } = renderPage();
 
-    const clearButton = screen.getByRole("button", { name: /^clear$/i });
+    const clearButton = await screen.findByRole("button", { name: /^clear$/i });
     await waitFor(() => expect(clearButton).not.toBeDisabled());
 
     fireEvent.click(clearButton);
@@ -430,7 +436,7 @@ describe("CachePage", () => {
     cacheClearMock.mockRejectedValue(new Error("Could not clear caches"));
 
     renderPage();
-    fireEvent.click(screen.getByRole("button", { name: /^clear$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^clear$/i }));
     const dialog = await screen.findByRole("alertdialog");
     fireEvent.click(within(dialog).getByRole("button", { name: /^delete$/i }));
 
@@ -457,7 +463,7 @@ describe("CachePage", () => {
     fireEvent.click(screen.getByRole("button", { name: /load caches/i }));
     await waitFor(() => expect(screen.getByText("api-cache-key")).toBeInTheDocument());
 
-    const clearKeyButton = screen.getByRole("button", { name: /^clear key$/i });
+    const clearKeyButton = await screen.findByRole("button", { name: /^clear key$/i });
     await waitFor(() => expect(clearKeyButton).not.toBeDisabled());
     fireEvent.click(clearKeyButton);
 
@@ -476,7 +482,7 @@ describe("CachePage", () => {
     );
 
     // The global "Clear" button, not this row's, must remain a plain trigger.
-    expect(screen.getByRole("button", { name: /^clear$/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^clear$/i })).toBeInTheDocument();
   });
 
   it("clears the stale cache table and clear result when navigating to a different repo under the same owner", async () => {
@@ -499,7 +505,7 @@ describe("CachePage", () => {
     fireEvent.click(screen.getByRole("button", { name: /load caches/i }));
     await waitFor(() => expect(screen.getByText("api-cache-key")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: /^clear$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^clear$/i }));
     const dialog = await screen.findByRole("alertdialog");
     fireEvent.click(within(dialog).getByRole("button", { name: /^delete$/i }));
     await waitFor(() => expect(screen.getByText(/cache cleared/i)).toBeInTheDocument());

@@ -7,8 +7,6 @@ import { CopyButton } from "@/components/copy-button"
 import { SectionError } from "@/components/section-error"
 import { badgeHtml, badgeMarkdown, badgeUrl } from "@/lib/badge"
 
-const RATE_LIMIT_ISSUE = "https://github.com/nazarli-shabnam/clevis/issues/577"
-
 function Snippet({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-1">
@@ -59,12 +57,8 @@ export function BadgeSettingsCard({ orgLogin }: { orgLogin: string }) {
           </label>
           <p className="text-xs text-muted-foreground">
             Only the bare score (a number) becomes public. The badge URL needs no sign-in, so anyone who has the link can
-            see it, and it is cached for a few minutes. It is off until you turn it on; turning it off makes the URL return
-            404. Request limits on this public route are tracked in{" "}
-            <a href={RATE_LIMIT_ISSUE} target="_blank" rel="noreferrer" className="underline underline-offset-2">
-              #577
-            </a>
-            .
+            see it. The score is cached for up to 5 minutes, and requests to the badge URL are rate-limited per client. It
+            is off until you turn it on; turning it off makes the URL return 404.
           </p>
           {update.isError && <p className="text-xs text-destructive">{update.error.message}</p>}
           {query.data.enabled && (

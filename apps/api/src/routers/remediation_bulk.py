@@ -5,13 +5,14 @@ Org-admin only, like the other org-wide write automations (bulk branch protectio
 it, capturing per-repo failures so one inaccessible repo doesn't abort the rest. Needs the same
 GitHub write permissions as the single-repo "Fix this" (``Administration``).
 
-A batch is capped at ``MAX_REPOS`` because it runs synchronously inside one request: a few GitHub
-calls per repo, with their own retry back-off, must stay well inside a proxy's timeout.
+A batch is capped at ``MAX_REPOS`` (a few GitHub calls per repo, with their own retry back-off). With
+``?async=1`` the loop runs as a tracked job and the response is ``202 {"job_id"}`` to poll via ``GET
+/jobs/{id}`` (the job result is the usual response body); without it the call stays synchronous.
 """
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy.orm import Session
 
@@ -19,7 +20,7 @@ from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import audit_repo
-from src.services import check_remediation, check_remediation_bulk
+from src.services import api_job_runner, check_remediation, check_remediation_bulk
 from src.services.github_client import GitHubClient
 from src.services.token_resolution import NoGitHubTokenAvailable, pick_client_token, resolve_org_token
 
@@ -72,7 +73,8 @@ def bulk_remediate(
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),
-) -> BulkRemediateResponse:
+    run_async: bool = Query(False, alias="async"),
+):
     if body.check_id not in check_remediation.supported_check_ids():
         raise HTTPException(status_code=404, detail=f"No automated fix for check {body.check_id!r}")
 
@@ -98,30 +100,41 @@ def bulk_remediate(
         tenant_id=ctx.org.tenant_id,
     )
 
-    client = GitHubClient(token)
-    run = check_remediation_bulk.plan_bulk if body.dry_run else check_remediation_bulk.apply_bulk
-    items = run(client, body.check_id, owner, body.repos)
+    tenant_id = ctx.org.tenant_id
 
-    if not body.dry_run:
-        # The row above only says what was asked for; this one says what happened, so an audit
-        # can tell which repos were actually changed.
-        audit_repo.write(
-            db,
-            user.email,
-            "security.remediate.bulk_result",
-            owner,
-            {
-                "check_id": body.check_id,
-                "applied": [i.repo for i in items if i.status == "applied"],
-                "unchanged": [i.repo for i in items if i.status == "unchanged"],
-                "failed": {i.repo: i.detail for i in items if i.status == "failed"},
-            },
-            tenant_id=ctx.org.tenant_id,
+    def work(session: Session) -> BulkRemediateResponse:
+        client = GitHubClient(token)
+        run = check_remediation_bulk.plan_bulk if body.dry_run else check_remediation_bulk.apply_bulk
+        items = run(client, body.check_id, owner, body.repos)
+
+        if not body.dry_run:
+            # The row above only says what was asked for; this one says what happened, so an audit
+            # can tell which repos were actually changed.
+            audit_repo.write(
+                session,
+                user.email,
+                "security.remediate.bulk_result",
+                owner,
+                {
+                    "check_id": body.check_id,
+                    "applied": [i.repo for i in items if i.status == "applied"],
+                    "unchanged": [i.repo for i in items if i.status == "unchanged"],
+                    "failed": {i.repo: i.detail for i in items if i.status == "failed"},
+                },
+                tenant_id=tenant_id,
+            )
+
+        return BulkRemediateResponse(
+            check_id=body.check_id,
+            dry_run=body.dry_run,
+            items=[BulkRemediateItem(repo=i.repo, status=i.status, detail=i.detail) for i in items],
+            hint=_PERMISSION_HINT if _all_forbidden(items) else None,
         )
 
-    return BulkRemediateResponse(
-        check_id=body.check_id,
-        dry_run=body.dry_run,
-        items=[BulkRemediateItem(repo=i.repo, status=i.status, detail=i.detail) for i in items],
-        hint=_PERMISSION_HINT if _all_forbidden(items) else None,
-    )
+    if run_async:
+        return api_job_runner.accepted(
+            api_job_runner.submit(
+                db, api_job_runner.JOB_TYPE_REMEDIATE, tenant_id=tenant_id, user_id=user.id, actor=user.email, work=work
+            )
+        )
+    return work(db)

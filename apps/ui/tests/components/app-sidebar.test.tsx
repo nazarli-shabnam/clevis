@@ -290,7 +290,8 @@ describe("AppSidebar health dot and unread badge", () => {
   });
 
   it("shows an unread badge counting events newer than the last-seen timestamp", async () => {
-    localStorage.setItem("activity_last_seen_at", "2026-07-01T00:00:00Z");
+    localStorage.setItem("default_org", "acme");
+    localStorage.setItem("activity_last_seen_at:org:acme", "2026-07-01T00:00:00Z");
     cockpitResponse = {
       latest_score: null,
       recent_events: [
@@ -304,9 +305,25 @@ describe("AppSidebar health dot and unread badge", () => {
     await waitFor(() => expect(link).toHaveTextContent("1"));
   });
 
+  it("does not let another account's last-seen stamp hide this account's unread events (#798)", async () => {
+    localStorage.setItem("default_org", "acme");
+    // Activity was viewed (just now) for a different account only.
+    localStorage.setItem("activity_last_seen_at:org:other", "2026-12-31T00:00:00Z");
+    cockpitResponse = {
+      latest_score: null,
+      recent_events: [
+        { id: "1", type: "PushEvent", actor: "alice", actor_avatar: "", repo: "acme/api", summary: "pushed", created_at: "2026-07-15T00:00:00Z" },
+      ],
+    };
+    renderSidebar();
+
+    const link = await screen.findByRole("link", { name: /Activity/ });
+    await waitFor(() => expect(link).toHaveTextContent("1"));
+  });
+
   it("still renders when localStorage cannot be read (#591)", async () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation((key: string) => {
-      if (key === "activity_last_seen_at") throw new Error("storage blocked");
+      if (key.startsWith("activity_last_seen_at")) throw new Error("storage blocked");
       return null;
     });
     renderSidebar();
@@ -315,7 +332,8 @@ describe("AppSidebar health dot and unread badge", () => {
   });
 
   it("shows no unread badge when there are no events newer than last-seen", async () => {
-    localStorage.setItem("activity_last_seen_at", "2026-07-20T00:00:00Z");
+    localStorage.setItem("default_org", "acme");
+    localStorage.setItem("activity_last_seen_at:org:acme", "2026-07-20T00:00:00Z");
     cockpitResponse = {
       latest_score: null,
       recent_events: [
