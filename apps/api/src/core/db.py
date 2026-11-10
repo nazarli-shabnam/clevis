@@ -678,6 +678,12 @@ def set_session_user(db: Session, user_id: int) -> None:
     db.execute(text(f"SET app.user_id = {int(user_id)}"))
 
 
+def session_user_id(db: Session) -> int | None:
+    """The user `require_auth` recorded on this session (`app.user_id`), or None outside a request."""
+    raw = db.execute(text("SELECT current_setting('app.user_id', true)")).scalar()
+    return int(raw) if raw else None
+
+
 def set_session_tenant(db: Session, tenant_id: int) -> None:
     """Set app.tenant_id alone, for system paths with no acting user (e.g. the webhook receiver).
 

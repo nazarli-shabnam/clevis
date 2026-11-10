@@ -71,17 +71,10 @@ export default function MyWorkPage() {
     router.replace(`?${params.toString()}`, { scroll: false })
   }
 
-  const resolveQuery = useQuery({
-    queryKey: ["tokens.resolve", org],
-    queryFn: () => api.tokens.resolve(org),
-    enabled: org.trim().length > 0,
-    retry: false,
-  })
-
   const itemsQuery = useQuery({
     queryKey: [config.queryKey, org, page],
-    queryFn: () => config.fetch(org, page, PER_PAGE, resolveQuery.data?.token),
-    enabled: org.trim().length > 0 && !resolveQuery.isLoading,
+    queryFn: () => config.fetch(org, page, PER_PAGE),
+    enabled: org.trim().length > 0,
     retry: false,
   })
 
@@ -89,7 +82,7 @@ export default function MyWorkPage() {
     <>
       <PageHeader title="My Work" description={config.description} />
 
-      {org && !resolveQuery.isLoading && <DeveloperInbox org={org} token={resolveQuery.data?.token} />}
+      {org && <DeveloperInbox org={org} />}
 
       <div className="flex items-center gap-1.5 mb-5">
         {TABS.map((t) => {
@@ -117,7 +110,7 @@ export default function MyWorkPage() {
       {org && (
         <MyItemsList
           items={itemsQuery.data?.items ?? []}
-          isLoading={itemsQuery.isLoading || resolveQuery.isLoading}
+          isLoading={itemsQuery.isLoading}
           isError={itemsQuery.isError}
           errorMessage={
             itemsQuery.error instanceof Error ? itemsQuery.error.message : config.errorMessage

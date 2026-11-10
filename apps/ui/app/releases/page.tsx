@@ -85,15 +85,9 @@ export default function ReleasesPage() {
     setOrgChecked(true)
   }, [])
 
-  const resolveQuery = useQuery({
-    queryKey: ["tokens.resolve", org],
-    queryFn: () => api.tokens.resolve(org),
-    enabled: hasOrgLogin(org),
-    retry: false,
-  })
-
-  const token = resolveQuery.data?.token ?? ""
-  const queriesEnabled = hasOrgLogin(org) && !resolveQuery.isLoading
+  // The API resolves the installation token (or a workspace admin's saved PAT) server-side.
+  const token = ""
+  const queriesEnabled = hasOrgLogin(org)
 
   const releaseTimelineQuery = useQuery({
     queryKey: ["github.release-timeline", org, days],
@@ -126,7 +120,7 @@ export default function ReleasesPage() {
             </select>
           </div>
 
-          {releaseTimelineQuery.isLoading || resolveQuery.isLoading ? (
+          {releaseTimelineQuery.isLoading ? (
             <div className="px-4 py-8">
               <p className="text-sm text-muted-foreground animate-pulse">Loading…</p>
             </div>

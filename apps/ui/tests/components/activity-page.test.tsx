@@ -143,8 +143,8 @@ describe("ActivityPage", () => {
 
     renderPage();
 
-    await waitFor(() => expect(tokensResolveMock).toHaveBeenCalledWith("hp"));
-    await waitFor(() => expect(githubEventsMock).toHaveBeenCalled());
+    await waitFor(() => expect(githubEventsMock).toHaveBeenCalledWith("hp", ""));
+    expect(tokensResolveMock).not.toHaveBeenCalled(); // the secret is never fetched for a routine read
     expect(await screen.findByText(/no events yet/)).toBeInTheDocument();
   });
 
@@ -233,7 +233,7 @@ describe("ActivityPage", () => {
 
     renderPage();
 
-    await waitFor(() => expect(githubFailedRunsMock).toHaveBeenCalledWith("acme", "ghp_test"));
+    await waitFor(() => expect(githubFailedRunsMock).toHaveBeenCalledWith("acme", ""));
     expect(await screen.findByText(/acme\/api · CI/)).toBeInTheDocument();
     expect(screen.getByText("×3")).toBeInTheDocument();
     expect(await screen.findByText(/acme\/api · v1.0.0/)).toBeInTheDocument();
@@ -251,7 +251,7 @@ describe("ActivityPage", () => {
 
     renderPage();
 
-    await waitFor(() => expect(analyticsCockpitMock).toHaveBeenCalledWith("acme", "ghp_test"));
+    await waitFor(() => expect(analyticsCockpitMock).toHaveBeenCalledWith("acme", ""));
     expect(await screen.findByText("Commit Heatmap (52w)")).toBeInTheDocument();
     expect(screen.queryByText("No commit activity in the last year")).not.toBeInTheDocument();
   });

@@ -57,14 +57,9 @@ export default function CachesPage() {
     setConfirmOpen(false)
   }, [org])
 
-  const resolveQuery = useQuery({
-    queryKey: ["tokens.resolve", org],
-    queryFn: () => api.tokens.resolve(org),
-    enabled: hasOrg,
-    retry: false,
-  })
-  const token = resolveQuery.data?.token ?? ""
-  const queriesEnabled = hasOrg && !resolveQuery.isLoading
+  // The API resolves the installation token (or a workspace admin's saved PAT) server-side.
+  const token = ""
+  const queriesEnabled = hasOrg
 
   const reposQuery = useQuery({
     queryKey: ["repos.list", org],

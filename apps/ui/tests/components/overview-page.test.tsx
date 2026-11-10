@@ -149,7 +149,7 @@ describe("OverviewPage cockpit", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(cockpitMock).toHaveBeenCalledWith("acme", "ghp_test");
+      expect(cockpitMock).toHaveBeenCalledWith("acme");
     });
 
     await waitFor(() => {
@@ -200,7 +200,7 @@ describe("OverviewPage cockpit", () => {
     await waitFor(() => expect(screen.getByText("12")).toBeInTheDocument());
     expect(screen.getByText("87")).toBeInTheDocument();
     expect(screen.queryAllByText("Configure →")).toHaveLength(0);
-    expect(cockpitMock).toHaveBeenCalledWith("acme", undefined);
+    expect(cockpitMock).toHaveBeenCalledWith("acme");
   });
 
   it("still asks to configure when there is no PAT and the cockpit fails too", async () => {
@@ -611,7 +611,7 @@ describe("OverviewPage cockpit", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(myViewMock).toHaveBeenCalledWith("acme", "ghp_test");
+      expect(myViewMock).toHaveBeenCalledWith("acme");
     });
     await waitFor(() => {
       expect(screen.getByText("Fix bug")).toBeInTheDocument();

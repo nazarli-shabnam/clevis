@@ -52,18 +52,12 @@ export function CommandPalette() {
   const { data: installs = [] } = useQuery<InstallationMeta[]>({ queryKey: ["installations"], queryFn: () => api.installations.list() })
 
   // Repositories are only fetched while the palette is open, and only for an org scope (the list call is
-  // org-scoped). No token is sent unless a saved PAT resolves; an installed App is used by the API otherwise.
+  // org-scoped). No token is sent: the API uses the installed App, or a workspace admin's saved PAT.
   const org = scope?.kind === "org" ? scope.login : ""
-  const tokenQuery = useQuery({
-    queryKey: ["tokens.resolve", org],
-    queryFn: () => api.tokens.resolve(org),
-    enabled: open && org !== "",
-    retry: false,
-  })
   const reposQuery = useQuery({
     queryKey: ["repos.palette", org],
-    queryFn: () => api.repos.list(org, tokenQuery.data?.token ?? ""),
-    enabled: open && org !== "" && !tokenQuery.isLoading,
+    queryFn: () => api.repos.list(org, ""),
+    enabled: open && org !== "",
     staleTime: 60_000,
     retry: false,
   })
