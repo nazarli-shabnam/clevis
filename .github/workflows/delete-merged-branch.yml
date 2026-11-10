@@ -46,7 +46,7 @@ jobs:
               return skip("long-lived branch");
             }
 
-            // 3. Protected branch, and 4. tip moved after the merge (someone kept working on it after the PR closed).
+            // 3. Protected branch, and 4. tip moved after the PR closed (someone kept working on it).
             let info;
             try {
               info = await github.rest.repos.getBranch({ ...repo, branch });
