@@ -452,9 +452,9 @@ def test_security_matrix_asks_github_for_a_repo_whose_alerts_were_only_partly_in
         return {}
 
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request_paginated.return_value = [
+        _set_repos(mock_client, [
             {"name": "api", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}}},
-        ]
+        ])
         mock_client.return_value.request.side_effect = _request_side_effect
         resp = connected_client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
 
@@ -477,9 +477,9 @@ def test_security_matrix_asks_github_again_once_a_sync_record_has_aged_out(conne
         return {}
 
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request_paginated.return_value = [
+        _set_repos(mock_client, [
             {"name": "api", "default_branch": "main", "security_and_analysis": {}},
-        ]
+        ])
         mock_client.return_value.request.side_effect = _request_side_effect
         resp = connected_client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
 
