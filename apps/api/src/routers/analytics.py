@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
+from src.core.path_params import Owner
 from src.core.app_config import get_config
 from src.core.auth import UserOut, require_auth
 from src.core.db import RepoEventDailyCount, get_db, release_connection, set_session_user
@@ -947,7 +948,7 @@ def _cache_job_success_rate(db: Session, owner: str, actor: str | None = None) -
 
 @router.get("/me/analytics/cockpit/{owner}", response_model=CockpitResponse)
 async def personal_analytics_cockpit(
-    owner: str,
+    owner: Owner,
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),

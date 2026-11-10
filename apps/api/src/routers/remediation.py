@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, SecretStr
 from sqlalchemy.orm import Session
 
+from src.core.path_params import Owner, Repo
 from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
 from src.core.rbac import audit_tenant
@@ -42,8 +43,8 @@ class RemediateResponse(BaseModel):
     response_model=RemediateResponse,
 )
 def remediate_check(
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     check_id: str,
     body: RemediateRequest,
     user: UserOut = Depends(require_auth),

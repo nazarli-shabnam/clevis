@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, SecretStr
 from sqlalchemy.orm import Session
 
+from src.core.path_params import Owner, Repo
 from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
 from src.core.rbac import (
@@ -90,8 +91,8 @@ def _run(
 
 @router.post("/me/repos/{owner}/{repo}/workflow-lint", response_model=LintResponse)
 def workflow_lint_personal(
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     body: LintRequest,
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
@@ -121,8 +122,8 @@ def workflow_lint_personal(
 )
 def workflow_lint_org(
     org_login: str,
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     body: LintRequest,
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),

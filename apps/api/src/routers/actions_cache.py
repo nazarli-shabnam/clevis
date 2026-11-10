@@ -2,6 +2,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from src.core.path_params import Owner, Repo
 from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
 from src.core.rbac import audit_tenant
@@ -43,8 +44,8 @@ def _client_token(payload: CacheListInput | CacheClearInput) -> str | None:
 
 @router.post("/me/repos/{owner}/{repo}/actions-caches", response_model=CacheListResponse)
 def personal_list_caches(
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     payload: CacheListInput,
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
@@ -58,8 +59,8 @@ def personal_list_caches(
 
 @router.post("/me/repos/{owner}/{repo}/actions-caches/clear", response_model=CacheClearResponse)
 def personal_clear_caches(
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     payload: CacheClearInput,
     db: Session = Depends(get_db),
     user: UserOut = Depends(require_auth),

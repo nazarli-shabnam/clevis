@@ -11,6 +11,7 @@ import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from src.core.path_params import Owner, Repo
 from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
 from src.core.rbac import OrgContext, assert_owner_matches_org, audit_tenant, require_org_role
@@ -270,8 +271,8 @@ def _dispatch_all(
 @router.get("/orgs/{org_login}/repos/{owner}/{repo}/workflows", response_model=WorkflowsResponse)
 def org_list_workflows(
     org_login: str,
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),
@@ -287,8 +288,8 @@ def org_list_workflows(
 @router.get("/orgs/{org_login}/repos/{owner}/{repo}/actions/runs", response_model=RunsResponse)
 def org_list_runs(
     org_login: str,
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     per_page: int = Query(default=10, ge=1, le=100),
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     db: Session = Depends(get_db),
@@ -305,8 +306,8 @@ def org_list_runs(
 @router.post("/orgs/{org_login}/repos/{owner}/{repo}/workflows/{workflow_id}/dispatch", response_model=DispatchResponse)
 def org_dispatch_workflow(
     org_login: str,
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     workflow_id: int,
     payload: DispatchInput,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
@@ -325,8 +326,8 @@ def org_dispatch_workflow(
 @router.post("/orgs/{org_login}/repos/{owner}/{repo}/workflows/dispatch-all", response_model=DispatchAllResponse)
 def org_dispatch_all_workflows(
     org_login: str,
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     payload: DispatchAllInput,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     user: UserOut = Depends(require_auth),
@@ -343,8 +344,8 @@ def org_dispatch_all_workflows(
 
 @router.get("/me/repos/{owner}/{repo}/workflows", response_model=WorkflowsResponse)
 def personal_list_workflows(
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),
@@ -358,8 +359,8 @@ def personal_list_workflows(
 
 @router.get("/me/repos/{owner}/{repo}/actions/runs", response_model=RunsResponse)
 def personal_list_runs(
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     per_page: int = Query(default=10, ge=1, le=100),
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
@@ -374,8 +375,8 @@ def personal_list_runs(
 
 @router.post("/me/repos/{owner}/{repo}/workflows/{workflow_id}/dispatch", response_model=DispatchResponse)
 def personal_dispatch_workflow(
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     workflow_id: int,
     payload: DispatchInput,
     user: UserOut = Depends(require_auth),
@@ -393,8 +394,8 @@ def personal_dispatch_workflow(
 
 @router.post("/me/repos/{owner}/{repo}/workflows/dispatch-all", response_model=DispatchAllResponse)
 def personal_dispatch_all_workflows(
-    owner: str,
-    repo: str,
+    owner: Owner,
+    repo: Repo,
     payload: DispatchAllInput,
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import httpx
 import psycopg
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 import backfill
 import membership_reconcile
@@ -82,11 +82,20 @@ def _read_poll_seconds() -> int:
 
 
 class ClearActionsCachePayload(BaseModel):
-    owner: str = Field(min_length=1)
-    repo: str = Field(min_length=1)
+    # Interpolated into the GitHub URL below, so a queued payload must not be able to change its shape
+    # (``?``, ``#``, ``/``, ``%``, ``..``), whatever the API let through.
+    owner: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,38}$")
+    repo: str = Field(pattern=r"^[A-Za-z0-9._-]{1,100}$")
     token: str = Field(min_length=1)
     key: str | None = None
     ref: str | None = None
+
+    @field_validator("repo")
+    @classmethod
+    def _repo_not_a_dot_segment(cls, value: str) -> str:
+        if value in (".", ".."):
+            raise ValueError("repo must not be '.' or '..'")
+        return value
 
 
 class BackfillRepoEventsPayload(BaseModel):
