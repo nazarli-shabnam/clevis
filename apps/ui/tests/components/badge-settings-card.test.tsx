@@ -42,7 +42,8 @@ describe("BadgeSettingsCard", () => {
 
     expect(await screen.findByRole("checkbox")).not.toBeChecked()
     expect(screen.getByText(/Only the bare score/)).toBeInTheDocument()
-    expect(screen.getByRole("link", { name: "#577" })).toHaveAttribute("href", "https://github.com/nazarli-shabnam/clevis/issues/577")
+    expect(screen.getByText(/cached for up to 5 minutes.*rate-limited per client/)).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: "#577" })).not.toBeInTheDocument()
     expect(screen.queryByAltText(/preview/i)).not.toBeInTheDocument()
     expect(screen.queryByText("Markdown")).not.toBeInTheDocument()
   })
