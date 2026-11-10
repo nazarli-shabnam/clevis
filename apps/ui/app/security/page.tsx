@@ -552,6 +552,11 @@ export default function SecurityPage() {
                     key={c.id}
                     check={c}
                     owner={isOrgMemberOnly(memberships, scan.data.owner) ? undefined : scan.data.owner}
+                    // Waivers are an org-admin action on a connected Clevis org (the API 403/404s otherwise).
+                    waiveOrg={
+                      memberships.find((m) => m.role === "admin" && m.org_login.toLowerCase() === scan.data.owner.toLowerCase())
+                        ?.org_login
+                    }
                     token={token}
                     onRemediated={() => runScan()}
                   />
