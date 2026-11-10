@@ -97,6 +97,18 @@ describe("PullRequestsPage", () => {
     expect(await screen.findByText("No open pull requests")).toBeInTheDocument();
   });
 
+  it("shows loading, not the empty state, while the repository list is still pending (#796)", async () => {
+    localStorage.setItem("default_org", "acme");
+    reposListMock.mockReturnValue(new Promise(() => {})); // never settles
+
+    renderPage();
+
+    // The data call goes out at once: nothing waits on a saved-token lookup any more.
+    await waitFor(() => expect(reposListMock).toHaveBeenCalledWith("acme", ""));
+    expect(tokensResolveMock).not.toHaveBeenCalled();
+    expect(screen.queryByText(/No open pull requests/)).not.toBeInTheDocument();
+  });
+
   it("aggregates pull requests across every repo in the org, sorted newest first", async () => {
     localStorage.setItem("default_org", "acme");
     reposListMock.mockResolvedValue({

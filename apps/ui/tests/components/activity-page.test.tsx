@@ -148,6 +148,17 @@ describe("ActivityPage", () => {
     expect(await screen.findByText(/no events yet/)).toBeInTheDocument();
   });
 
+  it("shows loading, not 'no events yet', while the events request is still pending (#796)", async () => {
+    localStorage.setItem("default_org", "acme");
+    githubEventsMock.mockReturnValue(new Promise(() => {})); // never settles
+
+    renderPage();
+
+    await waitFor(() => expect(githubEventsMock).toHaveBeenCalledWith("acme", ""));
+    expect(tokensResolveMock).not.toHaveBeenCalled();
+    expect(screen.queryByText(/no events yet/)).not.toBeInTheDocument();
+  });
+
   it("still queries events when no PAT is saved, relying on the API's installation-token fallback (#251)", async () => {
     localStorage.setItem("default_org", "acme");
     tokensResolveMock.mockResolvedValue({ token: "" });

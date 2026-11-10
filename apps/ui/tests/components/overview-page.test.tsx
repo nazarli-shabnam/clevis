@@ -134,6 +134,18 @@ describe("OverviewPage cockpit", () => {
     }
   });
 
+  it("does not show 'Nothing here right now' while My View is still pending (#796)", async () => {
+    localStorage.setItem("default_org", "acme");
+    cockpitMock.mockResolvedValue(EMPTY_COCKPIT);
+    myViewMock.mockReturnValue(new Promise(() => {})); // never settles
+
+    renderPage();
+
+    await waitFor(() => expect(myViewMock).toHaveBeenCalledWith("acme"));
+    expect(tokensResolveMock).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Nothing here right now/)).not.toBeInTheDocument();
+  });
+
   it("fires a single cockpit call (no waterfall) and renders real values for all 4 cards", async () => {
     localStorage.setItem("default_org", "acme");
     tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
