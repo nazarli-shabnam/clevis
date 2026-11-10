@@ -19,12 +19,12 @@ import {
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
 import { useActiveScope, type ActiveScope } from "@/lib/active-scope"
+import { readActivityLastSeen } from "@/lib/activity-last-seen"
 import { inviteMembersHref, membersHref } from "@/lib/members-href"
 import type { InstallationMeta, MyOrgMembership } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
 import { NAV_GROUPS } from "@/lib/nav-items"
 
-const ACTIVITY_LAST_SEEN_KEY = "activity_last_seen_at"
 
 function healthDotColor(score: number | null | undefined): string | null {
   if (score == null) return null
@@ -264,13 +264,10 @@ export function AppSidebar() {
   // Read after mount (never during render: the server render has no localStorage, and it can throw
   // in private mode) and again on navigation, since the Activity page writes the stamp when opened.
   const [lastSeenAt, setLastSeenAt] = useState<string | null>(null)
+  const scopeKind = scope?.kind
   useEffect(() => {
-    try {
-      setLastSeenAt(localStorage.getItem(ACTIVITY_LAST_SEEN_KEY))
-    } catch {
-      setLastSeenAt(null)
-    }
-  }, [pathname])
+    setLastSeenAt(scopeKind && scopeLogin ? readActivityLastSeen(scopeKind, scopeLogin) : null)
+  }, [pathname, scopeKind, scopeLogin])
   // On the Activity page itself everything is being seen right now.
   const unreadCount =
     pathname === "/activity"
