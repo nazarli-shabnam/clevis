@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -13,6 +13,7 @@ import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
 import { isOrgMemberOnly } from "@/lib/members-href"
 import { relativeTime } from "@/lib/format"
+import { PULL_SORT_LABELS, ageDays, isStale, sortPulls, type PullSort } from "@/lib/pull-triage"
 import type { MyOrgMembership, PullSummary } from "@/lib/api/types"
 
 // No repo-count cap here; requests are fanned out in batches so large orgs don't fire
@@ -27,7 +28,32 @@ interface PullRow extends PullSummary {
 
 type GroupBy = "repo" | "author"
 
-const COLUMNS: DataTableColumn<PullRow>[] = [
+// Mirrors the server's default (services/pr_nudge.py), used until a response reports the real one.
+const DEFAULT_STALE_DAYS = 3
+
+/** A draft is never stale (the nudge skips it); otherwise stale PRs are the ones the nudge would act on. */
+function pullStatus(p: PullRow, staleDays: number): "Draft" | "Stale" | "Open" {
+  return p.draft ? "Draft" : isStale(p, staleDays) ? "Stale" : "Open"
+}
+
+function DraftChip() {
+  return <span className="stat-chip shrink-0">Draft</span>
+}
+
+/** "5 days ago", highlighted when the PR is stale: the same PRs "Nudge stale PRs" would act on. */
+function Age({ pull, staleDays }: { pull: PullRow; staleDays: number }) {
+  const stale = isStale(pull, staleDays)
+  return (
+    <span
+      className={stale ? "text-warning font-medium" : undefined}
+      title={stale ? `Open ${ageDays(pull.created_at)} days with no activity for ${staleDays}+ days` : undefined}
+    >
+      {relativeTime(pull.created_at)}
+    </span>
+  )
+}
+
+const pullColumns = (staleDays: number): DataTableColumn<PullRow>[] => [
   {
     key: "repo",
     header: "Repo",
@@ -67,8 +93,28 @@ const COLUMNS: DataTableColumn<PullRow>[] = [
     align: "right",
     sortValue: (p) => p.created_at,
     cellClassName: "text-muted-foreground whitespace-nowrap",
-    render: (p) => relativeTime(p.created_at),
+    render: (p) => <Age pull={p} staleDays={staleDays} />,
     csvValue: (p) => p.created_at,
+  },
+  {
+    key: "updated",
+    header: "Updated",
+    align: "right",
+    sortValue: (p) => p.updated_at ?? p.created_at,
+    cellClassName: "text-muted-foreground whitespace-nowrap",
+    render: (p) => relativeTime(p.updated_at ?? p.created_at),
+    csvValue: (p) => p.updated_at ?? p.created_at,
+  },
+  {
+    key: "status",
+    header: "Status",
+    sortValue: (p) => pullStatus(p, staleDays),
+    csvValue: (p) => pullStatus(p, staleDays),
+    cellClassName: "whitespace-nowrap",
+    render: (p) => {
+      const status = pullStatus(p, staleDays)
+      return status === "Stale" ? <span className="text-warning font-medium">Stale</span> : <span className="text-muted-foreground">{status}</span>
+    },
   },
   {
     key: "url",
@@ -90,6 +136,7 @@ export default function PullRequestsPage() {
   const hasOrg = org.trim().length > 0
 
   const [groupBy, setGroupBy] = useState<GroupBy>("repo")
+  const [sort, setSort] = useState<PullSort>("newest")
 
   // Nudging posts on GitHub and needs org admin; plain members would just get a 403.
   const { data: memberships = [] } = useQuery<MyOrgMembership[]>({
@@ -124,6 +171,7 @@ export default function PullRequestsPage() {
       const rows: PullRow[] = []
       // A repo whose request fails must not look like a repo with no PRs.
       const failedRepos: string[] = []
+      let staleDays: number | undefined
       let firstError = ""
       for (let i = 0; i < repoNames.length; i += REPO_BATCH_SIZE) {
         const batch = repoNames.slice(i, i + REPO_BATCH_SIZE)
@@ -135,7 +183,10 @@ export default function PullRequestsPage() {
                 queryFn: () => api.repos.pulls(org, org, repo, token),
                 staleTime: REPO_PULLS_STALE_MS,
               })
-              .then((r) => r.pulls.map((p) => ({ ...p, repo })))
+              .then((r) => {
+                staleDays ??= r.stale_days
+                return r.pulls.map((p) => ({ ...p, repo }))
+              })
               .catch((e: unknown) => {
                 failedRepos.push(repo)
                 if (!firstError && e instanceof Error) firstError = e.message
@@ -148,14 +199,16 @@ export default function PullRequestsPage() {
       if (repoNames.length > 0 && failedRepos.length === repoNames.length) {
         throw new Error(firstError || "Failed to load pull requests.")
       }
-      rows.sort((a, b) => b.created_at.localeCompare(a.created_at))
-      return { rows, failedRepos }
+      return { rows, failedRepos, staleDays: staleDays ?? DEFAULT_STALE_DAYS }
     },
     enabled: queriesEnabled && !!reposQuery.data,
     retry: false,
   })
 
-  const pulls = pullsQuery.data?.rows ?? []
+  const staleDays = pullsQuery.data?.staleDays ?? DEFAULT_STALE_DAYS
+  const columns = useMemo(() => pullColumns(staleDays), [staleDays])
+  const loadedRows = pullsQuery.data?.rows
+  const pulls = useMemo(() => sortPulls(loadedRows ?? [], sort), [loadedRows, sort])
   const failedRepos = pullsQuery.data?.failedRepos ?? []
   const isLoading = reposQuery.isLoading || (reposQuery.isSuccess && pullsQuery.isLoading)
 
@@ -240,6 +293,16 @@ export default function PullRequestsPage() {
             >
               {nudge.isPending ? "Nudging…" : nudgeArmed ? "Click again to confirm" : "Nudge stale PRs"}
             </Button>}
+            <select
+              aria-label="Sort pull requests"
+              value={sort}
+              onChange={(e) => setSort(e.target.value as PullSort)}
+              className="bg-elevated border border-border rounded-md text-xs text-muted-foreground px-2 py-1 focus:outline-none focus:border-primary"
+            >
+              {(Object.keys(PULL_SORT_LABELS) as PullSort[]).map((k) => (
+                <option key={k} value={k}>{PULL_SORT_LABELS[k]}</option>
+              ))}
+            </select>
             <div className="flex items-center gap-1.5" role="group" aria-label="Group pull requests by">
               {(["repo", "author"] as const).map((g) => (
                 <button
@@ -317,6 +380,9 @@ export default function PullRequestsPage() {
                         className="text-xs text-muted-foreground hover:text-foreground transition-colors truncate block"
                       >
                         <span className="text-foreground/60">{p.repo}</span> #{p.number} {p.title}
+                        {p.draft && <> <DraftChip /></>}
+                        {" · "}
+                        <Age pull={p} staleDays={staleDays} />
                       </a>
                     </li>
                   ))}
@@ -326,7 +392,7 @@ export default function PullRequestsPage() {
           </div>
         ) : (
           <DataTable
-            columns={COLUMNS}
+            columns={columns}
             data={pulls}
             getRowKey={(p) => `${p.repo}-${p.number}`}
             pageSize={50}

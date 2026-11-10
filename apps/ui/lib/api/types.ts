@@ -326,12 +326,17 @@ export interface PullSummary {
   user: string | null
   created_at: string
   html_url: string
+  /** Last push or comment; absent on responses from an API that predates it. */
+  updated_at?: string | null
+  draft?: boolean
 }
 
 export interface RepoPullsResponse {
   repository: string
   total: number
   pulls: PullSummary[]
+  /** The instance's stale-PR threshold (pr_nudge_stale_days), in days. */
+  stale_days?: number
 }
 
 export interface RepoSecurityResponse {

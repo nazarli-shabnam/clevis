@@ -51,16 +51,10 @@ class NudgeResponse(BaseModel):
 
 
 def _settings() -> tuple[int, str]:
-    try:
-        stale_days = int(get_config(pr_nudge.STALE_DAYS_KEY, str(pr_nudge.DEFAULT_STALE_DAYS)))
-    except ValueError:
-        stale_days = pr_nudge.DEFAULT_STALE_DAYS
     mode = get_config(pr_nudge.MODE_KEY, pr_nudge.DEFAULT_MODE)
     if mode not in pr_nudge.MODES:
         mode = pr_nudge.DEFAULT_MODE
-    # Clamp: the value is DB-editable and only the PUT route bounds it at 1 -- an
-    # absurd upper value would waste a full paginated PR crawl.
-    return min(365, max(1, stale_days)), mode
+    return pr_nudge.configured_stale_days(), mode
 
 
 def _run(client: GitHubClient, owner: str, repo: str) -> NudgeResponse:

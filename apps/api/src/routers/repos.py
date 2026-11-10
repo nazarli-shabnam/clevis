@@ -23,7 +23,7 @@ from src.schemas.repos import (
     RepoStatsInput,
     RepoStatsResponse,
 )
-from src.services import flow_metrics
+from src.services import flow_metrics, pr_nudge
 from src.services.github_client import GitHubClient, github_error as _github_error
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token
 
@@ -196,10 +196,17 @@ def _list_pulls(owner: str, repo: str, token: str, state: str) -> RepoPullsRespo
             "user": (p.get("user") or {}).get("login"),
             "created_at": p["created_at"],
             "html_url": p["html_url"],
+            "updated_at": p.get("updated_at"),
+            "draft": bool(p.get("draft")),
         }
         for p in pulls
     ]
-    return {"repository": f"{owner}/{repo}", "total": len(summaries), "pulls": summaries}
+    return {
+        "repository": f"{owner}/{repo}",
+        "total": len(summaries),
+        "pulls": summaries,
+        "stale_days": pr_nudge.configured_stale_days(),
+    }
 
 
 @router.post("/orgs/{org_login}/repos", response_model=RepoListResponse)
