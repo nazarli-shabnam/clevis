@@ -27,6 +27,7 @@ from src.routers import (
     github,
     github_auth,
     health,
+    ingestion_health,
     installations,
     invitations,
     issues,
@@ -124,6 +125,7 @@ app.include_router(health.router)
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(github_auth.router, prefix="/auth/github", tags=["github-auth"])
 app.include_router(installations.router, tags=["installations"])
+app.include_router(ingestion_health.router, tags=["orgs"])
 app.include_router(orgs.router, tags=["orgs"])
 app.include_router(invitations.router, tags=["invitations"])
 app.include_router(org_memberships.router, tags=["orgs"])

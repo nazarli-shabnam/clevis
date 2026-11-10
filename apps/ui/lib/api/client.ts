@@ -16,6 +16,7 @@ import type {
   AnalyticsOverviewResponse,
   LatestScanResponse,
   OrgMembership,
+  IngestionHealth,
   AdminAuditFilters,
   AuditLogOut,
   OrgAuditFilters,
@@ -729,6 +730,7 @@ export const api = {
       put<OrgMembership>(`/orgs/${encodeURIComponent(orgLogin)}/members/${userId}`, { role }),
     remove: (orgLogin: string, userId: number) => del(`/orgs/${encodeURIComponent(orgLogin)}/members/${userId}`),
   },
+  ingestionHealth: (orgLogin: string) => get<IngestionHealth>(`/orgs/${encodeURIComponent(orgLogin)}/ingestion-health`),
   invitations: {
     create: (orgLogin: string, email: string) =>
       post<InvitationCreateResponse>(`/orgs/${encodeURIComponent(orgLogin)}/invitations`, { email }),
