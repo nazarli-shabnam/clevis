@@ -670,6 +670,9 @@ export const api = {
     list: (orgLogin: string) => get<CheckWaiver[]>(`/orgs/${encodeURIComponent(orgLogin)}/waivers`),
     create: (orgLogin: string, body: CheckWaiverInput) =>
       post<CheckWaiver>(`/orgs/${encodeURIComponent(orgLogin)}/waivers`, body),
+    // Renew or edit: PUT replaces the waiver's check, repos, reason, owner and expiry.
+    update: (orgLogin: string, id: number, body: CheckWaiverInput) =>
+      put<CheckWaiver>(`/orgs/${encodeURIComponent(orgLogin)}/waivers/${id}`, body),
     revoke: (orgLogin: string, id: number) => del(`/orgs/${encodeURIComponent(orgLogin)}/waivers/${id}`),
   },
   notificationDestinations: {

@@ -6,6 +6,7 @@ import { CheckCircle, MinusCircle, WarningCircle, XCircle, ArrowSquareOut, Wrenc
 import { api } from "@/lib/api/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { WAIVABLE_CHECKS, WaiverForm } from "@/components/waiver-form"
 import type { CheckResult, CheckValue } from "@/lib/api/types"
 
 // check_ids the API can auto-fix. Keep in sync with check_remediation.supported_check_ids().
@@ -22,6 +23,8 @@ interface CheckCardProps {
   token?: string
   // Called after a "Fix this" succeeds, so the page can re-scan.
   onRemediated?: () => void
+  // When set (the caller is an admin of this Clevis org), a failing check offers "Waive…" for that org.
+  waiveOrg?: string
 }
 
 const severityLabel: Record<string, string> = {
@@ -195,6 +198,37 @@ function FileAsIssue({ check, owner, token }: { check: CheckResult; owner: strin
   )
 }
 
+function WaiveThis({ check, orgLogin }: { check: CheckResult; orgLogin: string }) {
+  const [open, setOpen] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  if (saved) {
+    return <p className="mt-2 text-xs text-accent">Waiver added. It applies from the next scan.</p>
+  }
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mt-2 ml-3 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+      >
+        Waive…
+      </button>
+    )
+  }
+  return (
+    <div className="mt-2 border-t border-border/40 pt-2">
+      <WaiverForm
+        orgLogin={orgLogin}
+        fixedCheckId={check.id}
+        compact
+        onSaved={() => setSaved(true)}
+        onCancel={() => setOpen(false)}
+      />
+    </div>
+  )
+}
+
 function FixThisButton({
   check,
   owner,
@@ -257,7 +291,7 @@ function FixThisButton({
   )
 }
 
-export function CheckCard({ check, owner, token, onRemediated }: CheckCardProps) {
+export function CheckCard({ check, owner, token, onRemediated, waiveOrg }: CheckCardProps) {
   const pass = check.status === "pass"
   const notApplicable = check.status === "not_applicable"
   const fail = check.status === "fail"
@@ -316,6 +350,7 @@ export function CheckCard({ check, owner, token, onRemediated }: CheckCardProps)
           <FixThisButton check={check} owner={owner} token={token} onRemediated={onRemediated} />
         )}
         {fail && owner && <FileAsIssue check={check} owner={owner} token={token} />}
+        {fail && waiveOrg && check.id in WAIVABLE_CHECKS && <WaiveThis check={check} orgLogin={waiveOrg} />}
       </div>
     </div>
   )
