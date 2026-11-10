@@ -15,6 +15,7 @@ import { CHART_COLORS } from "@/lib/charts/theme"
 import { relativeTime } from "@/lib/format"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
+import { writeActivityLastSeen } from "@/lib/activity-last-seen"
 import { useAuth } from "@/lib/auth-context"
 
 const EVENTS_REFRESH_SECONDS = 30
@@ -24,24 +25,23 @@ const HEATMAP_COLOR_SCALE = [CHART_COLORS.grid, "#1d4ed8", "#3b82f6", "#60a5fa",
 const queryErrorMessage = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback)
 
 export default function ActivityPage() {
-  // Marks cockpit events as read so the sidebar's unread badge clears. Stamped again on leaving, so
-  // events that arrived while the page was open don't come back as unread, and on pagehide for a
-  // tab that is closed rather than navigated away from.
+  const { scope } = useActiveScope()
+  const scopeKind = scope?.kind
+  const scopeLogin = scope?.login
+
+  // Marks the active account's cockpit events as read so the sidebar's unread badge clears. Stamped again
+  // on leaving (or switching account, which re-runs this effect), so events that arrived while the page
+  // was open don't come back as unread, and on pagehide for a tab that is closed rather than navigated away.
   useEffect(() => {
-    const stamp = () => {
-      try {
-        localStorage.setItem("activity_last_seen_at", new Date().toISOString())
-      } catch {
-        // Storage blocked (private mode): the badge simply can't clear.
-      }
-    }
+    if (!scopeKind || !scopeLogin) return
+    const stamp = () => writeActivityLastSeen(scopeKind, scopeLogin)
     stamp()
     window.addEventListener("pagehide", stamp)
     return () => {
       window.removeEventListener("pagehide", stamp)
       stamp()
     }
-  }, [])
+  }, [scopeKind, scopeLogin])
 
   // /jobs is workspace-admin only; don't poll a 403 for everyone else.
   const { user } = useAuth()
@@ -53,7 +53,6 @@ export default function ActivityPage() {
     enabled: isWorkspaceAdmin,
   })
 
-  const { scope } = useActiveScope()
   const org = scope?.login ?? ""
   // Events, failed runs and releases are org endpoints; a personal account would 404.
   const isOrg = scope?.kind === "org"

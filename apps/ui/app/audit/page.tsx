@@ -17,6 +17,7 @@ import type { AdminAuditFilters, AuditLogOut, JobOut } from "@/lib/api/types"
 const JOB_STATUS_COLOR: Record<JobOut["status"], string> = {
   queued:     "text-muted-foreground",
   processing: "text-yellow-400",
+  running:    "text-yellow-400",
   done:       "text-accent",
   failed:     "text-destructive",
 }

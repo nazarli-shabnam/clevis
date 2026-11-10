@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from src.core.app_config import get_config
 from src.core.auth import UserOut, require_auth
-from src.core.db import RepoEventDailyCount, get_db
+from src.core.db import RepoEventDailyCount, get_db, release_connection, set_session_user
 from src.core.rbac import (
     OrgContext,
     assert_owner_matches_org,
@@ -45,7 +45,7 @@ from src.schemas.analytics import (
     ScanExportResponse,
     ScanHistoryEntry,
 )
-from src.services import notifications, scan_service
+from src.services import api_job_runner, notifications, scan_limiter, scan_service
 from src.services.analytics_service import (
     get_account_type,
     get_overview,
@@ -81,13 +81,13 @@ _COCKPIT_CACHE_TTL_SECONDS = 60
 _cockpit_cache: dict[tuple[int, str, str], tuple[float, CockpitResponse]] = {}
 
 
-async def _run_overview(
+def _overview_blocking(
     owner: str, token: str, account_type: str = "Organization", score_hygiene: bool | None = None
 ) -> AnalyticsResponse:
+    """The scan itself (hundreds of GitHub calls), with GitHub failures mapped to HTTP errors. Blocking:
+    callers run it on a worker thread, either the request's or an async job's."""
     try:
-        return await anyio.to_thread.run_sync(
-            lambda: get_overview(owner=owner, token=token, account_type=account_type, score_hygiene=score_hygiene)
-        )
+        return get_overview(owner=owner, token=token, account_type=account_type, score_hygiene=score_hygiene)
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=400, detail=f"GitHub API error: {exc.response.status_code}")
     except httpx.RequestError:
@@ -95,6 +95,12 @@ async def _run_overview(
     except Exception:
         logger.exception("analytics_overview failed")
         raise HTTPException(status_code=500, detail="Internal error")
+
+
+async def _run_overview(
+    owner: str, token: str, account_type: str = "Organization", score_hygiene: bool | None = None
+) -> AnalyticsResponse:
+    return await anyio.to_thread.run_sync(lambda: _overview_blocking(owner, token, account_type, score_hygiene))
 
 
 async def _get_account_type(owner: str, token: str) -> str:
@@ -257,6 +263,8 @@ async def org_analytics_overview(
     payload: AnalyticsInput,
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     db: Session = Depends(get_db),
+    user: UserOut = Depends(require_auth),
+    run_async: bool = Query(False, alias="async"),
 ):
     assert_owner_matches_org(payload.owner, ctx)
     client_token = payload.token.get_secret_value() if payload.token else None
@@ -276,9 +284,34 @@ async def org_analytics_overview(
         raise HTTPException(status_code=403, detail=str(exc))
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    result = await _run_overview(payload.owner, token, score_hygiene=org_scores_hygiene(ctx.org))
+    score_hygiene = org_scores_hygiene(ctx.org)
+    if run_async:
+        # Plain values only: the request session (and `ctx.org` with it) is gone by the time the job runs.
+        org_id, tenant_id, owner = ctx.org.id, ctx.org.tenant_id, payload.owner
 
-    await anyio.to_thread.run_sync(lambda: scan_service.persist_scan_and_alert(db, ctx.org, result, ctx.org.tenant_id))
+        def work(session: Session) -> dict:
+            with scan_limiter.scan_slot(f"org:{tenant_id}"):
+                result = _overview_blocking(owner, token, score_hygiene=score_hygiene)
+            org = org_repo.get_by_id(session, org_id)
+            scan_service.persist_scan_and_alert(session, org, result, tenant_id)
+            return result
+
+        return api_job_runner.accepted(
+            await anyio.to_thread.run_sync(
+                lambda: api_job_runner.submit(
+                    db, api_job_runner.JOB_TYPE_ANALYTICS, tenant_id=tenant_id,
+                    user_id=ctx.membership.user_id, actor=user.email, work=work,
+                )
+            )
+        )
+    # The scan holds no DB connection: read what the persist step needs, release the connection, scan, then
+    # reconnect with the same RLS context. (`ctx.org` is expired by the release and reloads on first use.)
+    tenant_id, user_id = ctx.org.tenant_id, ctx.membership.user_id
+    release_connection(db)
+    with scan_limiter.scan_slot(f"org:{tenant_id}"):
+        result = await _run_overview(payload.owner, token, score_hygiene=score_hygiene)
+    set_tenant_session_context(db, tenant_id, user_id)
+    await anyio.to_thread.run_sync(lambda: scan_service.persist_scan_and_alert(db, ctx.org, result, tenant_id))
     return result
 
 
@@ -287,6 +320,7 @@ async def personal_analytics_overview(
     payload: AnalyticsInput,
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
+    run_async: bool = Query(False, alias="async"),
 ):
     client_token = payload.token.get_secret_value() if payload.token else None
     try:
@@ -299,11 +333,33 @@ async def personal_analytics_overview(
         raise HTTPException(status_code=403, detail=str(exc))
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    score_hygiene = await anyio.to_thread.run_sync(lambda: _hygiene_setting_for_member(db, user, payload.owner))
+    # No DB connection is held across the GitHub calls below (see release_connection).
+    release_connection(db)
     account_type = await _get_account_type(payload.owner, token)
     if account_type == "User" and client_token is not None and token == client_token:
         await _require_token_owns_login(payload.owner, token)
-    score_hygiene = await anyio.to_thread.run_sync(lambda: _hygiene_setting_for_member(db, user, payload.owner))
-    result = await _run_overview(payload.owner, token, account_type=account_type, score_hygiene=score_hygiene)
+    if run_async:
+        owner = payload.owner
+
+        def work(session: Session) -> dict:
+            with scan_limiter.scan_slot(f"user:{user.id}"):
+                result = _overview_blocking(owner, token, account_type=account_type, score_hygiene=score_hygiene)
+            _persist_personal_scan(session, user, result)
+            return result
+
+        # Tenant context is set per-statement by the persist path (it resolves the org or personal tenant).
+        return api_job_runner.accepted(
+            await anyio.to_thread.run_sync(
+                lambda: api_job_runner.submit(
+                    db, api_job_runner.JOB_TYPE_ANALYTICS, tenant_id=None, user_id=user.id,
+                    actor=user.email, work=work,
+                )
+            )
+        )
+    with scan_limiter.scan_slot(f"user:{user.id}"):
+        result = await _run_overview(payload.owner, token, account_type=account_type, score_hygiene=score_hygiene)
+    set_session_user(db, user.id)
     # owner can be any account the user has a token for (BYO-token); where the scan is stored depends
     # on whether they belong to that org (see _persist_personal_scan).
     await anyio.to_thread.run_sync(lambda: _persist_personal_scan(db, user, result))

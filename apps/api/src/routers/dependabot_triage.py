@@ -1,10 +1,13 @@
 """Dependabot auto-triage endpoints: per-repo opt-in/mode (PUT) and sweep run (POST,
 org-admin only, dry_run makes no GitHub writes). Every decision is audit-logged.
-Approving needs ``pull_requests: write``; merging needs ``contents: write``.
+Approving needs ``pull_requests: write``; merging needs ``contents: write``. With ``?async=1`` the sweep
+runs as a tracked job (``202 {"job_id"}``, result via ``GET /jobs/{id}``).
 """
 
+from typing import NamedTuple
+
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, SecretStr
 from sqlalchemy.orm import Session
 
@@ -12,7 +15,7 @@ from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
 from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role
 from src.repositories import audit_repo, automation_settings_repo
-from src.services import dependabot_triage
+from src.services import api_job_runner, dependabot_triage
 from src.services.github_client import GitHubClient
 from src.services.token_resolution import NoGitHubTokenAvailable, pick_client_token, resolve_org_token
 
@@ -50,6 +53,13 @@ class DecisionOut(BaseModel):
 
 class TriageResponse(BaseModel):
     decisions: list[DecisionOut]
+
+
+class _TriageSetting(NamedTuple):
+    repo: str
+    enabled: bool
+    mode: str | None
+    merge_method: str
 
 
 @router.get("/orgs/{org_login}/repos/{owner}/{repo}/automation/dependabot-triage")
@@ -110,7 +120,8 @@ def run_triage(
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),
-) -> TriageResponse:
+    run_async: bool = Query(False, alias="async"),
+):
     try:
         token = resolve_org_token(
             db,
@@ -123,8 +134,11 @@ def run_triage(
 
     # GitHub repo names are case-insensitive; key and look up lowercased so "Acme/API" and
     # "acme/api" resolve to the same saved setting (and the same repo isn't run twice).
+    # Plain snapshots, not ORM rows: an async run outlives this request's session.
     settings = {
-        s.repo.lower(): s
+        s.repo.lower(): _TriageSetting(
+            s.repo, bool(s.enabled), s.mode, (s.extra or {}).get("merge_method", "squash")
+        )
         for s in automation_settings_repo.list_for_feature(db, ctx.org.tenant_id, _FEATURE)
     }
     # `repos: null` (omitted) means "every configured repo"; an explicit `repos: []`
@@ -139,50 +153,63 @@ def run_triage(
         {"repos": target, "dry_run": body.dry_run}, tenant_id=ctx.org.tenant_id,
     )
 
-    client = GitHubClient(token)
-    out: list[DecisionOut] = []
-    forbidden_repos = 0
-    for full_repo in target:
-        owner_r, _, name_r = full_repo.partition("/")
-        if not name_r:
-            owner_r, name_r = ctx.org.github_login, full_repo
-        setting = settings.get(full_repo.lower()) or settings.get(f"{owner_r}/{name_r}".lower())
-        try:
-            decisions = dependabot_triage.triage(
-                client,
-                owner_r,
-                name_r,
-                enabled=bool(setting and setting.enabled),
-                mode=(setting.mode if setting else dependabot_triage.MODE_APPROVE_ONLY),
-                merge_method=((setting.extra or {}).get("merge_method", "squash") if setting else "squash"),
-                dry_run=body.dry_run,
-            )
-        except httpx.HTTPStatusError as exc:
-            # 403 is almost always a missing scope. Record it against this repo so earlier
-            # repos' results (already acted on GitHub) are still returned; only if every repo
-            # was forbidden does the whole call fail with the hint.
-            if exc.response.status_code == 403:
-                forbidden_repos += 1
-                decisions = [dependabot_triage.Decision(None, "", "error", _PERMISSION_HINT)]
-            else:
-                decisions = [dependabot_triage.Decision(None, "", "error", f"GitHub API error: {exc.response.status_code}")]
-        except httpx.RequestError:
-            decisions = [dependabot_triage.Decision(None, "", "error", "GitHub API unreachable")]
+    owner = ctx.org.github_login
+    tenant_id = ctx.org.tenant_id
 
-        if not decisions and not (setting and setting.enabled):
-            decisions = [dependabot_triage.Decision(None, "", "skipped", "not enabled for this repo")]
+    def work(session: Session) -> TriageResponse:
+        client = GitHubClient(token)
+        out: list[DecisionOut] = []
+        forbidden_repos = 0
+        for full_repo in target:
+            owner_r, _, name_r = full_repo.partition("/")
+            if not name_r:
+                owner_r, name_r = owner, full_repo
+            setting = settings.get(full_repo.lower()) or settings.get(f"{owner_r}/{name_r}".lower())
+            try:
+                decisions = dependabot_triage.triage(
+                    client,
+                    owner_r,
+                    name_r,
+                    enabled=bool(setting and setting.enabled),
+                    mode=(setting.mode if setting else dependabot_triage.MODE_APPROVE_ONLY),
+                    merge_method=(setting.merge_method if setting else "squash"),
+                    dry_run=body.dry_run,
+                )
+            except httpx.HTTPStatusError as exc:
+                # 403 is almost always a missing scope. Record it against this repo so earlier
+                # repos' results (already acted on GitHub) are still returned; only if every repo
+                # was forbidden does the whole call fail with the hint.
+                if exc.response.status_code == 403:
+                    forbidden_repos += 1
+                    decisions = [dependabot_triage.Decision(None, "", "error", _PERMISSION_HINT)]
+                else:
+                    decisions = [dependabot_triage.Decision(None, "", "error", f"GitHub API error: {exc.response.status_code}")]
+            except httpx.RequestError:
+                decisions = [dependabot_triage.Decision(None, "", "error", "GitHub API unreachable")]
 
-        for d in decisions:
-            out.append(
-                DecisionOut(repo=full_repo, number=d.number, title=d.title, action=d.action, reason=d.reason)
+            if not decisions and not (setting and setting.enabled):
+                decisions = [dependabot_triage.Decision(None, "", "skipped", "not enabled for this repo")]
+
+            for d in decisions:
+                out.append(
+                    DecisionOut(repo=full_repo, number=d.number, title=d.title, action=d.action, reason=d.reason)
+                )
+                # audit_repo.write commits per call, so a decision already acted on GitHub is
+                # never left unaudited by a later repo's failure.
+                audit_repo.write(
+                    session, user.email, f"dependabot_triage.{d.action}",
+                    f"{full_repo}#{d.number}" if d.number else full_repo,
+                    {"reason": d.reason}, tenant_id=tenant_id,
+                )
+        if target and forbidden_repos == len(target):
+            raise HTTPException(status_code=400, detail=_PERMISSION_HINT)
+        return TriageResponse(decisions=out)
+
+    if run_async:
+        return api_job_runner.accepted(
+            api_job_runner.submit(
+                db, api_job_runner.JOB_TYPE_DEPENDABOT_TRIAGE,
+                tenant_id=tenant_id, user_id=user.id, actor=user.email, work=work,
             )
-            # audit_repo.write commits per call, so a decision already acted on GitHub is
-            # never left unaudited by a later repo's failure.
-            audit_repo.write(
-                db, user.email, f"dependabot_triage.{d.action}",
-                f"{full_repo}#{d.number}" if d.number else full_repo,
-                {"reason": d.reason}, tenant_id=ctx.org.tenant_id,
-            )
-    if target and forbidden_repos == len(target):
-        raise HTTPException(status_code=400, detail=_PERMISSION_HINT)
-    return TriageResponse(decisions=out)
+        )
+    return work(db)

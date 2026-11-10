@@ -4,6 +4,34 @@ import { api, errorDetail } from "@/lib/api/client";
 
 const TOKEN_KEY = "clevis:token";
 
+// The scan runs as a job: the POST answers 202 with an id and the first poll finds it done.
+function stubJobResult(result: unknown) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((_url: string, init?: RequestInit) =>
+      Promise.resolve(
+        init?.method === "POST"
+          ? new Response(JSON.stringify({ job_id: 1 }), { status: 202 })
+          : new Response(JSON.stringify({ id: 1, status: "done", result: JSON.stringify(result) }), { status: 200 }),
+      ),
+    ),
+  );
+}
+
+async function settleJob<T>(start: () => Promise<T>): Promise<T> {
+  vi.useFakeTimers();
+  try {
+    const pending = start();
+    await vi.advanceTimersByTimeAsync(2000);
+    return await pending;
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
+const runOverview = (...args: Parameters<typeof api.analytics.overview>) =>
+  settleJob(() => api.analytics.overview(...args));
+
 describe("del() 401 handling", () => {
   beforeEach(() => {
     localStorage.setItem(TOKEN_KEY, "stale-token");
@@ -144,8 +172,8 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
   }
 
   it("sends token: undefined for analytics.overview when the token field is empty", async () => {
-    stubOkJson({ owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [] });
-    await api.analytics.overview("acme", "");
+    stubJobResult({ owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [] });
+    await runOverview("acme", "");
     const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(JSON.parse(init.body as string)).toEqual({ owner: "acme", token: undefined });
   });
@@ -175,8 +203,8 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
   });
 
   it("POSTs branch-protection/bulk with the org in the path and drops an empty token", async () => {
-    stubOkJson({ dry_run: true, diffs: [] });
-    await api.branchProtection.bulk("acme", { repos: ["api"], dry_run: true, token: "" });
+    stubJobResult({ dry_run: true, diffs: [] });
+    await settleJob(() => api.branchProtection.bulk("acme", { repos: ["api"], dry_run: true, token: "" }));
     const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(url).toContain("/orgs/acme/branch-protection/bulk");
     expect(JSON.parse(init.body as string)).toEqual({ repos: ["api"], dry_run: true, token: undefined });
@@ -191,8 +219,10 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
   });
 
   it("POSTs security/remediate/bulk with the org in the path and drops an empty token", async () => {
-    stubOkJson({ check_id: "repository_secret_scanning_enabled", dry_run: true, items: [] });
-    await api.security.remediateBulk("acme", { check_id: "repository_secret_scanning_enabled", repos: ["api"], dry_run: true, token: "" });
+    stubJobResult({ check_id: "repository_secret_scanning_enabled", dry_run: true, items: [] });
+    await settleJob(() =>
+      api.security.remediateBulk("acme", { check_id: "repository_secret_scanning_enabled", repos: ["api"], dry_run: true, token: "" }),
+    );
     const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(url).toContain("/orgs/acme/security/remediate/bulk");
     expect(JSON.parse(init.body as string)).toEqual({
@@ -231,8 +261,8 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
     expect(settingUrl).toContain("/orgs/acme/repos/acme/api/automation/dependabot-triage");
     expect(settingInit.method).toBe("PUT");
 
-    stubOkJson({ decisions: [] });
-    await api.dependabotTriage.run("acme", { repos: ["acme/api"], dry_run: true }, "");
+    stubJobResult({ decisions: [] });
+    await settleJob(() => api.dependabotTriage.run("acme", { repos: ["acme/api"], dry_run: true }, ""));
     const [runUrl, runInit] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(runUrl).toContain("/orgs/acme/dependabot-triage");
     expect(JSON.parse(runInit.body as string)).toEqual({ repos: ["acme/api"], dry_run: true, token: undefined });
@@ -362,7 +392,7 @@ describe("api.analytics value normalization", () => {
   }
 
   it("normalizes the Dependabot check's raw counts into a severity_counts value", async () => {
-    stubOkJson({
+    stubJobResult({
       owner: "acme",
       score: 50,
       total_checks: 1,
@@ -379,12 +409,12 @@ describe("api.analytics value normalization", () => {
         },
       ],
     });
-    const result = await api.analytics.overview("acme", "ghp_test");
+    const result = await runOverview("acme", "ghp_test");
     expect(result.checks[0].value).toEqual({ type: "severity_counts", critical: 2, high: 1, medium: 0, low: 3 });
   });
 
   it("normalizes the code-scanning check's raw shape into a ratio value", async () => {
-    stubOkJson({
+    stubJobResult({
       owner: "acme",
       score: 50,
       total_checks: 1,
@@ -401,12 +431,12 @@ describe("api.analytics value normalization", () => {
         },
       ],
     });
-    const result = await api.analytics.overview("acme", "ghp_test");
+    const result = await runOverview("acme", "ghp_test");
     expect(result.checks[0].value).toEqual({ type: "ratio", numerator: 3, denominator: 4 });
   });
 
   it("keeps an errored check's string explanation instead of coercing it", async () => {
-    stubOkJson({
+    stubJobResult({
       owner: "acme",
       score: 0,
       total_checks: 1,
@@ -423,12 +453,12 @@ describe("api.analytics value normalization", () => {
         },
       ],
     });
-    const result = await api.analytics.overview("acme", "ghp_test");
+    const result = await runOverview("acme", "ghp_test");
     expect(result.checks[0].value).toEqual({ type: "text", text: "Check failed: could not fetch repository list" });
   });
 
   it("normalizes the force-push check's raw shape into a ratio value", async () => {
-    stubOkJson({
+    stubJobResult({
       owner: "acme",
       score: 50,
       total_checks: 1,
@@ -445,12 +475,12 @@ describe("api.analytics value normalization", () => {
         },
       ],
     });
-    const result = await api.analytics.overview("acme", "ghp_test");
+    const result = await runOverview("acme", "ghp_test");
     expect(result.checks[0].value).toEqual({ type: "ratio", numerator: 1, denominator: 2 });
   });
 
   it("normalizes a hygiene check's checked/missing counts into a ratio value", async () => {
-    stubOkJson({
+    stubJobResult({
       owner: "acme",
       score: 100,
       total_checks: 1,
@@ -468,19 +498,19 @@ describe("api.analytics value normalization", () => {
         },
       ],
     });
-    const result = await api.analytics.overview("acme", "ghp_test");
+    const result = await runOverview("acme", "ghp_test");
     expect(result.checks[0].value).toEqual({ type: "ratio", numerator: 6, denominator: 10 });
   });
 
   it("carries a check's unknown repo count through the ratio value", async () => {
-    stubOkJson({
+    stubJobResult({
       owner: "acme", score: 100, total_checks: 1, failed_checks: 1, repo_count: 3,
       checks: [{
         id: "repository_secret_scanning_enabled", title: "Secret scanning", severity: "high",
         remediation: "n/a", status: "error", value: { enabled: 2, total: 2, unknown: 1 },
       }],
     });
-    const result = await api.analytics.overview("acme", "ghp_test");
+    const result = await runOverview("acme", "ghp_test");
     expect(result.checks[0].value).toEqual({ type: "ratio", numerator: 2, denominator: 2, unknown: 1 });
   });
 
@@ -1370,25 +1400,76 @@ describe("request timeouts", () => {
     await vi.advanceTimersByTimeAsync(15_000);
     await pending;
   });
+});
 
-  it.each([
-    ["scan", () => api.analytics.overview("acme", "")],
-    ["bulk remediation", () => api.security.remediateBulk("acme", { check_id: "c", repos: ["r"], dry_run: false })],
-    ["bulk branch protection", () => api.branchProtection.bulk("acme", { repos: ["r"], dry_run: false })],
-    ["Dependabot triage", () => api.dependabotTriage.run("acme", { dry_run: false })],
-  ])("gives %s a longer ceiling than 15s", async (_name, call) => {
+describe("long operations run as jobs", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const calls = [
+    ["scan", () => api.analytics.overview("acme", ""), "/me/analytics/overview"],
+    [
+      "bulk remediation",
+      () => api.security.remediateBulk("acme", { check_id: "c", repos: ["r"], dry_run: false }),
+      "/orgs/acme/security/remediate/bulk",
+    ],
+    ["bulk branch protection", () => api.branchProtection.bulk("acme", { repos: ["r"], dry_run: false }), "/orgs/acme/branch-protection/bulk"],
+    ["Dependabot triage", () => api.dependabotTriage.run("acme", { dry_run: false }), "/orgs/acme/dependabot-triage"],
+  ] as const;
+
+  // POST answers 202 with a job id; the job is `running` for `runningPolls` polls, then ends as `end`.
+  function stubJob(end: { status: "done" | "failed"; result: string }, runningPolls = 1) {
+    let polls = 0;
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (init?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ job_id: 7 }), { status: 202 }));
+      polls += 1;
+      const job = polls <= runningPolls ? { status: "running", result: null } : end;
+      return Promise.resolve(new Response(JSON.stringify({ id: 7, job_type: "api.x", ...job }), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it.each(calls)("starts %s with ?async=1 and resolves with the job result", async (_name, call, path) => {
     vi.useFakeTimers();
-    hangingFetch();
-    let settled = false;
-    const pending = call().then(
-      () => { settled = true; },
-      () => { settled = true; },
+    const result = { checks: [], items: [], diffs: [], results: [], decisions: [], score: 90 };
+    const fetchMock = stubJob({ status: "done", result: JSON.stringify(result) });
+    const pending = call();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(String((fetchMock.mock.calls[2] ?? fetchMock.mock.calls[1])[0])).toContain("/jobs/7");
+    await vi.advanceTimersByTimeAsync(2000);
+    await expect(pending).resolves.toBeDefined();
+    const first = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(first.pathname).toBe(path);
+    expect(first.search).toBe("?async=1");
+  });
+
+  it("rejects with the job's message when it fails", async () => {
+    vi.useFakeTimers();
+    stubJob({ status: "failed", result: "GitHub returned 403 for every repo." }, 0);
+    const pending = expect(api.branchProtection.bulk("acme", { repos: ["r"], dry_run: false })).rejects.toThrow(
+      "GitHub returned 403 for every repo.",
     );
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(settled).toBe(false);
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(2000);
     await pending;
-    expect(settled).toBe(true);
+  });
+
+  it("rejects immediately when the request itself is refused", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify({ detail: "admin required" }), { status: 403 }))),
+    );
+    await expect(api.dependabotTriage.run("acme", { dry_run: false })).rejects.toThrow("admin required");
+  });
+
+  it("gives up with advice after 30 minutes of a job still running", async () => {
+    vi.useFakeTimers();
+    stubJob({ status: "done", result: "{}" }, Number.MAX_SAFE_INTEGER);
+    const pending = expect(api.analytics.overview("acme", "")).rejects.toThrow(/taking longer than expected/);
+    await vi.advanceTimersByTimeAsync(31 * 60_000);
+    await pending;
   });
 });
 

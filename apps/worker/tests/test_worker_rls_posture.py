@@ -43,7 +43,7 @@ def test_run_checks_the_rls_posture_before_polling(monkeypatch):
     warned = MagicMock()
     monkeypatch.setattr(worker, "_warn_if_rls_bypassed", warned)
     monkeypatch.setattr(worker, "_read_poll_seconds", lambda: 1)
-    monkeypatch.setattr(worker.time, "sleep", MagicMock(side_effect=_StopLoop))
+    monkeypatch.setattr(worker, "_wait", MagicMock(side_effect=_StopLoop))
     try:
         worker.run()
     except _StopLoop:

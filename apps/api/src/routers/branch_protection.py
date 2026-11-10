@@ -2,10 +2,11 @@
 
 Org-admin only. dry_run=true returns a per-repo diff; dry_run=false applies it,
 capturing per-repo failures so one inaccessible repo doesn't abort the rest. Requires
-GitHub's ``Administration: Read and write`` permission.
+GitHub's ``Administration: Read and write`` permission. With ``?async=1`` the per-repo loop runs as a tracked
+job (``202 {"job_id"}``, result via ``GET /jobs/{id}``); a whole-batch 403 then fails the job with the hint.
 """
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy.orm import Session
 
@@ -13,7 +14,7 @@ from src.core.auth import UserOut, require_auth
 from src.core.db import get_db
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import audit_repo, automation_settings_repo
-from src.services import branch_protection_bulk
+from src.services import api_job_runner, branch_protection_bulk
 from src.services.github_client import GitHubClient
 from src.services.token_resolution import NoGitHubTokenAvailable, pick_client_token, resolve_org_token
 
@@ -87,6 +88,7 @@ def bulk_branch_protection(
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),
+    run_async: bool = Query(False, alias="async"),
 ):
     # require_org_role already ran set_tenant_session_context for this org's tenant.
     try:
@@ -111,37 +113,49 @@ def bulk_branch_protection(
         {"repos": body.repos, "dry_run": body.dry_run}, tenant_id=ctx.org.tenant_id,
     )
 
-    # plan_bulk / apply_bulk capture every httpx error per repo -- a whole-batch failure
-    # surfaces as every result carrying an error, which _all_forbidden turns into the hint.
-    client = GitHubClient(token)
-    if body.dry_run:
-        diffs = branch_protection_bulk.plan_bulk(client, owner, body.repos, body.preset)
-        if _all_forbidden([d.error for d in diffs]):
+    tenant_id = ctx.org.tenant_id
+
+    def work(session: Session) -> BulkDryRunResponse | BulkApplyResponse:
+        # plan_bulk / apply_bulk capture every httpx error per repo -- a whole-batch failure
+        # surfaces as every result carrying an error, which _all_forbidden turns into the hint.
+        client = GitHubClient(token)
+        if body.dry_run:
+            diffs = branch_protection_bulk.plan_bulk(client, owner, body.repos, body.preset)
+            if _all_forbidden([d.error for d in diffs]):
+                raise HTTPException(status_code=400, detail=_PERMISSION_HINT)
+            return BulkDryRunResponse(
+                diffs=[
+                    RepoDiffOut(
+                        repo=d.repo, branch=d.branch, currently_protected=d.currently_protected,
+                        would_change=d.would_change, changes=d.changes, error=d.error,
+                    )
+                    for d in diffs
+                ]
+            )
+
+        results = branch_protection_bulk.apply_bulk(client, owner, body.repos, body.preset)
+        if _all_forbidden([r.error for r in results]):
             raise HTTPException(status_code=400, detail=_PERMISSION_HINT)
-        return BulkDryRunResponse(
-            diffs=[
-                RepoDiffOut(
-                    repo=d.repo, branch=d.branch, currently_protected=d.currently_protected,
-                    would_change=d.would_change, changes=d.changes, error=d.error,
-                )
-                for d in diffs
-            ]
+
+        if body.save_preset:
+            preset = branch_protection_bulk.normalize_preset(body.preset)
+            for r in results:
+                if r.applied:
+                    automation_settings_repo.upsert(
+                        session, tenant_id, f"{owner}/{r.repo}", _FEATURE,
+                        enabled=True, extra=preset,
+                    )
+            session.commit()
+
+        return BulkApplyResponse(
+            results=[RepoResultOut(repo=r.repo, applied=r.applied, error=r.error) for r in results]
         )
 
-    results = branch_protection_bulk.apply_bulk(client, owner, body.repos, body.preset)
-    if _all_forbidden([r.error for r in results]):
-        raise HTTPException(status_code=400, detail=_PERMISSION_HINT)
-
-    if body.save_preset:
-        preset = branch_protection_bulk.normalize_preset(body.preset)
-        for r in results:
-            if r.applied:
-                automation_settings_repo.upsert(
-                    db, ctx.org.tenant_id, f"{owner}/{r.repo}", _FEATURE,
-                    enabled=True, extra=preset,
-                )
-        db.commit()
-
-    return BulkApplyResponse(
-        results=[RepoResultOut(repo=r.repo, applied=r.applied, error=r.error) for r in results]
-    )
+    if run_async:
+        return api_job_runner.accepted(
+            api_job_runner.submit(
+                db, api_job_runner.JOB_TYPE_BRANCH_PROTECTION,
+                tenant_id=tenant_id, user_id=user.id, actor=user.email, work=work,
+            )
+        )
+    return work(db)

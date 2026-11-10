@@ -165,3 +165,8 @@ docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\du
 
 - The API has request-ID-tagged logs and a health endpoint at `/healthz`.
 - The worker logs each job's outcome (done/failed) as it processes the queue.
+
+## Stopping and redeploying the worker
+
+On `docker stop` or a redeploy the worker stops claiming jobs, lets the job it is running finish, and then exits. The compose file gives it `stop_grace_period: 120s` for that; if you run jobs that can take longer (a large backfill), raise it. A job still running when the grace period ends is killed and is recovered by the reclaim sweep after 30 minutes, which uses up one of its retries.
+
