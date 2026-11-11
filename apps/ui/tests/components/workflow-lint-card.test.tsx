@@ -10,11 +10,11 @@ vi.mock("@/lib/api/client", () => ({
 
 import { WorkflowLintCard } from "@/components/automation/workflow-lint-card"
 
-function renderCard(props: { owner?: string; repo?: string; token?: string } = {}) {
+function renderCard(props: { owner?: string; repo?: string; token?: string; canOpenFixPr?: boolean } = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <WorkflowLintCard owner={props.owner ?? "acme"} repo={props.repo ?? "api"} token={props.token ?? ""} />
+      <WorkflowLintCard owner={props.owner ?? "acme"} repo={props.repo ?? "api"} token={props.token ?? ""} canOpenFixPr={props.canOpenFixPr} />
     </QueryClientProvider>,
   )
 }
@@ -47,6 +47,16 @@ describe("WorkflowLintCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open fix PR" }))
     await waitFor(() => expect(screen.getByText(/pull\/5/)).toBeInTheDocument())
     expect(mockScan).toHaveBeenLastCalledWith("acme", "api", { open_pr: true }, "")
+  })
+
+  it("lets a member lint but offers no fix PR, only a hint (#830)", async () => {
+    mockScan.mockResolvedValueOnce({ findings: [{ path: "a.yml", rule: "r", severity: "critical", message: "bad" }], fixable: true, pr_url: null })
+    renderCard({ canOpenFixPr: false })
+    fireEvent.click(screen.getByRole("button", { name: "Lint workflows" }))
+
+    await waitFor(() => expect(screen.getByText(/bad/)).toBeInTheDocument())
+    expect(screen.queryByRole("button", { name: "Open fix PR" })).not.toBeInTheDocument()
+    expect(screen.getByText(/requires an organization admin/)).toBeInTheDocument()
   })
 
   it("says so when a clean repo has no findings", async () => {

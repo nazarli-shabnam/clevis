@@ -373,6 +373,30 @@ describe("AutomationPage", () => {
     expect(screen.queryByText("Dispatch all")).not.toBeInTheDocument();
   });
 
+  it("shows a plain org member no dispatch, dispatch-all or bulk branch protection controls (#830)", async () => {
+    orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "member" }]);
+    workflowsMock.mockResolvedValue({
+      repository: "acme/demo",
+      workflows: [
+        { id: 1, name: "CI", path: "p", state: "active", last_run_status: null, last_run_conclusion: null, last_run_at: null },
+        { id: 2, name: "Release", path: "p", state: "active", last_run_status: null, last_run_conclusion: null, last_run_at: null },
+      ],
+    });
+    runsMock.mockResolvedValue({ repository: "acme/demo", runs: [] });
+
+    renderPage();
+    await enterOwnerAndSelectRepo("acme", "demo");
+    fireEvent.click(screen.getByText("Load workflows"));
+    await waitFor(() => expect(screen.getByText("CI")).toBeInTheDocument());
+
+    expect(screen.queryByRole("button", { name: /Dispatch all/i })).not.toBeInTheDocument();
+    expect(await screen.findByText(/Bulk branch protection requires an organization admin/)).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "Dispatch" })[0]);
+    expect(await screen.findByRole("button", { name: "Dispatch workflow" })).toBeDisabled();
+    expect(screen.getByText("Dispatching workflows requires an organization admin.")).toBeInTheDocument();
+    expect(dispatchMock).not.toHaveBeenCalled();
+  });
+
   it("arms then confirms 'Dispatch all', showing the result summary", async () => {
     workflowsMock.mockResolvedValue({
       repository: "acme/demo",
