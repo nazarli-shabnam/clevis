@@ -9,11 +9,11 @@ Requires write scopes Clevis doesn't request by default (``administration:write`
 ``security_events:write``/``dependabot_alerts:write``); a 403 becomes a 400.
 """
 
-from urllib.parse import quote
 
 import httpx
 
 from src.services.github_client import GitHubClient
+from src.services.github_paths import quote_branch
 
 
 class RemediationNotSupported(Exception):
@@ -52,7 +52,7 @@ def _protect_default_branch(client: GitHubClient, owner: str, repo: str) -> None
     info = client.request("GET", f"/repos/{owner}/{repo}")
     branch = info.get("default_branch", "main") if isinstance(info, dict) else "main"
     # A branch name can contain slashes ("release/1.x"); keep it one path segment.
-    path = f"/repos/{owner}/{repo}/branches/{quote(branch, safe='')}/protection"
+    path = f"/repos/{owner}/{repo}/branches/{quote_branch(branch)}/protection"
 
     current = _get_branch_protection(client, path)
     if not current:

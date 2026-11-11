@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal
-from urllib.parse import quote
 
 import httpx
 
@@ -23,6 +22,7 @@ from src.services import check_remediation
 from src.services.branch_protection_bulk import _REPO_NAME_RE
 from src.services.check_remediation import RemediationConflict, _get_branch_protection, _preserving_put_body
 from src.services.github_client import GitHubClient
+from src.services.github_paths import quote_branch
 
 Status = Literal["would_change", "unchanged", "applied", "failed"]
 
@@ -61,7 +61,7 @@ def needs_change(client: GitHubClient, check_id: str, owner: str, repo: str) -> 
 
     if check_id in (_BRANCH_PROTECTION, _NO_FORCE_PUSH):
         branch = info.get("default_branch") or "main"
-        path = f"/repos/{owner}/{repo}/branches/{quote(branch, safe='')}/protection"
+        path = f"/repos/{owner}/{repo}/branches/{quote_branch(branch)}/protection"
         current = _get_branch_protection(client, path)
         if current is None:
             return (
