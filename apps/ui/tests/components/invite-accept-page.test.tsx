@@ -117,6 +117,20 @@ describe("InviteAcceptPage", () => {
     vi.restoreAllMocks();
   });
 
+  it.each([
+    ["expired", /expired.*resend/i],
+    ["revoked", /withdrawn/i],
+    ["accepted", /already been accepted/i],
+  ] as const)("shows status-specific copy for a %s invitation (#906)", async (status, copy) => {
+    previewMock.mockResolvedValue({ org_login: "acme", status });
+
+    renderPage();
+
+    expect(await screen.findByText(copy)).toBeInTheDocument();
+    expect(screen.queryByText(/no longer valid/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /accept invitation/i })).not.toBeInTheDocument();
+  });
+
   it("owns a main landmark, including for an invalid invitation (public routes render outside the shell)", async () => {
     previewMock.mockRejectedValue(new Error("Invitation not found"));
 
