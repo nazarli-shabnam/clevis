@@ -119,6 +119,16 @@ describe("ActivityByRepoCard", () => {
     expect(screen.getByText("acme/web")).toBeInTheDocument();
   });
 
+  it.each([401, 403, 404])("stops reconnecting for good on a %i and says the stream is not live (#904)", async (status) => {
+    summaryMock.mockResolvedValue(summary());
+    openStreamMock.mockResolvedValue(new Response("", { status }));
+    renderCard();
+    await waitFor(() => expect(screen.getByText("Not live")).toBeInTheDocument());
+    expect(screen.queryByText("Reconnecting…")).not.toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 2500)); // past the first backoff step
+    expect(openStreamMock).toHaveBeenCalledTimes(1);
+  });
+
   it("surfaces a snapshot error with retry", async () => {
     summaryMock.mockRejectedValue(new Error("boom"));
     renderCard();
