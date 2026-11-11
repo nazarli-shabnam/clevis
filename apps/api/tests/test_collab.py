@@ -65,6 +65,23 @@ def collab_client(db, acme_org):
     return TestClient(app)
 
 
+@pytest.fixture()
+def admin_collab_client(db, acme_org):
+    """Outside collaborators and pending GitHub invitations are org-admin reads (#899)."""
+    org_membership_repo.get_or_create(db, org_id=acme_org.id, user_id=_ADMIN.id, role="admin")
+    app = FastAPI()
+    app.include_router(collab_router)
+    app.dependency_overrides[require_auth] = lambda: _ADMIN
+    app.dependency_overrides[get_db] = lambda: db
+    return TestClient(app)
+
+
+@pytest.mark.parametrize("path", ["outside_collaborators", "invitations"])
+def test_collaborator_and_invitation_reads_need_org_admin(collab_client, path):
+    # `collab_client` is a plain member: invitee emails and per-collaborator access are admin-only.
+    assert collab_client.get(f"/github/orgs/acme/{path}").status_code == 403
+
+
 def _seed_membership_cursor(db, tenant_id, org_login="acme"):
     db.execute(text(f"SET app.tenant_id = {int(tenant_id)}"))
     db.execute(
@@ -384,7 +401,7 @@ def test_members_non_member_forbidden(db):
 # ---------------------------------------------------------------------------
 
 
-def test_outside_collaborators_maps_repos_per_login(collab_client):
+def test_outside_collaborators_maps_repos_per_login(admin_collab_client):
     # The per-repo collaborator fan-out runs concurrently (ThreadPoolExecutor), so
     # results must be keyed by request path rather than assumed call order.
     def fake_request_paginated(path, params=None):
@@ -402,7 +419,7 @@ def test_outside_collaborators_maps_repos_per_login(collab_client):
         "src.routers.collab.GitHubClient"
     ) as mock_client:
         mock_client.return_value.request_paginated.side_effect = fake_request_paginated
-        resp = collab_client.get("/github/orgs/acme/outside_collaborators")
+        resp = admin_collab_client.get("/github/orgs/acme/outside_collaborators")
     assert resp.status_code == 200
     body = resp.json()
     assert body["collaborators"][0]["login"] == "carol"
@@ -411,7 +428,7 @@ def test_outside_collaborators_maps_repos_per_login(collab_client):
     assert body["repos_total"] == 2
 
 
-def test_outside_collaborators_caps_repo_scan_and_reports_totals(collab_client):
+def test_outside_collaborators_caps_repo_scan_and_reports_totals(admin_collab_client):
     many_repos = [{"name": f"repo-{i}"} for i in range(60)]
 
     def fake_request_paginated(path, params=None):
@@ -425,33 +442,33 @@ def test_outside_collaborators_caps_repo_scan_and_reports_totals(collab_client):
         "src.routers.collab.GitHubClient"
     ) as mock_client:
         mock_client.return_value.request_paginated.side_effect = fake_request_paginated
-        resp = collab_client.get("/github/orgs/acme/outside_collaborators")
+        resp = admin_collab_client.get("/github/orgs/acme/outside_collaborators")
     assert resp.status_code == 200
     body = resp.json()
     assert body["repos_scanned"] == 50
     assert body["repos_total"] == 60
 
 
-def test_outside_collaborators_maps_github_error(collab_client):
+def test_outside_collaborators_maps_github_error(admin_collab_client):
     with patch("src.routers.collab.resolve_org_token", return_value="ghp_test"), patch(
         "src.routers.collab.GitHubClient"
     ) as mock_client:
         mock_client.return_value.request_paginated.side_effect = _HTTP_ERROR
-        resp = collab_client.get("/github/orgs/acme/outside_collaborators")
+        resp = admin_collab_client.get("/github/orgs/acme/outside_collaborators")
     assert resp.status_code == 400
 
 
-def test_outside_collaborators_maps_request_error(collab_client):
+def test_outside_collaborators_maps_request_error(admin_collab_client):
     with patch("src.routers.collab.resolve_org_token", return_value="ghp_test"), patch(
         "src.routers.collab.GitHubClient"
     ) as mock_client:
         mock_client.return_value.request_paginated.side_effect = httpx.RequestError("boom")
-        resp = collab_client.get("/github/orgs/acme/outside_collaborators")
+        resp = admin_collab_client.get("/github/orgs/acme/outside_collaborators")
     assert resp.status_code == 503
 
 
-def test_outside_collaborators_no_token_400(collab_client):
-    resp = collab_client.get("/github/orgs/acme/outside_collaborators")
+def test_outside_collaborators_no_token_400(admin_collab_client):
+    resp = admin_collab_client.get("/github/orgs/acme/outside_collaborators")
     assert resp.status_code == 400
 
 
@@ -466,7 +483,7 @@ def test_outside_collaborators_non_member_forbidden(db):
 # ---------------------------------------------------------------------------
 
 
-def test_invitations_maps_fields_including_email_only_invites(collab_client):
+def test_invitations_maps_fields_including_email_only_invites(admin_collab_client):
     raw = [
         {
             "login": "dave",
@@ -487,7 +504,7 @@ def test_invitations_maps_fields_including_email_only_invites(collab_client):
         "src.routers.collab.GitHubClient"
     ) as mock_client:
         mock_client.return_value.request_paginated.return_value = raw
-        resp = collab_client.get("/github/orgs/acme/invitations")
+        resp = admin_collab_client.get("/github/orgs/acme/invitations")
     assert resp.status_code == 200
     invitations = resp.json()["invitations"]
     assert invitations[0]["login"] == "dave"
@@ -496,7 +513,7 @@ def test_invitations_maps_fields_including_email_only_invites(collab_client):
     assert invitations[1]["email"] == "eve@example.com"
 
 
-def test_invitations_skips_malformed_entries_missing_created_at(collab_client):
+def test_invitations_skips_malformed_entries_missing_created_at(admin_collab_client):
     raw = [
         {"login": "dave", "email": None, "role": "direct_member", "created_at": "2026-07-10T00:00:00Z", "inviter": None},
         {"login": "malformed", "email": None, "role": "direct_member", "inviter": None},
@@ -505,33 +522,33 @@ def test_invitations_skips_malformed_entries_missing_created_at(collab_client):
         "src.routers.collab.GitHubClient"
     ) as mock_client:
         mock_client.return_value.request_paginated.return_value = raw
-        resp = collab_client.get("/github/orgs/acme/invitations")
+        resp = admin_collab_client.get("/github/orgs/acme/invitations")
     assert resp.status_code == 200
     invitations = resp.json()["invitations"]
     assert len(invitations) == 1
     assert invitations[0]["login"] == "dave"
 
 
-def test_invitations_maps_github_error(collab_client):
+def test_invitations_maps_github_error(admin_collab_client):
     with patch("src.routers.collab.resolve_org_token", return_value="ghp_test"), patch(
         "src.routers.collab.GitHubClient"
     ) as mock_client:
         mock_client.return_value.request_paginated.side_effect = _HTTP_ERROR
-        resp = collab_client.get("/github/orgs/acme/invitations")
+        resp = admin_collab_client.get("/github/orgs/acme/invitations")
     assert resp.status_code == 400
 
 
-def test_invitations_maps_request_error(collab_client):
+def test_invitations_maps_request_error(admin_collab_client):
     with patch("src.routers.collab.resolve_org_token", return_value="ghp_test"), patch(
         "src.routers.collab.GitHubClient"
     ) as mock_client:
         mock_client.return_value.request_paginated.side_effect = httpx.RequestError("boom")
-        resp = collab_client.get("/github/orgs/acme/invitations")
+        resp = admin_collab_client.get("/github/orgs/acme/invitations")
     assert resp.status_code == 503
 
 
-def test_invitations_no_token_400(collab_client):
-    resp = collab_client.get("/github/orgs/acme/invitations")
+def test_invitations_no_token_400(admin_collab_client):
+    resp = admin_collab_client.get("/github/orgs/acme/invitations")
     assert resp.status_code == 400
 
 
