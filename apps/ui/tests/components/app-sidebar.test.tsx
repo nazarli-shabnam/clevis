@@ -61,6 +61,7 @@ let orgMemberships: { org_login: string; role: "admin" | "member" }[] = [];
 // Mutable per-test fixture for the /me/installations response; reset in beforeEach.
 let installations: { id: number; account_login: string; account_type: string; installation_id: number | null; created_at: string }[] = [];
 // Mutable per-test fixture for the GET /tokens response (workspace admins only); reset in beforeEach.
+let meIsAdmin = false;
 let savedTokens: { org: string; label: string | null; created_at: string; updated_at: string }[] = [];
 // Mutable per-test fixture for the cockpit response driving the health dot/badge.
 let cockpitResponse: {
@@ -447,6 +448,7 @@ describe("AppSidebar scope switcher", () => {
     orgMemberships = [{ org_login: "acme", role: "admin" }];
     installations = [];
     savedTokens = [];
+    meIsAdmin = false;
     cockpitResponse = { latest_score: null, recent_events: [] };
 
     vi.stubGlobal(
@@ -469,7 +471,7 @@ describe("AppSidebar scope switcher", () => {
         const url = String(input);
         if (url.endsWith("/auth/me")) {
           return Promise.resolve(
-            jsonResponse({ id: 1, email: "user@example.com", name: "User", is_workspace_admin: false }),
+            jsonResponse({ id: 1, email: "user@example.com", name: "User", is_workspace_admin: meIsAdmin }),
           );
         }
         if (url.endsWith("/me/orgs")) {
@@ -751,6 +753,7 @@ describe("AppSidebar scope switcher", () => {
 
   it("keeps an org the workspace admin reaches only through a saved token (#903)", async () => {
     localStorage.setItem(TOKEN_KEY, makeJwt(true));
+    meIsAdmin = true;
     localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "legacy" }));
     orgMemberships = [{ org_login: "acme", role: "admin" }];
     savedTokens = [{ org: "legacy", label: null, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }];
@@ -784,7 +787,12 @@ describe("AppSidebar scope switcher", () => {
     renderSidebar();
 
     await waitFor(() => expect(orgCalls).toBeGreaterThanOrEqual(2));
-    await new Promise((r) => setTimeout(r, 50));
+    fireEvent.click(await screen.findByRole("button", { name: /user/i }));
+    const switcher = (await screen.findByText("Switch account")).parentElement!;
+    await waitFor(() => {
+      const newco = Array.from(switcher.querySelectorAll("button")).find((b) => b.textContent?.includes("newco"));
+      expect(newco).toHaveAttribute("aria-current", "true");
+    });
     expect(localStorage.getItem("active_scope")).toBe(JSON.stringify({ kind: "org", login: "newco" }));
   });
 

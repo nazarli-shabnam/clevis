@@ -174,7 +174,7 @@ function ProfileDropdown({
 export function AppSidebar() {
   const pathname = usePathname()
   const router = useRouter()
-  const { user, logout } = useAuth()
+  const { user, logout, isLoading: authLoading } = useAuth()
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const toggleRef = useRef<HTMLButtonElement>(null)
@@ -243,7 +243,7 @@ export function AppSidebar() {
       sublabel: `Organization · ${m.role}`,
     }))
     const known = new Set(memberships.map((m) => m.org_login.toLowerCase()))
-    const tokenOrgs = savedTokens
+    const tokenOrgs = (isWorkspaceAdmin ? savedTokens : [])
       .filter((t) => !known.has(t.org.toLowerCase()))
       .map((t) => ({
         scope: { kind: "org", login: t.org } as ActiveScope,
@@ -251,7 +251,7 @@ export function AppSidebar() {
         sublabel: "Organization · saved token",
       }))
     return [...personal, ...orgs, ...tokenOrgs]
-  }, [installs, memberships, savedTokens])
+  }, [installs, memberships, savedTokens, isWorkspaceAdmin])
 
   // Keep the persisted scope valid. With none stored, pick the first available; with one that is no
   // longer offered (removed from the org, personal installation disconnected), fall back to the first
@@ -265,22 +265,34 @@ export function AppSidebar() {
   const verifyingKey = useRef<string | null>(null)
   const refetchMemberships = membershipsRefetch
   useEffect(() => {
-    if (!membershipsReady || !installsReady || !savedTokensReady) return
+    if (authLoading || !membershipsReady || !installsReady || !savedTokensReady) return
     const stillValid =
       scope !== null &&
       scopeOptions.some(
         (o) => o.scope.kind === scope.kind && o.scope.login.toLowerCase() === scope.login.toLowerCase(),
       )
-    if (stillValid) return
+    if (stillValid) {
+      // A later change to a missing scope must be verified afresh, not by this attempt's result.
+      if (verifiedKey !== null) setVerifiedKey(null)
+      verifyingKey.current = null
+      return
+    }
     if (scope !== null && verifiedKey !== scopeKey) {
       if (verifyingKey.current === scopeKey) return
       verifyingKey.current = scopeKey
       const refetches = [refetchMemberships(), refetchInstalls(), ...(isWorkspaceAdmin ? [refetchSavedTokens()] : [])]
-      void Promise.all(refetches).then((results) => {
-        if (results.every((r) => r.isSuccess)) setVerifiedKey(scopeKey)
-      })
+      void Promise.all(refetches)
+        .then((results) => {
+          if (results.every((r) => r.isSuccess)) setVerifiedKey(scopeKey)
+        })
+        .finally(() => {
+          // Let a later trigger retry a failed verification; no retry is scheduled from here.
+          if (verifyingKey.current === scopeKey) verifyingKey.current = null
+        })
       return
     }
+    setVerifiedKey(null)
+    verifyingKey.current = null
     if (scopeOptions.length >= 1) setScope(scopeOptions[0].scope)
     else if (scope !== null) clearActiveScope()
   }, [
@@ -290,6 +302,7 @@ export function AppSidebar() {
     membershipsReady,
     installsReady,
     savedTokensReady,
+    authLoading,
     scopeOptions,
     setScope,
     refetchMemberships,
