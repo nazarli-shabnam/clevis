@@ -73,4 +73,30 @@ describe("AutomationSchedulesCard", () => {
     expect(await screen.findByText(/does nothing until a repository is added/)).toBeInTheDocument();
     expect(screen.getByText(/1 repository enabled in the/)).toBeInTheDocument();
   });
+
+  it("shows an error with a retry when the schedules cannot be loaded", async () => {
+    getMock.mockRejectedValueOnce(new Error("boom"));
+    renderCard();
+
+    expect(await screen.findByText(/Couldn't load the automation schedules: boom/)).toBeInTheDocument();
+    getMock.mockResolvedValue(schedules());
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByLabelText("Triage Dependabot pull requests automatically")).toBeInTheDocument();
+  });
+
+  it("lets an admin switch scheduled Dependabot triage off for the org", async () => {
+    setMock.mockResolvedValue(schedules());
+    renderCard();
+
+    fireEvent.change(await screen.findByLabelText("Triage Dependabot pull requests automatically"), { target: { value: "off" } });
+    await waitFor(() => expect(setMock).toHaveBeenCalledWith("acme", { dependabot_triage: false }));
+  });
+
+  it("surfaces an error from saving a schedule or a repository", async () => {
+    setMock.mockRejectedValue(new Error("save failed"));
+    renderCard();
+
+    fireEvent.change(await screen.findByLabelText("Triage Dependabot pull requests automatically"), { target: { value: "on" } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("save failed");
+  });
 });
