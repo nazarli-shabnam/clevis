@@ -95,4 +95,49 @@ describe("DigestCard", () => {
     expect(await screen.findByRole("button", { name: "Send test to me" })).toBeDisabled();
     expect(screen.getByText(/SMTP\) is not configured/)).toBeInTheDocument();
   });
+
+  it("shows an error with a retry when the settings cannot be loaded", async () => {
+    digestMock.mockRejectedValueOnce(new Error("boom"));
+    renderCard();
+
+    expect(await screen.findByText(/Couldn't load the digest settings: boom/)).toBeInTheDocument();
+    digestMock.mockResolvedValue(settings());
+    fireEvent.click(screen.getByRole("button", { name: /retry|try again/i }));
+    expect(await screen.findByLabelText(/Email this organization/)).toBeInTheDocument();
+  });
+
+  it("resets a chosen recipient list back to every verified admin", async () => {
+    digestMock.mockResolvedValue(settings({ recipients: ["dev@acme.com"], resolved_recipients: ["dev@acme.com"] }));
+    setDigestMock.mockResolvedValue(settings());
+    renderCard();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Reset to every verified admin" }));
+    await waitFor(() => expect(setDigestMock).toHaveBeenCalledWith("acme", { recipients: null }));
+  });
+
+  it("flags an empty preview and shows the busy labels while building and sending", async () => {
+    let finishPreview: (v: unknown) => void = () => {};
+    let finishTest: (v: unknown) => void = () => {};
+    previewMock.mockReturnValue(new Promise((r) => (finishPreview = r)));
+    testMock.mockReturnValue(new Promise((r) => (finishTest = r)));
+    renderCard();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Preview" }));
+    expect(await screen.findByRole("button", { name: "Building…" })).toBeDisabled();
+    finishPreview({ subject: "subj", body: "body", empty: true });
+    expect(await screen.findByText(/No scan has run yet/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send test to me" }));
+    expect(await screen.findByRole("button", { name: "Sending…" })).toBeDisabled();
+    finishTest({ sent_to: "admin@acme.com" });
+    expect(await screen.findByText(/Sent to admin@acme.com/)).toBeInTheDocument();
+  });
+
+  it("surfaces an error from saving, previewing or sending", async () => {
+    setDigestMock.mockRejectedValue(new Error("save failed"));
+    renderCard();
+
+    fireEvent.change(await screen.findByLabelText(/Email this organization/), { target: { value: "on" } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("save failed");
+  });
 });
