@@ -19,6 +19,7 @@ vi.mock("@/lib/api/client", () => ({
       mine: (...args: unknown[]) => mineMock(...args),
       hygieneScoring: vi.fn().mockResolvedValue({ enabled: null, effective: false, instance_default: false }),
       scheduledScans: vi.fn().mockResolvedValue({ enabled: null, effective: false, cadence: null, instance_cadence: "off" }),
+      automationSchedules: vi.fn().mockResolvedValue({ pr_nudges: { enabled: null, effective: false, cadence: null, instance_cadence: "off" }, dependabot_triage: { enabled: null, effective: false, cadence: null, instance_cadence: "off" }, pr_nudge_repos: [], triage_repos: [] }),
       digest: vi.fn().mockResolvedValue({ enabled: null, effective: false, cadence: null, instance_cadence: "off", recipients: null, resolved_recipients: [], available_recipients: [], smtp_configured: false }),
       badge: vi.fn().mockResolvedValue({ enabled: false }),
     },

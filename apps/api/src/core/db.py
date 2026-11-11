@@ -390,6 +390,10 @@ class Org(Base):
     # (NULL = every verified org admin).
     digest_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     digest_recipients: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Per-org overrides of the instance `pr_nudge_cadence` / `dependabot_triage_cadence` (migration 0084):
+    # True = run on a schedule, False = never, NULL = follow the instance.
+    pr_nudge_schedule: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    dependabot_triage_schedule: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # Stays nullable: a new Org and its Tenant reference each other, and NOT NULL can't be deferred
     # like a FK can. org_repo.get_or_create self-heals missing values.
     tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
