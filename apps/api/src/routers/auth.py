@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy import func, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from src.core.app_config import registration_enabled
@@ -33,6 +33,7 @@ from src.core.config import settings
 from src.core.db import Org, User, get_db, set_session_user
 from src.core.rate_limit import check_account_rate_limit, rate_limit
 from src.repositories import invitation_repo, session_repo, tenant_repo
+from src.services import github_oauth
 from src.services.email import EmailNotConfigured, send_verification_email
 
 logger = logging.getLogger(__name__)
@@ -145,6 +146,10 @@ class PatchMeRequest(BaseModel):
 
 class SetupRequiredResponse(BaseModel):
     setup_required: bool
+    # Booleans only: this endpoint is unauthenticated. They let the sign-in pages hide options that
+    # would only fail after the user filled in a form or went through the GitHub redirect.
+    registration_enabled: bool = True
+    github_oauth_enabled: bool = False
 
 
 class VerifyEmailRequest(BaseModel):
@@ -179,7 +184,17 @@ def _pending_invitations_for(db: Session, email: str) -> list[PendingInvitationS
 def setup_required(db: Session = Depends(get_db)):
     """No auth required — used by the UI before any redirect decision."""
     count = db.query(User).count()
-    return {"setup_required": count == 0}
+    try:
+        signup_open = registration_enabled(db)
+    except SQLAlchemyError:
+        # Only a UI hint (the register route enforces it); don't take the login page down with it.
+        db.rollback()
+        signup_open = True
+    return {
+        "setup_required": count == 0,
+        "registration_enabled": signup_open,
+        "github_oauth_enabled": github_oauth.is_configured(),
+    }
 
 
 @router.post("/setup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(rate_limit())])

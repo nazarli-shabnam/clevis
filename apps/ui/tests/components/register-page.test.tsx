@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const replace = vi.fn();
 const registerMock = vi.fn();
+const setupRequiredMock = vi.fn();
 let searchParams = new URLSearchParams();
 
 vi.mock("next/navigation", () => ({
@@ -14,6 +15,7 @@ vi.mock("@/lib/api/client", () => ({
   api: {
     auth: {
       register: (...args: unknown[]) => registerMock(...args),
+      setupRequired: (...args: unknown[]) => setupRequiredMock(...args),
     },
   },
 }));
@@ -42,10 +44,21 @@ function renderPage() {
 }
 
 describe("RegisterPage", () => {
+  it("replaces the form with a notice when registration is turned off (#902)", async () => {
+    setupRequiredMock.mockResolvedValue({ setup_required: false, registration_enabled: false, github_oauth_enabled: true });
+    renderPage();
+
+    expect(await screen.findByText(/New sign-ups are turned off/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /create account/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Sign in" })).toBeInTheDocument();
+  });
+
   beforeEach(() => {
     localStorage.clear();
     replace.mockClear();
     registerMock.mockReset();
+    setupRequiredMock.mockReset();
+    setupRequiredMock.mockResolvedValue({ setup_required: false, registration_enabled: true, github_oauth_enabled: true });
     searchParams = new URLSearchParams();
 
     vi.stubGlobal(

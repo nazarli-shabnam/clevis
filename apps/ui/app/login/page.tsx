@@ -44,6 +44,10 @@ export default function LoginPage() {
   const [password, setPassword] = useState("")
   const [error, setError] = useState(() => githubErrorMessage(searchParams.get("error")))
   const [isSubmitting, setIsSubmitting] = useState(false)
+  // Unknown until the server answers; both options show meanwhile, as before. A server that predates
+  // these fields (undefined) keeps showing them too.
+  const [registrationEnabled, setRegistrationEnabled] = useState(true)
+  const [githubEnabled, setGithubEnabled] = useState(true)
 
   // Strip ?error= from the URL once read, so a refresh doesn't re-show a stale message.
   useEffect(() => {
@@ -62,8 +66,10 @@ export default function LoginPage() {
       return
     }
     api.auth.setupRequired()
-      .then(({ setup_required }) => {
+      .then(({ setup_required, registration_enabled, github_oauth_enabled }) => {
         if (setup_required) router.replace("/setup")
+        setRegistrationEnabled(registration_enabled !== false)
+        setGithubEnabled(github_oauth_enabled !== false)
       })
       .catch(() => {
         // API unreachable — stay on login page; user will see the form
@@ -142,29 +148,39 @@ export default function LoginPage() {
           </Button>
         </form>
 
-        <div className="my-4 flex items-center gap-3">
-          <span className="h-px flex-1 bg-border" />
-          <span className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">or</span>
-          <span className="h-px flex-1 bg-border" />
-        </div>
+        {githubEnabled && (
+          <>
+            <div className="my-4 flex items-center gap-3">
+              <span className="h-px flex-1 bg-border" />
+              <span className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">or</span>
+              <span className="h-px flex-1 bg-border" />
+            </div>
 
-        <Button
-          type="button"
-          variant="outline"
-          className="w-full"
-          onClick={() => {
-            window.location.href = `${API_BASE}${withNext("/auth/github/login", next)}`
-          }}
-        >
-          <GithubMark />
-          Sign in with GitHub
-        </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={() => {
+                window.location.href = `${API_BASE}${withNext("/auth/github/login", next)}`
+              }}
+            >
+              <GithubMark />
+              Sign in with GitHub
+            </Button>
+          </>
+        )}
 
         <p className="text-xs text-muted-foreground mt-4 text-center">
-          Don&apos;t have an account?{" "}
-          <a href={withNext("/register", next)} className="text-foreground underline underline-offset-2">
-            Sign up
-          </a>
+          {registrationEnabled ? (
+            <>
+              Don&apos;t have an account?{" "}
+              <a href={withNext("/register", next)} className="text-foreground underline underline-offset-2">
+                Sign up
+              </a>
+            </>
+          ) : (
+            "New sign-ups are turned off. Ask an admin for an invitation."
+          )}
         </p>
       </div>
     </main>

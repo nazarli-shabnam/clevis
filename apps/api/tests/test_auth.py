@@ -68,6 +68,23 @@ def test_setup_required_with_user(auth_client):
     assert resp.json()["setup_required"] is False
 
 
+def test_setup_required_reports_registration_and_github_capabilities(auth_client, db):
+    from unittest.mock import patch
+
+    body = auth_client.get("/auth/setup-required").json()
+    assert body["registration_enabled"] is True  # no row = the code default
+
+    db.execute(text("INSERT INTO app_config (key, value, updated_at) VALUES ('registration_enabled', 'false', NOW())"))
+    db.flush()
+    with patch("src.routers.auth.github_oauth.is_configured", return_value=True):
+        body = auth_client.get("/auth/setup-required").json()
+    assert body["registration_enabled"] is False
+    assert body["github_oauth_enabled"] is True
+
+    with patch("src.routers.auth.github_oauth.is_configured", return_value=False):
+        assert auth_client.get("/auth/setup-required").json()["github_oauth_enabled"] is False
+
+
 # setup
 
 def test_setup_returns_token_and_owner(auth_client):
