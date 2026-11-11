@@ -15,7 +15,6 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from src.core.path_params import Owner, Repo
-from src.core.app_config import get_config
 from src.core.auth import UserOut, require_auth
 from src.core.db import SecurityAlert, SecurityAlertSync, get_db
 from src.core.rbac import OrgContext, require_org_role, set_tenant_session_context
@@ -37,7 +36,6 @@ from src.services.token_resolution import NoGitHubTokenAvailable, resolve_owner_
 
 router = APIRouter()
 
-_SLA_DEFAULTS = {"critical": 7, "high": 30}
 
 # Each repo costs up to 3 additional GitHub calls (branch, dependabot, code-scanning),
 # so the cap here is tighter than the single-call aggregate helpers in analytics.py.
@@ -423,18 +421,6 @@ def personal_secret_scanning(
     return SecretScanningResponse(repository=f"{owner}/{repo}", alerts=alerts, source="github")
 
 
-def _sla_days() -> dict[str, int | None]:
-    """Critical/high SLA windows from instance config; a bad stored value falls back to the default."""
-    out: dict[str, int | None] = {}
-    for severity, default in _SLA_DEFAULTS.items():
-        try:
-            value = int(get_config(f"dependabot_sla_{severity}_days", str(default)))
-        except ValueError:
-            value = default
-        out[severity] = value if value >= 1 else default
-    return out
-
-
 @router.get("/orgs/{org_login}/security/dependabot-burndown", response_model=DependabotBurndownResponse)
 def org_dependabot_burndown(
     days: int = 30,
@@ -453,4 +439,4 @@ def org_dependabot_burndown(
         .filter(SecurityAlert.tenant_id == ctx.org.tenant_id, SecurityAlert.kind == "dependabot")
         .all()
     )
-    return dependabot_burndown.compute(rows, datetime.now(timezone.utc), days, _sla_days())
+    return dependabot_burndown.compute(rows, datetime.now(timezone.utc), days, dependabot_burndown.sla_days())

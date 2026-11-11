@@ -72,7 +72,13 @@ export interface CheckWaiver {
 
 export type DestinationKind = "slack" | "teams" | "generic" | "email"
 
-export type AlertEvent = "score_drop" | "waiver_expired" | "new_critical_alert" | "stale_pr_summary" | "automation_failed"
+export type AlertEvent =
+  | "score_drop"
+  | "waiver_expired"
+  | "new_critical_alert"
+  | "stale_pr_summary"
+  | "automation_failed"
+  | "sla_breach"
 
 export interface NotificationDestination {
   id: number
@@ -990,6 +996,7 @@ export type NotificationKind =
   | "job_failed"
   | "permission_drift"
   | "waiver_expired"
+  | "sla_breach"
 
 export interface NotificationPreferences {
   // Kinds this user has hidden from the org's feed and unread count; empty = show everything.

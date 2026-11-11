@@ -227,6 +227,8 @@ class SecurityAlert(Base):
     ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     # When a new critical/high alert was announced to alert destinations (migration 0071); NULL = not yet.
     alert_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set by the SLA-breach sweep before it messages ``sla_breach`` destinations (migration 0082).
+    sla_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class SecurityAlertSync(Base):

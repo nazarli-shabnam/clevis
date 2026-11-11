@@ -4,7 +4,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr, model_validator
 
 
-EventName = Literal["score_drop", "waiver_expired", "new_critical_alert", "stale_pr_summary", "automation_failed"]
+EventName = Literal[
+    "score_drop", "waiver_expired", "new_critical_alert", "stale_pr_summary", "automation_failed", "sla_breach"
+]
 
 
 class DestinationCreate(BaseModel):

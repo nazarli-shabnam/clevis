@@ -11,8 +11,10 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from src.core.db import ScanResult
+from src.core.db import ScanResult, SecurityAlert
 from src.repositories import scan_results_repo
+from src.services import dependabot_burndown
+from src.services.sla_breach_sweep import breached_filter
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,9 @@ class DigestContent:
     scanned_at: datetime | None
     failing_checks: list[str] = field(default_factory=list)
     push_events_7d: int = 0
+    # Open Dependabot alerts past their SLA: how many in all, and the oldest few as display lines.
+    sla_breach_total: int = 0
+    sla_breaches: list[str] = field(default_factory=list)
 
     @property
     def score_delta(self) -> int | None:
@@ -86,6 +91,19 @@ def build_digest(db: Session, *, tenant_id: int, org_login: str, period_label: s
         {"t": tenant_id, "since": since},
     ).scalar()
 
+    now = datetime.now(timezone.utc)
+    breach_filter = (
+        SecurityAlert.tenant_id == tenant_id,
+        SecurityAlert.kind == "dependabot",
+        SecurityAlert.state == "open",
+        breached_filter(now, dependabot_burndown.sla_days()),
+    )
+    breach_total = db.query(SecurityAlert).filter(*breach_filter).count()
+    breach_rows = (
+        db.query(SecurityAlert).filter(*breach_filter)
+        .order_by(SecurityAlert.created_at, SecurityAlert.id).limit(_MAX_RISK_ITEMS).all()
+    )
+
     return DigestContent(
         org_login=org_login,
         period_label=period_label,
@@ -94,6 +112,10 @@ def build_digest(db: Session, *, tenant_id: int, org_login: str, period_label: s
         scanned_at=latest.created_at if latest else None,
         failing_checks=failing,
         push_events_7d=int(push_count or 0),
+        sla_breach_total=breach_total,
+        sla_breaches=[
+            f"{r.repo} #{r.number} ({r.severity}, open {(now - r.created_at).days} days)" for r in breach_rows
+        ],
     )
 
 
@@ -127,6 +149,12 @@ def render_text(content: DigestContent) -> str:
         lines.extend(f"  - {title}" for title in content.failing_checks)
     else:
         lines.append("Open risk items: none in the latest scan.")
+
+    if content.sla_breach_total:
+        lines += ["", f"Dependabot alerts past their SLA ({content.sla_breach_total}):"]
+        lines.extend(f"  - {item}" for item in content.sla_breaches)
+        if content.sla_breach_total > len(content.sla_breaches):
+            lines.append(f"  … and {content.sla_breach_total - len(content.sla_breaches)} more")
 
     lines += [
         "",

@@ -38,12 +38,14 @@ EVENT_WAIVER_EXPIRED = "waiver_expired"
 EVENT_NEW_CRITICAL_ALERT = "new_critical_alert"
 EVENT_STALE_PR_SUMMARY = "stale_pr_summary"
 EVENT_AUTOMATION_FAILED = "automation_failed"
+EVENT_SLA_BREACH = "sla_breach"
 EVENTS = (
     EVENT_SCORE_DROP,
     EVENT_WAIVER_EXPIRED,
     EVENT_NEW_CRITICAL_ALERT,
     EVENT_STALE_PR_SUMMARY,
     EVENT_AUTOMATION_FAILED,
+    EVENT_SLA_BREACH,
 )
 _TIMEOUT_SECONDS = 5
 # Destinations are messaged in parallel so one slow endpoint can't stall a scan request for
@@ -141,6 +143,7 @@ _EMAIL_SUBJECTS = {
     "new_critical_alert": "Clevis: new critical alert for {org}",
     "stale_pr_summary": "Clevis: stale PR summary for {org}",
     "automation_failed": "Clevis: automation failed for {org}",
+    "sla_breach": "Clevis: Dependabot SLA breached for {org}",
     "test": "Clevis: test message for {org}",
 }
 
@@ -335,6 +338,24 @@ def notify_new_critical_alerts(
     more = f" and {len(alerts) - 5} more" if len(alerts) > 5 else ""
     text = f"Clevis: {len(alerts)} new critical/high security alert{'s' if len(alerts) != 1 else ''} in {org_login}: {shown}{more}."
     _notify_event(db, tenant_id, org_login, EVENT_NEW_CRITICAL_ALERT, text, {"org": org_login, "alerts": alerts}, actor=actor)
+
+
+def notify_sla_breaches(
+    db: Session, tenant_id: int, org_login: str, breaches: list[dict], *, actor: str = "system"
+) -> None:
+    """``breaches`` is a list of ``{"repo", "number", "severity", "sla_days"}`` dicts for open Dependabot
+    alerts that have just passed their SLA window."""
+    if not breaches:
+        return
+    shown = "; ".join(
+        f"{_chat_safe(b['repo'])} #{int(b['number'])} ({_chat_safe(str(b['severity']))}, SLA {b['sla_days']}d)" for b in breaches[:5]
+    )
+    more = f" and {len(breaches) - 5} more" if len(breaches) > 5 else ""
+    text = (
+        f"Clevis: {len(breaches)} Dependabot alert{'s' if len(breaches) != 1 else ''} in {org_login} "
+        f"{'have' if len(breaches) != 1 else 'has'} passed the remediation SLA: {shown}{more}."
+    )
+    _notify_event(db, tenant_id, org_login, EVENT_SLA_BREACH, text, {"org": org_login, "breaches": breaches}, actor=actor)
 
 
 def notify_stale_prs(
