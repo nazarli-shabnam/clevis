@@ -131,6 +131,20 @@ describe("InviteAcceptPage", () => {
     expect(screen.queryByRole("button", { name: /accept invitation/i })).not.toBeInTheDocument();
   });
 
+  it("sends a signed-out visitor with an already-accepted invitation to sign in, and a signed-in one to the app (#906)", async () => {
+    previewMock.mockResolvedValue({ org_login: "acme", status: "accepted" });
+    renderPage();
+    expect(await screen.findByRole("link", { name: "Open Clevis" })).toHaveAttribute("href", "/");
+    cleanup();
+
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation((input: RequestInfo | URL) => {
+      if (String(input).endsWith("/auth/me")) return Promise.resolve(new Response(null, { status: 401 }));
+      return Promise.reject(new Error(`Unexpected fetch: ${String(input)}`));
+    });
+    renderPage();
+    expect(await screen.findByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/login");
+  });
+
   it("owns a main landmark, including for an invalid invitation (public routes render outside the shell)", async () => {
     previewMock.mockRejectedValue(new Error("Invitation not found"));
 
