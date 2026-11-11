@@ -57,7 +57,11 @@ def _expire(db: Session, invitation) -> None:
     db.refresh(invitation)
 
 
-@router.post("/orgs/{org_login}/invitations", response_model=InvitationCreateResponse)
+@router.post(
+    "/orgs/{org_login}/invitations",
+    response_model=InvitationCreateResponse,
+    dependencies=[Depends(rate_limit())],
+)
 def create_invitation(
     body: InvitationCreate,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
@@ -70,20 +74,24 @@ def create_invitation(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"A pending invitation already exists for {body.email} in this organization",
         )
+    # The invitation and its audit row commit together (as in the bulk route): a failure between two
+    # commits would leave a live invite link with no audit trail.
     try:
-        invitation = invitation_repo.create(db, org_id=ctx.org.id, email=body.email, invited_by_user_id=user.id)
+        invitation = invitation_repo.create(
+            db, org_id=ctx.org.id, email=body.email, invited_by_user_id=user.id, commit=False
+        )
+        audit_repo.write(
+            db, user.email, "invitation.create", ctx.org.github_login, {"email": body.email},
+            tenant_id=ctx.org.tenant_id, commit=False,
+        )
+        # Built before the commit, which expires the row.
+        link = _invite_link(invitation)
+        db.commit()
     except invitation_repo.DuplicatePendingInvitation as exc:
         # A concurrent request won the race between the pre-check above and its own
         # insert; the DB constraint rejected this one.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    audit_repo.write(
-        db, user.email, "invitation.create", ctx.org.github_login, {"email": body.email},
-        tenant_id=ctx.org.tenant_id,
-    )
-    return {
-        "invitation": invitation,
-        "invite_link": _invite_link(invitation),
-    }
+    return {"invitation": invitation, "invite_link": link}
 
 
 @router.post(
