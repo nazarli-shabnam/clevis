@@ -29,9 +29,10 @@ def test_passes_when_every_member_has_2fa():
     assert result["status"] == "pass" and result["value"]["unknown"] == 0
 
 
-def test_unknown_members_do_not_fail_it_but_are_reported():
+def test_partly_unknown_members_are_reported_as_unverifiable_not_as_a_pass():
     result = _run(MembersWithout2FA([_member("a", True), _member("b", None)]))
-    assert result == {"status": "pass", "value": {"enabled": 1, "total": 2, "unknown": 1}}
+    assert result["status"] == "error"
+    assert "1 of 2 members" in result["value"]
 
 
 def test_a_known_failure_still_fails_alongside_unknown_members():
@@ -64,9 +65,20 @@ def test_members_only_data_has_no_outside_collaborators_to_flag():
     assert result["status"] == "pass"
 
 
-def test_collaborators_not_yet_classified_are_not_counted():
-    # is_outside_collaborator is NULL until the reconcile fills it in
-    assert _run(OutsideCollaboratorsWithAdmin([_collab("acme/api", "c", "admin", outside=None)]))["status"] == "pass"
+def test_collaborators_not_yet_classified_cannot_be_reported_as_a_pass():
+    # is_outside_collaborator is NULL until the reconcile fills it in; an unclassified admin may be an outsider
+    result = _run(OutsideCollaboratorsWithAdmin([_collab("acme/api", "c", "admin", outside=None)]))
+    assert result["status"] == "error"
+    assert "1 recorded collaborators" in result["value"]
+
+
+def test_a_confirmed_outside_admin_still_fails_even_if_other_collaborators_are_unclassified():
+    result = _run(OutsideCollaboratorsWithAdmin([_collab("a", "x", "admin"), _collab("a", "y", "write", outside=None)]))
+    assert result["status"] == "fail"
+
+
+def test_fully_classified_members_only_data_passes():
+    assert _run(OutsideCollaboratorsWithAdmin([_collab("a", "m", "admin", outside=False)]))["status"] == "pass"
 
 
 def test_not_applicable_when_no_collaborator_data_has_been_recorded():

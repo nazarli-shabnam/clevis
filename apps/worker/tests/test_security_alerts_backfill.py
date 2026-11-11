@@ -18,8 +18,8 @@ BASE = "https://api.github.com"
 
 
 class _Resp:
-    def __init__(self, body, status_code=200, links=None, headers=None):
-        self._body, self.status_code, self.links, self.headers, self.text = body, status_code, links or {}, headers or {}, ""
+    def __init__(self, body, status_code=200, links=None, headers=None, text=""):
+        self._body, self.status_code, self.links, self.headers, self.text = body, status_code, links or {}, headers or {}, text
 
     def json(self):
         return self._body
@@ -85,6 +85,15 @@ def test_fetch_open_alerts_raises_for_other_failures_and_past_the_page_cap():
     endless = _Client({"dependabot/alerts": _Resp([_alert(1)], links={"next": {"url": f"{BASE}/repos/acme/api/dependabot/alerts?page=2"}})})
     with pytest.raises(sab.IncompleteListing):
         sab.fetch_open_alerts(endless, BASE, {}, "acme/api", "dependabot")
+
+
+def test_a_body_only_secondary_rate_limit_is_not_treated_as_unreadable():
+    limited = httpx.HTTPStatusError(
+        "x", request=MagicMock(), response=_Resp({}, status_code=403, text="You have exceeded a secondary rate limit.")
+    )
+    forbidden = httpx.HTTPStatusError("x", request=MagicMock(), response=_Resp({}, status_code=403, text="Forbidden"))
+    assert not sab.is_unreadable(limited)  # retried with the job, never recorded as a read list
+    assert sab.is_unreadable(forbidden)
 
 
 def test_a_rate_limit_is_not_treated_as_unreadable():

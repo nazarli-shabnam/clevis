@@ -80,11 +80,12 @@ def test_normalize_returns_none_for_missing_or_malformed_fields(overrides):
 
 
 class _FakeResponse:
-    def __init__(self, json_data, links=None, status_code=200, headers=None):
+    def __init__(self, json_data, links=None, status_code=200, headers=None, text=""):
         self._json_data = json_data
         self.links = links or {}
         self.status_code = status_code
         self.headers = headers or {}
+        self.text = text
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -757,6 +758,24 @@ def test_fetch_private_repo_events_uses_installation_repositories_for_personal_i
 
     assert [e["id"] for e in events] == ["p1"]
     assert client.calls[0][0] == "https://api.github.com/installation/repositories"
+
+
+def test_a_secondary_rate_limit_signalled_only_in_the_body_is_not_skipped_as_a_forbidden_repo():
+    """GitHub also sends the secondary limit as a 403 with no Retry-After / X-RateLimit-Remaining header; only
+    its message tells it from a permission refusal. Skipping it would drop that repo's events silently and
+    still advance the sync cursor, so it must propagate (the job is then requeued)."""
+    limited = _FakeResponse({}, status_code=403, text="You have exceeded a secondary rate limit. Please wait.")
+    client = _FakeClient([_FakeResponse([_repo("acme/a")]), limited])
+
+    with pytest.raises(httpx.HTTPStatusError):
+        backfill.fetch_private_repo_events(client, "https://api.github.com", {}, "acme", "Organization")
+
+
+def test_a_genuine_permission_403_is_still_skipped_when_its_message_is_unrelated():
+    denied = _FakeResponse({}, status_code=403, text="Resource not accessible by integration")
+    client = _FakeClient([_FakeResponse([_repo("acme/a")]), denied])
+
+    assert backfill.fetch_private_repo_events(client, "https://api.github.com", {}, "acme", "Organization") == []
 
 
 def test_a_personal_install_reads_every_repo_page_before_picking_the_newest_private_ones():

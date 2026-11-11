@@ -30,6 +30,16 @@ def _is_secondary_rate_limit(resp: httpx.Response) -> bool:
     return "Retry-After" in resp.headers or resp.headers.get("X-RateLimit-Remaining") == "0"
 
 
+def is_rate_limited_403(resp: httpx.Response) -> bool:
+    """Whether a 403 is GitHub's secondary rate limit, by its headers *or* its message: it is also sent with
+    neither header (the same variant membership_reconcile.py recognises), and only the text tells it from a
+    permission refusal. Used where the answer decides between "skip this call" and "retry the job"; the
+    in-line retry in _get_with_retry stays header-based because a body-only limit carries no wait hint."""
+    return _is_secondary_rate_limit(resp) or (
+        resp.status_code == 403 and "secondary rate limit" in (getattr(resp, "text", "") or "").lower()
+    )
+
+
 def _retry_delay_seconds(resp: httpx.Response, attempt: int) -> float:
     """Prefer Retry-After, then X-RateLimit-Reset, both capped at _MAX_RETRY_AFTER_SECONDS.
 
@@ -121,7 +131,7 @@ def _is_skippable(error: httpx.HTTPStatusError) -> bool:
     """A genuine 4xx (e.g. the token can't read that repo): not worth failing the whole backfill for.
     Rate limits and 5xx are not skippable; they propagate so the job is requeued."""
     resp = error.response
-    return 400 <= resp.status_code < 500 and resp.status_code != 429 and not _is_secondary_rate_limit(resp)
+    return 400 <= resp.status_code < 500 and resp.status_code != 429 and not is_rate_limited_403(resp)
 
 
 def _list_private_repos(client: httpx.Client, base: str, headers: dict, account_login: str, account_type: str) -> list[str]:

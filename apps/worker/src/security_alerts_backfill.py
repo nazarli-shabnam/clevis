@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 import event_consumer
-from backfill import _get_with_retry, _is_secondary_rate_limit
+from backfill import _get_with_retry, is_rate_limited_403
 
 _PER_PAGE = 100
 # Bound on the alert pages read per (repo, kind), so a looping Link header can't run forever. A listing
@@ -64,7 +64,7 @@ def is_unreadable(error: httpx.HTTPStatusError) -> bool:
     """A genuine 4xx (e.g. 403: the token lacks the alerts permission): that (repo, kind) is unknown, so it is
     skipped and never recorded as complete. Rate limits and 5xx are not, and propagate so the job is retried."""
     resp = error.response
-    return 400 <= resp.status_code < 500 and resp.status_code != 429 and not _is_secondary_rate_limit(resp)
+    return 400 <= resp.status_code < 500 and resp.status_code != 429 and not is_rate_limited_403(resp)
 
 
 def fetch_open_alerts(client: httpx.Client, base: str, headers: dict, full_name: str, kind: str) -> list[dict]:

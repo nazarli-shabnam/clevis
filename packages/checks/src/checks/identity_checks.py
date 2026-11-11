@@ -42,7 +42,16 @@ class MembersWithout2FA(Check):
         if total == 0 or unknown == total:
             # No roster yet, or 2FA status was never available: nothing was assessed.
             return {"status": "not_applicable", "value": value}
-        return {"status": "fail" if disabled else "pass", "value": value}
+        if disabled:
+            return {"status": "fail", "value": value}
+        if unknown:
+            # Like every GitHub-backed check, "clean so far but partly unknown" is not a pass: a member added by
+            # webhook has no 2FA status until the next reconcile, and a clean-looking result would hide that.
+            return {
+                "status": "error",
+                "value": f"Could not verify 2FA for {unknown} of {total} members (status not yet known).",
+            }
+        return {"status": "pass", "value": value}
 
 
 class OutsideCollaboratorsWithAdmin(Check):
@@ -69,11 +78,20 @@ class OutsideCollaboratorsWithAdmin(Check):
         if not self._collaborators:
             return {"status": "not_applicable", "value": "No collaborator data has been recorded yet."}
         outside = [c for c in self._collaborators if c.get("is_outside_collaborator") is True]
+        unclassified = [c for c in self._collaborators if c.get("is_outside_collaborator") is None]
+        admins = [c for c in outside if c.get("permission") == "admin"]
+        if admins:
+            return {"status": "fail", "value": {"checked": len(outside), "missing": len(admins)}}
+        if unclassified:
+            # Whether a collaborator is an outsider is only filled in by the reconcile (and needs an App
+            # permission); an unclassified admin could be an outsider, so this cannot be reported as a pass.
+            return {
+                "status": "error",
+                "value": f"Could not tell whether {len(unclassified)} recorded collaborators are outside collaborators.",
+            }
         if not outside:
             return {"status": "pass", "value": "No outside collaborators have been recorded."}
-        admins = [c for c in outside if c.get("permission") == "admin"]
-        value = {"checked": len(outside), "missing": len(admins)}
-        return {"status": "fail" if admins else "pass", "value": value}
+        return {"status": "pass", "value": {"checked": len(outside), "missing": 0}}
 
 
 def identity_checks(stored: dict) -> list[Check]:
