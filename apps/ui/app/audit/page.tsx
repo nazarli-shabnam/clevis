@@ -170,7 +170,7 @@ export default function AuditPage() {
   if (!isAdmin) {
     return (
       <>
-        <PageHeader title="Audit Log" description="Immutable record of all significant actions." />
+        <PageHeader title="Audit Log" description="Append-only record of all significant actions." />
         <div className="card px-4 py-6 text-sm text-muted-foreground">
           The audit log is only available to workspace admins.
         </div>
@@ -180,7 +180,7 @@ export default function AuditPage() {
 
   return (
     <>
-      <PageHeader title="Audit Log" description="Immutable record of all significant actions." />
+      <PageHeader title="Audit Log" description="Append-only record of all significant actions." />
 
       <div className="card">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-4">
