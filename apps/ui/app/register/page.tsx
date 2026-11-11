@@ -79,7 +79,7 @@ function RegisterForm() {
 
         {!registrationEnabled ? (
           <p role="status" className="text-sm text-muted-foreground">
-            New sign-ups are turned off on this server. Ask an admin for an invitation.
+            New sign-ups are turned off on this server. Ask an admin to create an account or send an invitation.
           </p>
         ) : (
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">

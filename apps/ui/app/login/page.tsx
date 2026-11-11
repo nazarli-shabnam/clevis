@@ -179,7 +179,7 @@ export default function LoginPage() {
               </a>
             </>
           ) : (
-            "New sign-ups are turned off. Ask an admin for an invitation."
+            "New sign-ups are turned off. Ask an admin to create an account or send an invitation."
           )}
         </p>
       </div>
