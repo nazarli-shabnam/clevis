@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/sidebar"
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
-import { useActiveScope, type ActiveScope } from "@/lib/active-scope"
+import { clearActiveScope, useActiveScope, type ActiveScope } from "@/lib/active-scope"
 import { readActivityLastSeen } from "@/lib/activity-last-seen"
 import { inviteMembersHref, membersHref } from "@/lib/members-href"
 import type { InstallationMeta, MyOrgMembership } from "@/lib/api/types"
@@ -216,17 +216,21 @@ export function AppSidebar() {
     [personalInstall, memberships],
   )
 
-  // When nothing is persisted, auto-select the first available scope once data loads; an explicit
-  // pick always persists so it's never overridden. Gate on isSuccess: a failed query leaves the
-  // `= []` fallback, which could look like "exactly one scope" and get persisted.
-  const autoSelectedScope = useRef(false)
+  // Keep the persisted scope valid. With none stored, pick the first available; with one that is no
+  // longer offered (removed from the org, personal installation disconnected), fall back to the first
+  // available, or clear it so the "connect an organization" state shows instead of every page erroring
+  // on a scope the user cannot reach. Gate on isSuccess: a failed query leaves the `= []` fallback,
+  // which would look like "no scopes" and wipe a good selection.
   useEffect(() => {
-    if (autoSelectedScope.current || scope !== null) return
     if (!membershipsReady || !installsReady) return
-    if (scopeOptions.length >= 1) {
-      autoSelectedScope.current = true
-      setScope(scopeOptions[0].scope)
-    }
+    const stillValid =
+      scope !== null &&
+      scopeOptions.some(
+        (o) => o.scope.kind === scope.kind && o.scope.login.toLowerCase() === scope.login.toLowerCase(),
+      )
+    if (stillValid) return
+    if (scopeOptions.length >= 1) setScope(scopeOptions[0].scope)
+    else if (scope !== null) clearActiveScope()
   }, [scope, membershipsReady, installsReady, scopeOptions, setScope])
 
   // Profile identity row reflects the active scope, falling back to real

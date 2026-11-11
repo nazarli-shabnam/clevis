@@ -684,6 +684,40 @@ describe("AppSidebar scope switcher", () => {
     );
   });
 
+  it("replaces a stored org scope the user no longer belongs to with the first available one (#903)", async () => {
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "foo" }));
+    orgMemberships = [{ org_login: "acme", role: "admin" }];
+    installations = [];
+    renderSidebar();
+
+    await waitFor(() =>
+      expect(localStorage.getItem("active_scope")).toBe(JSON.stringify({ kind: "org", login: "acme" })),
+    );
+  });
+
+  it("clears a stale stored scope when no scope is available at all (#903)", async () => {
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "foo" }));
+    orgMemberships = [];
+    installations = [];
+    renderSidebar();
+
+    await waitFor(() => expect(localStorage.getItem("active_scope")).toBeNull());
+  });
+
+  it("keeps a stored scope whose login differs from the membership only by case (#903)", async () => {
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "Acme" }));
+    orgMemberships = [
+      { org_login: "globex", role: "member" },
+      { org_login: "acme", role: "admin" },
+    ];
+    installations = [];
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: /user/i }));
+    await waitFor(() => expect(screen.getAllByText(/globex/i).length).toBeGreaterThan(0));
+    expect(localStorage.getItem("active_scope")).toBe(JSON.stringify({ kind: "org", login: "Acme" }));
+  });
+
   it("does not auto-select when the org query fails", async () => {
     orgMemberships = [{ org_login: "acme", role: "admin" }];
     installations = [];
