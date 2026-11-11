@@ -39,6 +39,7 @@ const STATUS_LABEL: Record<StreamStatus, string> = {
   live: "Live",
   connecting: "Connecting…",
   offline: "Reconnecting…",
+  closed: "Not live",
 }
 
 /** `quiet` is for pages that already have their own fallback (Overview): the card then renders only

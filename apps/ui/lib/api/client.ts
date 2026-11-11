@@ -89,12 +89,14 @@ function getAuthHeaders(): Record<string, string> {
 /** Opens the activity-summary SSE stream. Not routed through fetchWithTimeout: the stream is meant to
  * stay open (the API ends it after ~15 min), so only the caller's signal may abort it. Sends the same
  * credentials as every other call (Bearer header for password sessions, cookie for GitHub OAuth). */
-export function openActivityStream(org: string, days: number, signal: AbortSignal): Promise<Response> {
-  return fetch(`${BASE}/github/orgs/${encodeURIComponent(org)}/activity-summary/stream?days=${days}`, {
+export async function openActivityStream(org: string, days: number, signal: AbortSignal): Promise<Response> {
+  const res = await fetch(`${BASE}/github/orgs/${encodeURIComponent(org)}/activity-summary/stream?days=${days}`, {
     credentials: "include",
     headers: { Accept: "text/event-stream", ...getAuthHeaders() },
     signal,
   })
+  if (res.status === 401) notifyUnauthorized()
+  return res
 }
 
 // Hard ceiling so a hanging API surfaces an error instead of leaving callers loading forever.
@@ -150,13 +152,16 @@ class ApiError extends Error {
   }
 }
 
+/** Clears the stale token and lets the auth guard redirect to /login. */
+function notifyUnauthorized() {
+  if (typeof window === "undefined") return
+  localStorage.removeItem(_TOKEN_KEY)
+  window.dispatchEvent(new Event("clevis:unauthorized"))
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   const json = await res.json().catch(() => null)
-  if (res.status === 401) {
-    // Clear stale token and let the auth guard redirect to /login
-    if (typeof window !== "undefined") localStorage.removeItem(_TOKEN_KEY)
-    window.dispatchEvent(new Event("clevis:unauthorized"))
-  }
+  if (res.status === 401) notifyUnauthorized()
   if (!res.ok) throw new ApiError(errorDetail(json, `Request failed: ${res.status}`), res.status)
   return json as T
 }
@@ -655,10 +660,7 @@ export const api = {
         )
         if (!res.ok) {
           const json = await res.json().catch(() => null)
-          if (res.status === 401 && typeof window !== "undefined") {
-            localStorage.removeItem(_TOKEN_KEY)
-            window.dispatchEvent(new Event("clevis:unauthorized"))
-          }
+          if (res.status === 401) notifyUnauthorized()
           throw new ApiError(errorDetail(json, `Request failed: ${res.status}`), res.status)
         }
         const filename =
