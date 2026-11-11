@@ -33,6 +33,46 @@ describe("CheckCard", () => {
     cleanup();
   });
 
+  const failingWithRepos = (repos: string[], denominator = 40): CheckResult => ({
+    id: "repository_default_branch_protection_enabled",
+    title: "Branch protection",
+    severity: "high",
+    remediation: "Protect the default branch.",
+    status: "fail",
+    value: { type: "ratio", numerator: 7, denominator, repos },
+  });
+
+  it("lists the repos a failing check names, each linking to its detail page (#832)", () => {
+    renderWithClient(<CheckCard check={failingWithRepos(["api", "web"], 9)} owner="acme" />);
+
+    expect(screen.getByText("2 repositories affected")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "api" })).toHaveAttribute("href", "/repos/acme~api");
+    expect(screen.queryByText(/more repositories are affected/)).not.toBeInTheDocument();
+  });
+
+  it("says when the server-side cap hid some of the failing repos (#832)", () => {
+    const names = Array.from({ length: 25 }, (_, i) => `repo-${String(i).padStart(2, "0")}`);
+    renderWithClient(<CheckCard check={failingWithRepos(names, 100)} owner="acme" />);
+
+    expect(screen.getByText(/Showing the first 25; more repositories are affected/)).toBeInTheDocument();
+  });
+
+  it("shows no repo list for a passing check or one that names none (#832)", () => {
+    renderWithClient(<CheckCard check={{ ...failingWithRepos(["api"]), status: "pass" }} owner="acme" />);
+    expect(screen.queryByText(/affected/)).not.toBeInTheDocument();
+    cleanup();
+
+    renderWithClient(<CheckCard check={failingWithRepos([])} owner="acme" />);
+    expect(screen.queryByText(/affected/)).not.toBeInTheDocument();
+  });
+
+  it("prefills the waiver form with the listed repos (#832)", () => {
+    renderWithClient(<CheckCard check={failingWithRepos(["api", "web"])} waiveOrg="acme" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Waive…" }));
+    expect(screen.getByLabelText(/Repositories/)).toHaveValue("api, web");
+  });
+
   it("renders a severity the UI doesn't know about, as plain text", () => {
     render(<CheckCard check={{ ...baseCheck, severity: "critical" }} />);
 

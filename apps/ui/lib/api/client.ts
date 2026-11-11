@@ -235,6 +235,17 @@ async function del(path: string): Promise<void> {
 
 
 function normalizeCheckValue(id: string, raw: unknown): CheckValue {
+  const value = normalizeCheckValueShape(id, raw)
+  // The checks record the offending repos beside their counts; keep them for the card to list.
+  const repos = (raw as { repos?: unknown } | null)?.repos
+  if ((value?.type === "ratio" || value?.type === "severity_counts") && Array.isArray(repos)) {
+    const names = repos.filter((r): r is string => typeof r === "string")
+    if (names.length > 0) return { ...value, repos: names }
+  }
+  return value
+}
+
+function normalizeCheckValueShape(id: string, raw: unknown): CheckValue {
   // Checked first: an error explanation must not be coerced (Boolean("Check failed…") is true).
   if (typeof raw === "string") return raw ? { type: "text", text: raw } : null
   if (id === "organization_members_mfa_required") {

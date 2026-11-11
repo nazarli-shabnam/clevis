@@ -1,12 +1,13 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { useMutation } from "@tanstack/react-query"
 import { CheckCircle, MinusCircle, WarningCircle, XCircle, ArrowSquareOut, Wrench } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { WAIVABLE_CHECKS, WaiverForm } from "@/components/waiver-form"
+import { ORG_WIDE_ONLY_CHECKS, WAIVABLE_CHECKS, WaiverForm } from "@/components/waiver-form"
 import type { CheckResult, CheckValue } from "@/lib/api/types"
 
 // check_ids the API can auto-fix. Keep in sync with check_remediation.supported_check_ids().
@@ -25,6 +26,15 @@ interface CheckCardProps {
   onRemediated?: () => void
   // When set (the caller is an admin of this Clevis org), a failing check offers "Waive…" for that org.
   waiveOrg?: string
+}
+
+// The checks package caps the repos it records per check; keep in sync with github_checks.MAX_AFFECTED_REPOS.
+const MAX_AFFECTED_REPOS = 25
+
+/** The repositories a check names, if any. */
+function affectedRepos(check: CheckResult): string[] {
+  const v = check.value
+  return v && (v.type === "ratio" || v.type === "severity_counts") ? (v.repos ?? []) : []
 }
 
 const severityLabel: Record<string, string> = {
@@ -108,6 +118,39 @@ function CheckValueDisplay({ value }: { value: CheckValue }) {
   }
 
   return null
+}
+
+/** Collapsed list of the repos behind a failure, each linking to its detail page. */
+function AffectedRepos({ check, owner }: { check: CheckResult; owner?: string }) {
+  const repos = affectedRepos(check)
+  if (repos.length === 0) return null
+  const v = check.value
+  // The server keeps only the first MAX_AFFECTED_REPOS names; a ratio tells us whether more failed.
+  const capped =
+    repos.length >= MAX_AFFECTED_REPOS && (v?.type === "ratio" ? v.denominator - v.numerator > repos.length : true)
+  return (
+    <details className="mt-2 text-xs">
+      <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+        {repos.length} {repos.length === 1 ? "repository" : "repositories"} affected
+      </summary>
+      <ul className="mt-1.5 flex flex-wrap gap-1.5">
+        {repos.map((r) => (
+          <li key={r}>
+            {owner ? (
+              <Link href={`/repos/${encodeURIComponent(owner)}~${encodeURIComponent(r)}`} className="stat-chip hover:text-foreground">
+                {r}
+              </Link>
+            ) : (
+              <span className="stat-chip">{r}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+      {capped && (
+        <p className="mt-1 text-muted-foreground">Showing the first {repos.length}; more repositories are affected.</p>
+      )}
+    </details>
+  )
 }
 
 function FileAsIssue({ check, owner, token }: { check: CheckResult; owner: string; token?: string }) {
@@ -199,6 +242,8 @@ function FileAsIssue({ check, owner, token }: { check: CheckResult; owner: strin
 }
 
 function WaiveThis({ check, orgLogin }: { check: CheckResult; orgLogin: string }) {
+  // Prefill the repos the card names, but only for checks where a repo-scoped waiver means something.
+  const repos = ORG_WIDE_ONLY_CHECKS.has(check.id) ? [] : affectedRepos(check)
   const [open, setOpen] = useState(false)
   const [saved, setSaved] = useState(false)
 
@@ -221,6 +266,7 @@ function WaiveThis({ check, orgLogin }: { check: CheckResult; orgLogin: string }
       <WaiverForm
         orgLogin={orgLogin}
         fixedCheckId={check.id}
+        initialRepos={repos}
         compact
         onSaved={() => setSaved(true)}
         onCancel={() => setOpen(false)}
@@ -346,6 +392,7 @@ export function CheckCard({ check, owner, token, onRemediated, waiveOrg }: Check
         {(!errored || check.value?.type === "text" || (check.value?.type === "ratio" && !!check.value.unknown)) && (
           <CheckValueDisplay value={check.value} />
         )}
+        {(fail || errored) && <AffectedRepos check={check} owner={owner ?? waiveOrg} />}
         {fail && owner && REMEDIABLE_CHECK_IDS.has(check.id) && (
           <FixThisButton check={check} owner={owner} token={token} onRemediated={onRemediated} />
         )}

@@ -514,6 +514,25 @@ describe("api.analytics value normalization", () => {
     expect(result.checks[0].value).toEqual({ type: "ratio", numerator: 2, denominator: 2, unknown: 1 });
   });
 
+  it("carries the repos a check names through its ratio value, and omits them when there are none (#832)", async () => {
+    stubJobResult({
+      owner: "acme", score: 50, total_checks: 2, failed_checks: 1, repo_count: 4,
+      checks: [
+        {
+          id: "repository_default_branch_protection_enabled", title: "Branch protection", severity: "high",
+          remediation: "n/a", status: "fail", value: { checked: 4, protected: 2, unknown: 0, repos: ["api", "web"] },
+        },
+        {
+          id: "repository_secret_scanning_enabled", title: "Secret scanning", severity: "high",
+          remediation: "n/a", status: "pass", value: { enabled: 4, total: 4 },
+        },
+      ],
+    });
+    const result = await runOverview("acme", "ghp_test");
+    expect(result.checks[0].value).toEqual({ type: "ratio", numerator: 2, denominator: 4, repos: ["api", "web"] });
+    expect(result.checks[1].value).toEqual({ type: "ratio", numerator: 4, denominator: 4 });
+  });
+
   it("GETs /me/analytics/cockpit/{owner} with no body and no token header when omitted", async () => {
     stubOkJson({
       repo_count: 1, member_count: 2, latest_score: 90, score_trend: [90],

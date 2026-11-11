@@ -20,6 +20,8 @@ export interface RatioCheckValue {
   denominator: number
   /** Repos the check could not inspect; not part of the ratio. */
   unknown?: number
+  /** Names of the repositories behind a failure (sorted, capped server-side); absent when none or not recorded. */
+  repos?: string[]
 }
 
 export interface SeverityCountsValue {
@@ -28,6 +30,8 @@ export interface SeverityCountsValue {
   high: number
   medium: number
   low: number
+  /** Names of the repositories with open alerts (sorted, capped server-side). */
+  repos?: string[]
 }
 
 // A check that errored returns a plain-text explanation instead of structured data.

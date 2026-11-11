@@ -68,6 +68,8 @@ interface WaiverFormProps {
   editing?: CheckWaiver
   /** Waive exactly this check (the check picker is hidden), e.g. from a failing check's card. */
   fixedCheckId?: string
+  /** Repos to prefill the repository list with (e.g. the ones a failing check names); ignored when editing. */
+  initialRepos?: string[]
   /** One column, for narrow containers such as a check card. */
   compact?: boolean
   onSaved?: () => void
@@ -75,10 +77,10 @@ interface WaiverFormProps {
 }
 
 /** Add a waiver, or renew/edit one: a failing check is kept out of the score until it expires. */
-export function WaiverForm({ orgLogin, editing, fixedCheckId, compact, onSaved, onCancel }: WaiverFormProps) {
+export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, compact, onSaved, onCancel }: WaiverFormProps) {
   const queryClient = useQueryClient()
   const [checkId, setCheckId] = useState(editing?.check_id ?? fixedCheckId ?? Object.keys(WAIVABLE_CHECKS)[1])
-  const [repos, setRepos] = useState(editing?.repos?.join(", ") ?? "")
+  const [repos, setRepos] = useState(editing?.repos?.join(", ") ?? initialRepos?.join(", ") ?? "")
   const [reason, setReason] = useState(editing?.reason ?? "")
   const [owner, setOwner] = useState(editing?.owner ?? "")
   const [until, setUntil] = useState(editing ? renewalDay(editing) : dayInput(30))
