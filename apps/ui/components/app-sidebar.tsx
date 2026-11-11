@@ -21,7 +21,7 @@ import { api } from "@/lib/api/client"
 import { clearActiveScope, useActiveScope, type ActiveScope } from "@/lib/active-scope"
 import { readActivityLastSeen } from "@/lib/activity-last-seen"
 import { inviteMembersHref, membersHref } from "@/lib/members-href"
-import type { InstallationMeta, MyOrgMembership } from "@/lib/api/types"
+import type { InstallationMeta, MyOrgMembership, SavedTokenMeta } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
 import { NAV_GROUPS } from "@/lib/nav-items"
 
@@ -105,7 +105,7 @@ function ProfileDropdown({
           </p>
           {scopeOptions.map((opt) => {
             const isActive =
-              activeScope?.kind === opt.scope.kind && activeScope.login === opt.scope.login
+              activeScope?.kind === opt.scope.kind && activeScope.login.toLowerCase() === opt.scope.login.toLowerCase()
             return (
               <button
                 key={`${opt.scope.kind}:${opt.scope.login}`}
@@ -188,50 +188,115 @@ export function AppSidebar() {
     data: memberships = [],
     isLoading: membershipsLoading,
     isSuccess: membershipsReady,
+    refetch: membershipsRefetch,
   } = useQuery<MyOrgMembership[]>({
     queryKey: ["my-orgs"],
     queryFn: () => api.orgs.mine(),
   })
 
-  const { data: installs = [], isSuccess: installsReady } = useQuery<InstallationMeta[]>({
+  const {
+    data: installs = [],
+    isSuccess: installsReady,
+    refetch: refetchInstalls,
+  } = useQuery<InstallationMeta[]>({
     queryKey: ["installations"],
     queryFn: () => api.installations.list(),
   })
+  // A workspace admin can run on a saved PAT for an org Clevis has no membership in; keep such orgs
+  // selectable so reconciling does not drop a scope that still works. Only they may list saved tokens.
+  const isWorkspaceAdmin = Boolean(user?.is_workspace_admin)
+  const {
+    data: savedTokens = [],
+    isSuccess: savedTokensSuccess,
+    refetch: refetchSavedTokens,
+  } = useQuery<SavedTokenMeta[]>({
+    queryKey: ["saved-tokens"],
+    queryFn: () => api.tokens.list(),
+    enabled: isWorkspaceAdmin,
+    retry: false,
+  })
+  const savedTokensReady = !isWorkspaceAdmin || savedTokensSuccess
   const personalInstall = installs.find((i) => i.account_type === "User")
   const slug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG
   // Always offer installing on another account/org; there's no cap on how many can be connected.
   const addInstallUrl = slug ? githubWebUrl(`apps/${slug}/installations/new`) : null
 
-  const scopeOptions: ScopeOption[] = useMemo(
-    () => [
-      ...(personalInstall
-        ? [{ scope: { kind: "personal", login: personalInstall.account_login } as ActiveScope, label: personalInstall.account_login, sublabel: "Personal account" }]
-        : []),
-      ...memberships.map((m) => ({
-        scope: { kind: "org", login: m.org_login } as ActiveScope,
-        label: m.org_login,
-        sublabel: `Organization · ${m.role}`,
-      })),
-    ],
-    [personalInstall, memberships],
-  )
+  const scopeOptions: ScopeOption[] = useMemo(() => {
+    // Legacy migrations can leave several personal installations; offer each login once.
+    const seenPersonal = new Set<string>()
+    const personal = installs
+      .filter((i) => i.account_type === "User")
+      .filter((i) => {
+        const key = i.account_login.toLowerCase()
+        if (seenPersonal.has(key)) return false
+        seenPersonal.add(key)
+        return true
+      })
+      .map((i) => ({
+        scope: { kind: "personal", login: i.account_login } as ActiveScope,
+        label: i.account_login,
+        sublabel: "Personal account",
+      }))
+    const orgs = memberships.map((m) => ({
+      scope: { kind: "org", login: m.org_login } as ActiveScope,
+      label: m.org_login,
+      sublabel: `Organization · ${m.role}`,
+    }))
+    const known = new Set(memberships.map((m) => m.org_login.toLowerCase()))
+    const tokenOrgs = savedTokens
+      .filter((t) => !known.has(t.org.toLowerCase()))
+      .map((t) => ({
+        scope: { kind: "org", login: t.org } as ActiveScope,
+        label: t.org,
+        sublabel: "Organization · saved token",
+      }))
+    return [...personal, ...orgs, ...tokenOrgs]
+  }, [installs, memberships, savedTokens])
 
   // Keep the persisted scope valid. With none stored, pick the first available; with one that is no
   // longer offered (removed from the org, personal installation disconnected), fall back to the first
   // available, or clear it so the "connect an organization" state shows instead of every page erroring
   // on a scope the user cannot reach. Gate on isSuccess: a failed query leaves the `= []` fallback,
-  // which would look like "no scopes" and wipe a good selection.
+  // which would look like "no scopes" and wipe a good selection. A scope missing from the cached lists
+  // is only replaced after those lists were refetched successfully: another tab may have just accepted
+  // an invitation, and the stored scope is shared across tabs, so a stale replacement would stick.
+  const scopeKey = scope ? `${scope.kind}:${scope.login.toLowerCase()}` : null
+  const [verifiedKey, setVerifiedKey] = useState<string | null>(null)
+  const verifyingKey = useRef<string | null>(null)
+  const refetchMemberships = membershipsRefetch
   useEffect(() => {
-    if (!membershipsReady || !installsReady) return
+    if (!membershipsReady || !installsReady || !savedTokensReady) return
     const stillValid =
       scope !== null &&
       scopeOptions.some(
         (o) => o.scope.kind === scope.kind && o.scope.login.toLowerCase() === scope.login.toLowerCase(),
       )
     if (stillValid) return
+    if (scope !== null && verifiedKey !== scopeKey) {
+      if (verifyingKey.current === scopeKey) return
+      verifyingKey.current = scopeKey
+      const refetches = [refetchMemberships(), refetchInstalls(), ...(isWorkspaceAdmin ? [refetchSavedTokens()] : [])]
+      void Promise.all(refetches).then((results) => {
+        if (results.every((r) => r.isSuccess)) setVerifiedKey(scopeKey)
+      })
+      return
+    }
     if (scopeOptions.length >= 1) setScope(scopeOptions[0].scope)
     else if (scope !== null) clearActiveScope()
-  }, [scope, membershipsReady, installsReady, scopeOptions, setScope])
+  }, [
+    scope,
+    scopeKey,
+    verifiedKey,
+    membershipsReady,
+    installsReady,
+    savedTokensReady,
+    scopeOptions,
+    setScope,
+    refetchMemberships,
+    refetchInstalls,
+    refetchSavedTokens,
+    isWorkspaceAdmin,
+  ])
 
   // Profile identity row reflects the active scope, falling back to real
   // membership/installation data if nothing has been picked yet.

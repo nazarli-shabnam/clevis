@@ -60,6 +60,8 @@ function renderSidebar() {
 let orgMemberships: { org_login: string; role: "admin" | "member" }[] = [];
 // Mutable per-test fixture for the /me/installations response; reset in beforeEach.
 let installations: { id: number; account_login: string; account_type: string; installation_id: number | null; created_at: string }[] = [];
+// Mutable per-test fixture for the GET /tokens response (workspace admins only); reset in beforeEach.
+let savedTokens: { org: string; label: string | null; created_at: string; updated_at: string }[] = [];
 // Mutable per-test fixture for the cockpit response driving the health dot/badge.
 let cockpitResponse: {
   latest_score: number | null;
@@ -444,6 +446,7 @@ describe("AppSidebar scope switcher", () => {
     localStorage.setItem(TOKEN_KEY, makeJwt());
     orgMemberships = [{ org_login: "acme", role: "admin" }];
     installations = [];
+    savedTokens = [];
     cockpitResponse = { latest_score: null, recent_events: [] };
 
     vi.stubGlobal(
@@ -474,6 +477,9 @@ describe("AppSidebar scope switcher", () => {
         }
         if (url.endsWith("/me/installations")) {
           return Promise.resolve(jsonResponse(installations));
+        }
+        if (url.endsWith("/tokens")) {
+          return Promise.resolve(jsonResponse(savedTokens));
         }
         if (url.endsWith("/tokens/resolve")) {
           return Promise.resolve(jsonResponse({ detail: "No saved token for this org" }, 404));
@@ -716,6 +722,70 @@ describe("AppSidebar scope switcher", () => {
     fireEvent.click(screen.getByRole("button", { name: /user/i }));
     await waitFor(() => expect(screen.getAllByText(/globex/i).length).toBeGreaterThan(0));
     expect(localStorage.getItem("active_scope")).toBe(JSON.stringify({ kind: "org", login: "Acme" }));
+  });
+
+  it("marks the active scope even when its login differs from the option only by case (#903)", async () => {
+    orgMemberships = [{ org_login: "acme", role: "admin" }];
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "Acme" }));
+    renderSidebar();
+
+    fireEvent.click(await screen.findByRole("button", { name: /user/i }));
+    const switcher = (await screen.findByText("Switch account")).parentElement!;
+    const acme = Array.from(switcher.querySelectorAll("button")).find((b) => b.textContent?.includes("acme"))!;
+    expect(acme).toHaveAttribute("aria-current", "true");
+  });
+
+  it("keeps a selected personal installation when the user has several (#903)", async () => {
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "personal", login: "bob" }));
+    orgMemberships = [];
+    installations = [
+      { id: 1, account_login: "alice", account_type: "User", installation_id: 1, created_at: "2026-01-01T00:00:00Z" },
+      { id: 2, account_login: "bob", account_type: "User", installation_id: 2, created_at: "2026-01-01T00:00:00Z" },
+    ];
+    renderSidebar();
+
+    fireEvent.click(await screen.findByRole("button", { name: /user|alice|bob/i }));
+    await screen.findByText("Switch account");
+    expect(localStorage.getItem("active_scope")).toBe(JSON.stringify({ kind: "personal", login: "bob" }));
+  });
+
+  it("keeps an org the workspace admin reaches only through a saved token (#903)", async () => {
+    localStorage.setItem(TOKEN_KEY, makeJwt(true));
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "legacy" }));
+    orgMemberships = [{ org_login: "acme", role: "admin" }];
+    savedTokens = [{ org: "legacy", label: null, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }];
+    renderSidebar();
+
+    fireEvent.click(await screen.findByRole("button", { name: /user|legacy/i }));
+    await screen.findByText("Organization · saved token");
+    expect(localStorage.getItem("active_scope")).toBe(JSON.stringify({ kind: "org", login: "legacy" }));
+  });
+
+  it("refetches memberships before replacing a scope another tab just joined (#903)", async () => {
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "newco" }));
+    let orgCalls = 0;
+    const base = (globalThis.fetch as ReturnType<typeof vi.fn>).getMockImplementation() as (i: RequestInfo | URL, o?: RequestInit) => Promise<Response>;
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/me/orgs")) {
+        orgCalls += 1;
+        return Promise.resolve(
+          jsonResponse(
+            orgCalls === 1
+              ? [{ org_login: "acme", role: "admin" }]
+              : [
+                  { org_login: "acme", role: "admin" },
+                  { org_login: "newco", role: "admin" },
+                ],
+          ),
+        );
+      }
+      return base(input, init);
+    });
+    renderSidebar();
+
+    await waitFor(() => expect(orgCalls).toBeGreaterThanOrEqual(2));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(localStorage.getItem("active_scope")).toBe(JSON.stringify({ kind: "org", login: "newco" }));
   });
 
   it("does not auto-select when the org query fails", async () => {

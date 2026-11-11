@@ -5,7 +5,7 @@ const membersPath = (m: MyOrgMembership) => `/settings/org/${encodeURIComponent(
 
 function adminOrgFor(memberships: MyOrgMembership[], scope: ActiveScope | null): MyOrgMembership | undefined {
   const adminOrgs = memberships.filter((m) => m.role === "admin")
-  return adminOrgs.find((m) => scope?.kind === "org" && m.org_login === scope.login) ?? adminOrgs[0]
+  return adminOrgs.find((m) => scope?.kind === "org" && m.org_login.toLowerCase() === scope.login.toLowerCase()) ?? adminOrgs[0]
 }
 
 // Where to send someone to invite people. Inviting is admin-only on the backend, so this is the
@@ -21,7 +21,7 @@ export function inviteMembersHref(memberships: MyOrgMembership[], scope: ActiveS
 export function membersHref(memberships: MyOrgMembership[], scope: ActiveScope | null): string {
   const target =
     adminOrgFor(memberships, scope) ??
-    memberships.find((m) => scope?.kind === "org" && m.org_login === scope.login) ??
+    memberships.find((m) => scope?.kind === "org" && m.org_login.toLowerCase() === scope.login.toLowerCase()) ??
     memberships[0]
   return target ? membersPath(target) : "/settings"
 }
