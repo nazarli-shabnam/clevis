@@ -1,6 +1,10 @@
 """Read/write helpers for ``automation_repo_settings`` (per-(tenant, repo, feature) opt-in + options).
 
 Callers must set the tenant session context first; RLS scopes every row by ``tenant_id``.
+
+The ``repo`` key (``owner/name``) is stored lower-cased: GitHub names are case-insensitive, and a
+case-sensitive primary key let one repository hold two rows with different settings (migration 0081
+merged the existing ones). ``get`` and ``upsert`` normalise it, so callers may pass any casing.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ from src.core.db import AutomationRepoSetting
 
 
 def get(db: Session, tenant_id: int, repo: str, feature: str) -> AutomationRepoSetting | None:
+    repo = repo.lower()  # GitHub repo names are case-insensitive; see the module note
     return db.execute(
         select(AutomationRepoSetting).where(
             AutomationRepoSetting.tenant_id == tenant_id,
@@ -47,6 +52,7 @@ def upsert(
 ) -> AutomationRepoSetting:
     # Single-statement upsert avoids the get-then-add race on the composite PK. `extra` is only
     # overwritten when supplied, so `extra=None` keeps the stored value.
+    repo = repo.lower()
     values = {
         "tenant_id": tenant_id,
         "repo": repo,

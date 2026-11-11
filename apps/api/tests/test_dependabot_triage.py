@@ -409,6 +409,24 @@ def test_get_setting_returns_defaults_then_the_saved_row(db, acme):
     assert after.json() == {"enabled": True, "mode": "approve_and_merge", "merge_method": "rebase"}
 
 
+def test_setting_keys_ignore_the_casing_of_the_repo_in_the_url(db, acme):
+    """Enable via /Acme/Api, disable via /acme/api: one row, disabled; GET agrees under either casing (#898)."""
+    client = _client(db, acme["admin"].id)
+    client.put(
+        "/orgs/acme/repos/acme/Api/automation/dependabot-triage",
+        json={"enabled": True, "mode": "approve_and_merge", "merge_method": "squash"},
+    )
+    client.put(
+        "/orgs/acme/repos/acme/api/automation/dependabot-triage",
+        json={"enabled": False, "mode": "approve_only", "merge_method": "squash"},
+    )
+
+    rows = automation_settings_repo.list_for_feature(db, acme["org"].tenant_id, "dependabot_triage")
+    assert [(r.repo, r.enabled) for r in rows] == [("acme/api", False)]
+    for url in ("acme/Api", "acme/api"):
+        assert client.get(f"/orgs/acme/repos/{url}/automation/dependabot-triage").json()["enabled"] is False
+
+
 def test_a_non_403_error_on_one_repo_does_not_abort_the_sweep(db, acme):
     client = _client(db, acme["admin"].id)
     for r in ("good", "bad"):
