@@ -242,14 +242,14 @@ export default function OverviewPage() {
       {(cockpitQuery.isLoading || cockpit) && (
         // auto-fit collapses the empty track when the success-rate card is hidden, so one card fills the row.
         <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-px mb-6 border border-border bg-border">
-          <Link href="/repos" className="block hover:bg-elevated transition-colors">
+          <Link href="/caches" className="block hover:bg-elevated transition-colors">
             <StatCard
               label="Actions cache in use"
               value={cockpit ? formatBytes(cockpit.total_cache_size_bytes) : "…"}
             />
           </Link>
           {cockpit?.cache_job_success_rate != null && (
-            <Link href="/repos" className="block hover:bg-elevated transition-colors">
+            <Link href="/caches" className="block hover:bg-elevated transition-colors">
               <StatCard label="Cache clears succeeded" value={`${Math.round(cockpit.cache_job_success_rate * 100)}%`} />
             </Link>
           )}
