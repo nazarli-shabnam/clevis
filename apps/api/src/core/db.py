@@ -385,6 +385,11 @@ class Org(Base):
     # Per-org override of the instance-wide `scheduled_scan_cadence`: True = scan on a schedule, False = never,
     # NULL = follow the instance setting.
     scheduled_scans: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Per-org leadership digest (migration 0083): `digest_enabled` overrides the instance `digest_cadence`
+    # (True = send, False = never, NULL = follow); `digest_recipients` is the admin's chosen list of emails
+    # (NULL = every verified org admin).
+    digest_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    digest_recipients: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     # Stays nullable: a new Org and its Tenant reference each other, and NOT NULL can't be deferred
     # like a FK can. org_repo.get_or_create self-heals missing values.
     tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -41,6 +41,7 @@ from src.routers import (
     remediation,
     remediation_bulk,
     repos,
+    digest,
     scheduled_scans,
     security,
     tokens,
@@ -150,6 +151,7 @@ app.include_router(audit.router, prefix="/audit", tags=["audit"])
 app.include_router(org_activity.router, tags=["audit", "jobs"])
 app.include_router(org_notifications.router, tags=["notifications"])
 app.include_router(scheduled_scans.router, tags=["analytics"])
+app.include_router(digest.router, tags=["digest"])
 app.include_router(waivers.router, tags=["waivers"])
 app.include_router(evidence.router, tags=["audit"])
 app.include_router(tokens.router, prefix="/tokens", tags=["tokens"])
