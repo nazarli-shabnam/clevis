@@ -85,6 +85,18 @@ def test_setup_required_reports_registration_and_github_capabilities(auth_client
         assert auth_client.get("/auth/setup-required").json()["github_oauth_enabled"] is False
 
 
+def test_setup_required_still_answers_when_the_registration_flag_cannot_be_read(auth_client):
+    from unittest.mock import patch
+
+    from sqlalchemy.exc import SQLAlchemyError
+
+    # Only a UI hint: a failed read must not take the login page down (register still fails closed).
+    with patch("src.routers.auth.registration_enabled", side_effect=SQLAlchemyError("db blip")):
+        resp = auth_client.get("/auth/setup-required")
+    assert resp.status_code == 200
+    assert resp.json()["registration_enabled"] is True
+
+
 # setup
 
 def test_setup_returns_token_and_owner(auth_client):
