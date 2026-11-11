@@ -161,6 +161,25 @@ def get_installation_token(installation_id: int) -> str:
         return fresh.token
 
 
+def get_user_login_by_id(installation_token: str, github_user_id: int) -> str | None:
+    """The login GitHub currently gives the account with this immutable id, or None if no such
+    account exists. Logins are mutable and reusable, so identity checks key on the id and use this
+    only to learn what name to ask GitHub about."""
+    url = f"{settings.github_api_base}/user/{github_user_id}"
+    headers = {
+        "Authorization": f"Bearer {installation_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    with httpx.Client(timeout=20) as client:
+        resp = client.get(url, headers=headers)
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    login = resp.json().get("login")
+    return login if isinstance(login, str) and login else None
+
+
 def get_org_membership_role(installation_token: str, org_login: str, username: str) -> str | None:
     """Ask GitHub, authenticated as the App installation (not a user token), what role
     `username` holds in `org_login` -- "admin" | "member" -- or None if they have no

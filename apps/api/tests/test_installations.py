@@ -25,8 +25,11 @@ def _mock_installation(account_login: str, account_type: str, account_id: int | 
     return patch("src.routers.installations.github_app.get_installation", return_value={"account": account})
 
 
-def _make_user(db, email: str, github_login: str | None = None) -> UserOut:
-    user = User(email=email, name=None, password_hash=None, is_workspace_admin=False, github_login=github_login)
+def _make_user(db, email: str, github_login: str | None = None, github_user_id: int | None = None) -> UserOut:
+    user = User(
+        email=email, name=None, password_hash=None, is_workspace_admin=False,
+        github_login=github_login, github_user_id=github_user_id,
+    )
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -191,7 +194,7 @@ def test_personal_installations_scoped_to_self(db):
 
 
 def test_sync_personal_installation(db):
-    me = _make_user(db, "shabnam@e.com", github_login="shabnam")
+    me = _make_user(db, "shabnam@e.com", github_login="shabnam", github_user_id=4242)
     with _mock_installation("shabnam", "User"):
         resp = _client(db, me).post(
             "/me/installations/sync",
@@ -202,7 +205,7 @@ def test_sync_personal_installation(db):
 
 
 def test_sync_personal_installation_writes_audit_log(db):
-    me = _make_user(db, "shabnam@e.com", github_login="shabnam")
+    me = _make_user(db, "shabnam@e.com", github_login="shabnam", github_user_id=4242)
     with _mock_installation("shabnam", "User"):
         _client(db, me).post(
             "/me/installations/sync",
@@ -217,7 +220,7 @@ def test_sync_personal_installation_writes_audit_log(db):
 
 
 def test_sync_personal_installation_enqueues_a_backfill_job_when_a_token_is_available(db):
-    me = _make_user(db, "shabnam@e.com", github_login="shabnam")
+    me = _make_user(db, "shabnam@e.com", github_login="shabnam", github_user_id=4242)
     with _mock_installation("shabnam", "User"), patch(
         "src.routers.installations.resolve_personal_token", return_value="tok_shabnam"
     ):
@@ -243,11 +246,45 @@ def test_sync_personal_installation_requires_linked_github_account(db):
 
 
 def test_sync_personal_installation_login_mismatch_forbidden(db):
-    me = _make_user(db, "shabnam@e.com", github_login="shabnam")
-    resp = _client(db, me).post(
-        "/me/installations/sync",
-        json={"account_login": "someone-else", "account_type": "User", "installation_id": 3},
-    )
+    me = _make_user(db, "shabnam@e.com", github_login="shabnam", github_user_id=4242)
+    with _mock_installation("someone-else", "User", account_id=9999):
+        resp = _client(db, me).post(
+            "/me/installations/sync",
+            json={"account_login": "someone-else", "account_type": "User", "installation_id": 3},
+        )
+    assert resp.status_code == 403
+
+
+def test_sync_personal_installation_rejects_a_reclaimed_login_with_a_different_github_id(db):
+    """alice renamed her GitHub account; a stranger now owns 'alice' and installed the App. The stored
+    login and the claimed login both say 'alice', but the installation's account id is not hers (#829)."""
+    me = _make_user(db, "alice@e.com", github_login="alice", github_user_id=111)
+    with _mock_installation("alice", "User", account_id=222):
+        resp = _client(db, me).post(
+            "/me/installations/sync",
+            json={"account_login": "alice", "account_type": "User", "installation_id": 3},
+        )
+    assert resp.status_code == 403
+    assert installation_repo.list_for_user(db, owner_user_id=me.id) == []
+
+
+def test_sync_personal_installation_accepts_a_renamed_account_by_id(db):
+    me = _make_user(db, "alice@e.com", github_login="alice-old", github_user_id=111)
+    with _mock_installation("alice-new", "User", account_id=111):
+        resp = _client(db, me).post(
+            "/me/installations/sync",
+            json={"account_login": "alice-new", "account_type": "User", "installation_id": 3},
+        )
+    assert resp.status_code == 200
+
+
+def test_sync_personal_installation_requires_a_recorded_github_id(db):
+    me = _make_user(db, "legacy@e.com", github_login="legacy")  # linked login, but no immutable id
+    with _mock_installation("legacy", "User"):
+        resp = _client(db, me).post(
+            "/me/installations/sync",
+            json={"account_login": "legacy", "account_type": "User", "installation_id": 3},
+        )
     assert resp.status_code == 403
 
 
@@ -347,6 +384,40 @@ def test_sync_org_installation_bootstraps_new_org_for_live_github_admin(db):
     membership = org_membership_repo.get(db, org.id, me.id)
     assert membership is not None
     assert membership.role == "admin"
+
+
+def test_sync_org_bootstrap_asks_github_about_the_name_the_caller_id_has_now(db):
+    """The stored login is stale (renamed account); the role lookup must use the login GitHub gives the id (#829)."""
+    me = _make_user(db, "founder@e.com", github_login="founder-old", github_user_id=111)
+    with (
+        _mock_installation("acme", "Organization"),
+        patch("src.routers.installations.github_app.get_installation_token", return_value="itok"),
+        patch("src.routers.installations.github_app.get_user_login_by_id", return_value="founder-new") as mock_login,
+        patch("src.routers.installations.github_app.get_org_membership_role", return_value="admin") as mock_role,
+    ):
+        resp = _client(db, me).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 200
+    mock_login.assert_called_once_with("itok", 111)
+    mock_role.assert_called_once_with("itok", "acme", "founder-new")
+
+
+def test_sync_org_bootstrap_is_refused_when_the_callers_github_id_no_longer_resolves(db):
+    me = _make_user(db, "ghost@e.com", github_login="ghost", github_user_id=111)
+    with (
+        _mock_installation("acme", "Organization"),
+        patch("src.routers.installations.github_app.get_installation_token", return_value="itok"),
+        patch("src.routers.installations.github_app.get_user_login_by_id", return_value=None),
+        patch("src.routers.installations.github_app.get_org_membership_role") as mock_role,
+    ):
+        resp = _client(db, me).post(
+            "/orgs/acme/installations/sync",
+            json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
+        )
+    assert resp.status_code == 403
+    mock_role.assert_not_called()
 
 
 def test_sync_org_installation_bootstrap_reuses_org_for_a_casing_variant(db):
@@ -860,8 +931,8 @@ def test_refresh_org_installation_permissions_502_when_github_returns_no_permiss
 
 
 def test_refresh_personal_installation_permissions_only_for_owner(db):
-    owner = _make_user(db, "owner@e.com", github_login="owner")
-    other = _make_user(db, "other@e.com", github_login="other")
+    owner = _make_user(db, "owner@e.com", github_login="owner", github_user_id=4242)
+    other = _make_user(db, "other@e.com", github_login="other", github_user_id=5151)
     with _mock_installation("owner", "User"):
         _client(db, owner).post(
             "/me/installations/sync",
