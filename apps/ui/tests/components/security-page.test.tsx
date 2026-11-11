@@ -363,6 +363,31 @@ describe("SecurityPage", () => {
     expect(secretScanningMock).not.toHaveBeenCalled();
   });
 
+  it("says when the matrix covers only some of the org's repositories (#897)", async () => {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 150, checks: [],
+    });
+    securityMatrixMock.mockResolvedValue({
+      owner: "acme",
+      repos: [{
+        repo: "acme-repo", branch_protection: true, secret_scanning: true, dependabot_enabled: true,
+        dependabot_critical_count: 0, dependabot_high_count: 0, code_scanning: true, force_push_allowed: false,
+        score: 100, unknown_dimensions: [], alerts_source: "github",
+      }],
+      summary: { fully_compliant_count: 1, critical_risk_count: 0, secret_hits_count: 0, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } },
+      repos_total: 150,
+      repos_scanned: 20,
+    });
+
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+
+    expect(await screen.findByText(/Showing 20 of 150 repositories/)).toBeInTheDocument();
+  });
+
   it("shows a scan failure for the owner it was run for, and drops it once the owner changes (#549)", async () => {
     analyticsOverviewMock.mockRejectedValue(new Error("scan exploded"));
 

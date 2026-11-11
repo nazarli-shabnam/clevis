@@ -956,6 +956,9 @@ export interface SecurityMatrixResponse {
   owner: string
   repos: RepoSecurityRow[]
   summary: MatrixSummary
+  /** Only the first `repos_scanned` of `repos_total` repositories are in `repos` and the summary. */
+  repos_total: number
+  repos_scanned: number
 }
 
 export interface SecretAlert {

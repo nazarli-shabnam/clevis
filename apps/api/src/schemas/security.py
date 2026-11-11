@@ -43,6 +43,10 @@ class SecurityMatrixResponse(BaseModel):
     owner: str
     repos: list[RepoSecurityRow]
     summary: MatrixSummary
+    # Only the first repos_scanned of repos_total repositories are in `repos` and in the summary counts,
+    # so a caller can tell a complete matrix from a truncated one.
+    repos_total: int
+    repos_scanned: int
 
 
 class SecretAlert(BaseModel):

@@ -291,7 +291,9 @@ def _build_matrix(
         secret_hits_count=sum(1 for r in rows if not r.secret_scanning),
         vuln_by_severity=vuln,
     )
-    return SecurityMatrixResponse(owner=owner, repos=rows, summary=summary)
+    return SecurityMatrixResponse(
+        owner=owner, repos=rows, summary=summary, repos_total=len(repos), repos_scanned=len(scanned)
+    )
 
 
 @router.get("/me/analytics/security-matrix/{owner}", response_model=SecurityMatrixResponse)
