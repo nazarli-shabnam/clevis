@@ -126,8 +126,10 @@ function AffectedRepos({ check, owner }: { check: CheckResult; owner?: string })
   if (repos.length === 0) return null
   const v = check.value
   // The server keeps only the first MAX_AFFECTED_REPOS names; a ratio tells us whether more failed.
-  const capped =
-    repos.length >= MAX_AFFECTED_REPOS && (v?.type === "ratio" ? v.denominator - v.numerator > repos.length : true)
+  // A ratio proves whether more failed; for other value shapes a full list only means there may be more.
+  const full = repos.length >= MAX_AFFECTED_REPOS
+  const capped = full && (v?.type === "ratio" ? v.denominator - v.numerator > repos.length : true)
+  const cappedForSure = capped && v?.type === "ratio"
   return (
     <details className="mt-2 text-xs">
       <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
@@ -147,7 +149,7 @@ function AffectedRepos({ check, owner }: { check: CheckResult; owner?: string })
         ))}
       </ul>
       {capped && (
-        <p className="mt-1 text-muted-foreground">Showing the first {repos.length}; more repositories are affected.</p>
+        <p className="mt-1 text-muted-foreground">Showing the first {repos.length}; {cappedForSure ? "more repositories are affected." : "there may be more."}</p>
       )}
     </details>
   )

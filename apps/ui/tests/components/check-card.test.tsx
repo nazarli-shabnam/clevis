@@ -57,6 +57,18 @@ describe("CheckCard", () => {
     expect(screen.getByText(/Showing the first 25; more repositories are affected/)).toBeInTheDocument();
   });
 
+  it("only says there may be more when a severity-count list fills the cap (#832)", () => {
+    const names = Array.from({ length: 25 }, (_, i) => `repo-${String(i).padStart(2, "0")}`);
+    const check: CheckResult = {
+      ...failingWithRepos([]),
+      value: { type: "severity_counts", critical: 1, high: 2, medium: 0, low: 0, repos: names },
+    };
+    renderWithClient(<CheckCard check={check} owner="acme" />);
+
+    expect(screen.getByText(/Showing the first 25; there may be more/)).toBeInTheDocument();
+    expect(screen.queryByText(/more repositories are affected/)).not.toBeInTheDocument();
+  });
+
   it("shows no repo list for a passing check or one that names none (#832)", () => {
     renderWithClient(<CheckCard check={{ ...failingWithRepos(["api"]), status: "pass" }} owner="acme" />);
     expect(screen.queryByText(/affected/)).not.toBeInTheDocument();

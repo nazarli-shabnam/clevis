@@ -80,7 +80,7 @@ interface WaiverFormProps {
 export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, compact, onSaved, onCancel }: WaiverFormProps) {
   const queryClient = useQueryClient()
   const [checkId, setCheckId] = useState(editing?.check_id ?? fixedCheckId ?? Object.keys(WAIVABLE_CHECKS)[1])
-  const [repos, setRepos] = useState(editing?.repos?.join(", ") ?? initialRepos?.join(", ") ?? "")
+  const [repos, setRepos] = useState(editing ? (editing.repos?.join(", ") ?? "") : (initialRepos?.join(", ") ?? ""))
   const [reason, setReason] = useState(editing?.reason ?? "")
   const [owner, setOwner] = useState(editing?.owner ?? "")
   const [until, setUntil] = useState(editing ? renewalDay(editing) : dayInput(30))
