@@ -12,6 +12,8 @@ interface Props {
   owner: string
   repo: string
   token: string
+  /** False for a plain org member: opening the fix PR is an org-admin write, so the button is replaced by a hint. */
+  canOpenFixPr?: boolean
 }
 
 const SEVERITY_STYLE: Record<string, string> = {
@@ -20,7 +22,7 @@ const SEVERITY_STYLE: Record<string, string> = {
   warning: "text-yellow-500",
 }
 
-export function WorkflowLintCard({ owner, repo, token }: Props) {
+export function WorkflowLintCard({ owner, repo, token, canOpenFixPr = true }: Props) {
   const scan = useMutation({
     mutationFn: (openPr: boolean) =>
       api.workflowLint.scan(owner.trim(), repo.trim(), { open_pr: openPr }, token),
@@ -45,10 +47,13 @@ export function WorkflowLintCard({ owner, repo, token }: Props) {
           <Button size="sm" variant="outline" disabled={!ready || scan.isPending} onClick={() => scan.mutate(false)}>
             {scan.isPending ? "Scanning…" : "Lint workflows"}
           </Button>
-          {data?.fixable && (
+          {data?.fixable && canOpenFixPr && (
             <Button size="sm" disabled={scan.isPending} onClick={() => scan.mutate(true)}>
               Open fix PR
             </Button>
+          )}
+          {data?.fixable && !canOpenFixPr && (
+            <span className="text-xs text-muted-foreground">Opening a fix PR requires an organization admin.</span>
           )}
         </div>
 

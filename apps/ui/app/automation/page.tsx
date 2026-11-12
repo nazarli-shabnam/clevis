@@ -38,6 +38,20 @@ function StatusIcon({ status, conclusion }: { status: string; conclusion: string
   return <CircleDashed className="size-3.5 text-muted-foreground" />
 }
 
+const ADMIN_ONLY_DISPATCH = "Dispatching workflows requires an organization admin."
+
+function RoleLookupStatus({ query }: { query: { isError: boolean; refetch: () => unknown } }) {
+  if (!query.isError) return <p className="text-xs text-muted-foreground mt-1">Checking your access…</p>
+  return (
+    <p className="text-xs text-muted-foreground mt-1">
+      Couldn&apos;t check your access.{" "}
+      <button type="button" className="underline" onClick={() => void query.refetch()}>
+        Retry
+      </button>
+    </p>
+  )
+}
+
 export default function AutomationPage() {
   // Saved tokens are workspace-admin only on the API; for anyone else the button could only 403.
   const canSaveToken = !!useAuth().user?.is_workspace_admin
@@ -73,6 +87,13 @@ export default function AutomationPage() {
     queryFn: () => api.orgs.mine(),
   })
   const triageRole = membershipsQuery.data ? orgRoleFor(membershipsQuery.data, owner.trim()) : undefined
+  // Workflow dispatch, bulk branch protection and the lint fix PR are org-admin writes on the API (403 for
+  // a plain member), so members get a read-only view. Unknown owners stay enabled: the API decides.
+  const memberOnly = triageRole === "member"
+  // Until the lookup resolves (loading or failed) the role is unknown: keep the admin-only writes off
+  // rather than offering them to a member. A successful lookup with no membership stays "unknown owner".
+  const roleUnresolved = owner.trim().length > 0 && !membershipsQuery.data
+  const writesBlocked = memberOnly || roleUnresolved
 
   // The owner box drives token resolution, the installation lookup and the repo list; follow it
   // only once typing pauses, so each keystroke doesn't fire three requests.
@@ -381,11 +402,12 @@ export default function AutomationPage() {
                       setDispatchArmed(true)
                     }
                   }}
-                  disabled={dispatchMutation.isPending || !ref.trim()}
+                  disabled={dispatchMutation.isPending || !ref.trim() || writesBlocked}
                 >
                   <Play className="size-3.5" />
                   {dispatchArmed ? "Confirm dispatch" : "Dispatch workflow"}
                 </Button>
+                {memberOnly && <p className="text-xs text-muted-foreground">{ADMIN_ONLY_DISPATCH}</p>}
                 {dispatchArmed && (
                   <p className="text-xs text-yellow-400/80 flex items-center gap-1.5">
                     <Warning className="size-3 shrink-0" />
@@ -413,7 +435,7 @@ export default function AutomationPage() {
                 <span className="section-title">Workflows</span>
                 <div className="flex items-center gap-2">
                   {workflows.length > 0 && <span className="stat-chip">{workflows.length} total</span>}
-                  {workflows.length > 1 && (
+                  {workflows.length > 1 && !writesBlocked && (
                     <>
                       <Input
                         aria-label="Ref for bulk dispatch"
@@ -580,20 +602,34 @@ export default function AutomationPage() {
       {/* key each card by its target identity so switching owner/repo remounts it with
           fresh selection / preview / mutation state instead of showing the old target's. */}
       <div className="mt-4">
-        <BranchProtectionCard key={owner.trim()} org={owner.trim()} token={token} repos={repoOptions} initialSelected={preselected} />
+        {roleUnresolved ? (
+          <div className="card px-4 py-4">
+            <span className="section-title">Bulk branch protection</span>
+            <RoleLookupStatus query={membershipsQuery} />
+          </div>
+        ) : memberOnly ? (
+          <div className="card px-4 py-4">
+            <span className="section-title">Bulk branch protection</span>
+            <p className="text-xs text-muted-foreground mt-1">
+              Bulk branch protection requires an organization admin, and you only have member access to {owner.trim()}.
+            </p>
+          </div>
+        ) : (
+          <BranchProtectionCard key={owner.trim()} org={owner.trim()} token={token} repos={repoOptions} initialSelected={preselected} />
+        )}
       </div>
 
       <div className="mt-4">
-        <WorkflowLintCard key={`${owner.trim()}|${repo.trim()}`} owner={owner} repo={repo} token={token} />
+        <WorkflowLintCard key={`${owner.trim()}|${repo.trim()}`} owner={owner} repo={repo} token={token} canOpenFixPr={!writesBlocked} />
       </div>
 
       <div className="mt-4">
-        {owner.trim().length > 0 && membershipsQuery.isLoading ? (
+        {roleUnresolved ? (
           // Hold the card until the role is known: mounting it first would fire the admin-only
           // read for a plain member and flash a 403 before the note replaces it.
           <div className="card px-4 py-4">
             <span className="section-title">Dependabot auto-triage</span>
-            <p className="text-xs text-muted-foreground mt-1">Checking your access…</p>
+            <RoleLookupStatus query={membershipsQuery} />
           </div>
         ) : owner.trim().length > 0 && triageRole !== undefined && triageRole !== "admin" ? (
           <div className="card px-4 py-4">
