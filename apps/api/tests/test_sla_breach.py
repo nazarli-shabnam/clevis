@@ -94,7 +94,7 @@ def test_feed_item_is_dated_by_the_breach_moment_and_respects_the_window(db, org
     by_title = {i["title"]: i for i in items}
     critical = next(i for i in items if i["title"].startswith("Critical"))
     assert abs((critical["at"] - (NOW - timedelta(days=1))).total_seconds()) < 5  # opened 8d ago + 7d window
-    assert critical["href"] == "/security/burndown"
+    assert critical["href"] == "/security/burndown?repo=api"
     assert len(by_title) == 2
     # A breach older than the window is history, not a notification.
     assert _sla_breach_items(db, org.tenant_id, NOW, 40) == []

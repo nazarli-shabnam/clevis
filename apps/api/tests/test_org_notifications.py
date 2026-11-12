@@ -107,6 +107,7 @@ def test_only_new_open_critical_dependabot_alerts_count(db, world):
     resp = _client(db, world["users"]["member"]).get("/orgs/acme/notifications")
     assert [i["title"] for i in resp.json()["items"]] == ["New critical Dependabot alert in acme/api"]
     assert [i["detail"] for i in resp.json()["items"]] == ["RCE in lib"]
+    assert [i["href"] for i in resp.json()["items"]] == ["/security/burndown?repo=acme%2Fapi"]
 
 
 def test_score_changes_that_are_not_real_drops_are_ignored(db, world):
