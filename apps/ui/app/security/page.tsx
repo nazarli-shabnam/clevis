@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { ScanChangesCard, scanChangesKey } from "@/components/scan-changes-card"
+import { ScanExplorer } from "@/components/scan-explorer"
 import { EmptyStateNoAccount } from "@/components/empty-state"
 import { CheckCard } from "@/components/check-card"
 import { BulkFixPanel } from "@/components/bulk-fix-panel"
@@ -103,6 +104,24 @@ export default function SecurityPage() {
   const tab = (searchParams.get("tab") ?? "all") as TabId
   const severityFilter = (searchParams.get("severity") ?? "all") as "all" | "high" | "medium" | "low"
   const statusFilter = tab === "fail" ? "fail" : "all"
+
+  // Which stored scan is open (and the one it is compared with) lives in the URL, so "see the scan from
+  // Nov 3" can be shared in a review: ?scan=<id>[&compare=<id>].
+  const idParam = (key: string) => {
+    const n = Number(searchParams.get(key))
+    return Number.isInteger(n) && n > 0 ? n : null
+  }
+  const scanId = idParam("scan")
+  const compareId = scanId === null ? null : idParam("compare")
+  function selectScans(scan: number | null, compare: number | null) {
+    const params = new URLSearchParams(searchParams.toString())
+    if (scan === null) params.delete("scan")
+    else params.set("scan", String(scan))
+    if (scan === null || compare === null) params.delete("compare")
+    else params.set("compare", String(compare))
+    router.replace(`?${params.toString()}`, { scroll: false })
+    document.getElementById("scan-history")?.scrollIntoView?.({ behavior: "smooth", block: "nearest" })
+  }
 
   function setFilter(key: "tab" | "severity", value: string) {
     const params = new URLSearchParams(searchParams.toString())
@@ -278,7 +297,13 @@ export default function SecurityPage() {
     .flatMap((h) =>
       h.score === null
         ? []
-        : [{ week: new Date(h.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }), value: h.score }]
+        : [
+            {
+              id: h.id,
+              week: new Date(h.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+              value: h.score,
+            },
+          ]
     )
 
   // Passing checks per scan over the last N scans: an approximation of remediation progress,
@@ -470,6 +495,9 @@ export default function SecurityPage() {
         </div>
 
         {scopeOrgLogin !== "" && owner === scopeOrgLogin && <ScanChangesCard org={scopeOrgLogin} />}
+        {(historyQuery.data?.length ?? 0) > 0 && hasOrgLogin(lookupOwner) && (
+          <ScanExplorer owner={lookupOwner} scanId={scanId} compareId={compareId} onChange={selectScans} />
+        )}
 
         {(shown || (scanIsForOwner && scan.isPending)) && (
           <div className="card lg:col-span-2">
@@ -502,9 +530,14 @@ export default function SecurityPage() {
             {trendData.length > 1 && (
               <div className="px-4 py-4 border-b border-border">
                 <span className="text-xs font-medium text-muted-foreground block mb-2">
-                  Score trend (last {trendData.length} scans)
+                  Score trend (last {trendData.length} scans) — click a point to see that scan
                 </span>
-                <AreaTimeChart data={trendData} label="score" height={140} />
+                <AreaTimeChart
+                  data={trendData}
+                  label="score"
+                  height={140}
+                  onPointClick={(i) => selectScans(trendData[i].id, null)}
+                />
               </div>
             )}
 

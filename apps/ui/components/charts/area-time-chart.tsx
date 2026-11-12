@@ -17,6 +17,8 @@ interface AreaTimeChartProps {
   label: string
   color?: string
   height?: number
+  /** Makes the points clickable; called with the index into `data` of the point under the click. */
+  onPointClick?: (index: number) => void
 }
 
 /** Time-series area chart with gradient fill (commit activity, velocity trends). */
@@ -25,12 +27,24 @@ export function AreaTimeChart({
   label,
   color = CHART_COLORS.primary,
   height = 240,
+  onPointClick,
 }: AreaTimeChartProps) {
   // useId keeps the gradient id unique even with several charts on one page.
   const gradientId = `area-grad-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <AreaChart data={data}>
+      <AreaChart
+        data={data}
+        style={onPointClick ? { cursor: "pointer" } : undefined}
+        onClick={
+          onPointClick
+            ? (state) => {
+                const index = Number(state?.activeIndex)
+                if (Number.isInteger(index) && index >= 0 && index < data.length) onPointClick(index)
+              }
+            : undefined
+        }
+      >
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={color} stopOpacity={0.3} />
