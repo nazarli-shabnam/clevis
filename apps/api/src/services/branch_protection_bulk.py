@@ -15,7 +15,6 @@ repo is reported as an error and left alone.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from urllib.parse import quote
 
 import httpx
 
@@ -26,6 +25,7 @@ from src.services.check_remediation import (
 )
 from src.core.path_params import REPO_NAME_RE
 from src.services.github_client import GitHubClient
+from src.services.github_paths import quote_branch
 
 # ``repos[]`` is caller-supplied, so a name with a slash or ".." could otherwise walk
 # the API path to another repo/org.
@@ -112,7 +112,7 @@ def _default_branch(client: GitHubClient, owner: str, repo: str) -> str:
 
 def _protection_path(owner: str, repo: str, branch: str) -> str:
     # A branch name can contain slashes ("release/1.x"); keep it one path segment.
-    return f"/repos/{owner}/{repo}/branches/{quote(branch, safe='')}/protection"
+    return f"/repos/{owner}/{repo}/branches/{quote_branch(branch)}/protection"
 
 
 def _get_protection(client: GitHubClient, owner: str, repo: str, branch: str) -> dict | None:

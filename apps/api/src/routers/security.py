@@ -33,6 +33,7 @@ from src.services import dependabot_burndown
 from src.services.backfill_service import ALERT_SYNC_TTL
 from src.services.analytics_service import get_account_type
 from src.services.github_client import GitHubClient, github_error as _github_error, list_owner_repos
+from src.services.github_paths import quote_branch
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_owner_token
 
 router = APIRouter()
@@ -138,13 +139,13 @@ def _force_push_allowed(client: GitHubClient, owner: str, name: str, branch: str
     does not already forbid them, let an active ruleset's ``non_fast_forward`` rule veto it.
     Any other failure raises: the caller must treat it as unknown, not as compliant."""
     try:
-        protection = client.request("GET", f"/repos/{owner}/{name}/branches/{branch}/protection")
+        protection = client.request("GET", f"/repos/{owner}/{name}/branches/{quote_branch(branch)}/protection")
         if not (isinstance(protection, dict) and (protection.get("allow_force_pushes") or {}).get("enabled")):
             return False
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code != 404:
             raise
-    rules = client.request_paginated(f"/repos/{owner}/{name}/rules/branches/{branch}")
+    rules = client.request_paginated(f"/repos/{owner}/{name}/rules/branches/{quote_branch(branch)}")
     return not any(isinstance(r, dict) and r.get("type") == "non_fast_forward" for r in rules)
 
 
@@ -162,7 +163,7 @@ def _repo_row(client: GitHubClient, owner: str, repo: dict, alerts_by_repo: dict
         unknown.extend(["branch_protection", "force_push"])
     else:
         try:
-            details = client.request("GET", f"/repos/{owner}/{name}/branches/{branch}")
+            details = client.request("GET", f"/repos/{owner}/{name}/branches/{quote_branch(branch)}")
             if isinstance(details, dict):
                 branch_protection = bool(details.get("protected"))
             branch_found = True

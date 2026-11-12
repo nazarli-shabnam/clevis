@@ -17,6 +17,7 @@ import httpx
 import yaml
 
 from src.services.github_client import GitHubClient
+from src.services.github_paths import quote_branch
 
 _FIX_BRANCH = "clevis/workflow-lint-fix"
 
@@ -277,7 +278,7 @@ def open_fix_pr(client: GitHubClient, owner: str, repo: str, result: LintResult)
         # No open PR — (re)create the branch at the current default-branch tip. A stale
         # branch left behind by a merged/closed PR is safe to reset here.
         base_sha = client.request(
-            "GET", f"/repos/{owner}/{repo}/git/ref/heads/{default_branch}"
+            "GET", f"/repos/{owner}/{repo}/git/ref/heads/{quote_branch(default_branch, safe='/')}"
         )["object"]["sha"]
         try:
             client.request(
