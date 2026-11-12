@@ -134,4 +134,41 @@ describe("DependabotBurndownPage", () => {
     fireEvent.click(screen.getByTitle("Show all repositories"))
     expect(await screen.findByRole("link", { name: "acme/api" })).toBeInTheDocument()
   })
+
+  it("filters by severity and sorts from the controls, and says when nothing matches", async () => {
+    burndownMock.mockResolvedValue({
+      ...DATA,
+      repos: [
+        ...DATA.repos,
+        { repo: "acme/web", open: { critical: 0, high: 2 }, breaches: 0, oldest_age_days: 50, oldest_alert_number: 7 },
+        { repo: "weird", open: { critical: 0, high: 1 }, breaches: 0, oldest_age_days: 1, oldest_alert_number: 8 },
+      ],
+    })
+    renderPage()
+    await screen.findByRole("link", { name: "acme/api" })
+    // A repo name that isn't owner/name has no in-app page, so it renders as plain text.
+    expect(screen.queryByRole("link", { name: "weird" })).not.toBeInTheDocument()
+    expect(screen.getByText("weird")).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText("Sort"), { target: { value: "breaches" } })
+    await waitFor(() => expect(window.location.search).toContain("sort=breaches"))
+
+    fireEvent.change(screen.getByLabelText("Severity"), { target: { value: "critical" } })
+    await waitFor(() => expect(screen.queryByRole("link", { name: "acme/web" })).not.toBeInTheDocument())
+    expect(screen.getByRole("link", { name: "acme/api" })).toBeInTheDocument()
+    expect(window.location.search).toContain("severity=critical")
+  })
+
+  it("explains an empty result caused by the filters", async () => {
+    burndownMock.mockResolvedValue({
+      ...DATA,
+      repos: [{ repo: "acme/web", open: { critical: 0, high: 2 }, breaches: 0, oldest_age_days: 5, oldest_alert_number: 7 }],
+    })
+    renderPage()
+    await screen.findByRole("link", { name: "acme/web" })
+
+    fireEvent.change(screen.getByLabelText("Severity"), { target: { value: "critical" } })
+
+    expect(await screen.findByText("No repositories match these filters.")).toBeInTheDocument()
+  })
 })

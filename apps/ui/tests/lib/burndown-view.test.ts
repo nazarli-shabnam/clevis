@@ -49,4 +49,19 @@ describe("visibleBurndownRepos", () => {
     ])
     expect(visibleBurndownRepos(REPOS, { ...DEFAULT_BURNDOWN_VIEW, repo: "acme/web" }).map((r) => r.repo)).toEqual(["acme/web"])
   })
+
+  it("breaks equal ages by repository name", () => {
+    const tied = [repo("acme/b", { high: 1 }, 0, 5), repo("acme/a", { high: 1 }, 0, 5)]
+    expect(visibleBurndownRepos(tied, DEFAULT_BURNDOWN_VIEW).map((r) => r.repo)).toEqual(["acme/a", "acme/b"])
+  })
+
+  it("breaks equal breach counts by oldest alert", () => {
+    const tied = [repo("acme/b", { high: 1 }, 2, 5), repo("acme/a", { high: 1 }, 2, 9)]
+    const view = { ...DEFAULT_BURNDOWN_VIEW, sort: "breaches" as const }
+    expect(visibleBurndownRepos(tied, view).map((r) => r.repo)).toEqual(["acme/a", "acme/b"])
+  })
+
+  it("treats a missing severity count as none", () => {
+    expect(visibleBurndownRepos([repo("acme/a", {}, 0, 1)], { ...DEFAULT_BURNDOWN_VIEW, severity: "high" })).toEqual([])
+  })
 })
