@@ -12,6 +12,7 @@ Safety rails, because this spends GitHub API quota nobody is watching:
 - a ``scan.scheduled_started`` marker is committed before the scan (the advisory lock is transaction-scoped
   and the scan can take minutes, so no transaction stays open while it runs): other replicas see the org
   as in progress for IN_PROGRESS_WINDOW;
+- a scan in which every scored check errored (expired token, rate limit) counts as a failure and is not stored;
 - a failure of any kind after that is recorded (``scan.scheduled_failed``) and retried only after
   FAILURE_RETRY, so a broken org doesn't burn a slot on every tick;
 - orgs without an App installation are not candidates at all, so they can't crowd out the others.
@@ -41,6 +42,10 @@ MAX_SCANS_PER_TICK = 3
 _GRACE = timedelta(hours=1)
 FAILURE_RETRY = timedelta(hours=6)
 IN_PROGRESS_WINDOW = timedelta(hours=1)
+
+
+class ScanAllErrored(Exception):
+    """Every scored check errored (expired token, rate limit): nothing was assessed, so the result is not stored."""
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -112,6 +117,9 @@ def _scan_one(db: Session, org_id: int, tenant_id: int, org_login: str, cadence:
             score_hygiene=org_scores_hygiene(org),
             stored_identity=load_stored_identity(db, tenant_id),
         )
+        scored = [c for c in result["checks"] if c.get("scored")]
+        if scored and all(c["status"] == "error" for c in scored):
+            raise ScanAllErrored(f"all {len(scored)} scored checks errored")
         previous = scan_service.persist_scan_and_alert(db, org, result, tenant_id, actor=ACTOR)
         audit_repo.write(
             db, actor=ACTOR, action="scan.scheduled", target=org_login,

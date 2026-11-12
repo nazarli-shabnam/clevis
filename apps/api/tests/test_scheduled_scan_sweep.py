@@ -223,3 +223,19 @@ def test_an_org_whose_scan_is_marked_in_progress_is_left_alone(db):
                      payload={}, tenant_id=org.tenant_id)
     get_overview, _ = _run(db)
     get_overview.assert_not_called()
+
+
+def test_a_scan_where_every_scored_check_errored_is_not_stored_and_retries_after_the_failure_window(db):
+    org = _org(db, "acme-all-errored")
+    _scan(db, org, timedelta(days=2))
+    errored = {
+        "owner": org.github_login, "score": 100, "total_checks": 1, "failed_checks": 1, "repo_count": 1,
+        "checks": [{"id": "a", "title": "A", "severity": "high", "status": "error", "scored": True}],
+    }
+    before = db.query(ScanResult).count()
+
+    _run(db, overview=lambda owner, **k: errored)
+
+    assert db.query(ScanResult).count() == before
+    actions = _actions(db, org)
+    assert "scan.scheduled_failed" in actions and "scan.scheduled" not in actions
