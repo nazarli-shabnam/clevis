@@ -705,7 +705,7 @@ describe("AutomationPage", () => {
       renderPage();
       await enterOwnerAndSelectRepo("acme", "demo");
 
-      expect(await screen.findByText("Checking your access…")).toBeInTheDocument();
+      expect((await screen.findAllByText("Checking your access…")).length).toBeGreaterThan(0);
       expect(screen.queryByRole("button", { name: "Save settings" })).not.toBeInTheDocument();
       expect(triageGetRepoMock).not.toHaveBeenCalled();
 
@@ -732,13 +732,19 @@ describe("AutomationPage", () => {
       expect(screen.queryByText(/available to organization admins/)).not.toBeInTheDocument();
     });
 
-    it("does not guess when the membership lookup fails: the card renders and shows its own state", async () => {
-      orgsMineMock.mockRejectedValue(new Error("memberships unavailable"));
+    it("does not guess when the membership lookup fails: offers a retry and keeps admin-only controls off", async () => {
+      orgsMineMock.mockRejectedValueOnce(new Error("memberships unavailable"));
       renderPage();
       await enterOwnerAndSelectRepo("acme", "demo");
 
+      const retries = await screen.findAllByRole("button", { name: "Retry" });
+      expect(retries.length).toBeGreaterThan(0);
+      expect(triageGetRepoMock).not.toHaveBeenCalled();
+      expect(screen.queryByRole("button", { name: "Save settings" })).not.toBeInTheDocument();
+
+      orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "admin" }]);
+      fireEvent.click(retries[0]);
       await waitFor(() => expect(triageGetRepoMock).toHaveBeenCalled());
-      expect(screen.queryByText(/available to organization admins/)).not.toBeInTheDocument();
     });
 
     it("keeps the (disabled) card, not a note, before any owner is entered", async () => {
