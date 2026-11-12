@@ -13,7 +13,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from src.core.db import SecurityAlert, set_session_tenant
-from src.services import notifications
+from src.services import notifications, sla_breach_sweep
 from src.services.sweep_lock import try_acquire_sweep_slot
 
 logger = logging.getLogger(__name__)
@@ -35,6 +35,12 @@ def run_security_alert_sweep(db: Session) -> None:
             set_session_tenant(db, tenant_id)
             if not try_acquire_sweep_slot(db, _SWEEP_KEY, tenant_id):
                 continue
+            # Same slot, same tick: alerts that just crossed their SLA window are announced alongside new ones.
+            try:
+                sla_breach_sweep.announce_breaches(db, tenant_id, org_login)
+            except Exception:
+                db.rollback()
+                logger.exception("SLA breach sweep: iteration failed for tenant %d", tenant_id)
             rows = list(
                 db.execute(
                     select(SecurityAlert)

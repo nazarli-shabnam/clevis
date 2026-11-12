@@ -3,7 +3,9 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-NotificationKind = Literal["critical_alert", "score_drop", "job_failed", "permission_drift", "waiver_expired"]
+NotificationKind = Literal[
+    "critical_alert", "score_drop", "job_failed", "permission_drift", "waiver_expired", "sla_breach"
+]
 
 
 class NotificationItem(BaseModel):

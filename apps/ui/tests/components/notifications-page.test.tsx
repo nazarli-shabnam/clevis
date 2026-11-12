@@ -55,6 +55,16 @@ describe("NotificationsPage", () => {
     expect(feedMock).toHaveBeenCalledWith("acme", { days: 90, limit: 50 });
   });
 
+  it("offers the SLA breach kind as a filter and lists its items (#834)", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "sla_breach", false, { title: "Critical Dependabot alert past its 7-day SLA in acme/api" }), item("b", "score_drop")]));
+    renderPage();
+    await screen.findByText(/past its 7-day SLA/);
+
+    fireEvent.click(screen.getByRole("button", { name: "SLA breach" }));
+    expect(screen.queryByText(/past its 7-day SLA/)).not.toBeInTheDocument();
+    expect(screen.getByText("title b")).toBeInTheDocument();
+  });
+
   it("filters by kind and by unread, and says so when nothing matches", async () => {
     feedMock.mockResolvedValue(
       feed([item("a", "critical_alert"), item("b", "score_drop", true), item("c", "job_failed")]),

@@ -451,8 +451,10 @@ def test_a_wider_window_and_limit_reach_older_and_more_items(db, world):
     assert len(default["items"]) == 50  # the bell's default window and cap
 
     wide = admin.get("/orgs/acme/notifications", params={"days": 60, "limit": 200}).json()
-    assert len(wide["items"]) == 61
-    assert wide["items"][-1]["at"].startswith((NOW - timedelta(days=40)).strftime("%Y-%m-%d"))
+    # The 40-day-old alert is also past its SLA, which is its own (sla_breach) item.
+    alerts = [i for i in wide["items"] if i["kind"] == "critical_alert"]
+    assert len(alerts) == 61
+    assert alerts[-1]["at"].startswith((NOW - timedelta(days=40)).strftime("%Y-%m-%d"))
 
 
 def test_window_and_limit_are_bounded(db, world):

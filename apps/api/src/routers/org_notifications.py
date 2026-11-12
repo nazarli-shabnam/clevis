@@ -29,7 +29,7 @@ from src.repositories import (
     waiver_repo,
 )
 from src.schemas.notification_feed import NotificationFeed, NotificationItem, NotificationPreferences
-from src.services import app_permissions
+from src.services import app_permissions, dependabot_burndown
 from src.services.scan_service import comparable_scans
 
 router = APIRouter()
@@ -43,7 +43,7 @@ MAX_LIMIT = 200
 _PER_SOURCE = 40
 # The stable ids the feed hands out: a kind plus the source row's integer id.
 _MAX_SCANS_IN_WINDOW = 1000
-_ITEM_ID = re.compile(r"^(critical_alert|score_drop|job_failed|permission_drift|waiver_expired):[0-9]{1,18}$")
+_ITEM_ID = re.compile(r"^(critical_alert|score_drop|job_failed|permission_drift|waiver_expired|sla_breach):[0-9]{1,18}$")
 
 
 def _aware(value: datetime) -> datetime:
@@ -229,6 +229,43 @@ def _waiver_expired_items(db: Session, org_login: str, tenant_id: int, since: da
     ]
 
 
+def _sla_breach_items(db: Session, tenant_id: int, since: datetime, per_source: int) -> list[dict]:
+    """Open Dependabot alerts that passed their SLA window inside the feed window, dated by the breach
+    moment (opened + window), so each is one item that appears when it crosses the line."""
+    now = datetime.now(timezone.utc)
+    items: list[dict] = []
+    for severity, days in dependabot_burndown.sla_days().items():
+        if days is None:
+            continue
+        window = timedelta(days=days)
+        rows = (
+            db.query(SecurityAlert)
+            .filter(
+                SecurityAlert.tenant_id == tenant_id,
+                SecurityAlert.kind == "dependabot",
+                SecurityAlert.state == "open",
+                SecurityAlert.severity == severity,
+                SecurityAlert.created_at >= since - window,
+                SecurityAlert.created_at <= now - window,
+            )
+            .order_by(SecurityAlert.created_at.desc(), SecurityAlert.id.desc())
+            .limit(per_source)
+            .all()
+        )
+        items += [
+            {
+                "id": f"sla_breach:{r.id}",
+                "kind": "sla_breach",
+                "at": _aware(r.created_at) + window,
+                "title": f"{severity.capitalize()} Dependabot alert past its {days}-day SLA in {r.repo}",
+                "detail": f"Alert #{r.number}",
+                "href": "/security/burndown",
+            }
+            for r in rows
+        ]
+    return items
+
+
 def _unread_beyond_limit(db: Session, filters: list, at_column, last_read, items: list, kind: str, dismissed) -> int:
     """Unread rows of one source past the read cursor that the per-source LIMIT kept out of ``items``.
 
@@ -301,6 +338,8 @@ def get_notifications(
         raw += _permission_drift_items(db, ctx, org_login, since)
     if is_admin and "waiver_expired" not in muted:
         raw += _waiver_expired_items(db, org_login, tenant_id, since)
+    if "sla_breach" not in muted:
+        raw += _sla_breach_items(db, tenant_id, since, per_source)
 
     if cursor is not None:
         # permission drift and waivers are not row-limited, so they are cut here instead of in a query.

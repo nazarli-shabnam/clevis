@@ -31,6 +31,7 @@ _INT_KEYS = {
     "dependabot_sla_critical_days",
     "dependabot_sla_high_days",
     "scheduled_scan_poll_seconds",
+    "automation_poll_seconds",
     "retention_webhook_deliveries_days",
     "retention_jobs_days",
     "retention_repo_events_days",
@@ -44,6 +45,8 @@ _ENUM_KEYS = {
     "digest_cadence": {"off", "weekly", "monthly"},
     "pr_nudge_mode": {"off", "comment", "label"},
     "scheduled_scan_cadence": {"off", "daily", "weekly"},
+    "pr_nudge_cadence": {"off", "daily", "weekly"},
+    "dependabot_triage_cadence": {"off", "daily", "weekly"},
 }
 
 
