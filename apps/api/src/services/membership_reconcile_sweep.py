@@ -70,7 +70,7 @@ def run_membership_reconcile_sweep(db: Session) -> None:
             continue
 
         try:
-            token = resolve_org_token(db, org_id=org_id, account_login=org_login, client_token=None)
+            token = resolve_org_token(db, org_id=org_id, account_login=org_login, client_token=None, for_job=True)
             membership_reconcile_service.enqueue(db, tenant_id=tenant_id, org_login=org_login, token=token)
         except NoGitHubTokenAvailable as exc:
             db.commit()  # nothing to persist; releases the advisory lock promptly
