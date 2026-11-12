@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
 from src.core.auth import UserOut, require_auth
+from src.core.rate_limit import _buckets as _rate_limit_buckets
 from src.core.db import Invitation, User, get_db
 from src.repositories import invitation_repo, org_membership_repo, org_repo
 from src.routers.invitations import router as invitations_router
@@ -35,6 +36,14 @@ def acme_org(db):
     org_membership_repo.get_or_create(db, org_id=org.id, user_id=admin.id, role="admin")
     org_membership_repo.get_or_create(db, org_id=org.id, user_id=member.id, role="member")
     return {"org": org, "admin": admin, "member": member, "invitee": invitee, "wrong_email": wrong_email}
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """The per-IP buckets are process-wide; the invitation routes are rate limited, so reset between tests."""
+    _rate_limit_buckets.clear()
+    yield
+    _rate_limit_buckets.clear()
 
 
 def _client(db, user):
@@ -576,6 +585,27 @@ def test_bulk_invite_commits_each_address_with_its_audit_row(db, acme_org):
     }
     # b's invitation went down with its audit row: nothing was left behind without a link.
     assert sorted(i["email"] for i in admin.get("/orgs/acme/invitations").json()) == ["a@acme.com", "c@acme.com"]
+
+
+def test_single_invite_commits_with_its_audit_row_or_not_at_all(db, acme_org):
+    from sqlalchemy.exc import SQLAlchemyError
+
+    admin = _client(db, acme_org["admin"])
+
+    with patch("src.routers.invitations.audit_repo.write", side_effect=SQLAlchemyError("audit down")):
+        with pytest.raises(SQLAlchemyError):
+            admin.post("/orgs/acme/invitations", json={"email": "solo@acme.com"})
+
+    # The invitation must not outlive its audit row: no live link without a trail.
+    db.rollback()
+    assert admin.get("/orgs/acme/invitations").json() == []
+
+
+def test_single_invite_is_rate_limited_like_its_siblings(db, acme_org):
+    admin = _client(db, acme_org["admin"])
+    codes = [admin.post("/orgs/acme/invitations", json={"email": f"u{i}@acme.com"}).status_code for i in range(12)]
+    assert 429 in codes
+    assert codes[0] == 200
 
 
 def test_reissue_and_bulk_are_audited(db, acme_org):
