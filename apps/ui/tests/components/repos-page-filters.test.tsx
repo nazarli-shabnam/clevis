@@ -8,7 +8,10 @@ const installationsListMock = vi.fn();
 const installationsListForOrgMock = vi.fn();
 const securityMock = vi.fn();
 
-vi.mock("next/navigation", () => ({ useParams: () => ({}) }));
+vi.mock("next/navigation", () => ({
+  useParams: () => ({}),
+  useSearchParams: () => new URLSearchParams(window.location.search),
+}));
 
 const downloadTextFileMock = vi.fn();
 vi.mock("@/lib/download", () => ({
