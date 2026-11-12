@@ -95,6 +95,27 @@ def upsert(
     return row
 
 
+# Deliveries that arrived before the installation was synced (installation.created is a no-op) are adopted
+# only while still recent: older ones are outside what the activity views would show anyway.
+ORPHAN_DELIVERY_ADOPT_DAYS = 7
+
+
+def adopt_orphan_deliveries(db: Session, installation_id: int, tenant_id: int) -> int:
+    """Give still-queued ``webhook_deliveries`` that arrived for this installation before it was linked
+    to a tenant that tenant. They stay ``queued``, so the requeue sweep (which needs a tenant_id) puts
+    them on the stream and the consumer normalizes them like any other delivery."""
+    adopted = db.execute(
+        text(
+            "UPDATE webhook_deliveries SET tenant_id = :tenant_id "
+            "WHERE installation_id = :installation_id AND tenant_id IS NULL AND status = 'queued' "
+            "AND received_at >= now() - make_interval(days => :days)"
+        ),
+        {"tenant_id": tenant_id, "installation_id": installation_id, "days": ORPHAN_DELIVERY_ADOPT_DAYS},
+    ).rowcount
+    db.commit()
+    return adopted
+
+
 def create(
     db: Session,
     account_login: str,
@@ -104,7 +125,7 @@ def create(
     org_id: int | None = None,
     owner_user_id: int | None = None,
 ) -> GitHubInstallation:
-    return upsert(
+    row = upsert(
         db,
         account_login=account_login,
         account_type=account_type,
@@ -113,6 +134,9 @@ def create(
         org_id=org_id,
         owner_user_id=owner_user_id,
     )
+    if row.installation_id is not None:
+        adopt_orphan_deliveries(db, row.installation_id, row.tenant_id)
+    return row
 
 
 def get_for_org(db: Session, org_id: int, account_login: str) -> GitHubInstallation | None:

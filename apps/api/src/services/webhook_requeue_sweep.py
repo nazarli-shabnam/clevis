@@ -37,8 +37,8 @@ _MAX_AGE_HOURS = 24
 # (guarded upserts) -- enforced by apps/worker/tests/test_event_consumer.py. A new
 # ingested event type that skips a matching idempotency test would make re-XADD unsafe for it.
 #
-# Excludes rows event_consumer.py deliberately leaves 'queued' forever (not stuck): a
-# null tenant_id, or an event_type with no normalizer yet (membership/team). Without this
+# Excludes rows event_consumer.py deliberately leaves 'queued' (not stuck): a null tenant_id (adopted
+# when its installation syncs, else purged by retention_sweep), or an event_type with no normalizer yet (membership/team). Without this
 # exclusion, this sweep would re-XADD those every tick forever -- the consumer re-acks
 # without ever changing their status, defeating the whole point of bounding the stream.
 # A delivery the consumer gives up on (malformed payload, missing required fields, too many

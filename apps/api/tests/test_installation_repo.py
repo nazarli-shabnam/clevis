@@ -183,3 +183,36 @@ def test_last_uninstall_purges_the_tenants_github_data(db):
     assert count == 1
     assert automation_settings_repo.list_for_feature(db, tenant_id, "dependabot_triage") == []
     assert db.execute(text("SELECT count(*) FROM org_members WHERE tenant_id = :t"), {"t": tenant_id}).scalar() == 0
+
+
+def test_create_adopts_recent_tenantless_deliveries_for_the_installation(db):
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import text
+
+    from src.core.db import WebhookDelivery
+
+    def delivery(name, installation_id, status="queued", age_days=0):
+        row = WebhookDelivery(
+            delivery_id=name, event_type="push", installation_id=installation_id, payload=b"{}", status=status
+        )
+        db.add(row)
+        db.commit()
+        db.execute(
+            text("UPDATE webhook_deliveries SET received_at = :ts WHERE id = :id"),
+            {"ts": datetime.now(timezone.utc) - timedelta(days=age_days), "id": row.id},
+        )
+        db.commit()
+
+    delivery("mine", 7)
+    delivery("other-installation", 8)
+    delivery("too-old", 7, age_days=30)
+    delivery("already-done", 7, status="processed")
+
+    row = installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=7,
+        org_id=_acme_org_id(db),
+    )
+
+    tenants = {d.delivery_id: d.tenant_id for d in db.query(WebhookDelivery).all()}
+    assert tenants == {"mine": row.tenant_id, "other-installation": None, "too-old": None, "already-done": None}
