@@ -142,3 +142,61 @@ def test_org_with_no_scan_history_is_skipped(db):
     send = _run(db)
     send.assert_not_called()
     assert _audit_rows(db, org.tenant_id) == 0
+
+
+def _actions(db, tenant_id):
+    db.execute(text(f"SET app.tenant_id = {int(tenant_id)}"))
+    return [
+        r[0]
+        for r in db.execute(
+            text("SELECT action FROM audit_logs WHERE tenant_id = :t AND action LIKE 'digest.%' ORDER BY id"),
+            {"t": tenant_id},
+        )
+    ]
+
+
+def _run_with_sender(db, sender):
+    with (
+        patch("src.services.digest_sweep.get_config", return_value="weekly"),
+        patch("src.services.digest_sweep.email.is_configured", return_value=True),
+        patch("src.services.digest_sweep.email.send_email", side_effect=sender) as send,
+    ):
+        run_digest_sweep(db)
+    return send
+
+
+def test_a_partial_smtp_failure_is_retried_for_the_failed_recipient_only(db):
+    org = _seed_org_with_scan(db, "digest-sweep-partial")
+    _admin(db, org.tenant_id, "ok-admin@e.com")
+    _admin(db, org.tenant_id, "flaky-admin@e.com")
+    flaky = {"down": True}
+
+    def sender(address, subject, body):
+        if address == "flaky-admin@e.com" and flaky["down"]:
+            raise RuntimeError("smtp blip")
+
+    first = _run_with_sender(db, sender)
+    assert sorted(c.args[0] for c in first.call_args_list) == ["flaky-admin@e.com", "ok-admin@e.com"]
+    assert "digest.sent" not in _actions(db, org.tenant_id)  # the period stays open
+
+    flaky["down"] = False
+    second = _run_with_sender(db, sender)
+    assert [c.args[0] for c in second.call_args_list] == ["flaky-admin@e.com"]  # nobody is emailed twice
+    assert _actions(db, org.tenant_id).count("digest.sent") == 1
+
+    third = _run_with_sender(db, sender)
+    third.assert_not_called()  # the period is closed
+
+
+def test_a_recipient_that_keeps_failing_is_given_up_on_for_the_period(db):
+    org = _seed_org_with_scan(db, "digest-sweep-giveup")
+    _admin(db, org.tenant_id, "bad-mailbox@e.com")
+
+    def sender(address, subject, body):
+        raise RuntimeError("550 no such mailbox")
+
+    for _ in range(digest_sweep.MAX_ATTEMPTS_PER_RECIPIENT):
+        _run_with_sender(db, sender)
+    assert "digest.sent" in _actions(db, org.tenant_id)
+
+    _run_with_sender(db, sender).assert_not_called()

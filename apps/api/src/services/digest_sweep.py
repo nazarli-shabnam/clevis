@@ -6,6 +6,7 @@ digest due" is derived from the newest `digest.sent` audit-log row, so no new ta
 needed.
 """
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -21,6 +22,8 @@ from src.services.sweep_lock import try_acquire_sweep_slot
 logger = logging.getLogger(__name__)
 
 _SWEEP_KEY = "digest"
+# A recipient whose sends keep failing is given up on for the period after this many tries (one per tick).
+MAX_ATTEMPTS_PER_RECIPIENT = 3
 _CADENCE_DAYS = {"weekly": 7, "monthly": 30}
 # An org that opts in while the instance cadence is off gets the gentlest setting, as with scheduled scans.
 _OPT_IN_DEFAULT = "weekly"
@@ -73,6 +76,91 @@ def _last_sent_at(db: Session, tenant_id: int) -> datetime | None:
     return row[0] if row else None
 
 
+def _is_due(last_sent: datetime | None, now: datetime, interval_days: int) -> bool:
+    if last_sent is None:
+        return True
+    if last_sent.tzinfo is None:
+        last_sent = last_sent.replace(tzinfo=timezone.utc)
+    # 12h grace so the digest doesn't drift a poll-interval later every period (timedelta.days floors;
+    # the send only lands on a poll tick).
+    return now - last_sent >= timedelta(days=interval_days, hours=-12)
+
+
+def _delivery_state(db: Session, tenant_id: int, since: datetime | None) -> tuple[set[str], dict[str, int]]:
+    """Addresses already emailed in the current period, and failed attempts per address (lower-cased).
+    The period is everything after the last ``digest.sent`` row."""
+    rows = db.execute(
+        text(
+            "SELECT action, payload FROM audit_logs WHERE tenant_id = :t "
+            "AND action IN ('digest.recipient_sent', 'digest.recipient_failed') "
+            "AND (CAST(:since AS timestamptz) IS NULL OR created_at > :since)"
+        ),
+        {"t": tenant_id, "since": since},
+    ).fetchall()
+    done: set[str] = set()
+    failures: dict[str, int] = {}
+    for action, payload in rows:
+        try:
+            address = str(json.loads(payload).get("to", "")).lower()
+        except (ValueError, AttributeError):
+            continue
+        if action == "digest.recipient_sent":
+            done.add(address)
+        else:
+            failures[address] = failures.get(address, 0) + 1
+    return done, failures
+
+
+def _deliver(db, tenant_id, org_login, cadence, interval_days, recipients, content, now) -> None:
+    """Email each recipient not yet served this period, recording every attempt as its own audit row so a
+    partial SMTP failure retries only the failed addresses (up to MAX_ATTEMPTS_PER_RECIPIENT) and an audit
+    failure can only repeat one address. ``digest.sent`` closes the period -- and the cadence -- once no
+    recipient is left to try.
+
+    Each row is committed, which releases the transaction-scoped slot, so the slot is re-taken after every
+    recipient and this tenant is abandoned (a peer replica is delivering) if it can't be, with the state
+    re-read each round so nothing a peer sent is sent again."""
+    subject = digest_service.render_subject(content)
+    body = digest_service.render_text(content)
+    attempted: set[str] = set()  # one try per address per tick; a failed one waits for the next tick
+    while True:
+        last_sent = _last_sent_at(db, tenant_id)
+        if not _is_due(last_sent, now, interval_days):
+            db.commit()  # a peer closed the period
+            return
+        done, failures = _delivery_state(db, tenant_id, last_sent)
+        pending = [
+            a for a in recipients if a.lower() not in done and failures.get(a.lower(), 0) < MAX_ATTEMPTS_PER_RECIPIENT
+        ]
+        if not pending:
+            audit_repo.write(
+                db,
+                actor="system:digest",
+                action="digest.sent",
+                target=org_login,
+                payload={"cadence": cadence, "recipients": len(done), "score": content.latest_score},
+                tenant_id=tenant_id,
+            )
+            return
+        untried = [a for a in pending if a.lower() not in attempted]
+        if not untried:
+            db.commit()  # failures left for the next tick; release the slot
+            return
+        address = untried[0]
+        attempted.add(address.lower())
+        try:
+            email.send_email(address, subject, body)
+            action = "digest.recipient_sent"
+        except Exception:
+            logger.exception("digest sweep: failed to email %s for tenant %d", address, tenant_id)
+            action = "digest.recipient_failed"
+        audit_repo.write(
+            db, actor="system:digest", action=action, target=org_login, payload={"to": address}, tenant_id=tenant_id
+        )
+        if not try_acquire_sweep_slot(db, _SWEEP_KEY, tenant_id):
+            return
+
+
 def run_digest_sweep(db: Session) -> None:
     instance = _read_cadence()
     if instance is None and not db.execute(text("SELECT 1 FROM orgs WHERE digest_enabled IS TRUE LIMIT 1")).first():
@@ -105,15 +193,9 @@ def run_digest_sweep(db: Session) -> None:
 
             # Read the last-sent marker *after* taking the slot -- another replica may have
             # sent and committed between this tick's tenant query and now.
-            last_sent = _last_sent_at(db, tenant_id)
-            if last_sent is not None:
-                if last_sent.tzinfo is None:
-                    last_sent = last_sent.replace(tzinfo=timezone.utc)
-                # 12h grace so the digest doesn't drift a poll-interval later every
-                # period (timedelta.days floors; the send only lands on a poll tick).
-                if now - last_sent < timedelta(days=interval_days, hours=-12):
-                    db.commit()  # release the advisory slot; not due yet
-                    continue
+            if not _is_due(_last_sent_at(db, tenant_id), now, interval_days):
+                db.commit()  # release the advisory slot; not due yet
+                continue
 
             recipients = recipients_for(db, tenant_id, digest_recipients)
             if not recipients:
@@ -127,30 +209,7 @@ def run_digest_sweep(db: Session) -> None:
                 db.commit()
                 continue
 
-            subject = digest_service.render_subject(content)
-            body = digest_service.render_text(content)
-            # is_configured() was checked at the top; if SMTP drops mid-run a send just
-            # fails like any other error -- caught here so a partial success still records
-            # its digest.sent marker (otherwise the next tick re-sends to everyone).
-            sent = 0
-            for address in recipients:
-                try:
-                    email.send_email(address, subject, body)
-                    sent += 1
-                except Exception:
-                    logger.exception("digest sweep: failed to email %s for tenant %d", address, tenant_id)
-
-            if sent:
-                audit_repo.write(
-                    db,
-                    actor="system:digest",
-                    action="digest.sent",
-                    target=org_login,
-                    payload={"cadence": cadence, "recipients": sent, "score": content.latest_score},
-                    tenant_id=tenant_id,
-                )
-            else:
-                db.commit()  # release the lock even when every send failed
+            _deliver(db, tenant_id, org_login, cadence, interval_days, recipients, content, now)
         except Exception:
             db.rollback()
             logger.exception("digest sweep: iteration failed for tenant %d", tenant_id)
