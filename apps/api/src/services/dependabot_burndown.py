@@ -13,9 +13,26 @@ import statistics
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 
+from src.core.app_config import get_config
+
 SEVERITIES = ("critical", "high", "medium", "low")
 TREND_MAX_DAYS = 90
 _MAX_REPO_ROWS = 50
+
+
+SLA_DEFAULTS = {"critical": 7, "high": 30}
+
+
+def sla_days() -> dict[str, int | None]:
+    """Critical/high SLA windows from instance config; a bad stored value falls back to the default."""
+    out: dict[str, int | None] = {}
+    for severity, default in SLA_DEFAULTS.items():
+        try:
+            value = int(get_config(f"dependabot_sla_{severity}_days", str(default)))
+        except ValueError:
+            value = default
+        out[severity] = value if value >= 1 else default
+    return out
 
 
 def _age_days(created: datetime, now: datetime) -> float:

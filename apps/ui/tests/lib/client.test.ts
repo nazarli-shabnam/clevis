@@ -375,6 +375,54 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain("/orgs/acme/analytics/changes");
   });
 
+  it("GET/PUTs the org's digest setting and previews or test-sends it", async () => {
+    const settings = {
+      enabled: null, effective: true, cadence: "weekly", instance_cadence: "weekly",
+      recipients: null, resolved_recipients: [], available_recipients: [], smtp_configured: true,
+    };
+    stubOkJson(settings);
+    await api.orgs.digest("acme");
+    const [getUrl, getInit] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(getUrl).toContain("/orgs/acme/digest");
+    expect(getInit.method).toBeUndefined();
+
+    stubOkJson(settings);
+    await api.orgs.setDigest("acme", { enabled: false, recipients: ["a@acme.com"] });
+    const [putUrl, putInit] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(putUrl).toContain("/orgs/acme/digest");
+    expect(putInit.method).toBe("PUT");
+    expect(JSON.parse(putInit.body as string)).toEqual({ enabled: false, recipients: ["a@acme.com"] });
+
+    stubOkJson({ subject: "s", body: "b", empty: false });
+    await api.orgs.digestPreview("acme");
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain("/orgs/acme/digest/preview");
+
+    stubOkJson({ sent_to: "a@acme.com" });
+    await api.orgs.sendTestDigest("acme");
+    const [testUrl, testInit] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(testUrl).toContain("/orgs/acme/digest/test");
+    expect(testInit.method).toBe("POST");
+  });
+
+  it("GET/PUTs the org's automation schedules and a repo's PR-nudge opt-in", async () => {
+    stubOkJson({ pr_nudges: {}, dependabot_triage: {}, pr_nudge_repos: [], triage_repos: [] });
+    await api.orgs.automationSchedules("acme");
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain("/orgs/acme/automation-schedules");
+
+    stubOkJson({ pr_nudges: {}, dependabot_triage: {}, pr_nudge_repos: [], triage_repos: [] });
+    await api.orgs.setAutomationSchedules("acme", { dependabot_triage: true });
+    const [putUrl, putInit] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(putUrl).toContain("/orgs/acme/automation-schedules");
+    expect(putInit.method).toBe("PUT");
+    expect(JSON.parse(putInit.body as string)).toEqual({ dependabot_triage: true });
+
+    stubOkJson({ enabled: true });
+    await api.orgs.setPrNudgeRepo("acme", "acme", "web", true);
+    const [repoUrl, repoInit] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(repoUrl).toContain("/orgs/acme/repos/acme/web/automation/pr-nudge");
+    expect(JSON.parse(repoInit.body as string)).toEqual({ enabled: true });
+  });
+
   it("GET/PUTs the org's badge setting", async () => {
     stubOkJson({ enabled: false });
     await api.orgs.badge("acme");

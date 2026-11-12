@@ -154,7 +154,7 @@ def test_endpoint_uses_configured_sla_and_falls_back_on_bad_values(db, acme):
     client = _client(db)
 
     def critical(values):
-        with patch("src.routers.security.get_config", side_effect=lambda k, d: values.get(k, d)):
+        with patch("src.services.dependabot_burndown.get_config", side_effect=lambda k, d: values.get(k, d)):
             body = client.get("/orgs/acme/security/dependabot-burndown").json()
         return next(s for s in body["severities"] if s["severity"] == "critical")
 

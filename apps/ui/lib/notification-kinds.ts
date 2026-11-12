@@ -7,9 +7,17 @@ export const KIND_LABEL = {
   job_failed: "Job failed",
   permission_drift: "Permissions",
   waiver_expired: "Waiver expired",
+  sla_breach: "SLA breach",
 } as const satisfies Record<NotificationKind, string>
 
-export const KIND_ORDER: NotificationKind[] = ["critical_alert", "score_drop", "job_failed", "permission_drift", "waiver_expired"]
+export const KIND_ORDER: NotificationKind[] = [
+  "critical_alert",
+  "score_drop",
+  "job_failed",
+  "permission_drift",
+  "waiver_expired",
+  "sla_breach",
+]
 
 export const KIND_HINT: Record<NotificationKind, string> = {
   critical_alert: "New critical Dependabot alerts",
@@ -17,4 +25,5 @@ export const KIND_HINT: Record<NotificationKind, string> = {
   job_failed: "Failed background jobs (admins)",
   permission_drift: "GitHub App permission changes (admins)",
   waiver_expired: "Check waivers that expired (admins)",
+  sla_breach: "Dependabot alerts past their remediation SLA",
 }

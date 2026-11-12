@@ -227,6 +227,8 @@ class SecurityAlert(Base):
     ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     # When a new critical/high alert was announced to alert destinations (migration 0071); NULL = not yet.
     alert_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set by the SLA-breach sweep before it messages ``sla_breach`` destinations (migration 0082).
+    sla_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class SecurityAlertSync(Base):
@@ -383,6 +385,15 @@ class Org(Base):
     # Per-org override of the instance-wide `scheduled_scan_cadence`: True = scan on a schedule, False = never,
     # NULL = follow the instance setting.
     scheduled_scans: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Per-org leadership digest (migration 0083): `digest_enabled` overrides the instance `digest_cadence`
+    # (True = send, False = never, NULL = follow); `digest_recipients` is the admin's chosen list of emails
+    # (NULL = every verified org admin).
+    digest_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    digest_recipients: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Per-org overrides of the instance `pr_nudge_cadence` / `dependabot_triage_cadence` (migration 0084):
+    # True = run on a schedule, False = never, NULL = follow the instance.
+    pr_nudge_schedule: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    dependabot_triage_schedule: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # Stays nullable: a new Org and its Tenant reference each other, and NOT NULL can't be deferred
     # like a FK can. org_repo.get_or_create self-heals missing values.
     tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

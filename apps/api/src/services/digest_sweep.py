@@ -15,13 +15,15 @@ from sqlalchemy.orm import Session
 from src.core.app_config import get_config
 from src.core.db import set_session_tenant
 from src.repositories import audit_repo
-from src.services import digest_service, email
+from src.services import digest_service, email, notifications
 from src.services.sweep_lock import try_acquire_sweep_slot
 
 logger = logging.getLogger(__name__)
 
 _SWEEP_KEY = "digest"
 _CADENCE_DAYS = {"weekly": 7, "monthly": 30}
+# An org that opts in while the instance cadence is off gets the gentlest setting, as with scheduled scans.
+_OPT_IN_DEFAULT = "weekly"
 
 
 def _read_cadence() -> str | None:
@@ -29,7 +31,26 @@ def _read_cadence() -> str | None:
     return raw if raw in _CADENCE_DAYS else None
 
 
-def _recipients(db: Session, tenant_id: int) -> list[str]:
+def effective_cadence(override: bool | None, instance: str | None) -> str | None:
+    """The cadence an org's digest goes out at, or None when it gets none: ``orgs.digest_enabled`` overrides
+    the instance setting (True = on, False = off, NULL = follow the instance)."""
+    if override is False:
+        return None
+    if instance in _CADENCE_DAYS:
+        return instance
+    return _OPT_IN_DEFAULT if override is True else None
+
+
+def recipients_for(db: Session, tenant_id: int, chosen: list | None) -> list[str]:
+    """Who the digest goes to: the admin's chosen addresses, each re-checked against the org's verified
+    members (a removed or unverified member silently drops out), else every verified org admin."""
+    if chosen is None:
+        return _admin_recipients(db, tenant_id)
+    allowed = notifications.verified_member_emails(db, tenant_id)
+    return [e for e in chosen if isinstance(e, str) and e.lower() in allowed]
+
+
+def _admin_recipients(db: Session, tenant_id: int) -> list[str]:
     rows = db.execute(
         text(
             "SELECT u.email FROM memberships m JOIN users u ON u.id = m.user_id "
@@ -53,22 +74,28 @@ def _last_sent_at(db: Session, tenant_id: int) -> datetime | None:
 
 
 def run_digest_sweep(db: Session) -> None:
-    cadence = _read_cadence()
-    if cadence is None:
+    instance = _read_cadence()
+    if instance is None and not db.execute(text("SELECT 1 FROM orgs WHERE digest_enabled IS TRUE LIMIT 1")).first():
         return
     if not email.is_configured():
-        logger.info("digest sweep: cadence=%s but SMTP is not configured; nothing sent", cadence)
+        logger.info("digest sweep: cadence=%s but SMTP is not configured; nothing sent", instance)
         return
 
-    interval_days = _CADENCE_DAYS[cadence]
     now = datetime.now(timezone.utc)
 
     # tenants has no RLS (identity table) -- read freely, then scope per tenant below.
     tenants = db.execute(
-        text("SELECT t.id, o.github_login FROM tenants t JOIN orgs o ON o.id = t.org_id WHERE t.kind = 'org'")
+        text(
+            "SELECT t.id, o.github_login, o.digest_enabled, o.digest_recipients "
+            "FROM tenants t JOIN orgs o ON o.id = t.org_id WHERE t.kind = 'org'"
+        )
     ).fetchall()
 
-    for tenant_id, org_login in tenants:
+    for tenant_id, org_login, digest_enabled, digest_recipients in tenants:
+        cadence = effective_cadence(digest_enabled, instance)
+        if cadence is None:
+            continue
+        interval_days = _CADENCE_DAYS[cadence]
         try:
             set_session_tenant(db, tenant_id)
 
@@ -88,7 +115,7 @@ def run_digest_sweep(db: Session) -> None:
                     db.commit()  # release the advisory slot; not due yet
                     continue
 
-            recipients = _recipients(db, tenant_id)
+            recipients = recipients_for(db, tenant_id, digest_recipients)
             if not recipients:
                 db.commit()  # release the advisory lock; nothing to do for this tenant
                 continue

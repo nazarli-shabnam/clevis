@@ -76,7 +76,13 @@ export interface CheckWaiver {
 
 export type DestinationKind = "slack" | "teams" | "generic" | "email"
 
-export type AlertEvent = "score_drop" | "waiver_expired" | "new_critical_alert" | "stale_pr_summary" | "automation_failed"
+export type AlertEvent =
+  | "score_drop"
+  | "waiver_expired"
+  | "new_critical_alert"
+  | "stale_pr_summary"
+  | "automation_failed"
+  | "sla_breach"
 
 export interface NotificationDestination {
   id: number
@@ -997,6 +1003,7 @@ export type NotificationKind =
   | "job_failed"
   | "permission_drift"
   | "waiver_expired"
+  | "sla_breach"
 
 export interface NotificationPreferences {
   // Kinds this user has hidden from the org's feed and unread count; empty = show everything.
@@ -1018,6 +1025,38 @@ export interface NotificationFeed {
   items: NotificationItem[]
   unread_count: number
   last_read_at: string | null
+}
+
+export interface AutomationScheduleSetting {
+  enabled: boolean | null
+  effective: boolean
+  cadence: "daily" | "weekly" | null
+  instance_cadence: "off" | "daily" | "weekly"
+}
+
+export interface AutomationSchedules {
+  pr_nudges: AutomationScheduleSetting
+  dependabot_triage: AutomationScheduleSetting
+  pr_nudge_repos: string[]
+  triage_repos: string[]
+}
+
+export interface DigestSettings {
+  enabled: boolean | null
+  effective: boolean
+  cadence: "weekly" | "monthly" | null
+  instance_cadence: "off" | "weekly" | "monthly"
+  /** The chosen recipients; null = every verified org admin. */
+  recipients: string[] | null
+  resolved_recipients: string[]
+  available_recipients: string[]
+  smtp_configured: boolean
+}
+
+export interface DigestPreview {
+  subject: string
+  body: string
+  empty: boolean
 }
 
 export interface ScheduledScanSettings {
