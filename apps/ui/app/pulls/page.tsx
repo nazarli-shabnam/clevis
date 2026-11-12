@@ -405,7 +405,7 @@ export default function PullRequestsPage() {
           />
         )}
       </div>
-      {hasOrg && repoNames.length > 0 && <FlowRankingCard org={org} repos={recentlyPushedRepos} token={token} />}
+      {hasOrg && repoNames.length > 0 && <FlowRankingCard key={org} org={org} repos={recentlyPushedRepos} token={token} />}
     </>
   )
 }
