@@ -86,6 +86,7 @@ describe("ReposPage filters", () => {
     downloadTextFileMock.mockReset();
     mockIsWorkspaceAdmin = true;
     localStorage.clear();
+    window.history.replaceState(null, "", "/repos");
     tokensResolveMock.mockReset();
     tokensResolveMock.mockRejectedValue(new Error("no saved token"));
     reposListMock.mockReset();
@@ -248,6 +249,7 @@ describe("ReposPage filters", () => {
 describe("ReposPage auto-load", () => {
   beforeEach(() => {
     localStorage.clear();
+    window.history.replaceState(null, "", "/repos");
     tokensResolveMock.mockReset();
     tokensResolveMock.mockRejectedValue(new Error("no saved token"));
     reposListMock.mockReset();
