@@ -13,6 +13,7 @@ import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
 import { isOrgMemberOnly } from "@/lib/members-href"
 import { relativeTime } from "@/lib/format"
+import { githubWebUrl } from "@/lib/github-web"
 import { PULL_SORT_LABELS, ageDays, isStale, sortPulls, type PullSort } from "@/lib/pull-triage"
 import type { MyOrgMembership, PullSummary } from "@/lib/api/types"
 
@@ -128,6 +129,90 @@ const pullColumns = (staleDays: number): DataTableColumn<PullRow>[] => [
   },
 ]
 
+// What a nudge run reports for a PR it acted on: real actions, or the "would-…" ones of a dry-run preview.
+const NUDGE_ACTIONS = ["commented", "labeled", "would-comment", "would-label"]
+
+interface NudgedPr {
+  repo: string
+  number: number
+  title: string
+  action: string
+}
+interface SweepOutcome {
+  prs: NudgedPr[]
+  failed: { repo: string; reason: string }[]
+}
+
+const plural = (n: number, one: string, many: string) => (n === 1 ? one : many)
+
+function NudgePanel({
+  org,
+  kind,
+  outcome,
+  sending,
+  onConfirm,
+  onDismiss,
+}: {
+  org: string
+  kind: "preview" | "done"
+  outcome: SweepOutcome
+  sending: boolean
+  onConfirm: () => void
+  onDismiss: () => void
+}) {
+  const { prs, failed } = outcome
+  const n = prs.length
+  const failedText = `${failed.length} ${plural(failed.length, "repository", "repositories")} failed`
+  return (
+    <div className="px-4 py-3 border-b border-border text-xs space-y-2" role="region" aria-label="Nudge details">
+      <p className="text-foreground">
+        {kind === "preview"
+          ? n === 0
+            ? "No pull requests need a nudge right now."
+            : `These ${n} ${plural(n, "pull request", "pull requests")} would be nudged:`
+          : `Nudged ${n} ${plural(n, "pull request", "pull requests")}.${failed.length > 0 ? ` ${failedText}: ${failed.map((f) => f.repo).join(", ")}.` : ""}`}
+      </p>
+      {n > 0 && (
+        <ul className="divide-y divide-border border border-border">
+          {prs.map((p) => (
+            <li key={`${p.repo}#${p.number}`} className="px-3 py-1.5 flex items-center justify-between gap-3">
+              <a
+                href={githubWebUrl(`${org}/${p.repo}/pull/${p.number}`)}
+                target="_blank"
+                rel="noreferrer"
+                className="min-w-0 truncate text-primary hover:underline"
+              >
+                {p.repo} #{p.number} {p.title}
+              </a>
+              <span className="stat-chip shrink-0">{p.action.replace("would-", "").replace(/ed$/, "")}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {failed.length > 0 && (
+        <ul className="text-destructive space-y-0.5">
+          {failed.map((f) => (
+            <li key={f.repo}>
+              {kind === "preview" ? `${f.repo} could not be checked: ` : `${f.repo} failed: `}
+              {f.reason}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex items-center gap-2">
+        {kind === "preview" && n > 0 && (
+          <Button size="sm" disabled={sending} onClick={onConfirm}>
+            {sending ? "Nudging…" : `Nudge ${n} ${plural(n, "pull request", "pull requests")}`}
+          </Button>
+        )}
+        <Button size="sm" variant="outline" disabled={sending} onClick={onDismiss}>
+          {kind === "preview" && n > 0 ? "Cancel" : "Dismiss"}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 export default function PullRequestsPage() {
   const queryClient = useQueryClient()
   const { scope } = useActiveScope()
@@ -205,54 +290,60 @@ export default function PullRequestsPage() {
   const failedRepos = pullsQuery.data?.failedRepos ?? []
   const isLoading = reposQuery.isLoading || (reposQuery.isSuccess && pullsQuery.isLoading)
 
-  // Two-step confirm so a misclick can't fan public nudge comments across every repo.
+  // Nudging posts public comments on teammates' PRs, so it is two steps: a dry-run preview lists exactly which
+  // PRs would be touched, and only confirming that list sends the real run.
   const [nudgeMsg, setNudgeMsg] = useState<string | null>(null)
-  const [nudgeArmed, setNudgeArmed] = useState(false)
-  const nudge = useMutation({
-    mutationFn: async () => {
-      let nudged = 0
-      const failed: string[] = []
-      let sawPermissionError = false
-      for (let i = 0; i < repoNames.length; i += REPO_BATCH_SIZE) {
-        const batch = repoNames.slice(i, i + REPO_BATCH_SIZE)
-        const counts = await Promise.all(
-          batch.map((repo) =>
-            api.prNudges
-              .sweep(org, org, repo, token)
-              .then((r) => r.results.filter((x) => x.action === "commented" || x.action === "labeled").length)
-              .catch((e: unknown) => {
-                failed.push(repo)
-                const msg = e instanceof Error ? e.message : ""
-                if (/pull requests|permission/i.test(msg)) sawPermissionError = true
-                return 0
-              }),
-          ),
-        )
-        nudged += counts.reduce((a, b) => a + b, 0)
-      }
-      if (failed.length === repoNames.length && repoNames.length > 0) {
-        // Every repo failed — lead with the most likely cause when it's a permission
-        // error, otherwise report the failure plainly rather than guessing.
-        throw new Error(
-          sawPermissionError
-            ? "Couldn't nudge any repository — the GitHub App may be missing the 'Pull requests: write' permission. See docs/self-hosting.md."
-            : `Couldn't nudge any repository (${failed.length} failed).`,
-        )
-      }
-      return { nudged, failed }
-    },
-    onSuccess: ({ nudged, failed }) => {
-      const base = `Nudged ${nudged} pull request${nudged === 1 ? "" : "s"}.`
-      setNudgeMsg(failed.length > 0 ? `${base} ${failed.length} repositor${failed.length === 1 ? "y" : "ies"} failed: ${failed.join(", ")}.` : base)
-    },
-    onError: (e) => setNudgeMsg(e instanceof Error ? e.message : "Nudge failed."),
-  })
+  const [panel, setPanel] = useState<{ kind: "preview" | "done"; outcome: SweepOutcome } | null>(null)
 
-  useEffect(() => {
-    if (!nudgeArmed) return
-    const t = setTimeout(() => setNudgeArmed(false), 4000)
-    return () => clearTimeout(t)
-  }, [nudgeArmed])
+  async function sweepAll(dryRun: boolean): Promise<SweepOutcome> {
+    const prs: NudgedPr[] = []
+    const failed: { repo: string; reason: string }[] = []
+    let sawPermissionError = false
+    for (let i = 0; i < repoNames.length; i += REPO_BATCH_SIZE) {
+      const batch = repoNames.slice(i, i + REPO_BATCH_SIZE)
+      const batches = await Promise.all(
+        batch.map((repo) =>
+          (dryRun ? api.prNudges.sweep(org, org, repo, token, true) : api.prNudges.sweep(org, org, repo, token))
+            .then((r) =>
+              r.results
+                .filter((x) => NUDGE_ACTIONS.includes(x.action))
+                .map((x) => ({ repo, number: x.number, title: x.title, action: x.action })),
+            )
+            .catch((e: unknown) => {
+              const reason = e instanceof Error ? e.message : "request failed"
+              failed.push({ repo, reason })
+              if (/pull requests|permission/i.test(reason)) sawPermissionError = true
+              return [] as NudgedPr[]
+            }),
+        ),
+      )
+      prs.push(...batches.flat())
+    }
+    if (failed.length === repoNames.length && repoNames.length > 0) {
+      // Every repo failed — lead with the most likely cause when it's a permission
+      // error, otherwise report the failure plainly rather than guessing.
+      throw new Error(
+        sawPermissionError
+          ? "Couldn't nudge any repository — the GitHub App may be missing the 'Pull requests: write' permission. See docs/self-hosting.md."
+          : `Couldn't nudge any repository (${failed.length} failed).`,
+      )
+    }
+    return { prs, failed }
+  }
+
+  const preview = useMutation({
+    mutationFn: () => sweepAll(true),
+    onSuccess: (outcome) => setPanel({ kind: "preview", outcome }),
+    onError: (e) => setNudgeMsg(e instanceof Error ? e.message : "Nudge preview failed."),
+  })
+  const nudge = useMutation({
+    mutationFn: () => sweepAll(false),
+    onSuccess: (outcome) => setPanel({ kind: "done", outcome }),
+    onError: (e) => {
+      setPanel(null)
+      setNudgeMsg(e instanceof Error ? e.message : "Nudge failed.")
+    },
+  })
 
   const byAuthor = new Map<string, PullRow[]>()
   for (const p of pulls) {
@@ -273,18 +364,14 @@ export default function PullRequestsPage() {
             {canNudge && <Button
               size="sm"
               variant="outline"
-              disabled={pulls.length === 0 || nudge.isPending}
+              disabled={pulls.length === 0 || preview.isPending || nudge.isPending}
               onClick={() => {
-                if (nudgeArmed) {
-                  setNudgeArmed(false)
-                  setNudgeMsg(null)
-                  nudge.mutate()
-                } else {
-                  setNudgeArmed(true)
-                }
+                setNudgeMsg(null)
+                setPanel(null)
+                preview.mutate()
               }}
             >
-              {nudge.isPending ? "Nudging…" : nudgeArmed ? "Click again to confirm" : "Nudge stale PRs"}
+              {preview.isPending ? "Checking…" : nudge.isPending ? "Nudging…" : "Nudge stale PRs"}
             </Button>}
             <select
               aria-label="Sort pull requests"
@@ -317,6 +404,16 @@ export default function PullRequestsPage() {
         </div>
         {nudgeMsg && (
           <p className="px-4 py-2 text-xs text-muted-foreground border-b border-border">{nudgeMsg}</p>
+        )}
+        {panel && (
+          <NudgePanel
+            org={org}
+            kind={panel.kind}
+            outcome={panel.outcome}
+            sending={nudge.isPending}
+            onConfirm={() => nudge.mutate()}
+            onDismiss={() => setPanel(null)}
+          />
         )}
         {failedRepos.length > 0 && !pullsQuery.isError && (
           <p role="alert" className="px-4 py-2 text-xs text-destructive border-b border-border">

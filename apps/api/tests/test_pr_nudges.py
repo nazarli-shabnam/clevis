@@ -383,3 +383,42 @@ def test_a_failing_summary_alert_does_not_fail_the_nudge(client, db, user):
             _wire(mock, prs=[_pr(1, 10)])
             resp = client.post("/orgs/acme/repos/acme/api/pr-nudges", json={"token": "ghp_admin"})
     assert resp.status_code == 200
+
+
+def test_dry_run_reports_what_would_be_posted_without_writing_or_notifying(client, db, user):
+    _admin_org(db, user)
+    set_config("pr_nudge_stale_days", "3")
+    set_config("pr_nudge_mode", "comment")
+    prs = [_pr(1, 10), _pr(2, 1), _pr(3, 10)]
+    comments_for = {3: [{"body": "ping <!-- clevis:pr-nudge -->"}]}
+
+    with patch("src.routers.pr_nudges.GitHubClient") as mock, patch("src.routers.pr_nudges.notifications") as notif:
+        inst = _wire(mock, prs=prs)
+        inst.request_paginated.side_effect = lambda path, params=None: (
+            prs if path.endswith("/pulls") else comments_for.get(int(path.split("/")[-2]), [])
+        )
+        resp = client.post("/me/repos/acme/api/pr-nudges", json={"token": "ghp_admin", "dry_run": True})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["dry_run"] is True
+    assert {r["number"]: r["action"] for r in body["results"]} == {
+        1: "would-comment",
+        2: "skipped-not-stale",
+        3: "skipped-recent-nudge",  # the already-nudged rule applies to a preview too
+    }
+    assert not [c for c in inst.request.call_args_list if c[0][0] == "POST"]  # nothing posted
+    notif.notify_stale_prs.assert_not_called()
+    assert db.query(AuditLog).filter(AuditLog.action == "pr_nudge.sweep").count() == 0
+    assert db.query(AuditLog).filter(AuditLog.action == "pr_nudge.preview").count() == 1
+
+
+def test_dry_run_in_label_mode_reports_would_label(client, db, user):
+    _admin_org(db, user)
+    set_config("pr_nudge_stale_days", "3")
+    set_config("pr_nudge_mode", "label")
+    with patch("src.routers.pr_nudges.GitHubClient") as mock:
+        inst = _wire(mock, prs=[_pr(1, 10)])
+        resp = client.post("/me/repos/acme/api/pr-nudges", json={"token": "ghp_admin", "dry_run": True})
+    assert [r["action"] for r in resp.json()["results"]] == ["would-label"]
+    assert not [c for c in inst.request.call_args_list if c[0][0] == "POST"]
