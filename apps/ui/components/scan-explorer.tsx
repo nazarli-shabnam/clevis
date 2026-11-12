@@ -68,6 +68,15 @@ function ScanDetail({ scan }: { scan: ScanExportEntry }) {
 
 function Comparison({ from, to }: { from: ScanExportEntry; to: ScanExportEntry }) {
   const diff = useMemo(() => diffScans(checksOf(from), checksOf(to)), [from, to])
+  // An empty side (empty/unparseable stored checks_json) would make every failure in the other look new.
+  const detailMissing = checksOf(from).length === 0 || checksOf(to).length === 0
+  if (detailMissing) {
+    return (
+      <p role="region" aria-label="Scan comparison" className="px-4 py-3 text-sm text-muted-foreground">
+        Per-check detail is unavailable for one of these scans, so they can&apos;t be compared.
+      </p>
+    )
+  }
   return (
     <div role="region" aria-label="Scan comparison">
       <p className="px-4 pt-3 text-xs text-muted-foreground">
@@ -130,10 +139,17 @@ export function ScanExplorer({
         : ([other, selected] as const)
       : null
 
-  const missingNotice = scanId !== null && !selected && (
-    <p className="px-4 py-3 text-sm text-muted-foreground border-t border-border">
-      That scan is not in the last {WINDOW_DAYS} days of history.
-    </p>
+  const missingScan = scanId !== null && !selected
+  const missingCompare = compareId !== null && !other
+  const missingNotice = (missingScan || missingCompare) && (
+    <div className="px-4 py-3 text-sm text-muted-foreground border-t border-border flex items-center justify-between gap-3 flex-wrap">
+      <p>
+        {missingScan ? "That scan" : "The scan to compare with"} is not in the last {WINDOW_DAYS} days of history.
+      </p>
+      <Button size="sm" variant="outline" onClick={() => onChange(missingScan ? null : scanId, null)}>
+        {missingScan ? "Clear selection" : "Clear comparison"}
+      </Button>
+    </div>
   )
 
   return (

@@ -65,4 +65,10 @@ describe("diffScans", () => {
     expect(diff.changed).toHaveLength(1)
     expect(diff.changed[0].before).toContain("affected repos changed")
   })
+
+  it("shows a change in unknown repos without calling it a repo move", () => {
+    const ratio = (unknown: number) => ({ type: "ratio" as const, numerator: 2, denominator: 5, repos: ["repo-a"], unknown })
+    const diff = diffScans([check("a", "fail", ratio(1))], [check("a", "fail", ratio(2))])
+    expect(diff.changed).toEqual([expect.objectContaining({ before: "2/5 (1 unknown)", after: "2/5 (2 unknown)" })])
+  })
 })

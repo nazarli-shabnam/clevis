@@ -517,10 +517,10 @@ describe("SecurityPage", () => {
 
     const views = await screen.findAllByRole("button", { name: /View scan from/ });
     fireEvent.click(views[0]);
-    expect(routerReplaceMock).toHaveBeenLastCalledWith("?scan=2", { scroll: false });
+    expect(routerReplaceMock).toHaveBeenLastCalledWith("?scan=2&owner=acme", { scroll: false });
 
     fireEvent.click(await screen.findByRole("button", { name: "trend-point" }));
-    expect(routerReplaceMock).toHaveBeenLastCalledWith("?scan=1", { scroll: false });
+    expect(routerReplaceMock).toHaveBeenLastCalledWith("?scan=1&owner=acme", { scroll: false });
   });
 
   async function runScan() {

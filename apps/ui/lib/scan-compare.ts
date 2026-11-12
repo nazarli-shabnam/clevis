@@ -23,11 +23,13 @@ export function checkValueSummary(value: CheckResult["value"] | undefined): stri
       return parts.length > 0 ? parts.join(", ") : "No open alerts"
     }
     case "ratio":
-      return `${value.numerator}/${value.denominator}`
+      return `${value.numerator}/${value.denominator}${value.unknown ? ` (${value.unknown} unknown)` : ""}`
     default:
       return ""
   }
 }
+
+const reposOf = (value: CheckResult["value"] | undefined) => (value?.type === "ratio" ? (value.repos ?? []).join(",") : "")
 
 export interface ScanCounts {
   failed: number
@@ -64,9 +66,9 @@ export function diffScans(older: readonly StoredCheck[], newer: readonly StoredC
     else if (!isFailing(now) && was && isFailing(was)) diff.fixed.push(now)
     else if (isFailing(now) && was && isFailing(was)) {
       const [a, b] = [checkValueSummary(was.value), checkValueSummary(now.value)]
-      // The summary can match while the affected repos moved (2/5 on repo-a vs repo-b): compare the values too.
+      // The summary can match while the affected repos moved (2/5 on repo-a vs repo-b): compare them too.
       if (a !== b) diff.changed.push({ check: now, before: a, after: b })
-      else if (JSON.stringify(was.value) !== JSON.stringify(now.value)) {
+      else if (reposOf(was.value) !== reposOf(now.value)) {
         diff.changed.push({ check: now, before: `${a} (affected repos changed)`.trim(), after: a })
       }
     }

@@ -150,9 +150,19 @@ describe("ScanExplorer", () => {
     cleanup()
 
     renderExplorer(7, 6)
+    // A side without per-check detail can't be diffed: it must not read as "nothing changed".
     const none = await screen.findByRole("region", { name: "Scan comparison" })
-    expect(none).toHaveTextContent("No failing check changed value.")
-    expect(none).toHaveTextContent("score n/a")
+    expect(none).toHaveTextContent("Per-check detail is unavailable")
+  })
+
+  it("says so when the scan to compare with is not in the window, and lets you clear it", async () => {
+    const a = scan(5, "2026-11-01T10:00:00Z", 60, [{ id: "bp", title: "Branch protection", status: "fail" }])
+    exportMock.mockResolvedValue({ truncated: false, row_count: 1, entries: [a] })
+    const onChange = renderExplorer(5, 99)
+
+    expect(await screen.findByText(/The scan to compare with is not in the last/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Clear comparison" }))
+    expect(onChange).toHaveBeenCalledWith(5, null)
   })
 
   it("disables the compare picker until a scan is open", async () => {

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
@@ -115,8 +115,14 @@ export default function SecurityPage() {
   const compareId = scanId === null ? null : idParam("compare")
   function selectScans(scan: number | null, compare: number | null) {
     const params = new URLSearchParams(searchParams.toString())
-    if (scan === null) params.delete("scan")
-    else params.set("scan", String(scan))
+    // The owner travels with the scan id: a recipient's active scope may be a different org.
+    if (scan === null) {
+      params.delete("scan")
+      params.delete("owner")
+    } else {
+      params.set("scan", String(scan))
+      params.set("owner", lookupOwner)
+    }
     if (scan === null || compare === null) params.delete("compare")
     else params.set("compare", String(compare))
     router.replace(`?${params.toString()}`, { scroll: false })
@@ -148,6 +154,14 @@ export default function SecurityPage() {
   useEffect(() => {
     setScopeChecked(true)
   }, [])
+  // A shared ?scan= link names its org (?owner=); it wins over the active scope on first load only, and
+  // runs after the scope effect above has filled the box.
+  const linkedOwner = useRef(searchParams.get("scan") ? searchParams.get("owner") : null)
+  useEffect(() => {
+    if (!scopeChecked) return
+    if (linkedOwner.current) setOwner(linkedOwner.current)
+    linkedOwner.current = null
+  }, [scopeChecked])
 
   // The owner box drives token resolution, the installation lookup and the history query; follow it
   // only once typing pauses, so each keystroke doesn't fire a request per query.
