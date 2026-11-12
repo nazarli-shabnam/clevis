@@ -200,3 +200,72 @@ def test_a_recipient_that_keeps_failing_is_given_up_on_for_the_period(db):
     assert "digest.sent" in _actions(db, org.tenant_id)
 
     _run_with_sender(db, sender).assert_not_called()
+
+
+def test_is_due_treats_a_naive_timestamp_as_utc():
+    now = datetime(2026, 11, 12, tzinfo=timezone.utc)
+    assert digest_sweep._is_due(datetime(2026, 11, 1), now, 7)
+    assert not digest_sweep._is_due(datetime(2026, 11, 11), now, 7)
+
+
+def test_delivery_state_skips_audit_rows_with_an_unreadable_payload(db):
+    org = _seed_org_with_scan(db, "digest-sweep-badpayload")
+    db.execute(text(f"SET app.tenant_id = {int(org.tenant_id)}"))
+    for payload in ("not json", '{"to": "Ok@E.com"}'):
+        db.execute(
+            text(
+                "INSERT INTO audit_logs (actor, action, target, payload, tenant_id, created_at) "
+                "VALUES ('system:digest', 'digest.recipient_sent', 't', :p, :t, now())"
+            ),
+            {"p": payload, "t": org.tenant_id},
+        )
+
+    done, failures = digest_sweep._delivery_state(db, org.tenant_id, None)
+
+    assert done == {"ok@e.com"}
+    assert failures == {}
+
+
+def test_delivery_stops_when_a_peer_closes_the_period_midway(db):
+    org = _seed_org_with_scan(db, "digest-sweep-peerclose")
+    _admin(db, org.tenant_id, "a-admin@e.com")
+    _admin(db, org.tenant_id, "b-admin@e.com")
+
+    def sender(address, subject, body):
+        # A peer replica finishes the period while this one is partway through the recipient list.
+        db.execute(text(f"SET app.tenant_id = {int(org.tenant_id)}"))
+        db.execute(
+            text(
+                "INSERT INTO audit_logs (actor, action, target, payload, tenant_id, created_at) "
+                "VALUES ('system:digest', 'digest.sent', 'peer', '{}', :t, now())"
+            ),
+            {"t": org.tenant_id},
+        )
+
+    send = _run_with_sender(db, sender)
+
+    assert send.call_count == 1  # the second recipient is left to the peer
+    assert _actions(db, org.tenant_id).count("digest.sent") == 1
+
+
+def test_delivery_is_abandoned_when_the_slot_is_lost_between_recipients(db):
+    org = _seed_org_with_scan(db, "digest-sweep-slotlost")
+    _admin(db, org.tenant_id, "a-admin@e.com")
+    _admin(db, org.tenant_id, "b-admin@e.com")
+    real_acquire = digest_sweep.try_acquire_sweep_slot
+    calls = {"n": 0}
+
+    def acquire_once(session, key, tenant_id):
+        calls["n"] += 1
+        return real_acquire(session, key, tenant_id) if calls["n"] == 1 else False
+
+    with (
+        patch("src.services.digest_sweep.get_config", return_value="weekly"),
+        patch("src.services.digest_sweep.email.is_configured", return_value=True),
+        patch("src.services.digest_sweep.email.send_email") as send,
+        patch("src.services.digest_sweep.try_acquire_sweep_slot", side_effect=acquire_once),
+    ):
+        run_digest_sweep(db)
+
+    assert send.call_count == 1  # a peer holds the slot now, so the rest is its job
+    assert "digest.sent" not in _actions(db, org.tenant_id)
