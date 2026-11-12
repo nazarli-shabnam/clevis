@@ -125,9 +125,11 @@ def workflow_metrics(client: GitHubClient, owner: str, repo: str, since: datetim
     for name, wf_runs in by_workflow.items():
         counted = [r for r in wf_runs if r.get("conclusion") in _COUNTED]
         failures = sum(1 for r in counted if r["conclusion"] in _FAILED)
+        # Runs, duration, failure rate and flakiness all use the same set: cancelled/skipped runs (e.g. from
+        # cancel-in-progress concurrency) say nothing about how long a real run takes or whether it passes.
         durations = [
             _hours(end - start) * 3600
-            for r in wf_runs
+            for r in counted
             if (start := _ts(r.get("run_started_at"))) is not None and (end := _ts(r.get("updated_at"))) is not None
         ]
         # Flaky = the same commit saw both a failing and a passing run of this workflow. /actions/runs
@@ -142,7 +144,7 @@ def workflow_metrics(client: GitHubClient, owner: str, repo: str, since: datetim
         out.append(
             {
                 "name": name,
-                "runs": len(wf_runs),
+                "runs": len(counted),
                 "failure_rate": round(failures / len(counted), 3) if counted else None,
                 "avg_duration_seconds": round(sum(durations) / len(durations)) if durations else None,
                 "flaky_commits": sum(1 for o in outcomes.values() if o == {"fail", "pass"}),
