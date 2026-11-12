@@ -100,13 +100,14 @@ This is the infrastructure/ops guide — getting the Clevis stack itself running
    docker compose up --build -d
    ```
 
-   Or, on a tagged release, pull the pre-built images instead of building from source:
+   Or, on a tagged release, pull the pre-built API and worker images instead of building them from source:
 
    ```
    ghcr.io/<owner>/clevis-api
    ghcr.io/<owner>/clevis-worker
-   ghcr.io/<owner>/clevis-ui
    ```
+
+   `docker-compose.yml` only has `build:` entries, so to use these you add an `image:` override for `api` and `worker` (for example in a `docker-compose.override.yml`). The published `clevis-ui` image is **not** portable: `NEXT_PUBLIC_API_BASE` and `NEXT_PUBLIC_GITHUB_APP_SLUG` are inlined into the browser bundle at build time (see step 2), so that image calls the publisher's API URL and cannot reach yours. Always build the UI yourself with your own `NEXT_PUBLIC_*` values (`docker compose build ui`).
 
 8. Verify it's up:
 
