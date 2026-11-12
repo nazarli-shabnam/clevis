@@ -196,7 +196,10 @@ export default function RepoDetailPage() {
   }, [owner])
 
   useEffect(() => {
-    setTab("overview")
+    // /repos/<repo>?tab=security opens that tab (the burn-down page links here). Read after mount to match
+    // the server render, so the page shows Overview for a moment first.
+    const wanted = new URLSearchParams(window.location.search).get("tab")
+    setTab(TABS.find((t) => t.id === wanted)?.id ?? "overview")
   }, [params.repo])
 
   const statsQuery = useQuery({

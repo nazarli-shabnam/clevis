@@ -282,6 +282,17 @@ describe("RepoDetailPage", () => {
     await waitFor(() => expect(reposSecurityMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
   });
 
+  it("opens the Security tab straight from ?tab=security", async () => {
+    window.history.replaceState(null, "", "/repos/acme~demo?tab=security");
+    try {
+      renderPage();
+      await waitFor(() => expect(reposSecurityMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
+      expect(screen.getByRole("tab", { name: /security/i })).toHaveAttribute("aria-selected", "true");
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
   it("renders the repo's own branch-protection and secret-scanning status, not an org score", async () => {
     reposSecurityMock.mockResolvedValue({
       repository: "acme/demo",

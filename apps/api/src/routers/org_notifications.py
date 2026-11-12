@@ -9,6 +9,7 @@ read status follows them across devices.
 """
 
 import re
+from urllib.parse import quote
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -103,7 +104,7 @@ def _critical_alert_items(
             "title": f"New critical Dependabot alert in {r.repo}",
             # The worker stores GitHub's advisory under ``security_advisory`` (event_consumer._normalize_security_alert).
             "detail": str(((r.details or {}).get("security_advisory") or {}).get("summary") or ""),
-            "href": "/security",
+            "href": f"/security/burndown?repo={quote(r.repo, safe='')}",
         }
         for r in rows
     ]
@@ -263,7 +264,7 @@ def _sla_breach_items(
                 "at": _aware(r.created_at) + window,
                 "title": f"{severity.capitalize()} Dependabot alert past its {days}-day SLA in {r.repo}",
                 "detail": f"Alert #{r.number}",
-                "href": "/security/burndown",
+                "href": f"/security/burndown?repo={quote(r.repo, safe='')}",
             }
             for r in rows
         ]
