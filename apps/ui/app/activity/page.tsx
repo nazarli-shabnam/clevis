@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import Link from "next/link"
+import { useSearchParams } from "next/navigation"
 import { useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { ActivityByRepoCard, DEFAULT_ACTIVITY_DAYS } from "@/components/activity-by-repo-card"
@@ -30,20 +31,23 @@ const HEATMAP_COLOR_SCALE = [CHART_COLORS.grid, "#1d4ed8", "#3b82f6", "#60a5fa",
 
 const queryErrorMessage = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback)
 
-export default function ActivityPage() {
+function ActivityView() {
   const { scope } = useActiveScope()
   const scopeKind = scope?.kind
   const scopeLogin = scope?.login
 
   // The by-repo window lives in the URL (?days=) so a view can be shared. Read once after mount to avoid a
-  // hydration mismatch, then mirrored with replaceState (no history entries, no Suspense boundary needed).
+  // hydration mismatch, then mirrored with replaceState (no history entries). It is also re-read whenever the
+  // search params change, so a same-route navigation (Back/Forward, a link to /activity) moves the selector too.
   const [days, setDays] = useState<number>(DEFAULT_ACTIVITY_DAYS)
   const [daysRestored, setDaysRestored] = useState(false)
+  const searchParams = useSearchParams()
+  const daysParam = searchParams?.get("days") ?? null
   useEffect(() => {
-    const fromUrl = Number(new URLSearchParams(window.location.search).get("days"))
-    if (WINDOW_OPTIONS.some((o) => o.days === fromUrl)) setDays(fromUrl)
+    const fromUrl = Number(daysParam)
+    setDays(WINDOW_OPTIONS.some((o) => o.days === fromUrl) ? fromUrl : DEFAULT_ACTIVITY_DAYS)
     setDaysRestored(true)
-  }, [])
+  }, [daysParam])
   useEffect(() => {
     if (!daysRestored) return
     const params = new URLSearchParams(window.location.search)
@@ -290,5 +294,14 @@ export default function ActivityPage() {
         </div>
       )}
     </>
+  )
+}
+
+// useSearchParams must sit under a Suspense boundary or static prerendering bails out.
+export default function ActivityPage() {
+  return (
+    <Suspense fallback={null}>
+      <ActivityView />
+    </Suspense>
   )
 }
