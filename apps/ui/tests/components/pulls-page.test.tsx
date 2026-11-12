@@ -474,7 +474,7 @@ describe("PullRequestsPage", () => {
       prNudgesSweepMock.mockRejectedValue(new Error("GitHub API unreachable"));
       fireEvent.click(send);
 
-      expect(await screen.findByText("Couldn't nudge any repository (1 failed).")).toBeInTheDocument();
+      expect(await screen.findByText(/Couldn't nudge any repository \(1 failed\): .*GitHub API unreachable/)).toBeInTheDocument();
       expect(screen.queryByRole("region", { name: "Nudge details" })).not.toBeInTheDocument();
     });
   });

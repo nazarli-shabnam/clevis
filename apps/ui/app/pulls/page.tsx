@@ -168,7 +168,9 @@ function NudgePanel({
       <p className="text-foreground">
         {kind === "preview"
           ? n === 0
-            ? "No pull requests need a nudge right now."
+            ? failed.length > 0
+              ? "No pull requests need a nudge in the repositories that were checked."
+              : "No pull requests need a nudge right now."
             : `These ${n} ${plural(n, "pull request", "pull requests")} would be nudged:`
           : `Nudged ${n} ${plural(n, "pull request", "pull requests")}.${failed.length > 0 ? ` ${failedText}: ${failed.map((f) => f.repo).join(", ")}.` : ""}`}
       </p>
@@ -304,11 +306,15 @@ export default function PullRequestsPage() {
       const batches = await Promise.all(
         batch.map((repo) =>
           (dryRun ? api.prNudges.sweep(org, org, repo, token, true) : api.prNudges.sweep(org, org, repo, token))
-            .then((r) =>
-              r.results
+            .then((r) => {
+              // The API stops a repository's sweep at a GitHub error after some PRs were handled.
+              if (r.results.some((x) => x.action === "error")) {
+                failed.push({ repo, reason: "the sweep stopped early after a GitHub error; later pull requests were not processed" })
+              }
+              return r.results
                 .filter((x) => NUDGE_ACTIONS.includes(x.action))
-                .map((x) => ({ repo, number: x.number, title: x.title, action: x.action })),
-            )
+                .map((x) => ({ repo, number: x.number, title: x.title, action: x.action }))
+            })
             .catch((e: unknown) => {
               const reason = e instanceof Error ? e.message : "request failed"
               failed.push({ repo, reason })
@@ -322,10 +328,11 @@ export default function PullRequestsPage() {
     if (failed.length === repoNames.length && repoNames.length > 0) {
       // Every repo failed — lead with the most likely cause when it's a permission
       // error, otherwise report the failure plainly rather than guessing.
+      const detail = failed.map((f) => `${f.repo}: ${f.reason}`).join("; ")
       throw new Error(
         sawPermissionError
-          ? "Couldn't nudge any repository — the GitHub App may be missing the 'Pull requests: write' permission. See docs/self-hosting.md."
-          : `Couldn't nudge any repository (${failed.length} failed).`,
+          ? `Couldn't nudge any repository — the GitHub App may be missing the 'Pull requests: write' permission. See docs/self-hosting.md. (${detail})`
+          : `Couldn't nudge any repository (${failed.length} failed): ${detail}`,
       )
     }
     return { prs, failed }

@@ -422,3 +422,24 @@ def test_dry_run_in_label_mode_reports_would_label(client, db, user):
         resp = client.post("/me/repos/acme/api/pr-nudges", json={"token": "ghp_admin", "dry_run": True})
     assert [r["action"] for r in resp.json()["results"]] == ["would-label"]
     assert not [c for c in inst.request.call_args_list if c[0][0] == "POST"]
+
+
+def test_dry_run_read_error_after_a_planned_action_is_raised_not_truncated():
+    now = datetime.now(timezone.utc)
+    stale = [
+        {"number": n, "title": f"PR {n}", "draft": False,
+         "created_at": (now - timedelta(days=30)).isoformat(), "updated_at": (now - timedelta(days=30)).isoformat()}
+        for n in (1, 2, 3)
+    ]
+    fake = _FakeClient(stale)
+    real = fake.request_paginated
+
+    def paginated(path, params=None):
+        if "/issues/2/comments" in path:
+            raise httpx.HTTPStatusError("500", request=httpx.Request("GET", "https://x"), response=httpx.Response(500))
+        return real(path, params=params)
+
+    fake.request_paginated = paginated
+    with pytest.raises(httpx.HTTPStatusError):
+        pr_nudge.run_nudge_sweep(fake, "o", "r", stale_days=3, mode="comment", dry_run=True)
+    assert fake.writes == []

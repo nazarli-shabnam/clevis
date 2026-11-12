@@ -126,7 +126,9 @@ def run_nudge_sweep(
         except (httpx.HTTPStatusError, httpx.RequestError):
             # Nothing posted yet: let the caller map the error (e.g. a 403 permission hint).
             # Otherwise keep what was already posted so it's returned and audited, and stop.
-            if acted == 0:
+            # A dry run posts nothing (its `acted` counts planned actions), so a partial preview would
+            # silently hide the PRs it never got to: always surface the error.
+            if acted == 0 or dry_run:
                 raise
             results.append(NudgeResult(number, title, "error"))
             break
