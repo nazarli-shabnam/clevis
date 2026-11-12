@@ -103,7 +103,11 @@ ORPHAN_DELIVERY_ADOPT_DAYS = 7
 def adopt_orphan_deliveries(db: Session, installation_id: int, tenant_id: int) -> int:
     """Give still-queued ``webhook_deliveries`` that arrived for this installation before it was linked
     to a tenant that tenant. They stay ``queued``, so the requeue sweep (which needs a tenant_id) puts
-    them on the stream and the consumer normalizes them like any other delivery."""
+    them on the stream and the consumer normalizes them like any other delivery.
+
+    Takes the tenant lock first so it serializes with an uninstall that has deleted the row but not yet
+    committed (the EXISTS below alone would still see the row and adopt)."""
+    _lock_tenant_installs(db, tenant_id)
     adopted = db.execute(
         text(
             "UPDATE webhook_deliveries SET tenant_id = :tenant_id "

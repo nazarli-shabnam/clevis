@@ -227,3 +227,22 @@ def test_adoption_does_nothing_once_the_installation_is_gone(db):
     # No github_installations row for (7, tenant): an uninstall committed between upsert and adoption.
     assert installation_repo.adopt_orphan_deliveries(db, 7, tenant_id=_acme_org_id(db)) == 0
     assert db.query(WebhookDelivery).one().tenant_id is None
+
+
+def test_adoption_waits_for_a_concurrent_uninstall_holding_the_tenant_lock(db, _engine):
+    import pytest
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError
+
+    tenant_id = _acme_org_id(db)
+    with _engine.connect() as other_conn:
+        other_conn.begin()
+        # What delete_by_installation_id holds from its row delete until its purge commits.
+        other_conn.execute(
+            text("SELECT pg_advisory_xact_lock(:ns, :t)"),
+            {"ns": installation_repo._TENANT_INSTALL_LOCK_NS, "t": tenant_id},
+        )
+        db.execute(text("SET LOCAL lock_timeout = '300ms'"))
+        with pytest.raises(DBAPIError):
+            installation_repo.adopt_orphan_deliveries(db, 7, tenant_id=tenant_id)
+        other_conn.rollback()
