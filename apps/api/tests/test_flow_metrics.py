@@ -169,6 +169,18 @@ def test_rerun_that_passed_counts_as_flaky_even_though_the_failed_attempt_is_hid
     assert workflows[0]["flaky_commits"] == 1
 
 
+def test_cancelled_and_skipped_runs_do_not_count_toward_runs_or_average_duration():
+    runs = [_run(i, "CI", f"c{i}", "cancelled", i, 5) for i in range(1, 41)]
+    runs += [_run(100, "CI", "x", "skipped", 1, 1)]
+    runs += [_run(200 + i, "CI", f"r{i}", "success", 50 + i, 600) for i in range(10)]
+    workflows, _ = flow_metrics.workflow_metrics(FakeClient(runs=runs), "acme", "api", NOW - timedelta(days=30))
+
+    ci = {w["name"]: w for w in workflows}["CI"]
+    assert ci["runs"] == 10
+    assert ci["avg_duration_seconds"] == 600
+    assert ci["failure_rate"] == 0.0
+
+
 def test_workflow_runs_flag_truncation_when_page_cap_is_hit():
     full_page = [_run(i, "CI", f"s{i}", "success", 1, 10) for i in range(100)]
 
