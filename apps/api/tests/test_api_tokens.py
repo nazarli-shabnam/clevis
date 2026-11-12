@@ -645,3 +645,35 @@ def test_a_non_owner_session_cannot_unlock_api_tokens_by_setting_the_old_lookup_
         assert db.execute(text("SELECT count(*) FROM api_tokens")).scalar() == 0
     finally:
         db.execute(text("RESET ROLE"))
+
+
+def test_api_token_scan_holds_no_connection_while_queued_or_scanning_and_restores_context_to_persist(db, acme):
+    from src.core import db as db_module
+
+    token = _new_token(db, acme)
+    seen = {"releases": 0}
+    real_release = db_module.release_connection
+
+    def release(session):
+        real_release(session)
+        seen["releases"] += 1
+
+    def setting(name):
+        return db.execute(text("SELECT current_setting(:n, true)"), {"n": name}).scalar()
+
+    def overview(*_args, **_kwargs):
+        seen["released_before_github"] = seen["releases"] >= 2  # once before the lock, once before the scan
+        seen["tenant_during_github"] = setting("app.tenant_id")
+        return {"owner": "acme", "score": 70, "total_checks": 2, "failed_checks": 1, "repo_count": 3, "checks": CHECKS}
+
+    with (
+        patch("src.routers.api_tokens.release_connection", release),
+        patch("src.routers.api_tokens.resolve_org_token", return_value="ghs_x"),
+        patch("src.routers.analytics.get_overview", side_effect=overview),
+    ):
+        resp = _client(db).post("/api/v1/orgs/acme/scan", headers=_bearer(token))
+
+    assert resp.status_code == 200 and resp.json()["score"] == 70
+    assert seen["released_before_github"] is True
+    assert seen["tenant_during_github"] in {"", None}  # nothing leaks onto the pooled connection
+    assert scan_results_repo.latest_with_checks(db, "acme", acme["org"].tenant_id)["score"] == 70
