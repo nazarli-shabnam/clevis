@@ -58,4 +58,11 @@ describe("diffScans", () => {
     const scan = [check("a", "fail"), check("b", "pass")]
     expect(diffScans(scan, scan)).toEqual({ newlyFailing: [], fixed: [], changed: [] })
   })
+
+  it("flags a failing check whose affected repos moved at the same ratio", () => {
+    const ratio = (repos: string[]) => ({ type: "ratio" as const, numerator: 2, denominator: 5, repos })
+    const diff = diffScans([check("a", "fail", ratio(["repo-a"]))], [check("a", "fail", ratio(["repo-b"]))])
+    expect(diff.changed).toHaveLength(1)
+    expect(diff.changed[0].before).toContain("affected repos changed")
+  })
 })

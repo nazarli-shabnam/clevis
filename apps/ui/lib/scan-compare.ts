@@ -64,7 +64,11 @@ export function diffScans(older: readonly StoredCheck[], newer: readonly StoredC
     else if (!isFailing(now) && was && isFailing(was)) diff.fixed.push(now)
     else if (isFailing(now) && was && isFailing(was)) {
       const [a, b] = [checkValueSummary(was.value), checkValueSummary(now.value)]
+      // The summary can match while the affected repos moved (2/5 on repo-a vs repo-b): compare the values too.
       if (a !== b) diff.changed.push({ check: now, before: a, after: b })
+      else if (JSON.stringify(was.value) !== JSON.stringify(now.value)) {
+        diff.changed.push({ check: now, before: `${a} (affected repos changed)`.trim(), after: a })
+      }
     }
   }
   return diff

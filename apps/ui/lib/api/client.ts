@@ -242,7 +242,7 @@ async function del(path: string): Promise<void> {
 }
 
 
-function normalizeCheckValue(id: string, raw: unknown): CheckValue {
+export function normalizeCheckValue(id: string, raw: unknown): CheckValue {
   const value = normalizeCheckValueShape(id, raw)
   // The checks record the offending repos beside their counts; keep them for the card to list.
   const repos = (raw as { repos?: unknown } | null)?.repos

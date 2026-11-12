@@ -218,6 +218,7 @@ export default function SecurityPage() {
     onSuccess: (_data, forOwner) => {
       queryClient.invalidateQueries({ queryKey: ["analytics.latest-scan", forOwner] })
       queryClient.invalidateQueries({ queryKey: ["analytics.history", forOwner] })
+      queryClient.invalidateQueries({ queryKey: ["analytics.scans", forOwner] })
       queryClient.invalidateQueries({ queryKey: scanChangesKey(forOwner) })
     },
   })
@@ -495,7 +496,7 @@ export default function SecurityPage() {
         </div>
 
         {scopeOrgLogin !== "" && owner === scopeOrgLogin && <ScanChangesCard org={scopeOrgLogin} />}
-        {(historyQuery.data?.length ?? 0) > 0 && hasOrgLogin(lookupOwner) && (
+        {((historyQuery.data?.length ?? 0) > 0 || scanId !== null) && hasOrgLogin(lookupOwner) && (
           <ScanExplorer owner={lookupOwner} scanId={scanId} compareId={compareId} onChange={selectScans} />
         )}
 

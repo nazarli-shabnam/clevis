@@ -39,7 +39,9 @@ export function AreaTimeChart({
         onClick={
           onPointClick
             ? (state) => {
-                const index = Number(state?.activeIndex)
+                // activeIndex is null/"" when the click lands on no point; Number() would turn that into 0.
+                if (state?.activeIndex == null || state.activeIndex === "") return
+                const index = Number(state.activeIndex)
                 if (Number.isInteger(index) && index >= 0 && index < data.length) onPointClick(index)
               }
             : undefined

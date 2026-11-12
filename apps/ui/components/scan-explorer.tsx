@@ -1,15 +1,19 @@
 "use client"
 
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { SectionError } from "@/components/section-error"
 import { Button } from "@/components/ui/button"
-import { api } from "@/lib/api/client"
+import { api, normalizeCheckValue } from "@/lib/api/client"
 import { checkValueSummary, diffScans, isFailing, scanCounts, type StoredCheck } from "@/lib/scan-compare"
 import type { ScanExportEntry } from "@/lib/api/types"
 
 // Rows replayed from older runners may lack `checks`; read them as empty rather than failing the whole list.
-const checksOf = (scan: ScanExportEntry) => (scan.checks ?? []) as StoredCheck[]
+// The export returns the stored values raw, so normalize them the way latestScan/overview do.
+const checksOf = (scan: ScanExportEntry) =>
+  ((scan.checks ?? []) as StoredCheck[]).map((c) =>
+    c.value == null ? c : { ...c, value: normalizeCheckValue(c.id ?? "", c.value) },
+  )
 
 const SHOWN_SCANS = 30
 const WINDOW_DAYS = 180
@@ -44,13 +48,20 @@ function CheckRows({ checks, empty }: { checks: StoredCheck[]; empty: string }) 
 function ScanDetail({ scan }: { scan: ScanExportEntry }) {
   const checks = checksOf(scan)
   const counts = scanCounts(checks)
+  // An empty/unparseable stored checks_json comes back as []: fall back to the stored failure count.
+  const detailMissing = checks.length === 0 && scan.failed_checks > 0
   return (
     <div role="region" aria-label="Scan details">
       <p className="px-4 pt-3 text-xs text-muted-foreground">
-        Scan from {when(scan.created_at)} · score {scan.score ?? "n/a"} · {counts.failed} failed, {counts.errored} errored,{" "}
-        {counts.waived} waived
+        Scan from {when(scan.created_at)} · score {scan.score ?? "n/a"} ·{" "}
+        {detailMissing
+          ? `${scan.failed_checks} failed (stored count)`
+          : `${counts.failed} failed, ${counts.errored} errored, ${counts.waived} waived`}
       </p>
-      <CheckRows checks={checks.filter(isFailing)} empty="No failing or errored checks in this scan." />
+      <CheckRows
+        checks={checks.filter(isFailing)}
+        empty={detailMissing ? "Per-check detail is unavailable for this scan." : "No failing or errored checks in this scan."}
+      />
     </div>
   )
 }
@@ -105,7 +116,9 @@ export function ScanExplorer({
     enabled: owner.trim().length > 0,
     retry: false,
   })
-  const scans = useMemo(() => (query.data?.entries ?? []).slice(0, SHOWN_SCANS), [query.data])
+  const [limit, setLimit] = useState(SHOWN_SCANS)
+  const allScans = query.data?.entries ?? []
+  const scans = useMemo(() => (query.data?.entries ?? []).slice(0, limit), [query.data, limit])
   const byId = useMemo(() => new Map((query.data?.entries ?? []).map((s) => [s.id, s])), [query.data])
   const selected = scanId !== null ? byId.get(scanId) : undefined
   const other = compareId !== null ? byId.get(compareId) : undefined
@@ -116,6 +129,12 @@ export function ScanExplorer({
         ? ([selected, other] as const)
         : ([other, selected] as const)
       : null
+
+  const missingNotice = scanId !== null && !selected && (
+    <p className="px-4 py-3 text-sm text-muted-foreground border-t border-border">
+      That scan is not in the last {WINDOW_DAYS} days of history.
+    </p>
+  )
 
   return (
     <div className="card lg:col-span-2" id="scan-history">
@@ -152,7 +171,10 @@ export function ScanExplorer({
       ) : query.isLoading ? (
         <p className="p-4 text-sm text-muted-foreground">Loading…</p>
       ) : scans.length === 0 ? (
-        <p className="p-4 text-sm text-muted-foreground">No scans in the last {WINDOW_DAYS} days.</p>
+        <>
+          <p className="p-4 text-sm text-muted-foreground">No scans in the last {WINDOW_DAYS} days.</p>
+          {missingNotice}
+        </>
       ) : (
         <>
           <ul className="divide-y divide-border max-h-64 overflow-y-auto">
@@ -164,7 +186,8 @@ export function ScanExplorer({
                   <span className="flex items-center gap-3">
                     <span className="stat-chip">score {s.score ?? "n/a"}</span>
                     <span className="text-[0.6875rem] text-muted-foreground">
-                      {counts.failed} failed{counts.errored > 0 ? `, ${counts.errored} errored` : ""}
+                      {(s.checks ?? []).length === 0 ? s.failed_checks : counts.failed} failed
+                      {counts.errored > 0 ? `, ${counts.errored} errored` : ""}
                     </span>
                     <Button
                       size="sm"
@@ -180,14 +203,17 @@ export function ScanExplorer({
               )
             })}
           </ul>
+          {allScans.length > limit && (
+            <div className="px-4 py-2 border-t border-border">
+              <Button size="sm" variant="outline" onClick={() => setLimit((l) => l + SHOWN_SCANS)}>
+                Show more ({allScans.length - limit} older)
+              </Button>
+            </div>
+          )}
           {query.data?.truncated && (
             <p className="px-4 py-2 text-xs text-amber-500">Showing a capped slice of the history.</p>
           )}
-          {scanId !== null && !selected && (
-            <p className="px-4 py-3 text-sm text-muted-foreground border-t border-border">
-              That scan is not in the last {WINDOW_DAYS} days of history.
-            </p>
-          )}
+          {missingNotice}
           {ordered ? (
             <div className="border-t border-border">
               <Comparison from={ordered[0]} to={ordered[1]} />
