@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { api, errorDetail } from "@/lib/api/client";
+import { api, errorDetail, openActivityStream } from "@/lib/api/client";
 
 const TOKEN_KEY = "clevis:token";
 
@@ -68,6 +68,37 @@ describe("del() 401 handling", () => {
     await api.tokens.delete("acme");
 
     expect(localStorage.getItem(TOKEN_KEY)).toBe("stale-token");
+    expect(dispatchSpy).not.toHaveBeenCalledWith(expect.objectContaining({ type: "clevis:unauthorized" }));
+  });
+});
+
+describe("openActivityStream() 401 handling (#904)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  it("clears the token and dispatches clevis:unauthorized on a 401, still returning the response", async () => {
+    localStorage.setItem(TOKEN_KEY, "stale-token");
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(null, { status: 401 }))));
+    const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+
+    const res = await openActivityStream("acme", 7, new AbortController().signal);
+
+    expect(res.status).toBe(401);
+    expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
+    expect(dispatchSpy).toHaveBeenCalledWith(expect.objectContaining({ type: "clevis:unauthorized" }));
+  });
+
+  it("leaves the session alone on a 403", async () => {
+    localStorage.setItem(TOKEN_KEY, "good-token");
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(null, { status: 403 }))));
+    const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+
+    await openActivityStream("acme", 7, new AbortController().signal);
+
+    expect(localStorage.getItem(TOKEN_KEY)).toBe("good-token");
     expect(dispatchSpy).not.toHaveBeenCalledWith(expect.objectContaining({ type: "clevis:unauthorized" }));
   });
 });

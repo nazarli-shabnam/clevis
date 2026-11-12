@@ -555,7 +555,7 @@ export interface InvitationBulkResponse {
 
 export interface InvitationPreview {
   org_login: string
-  status: "pending" | "accepted" | "revoked"
+  status: "pending" | "accepted" | "revoked" | "expired"
 }
 
 export interface GithubOrgMember {

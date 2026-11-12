@@ -9,6 +9,13 @@ import { Button } from "@/components/ui/button"
 import { Warning, CheckCircle, CircleNotch } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { useAuth } from "@/lib/auth-context"
+import type { InvitationPreview } from "@/lib/api/types"
+
+const INACTIVE_COPY: Record<Exclude<InvitationPreview["status"], "pending">, string> = {
+  expired: "This invitation has expired. Ask an org admin to resend it.",
+  revoked: "This invitation was withdrawn by an org admin.",
+  accepted: "This invitation has already been accepted.",
+}
 
 export default function InviteAcceptPage() {
   const params = useParams<{ token: string }>()
@@ -73,9 +80,12 @@ export default function InviteAcceptPage() {
             </>
           ) : preview.status !== "pending" ? (
             <>
-              <p className="text-sm text-muted-foreground">This invitation is no longer valid.</p>
-              <Link href="/" className="text-sm text-primary hover:underline">
-                Back to Clevis
+              <p className="text-sm text-muted-foreground">{INACTIVE_COPY[preview.status]}</p>
+              <Link
+                href={preview.status === "accepted" && !user ? "/login" : "/"}
+                className="text-sm text-primary hover:underline"
+              >
+                {preview.status === "accepted" ? (user ? "Open Clevis" : "Sign in") : "Back to Clevis"}
               </Link>
             </>
           ) : (

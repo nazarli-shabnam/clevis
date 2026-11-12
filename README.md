@@ -30,7 +30,7 @@
 | **Collaborators** | See who has access across the surface you manage. |
 | **Automation** | Run privileged maintenance jobs (e.g. clearing GitHub Actions caches) with **dry-run** support and a full **audit trail**. |
 
-Every privileged action is recorded in an immutable audit log, and long-running work is dispatched to a background worker through a Postgres-backed job queue.
+Every privileged action is recorded in an append-only audit log, and long-running work is dispatched to a background worker through a Postgres-backed job queue.
 
 ---
 

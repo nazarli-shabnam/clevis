@@ -6,7 +6,8 @@ import { openActivityStream } from "@/lib/api/client"
 import { readSse } from "@/lib/sse"
 import type { ActivitySummary } from "@/lib/api/types"
 
-export type StreamStatus = "connecting" | "live" | "offline"
+/** `closed`: the server refused the stream (signed out, no access, unknown org), so retrying cannot help. */
+export type StreamStatus = "connecting" | "live" | "offline" | "closed"
 
 export const activitySummaryKey = (org: string, days: number) => ["github.activity-summary", org, days] as const
 
@@ -16,7 +17,7 @@ const RECONNECT_MAX_MS = 30_000
 
 /** Keeps the cached activity summary for `org` fresh from the server's SSE stream and reports whether
  * it is live. The server ends each stream after ~15 minutes, so this reconnects (after a brief pause on a
- * clean end, with backoff after an error), and tears down on scope change, disable or unmount. */
+ * clean end, with backoff after an error), and stops for good on 401/403/404, and tears down on scope change, disable or unmount. */
 export function useActivityStream(org: string, days: number, enabled: boolean): StreamStatus {
   const queryClient = useQueryClient()
   const [status, setStatus] = useState<StreamStatus>("connecting")
@@ -31,6 +32,10 @@ export function useActivityStream(org: string, days: number, enabled: boolean): 
       setStatus("connecting")
       try {
         const res = await openActivityStream(org, days, controller.signal)
+        if (res.status === 401 || res.status === 403 || res.status === 404) {
+          setStatus("closed")
+          return
+        }
         if (!res.ok) throw new Error(`stream responded ${res.status}`)
         setStatus("live")
         failures = 0

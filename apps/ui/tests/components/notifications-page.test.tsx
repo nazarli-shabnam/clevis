@@ -65,6 +65,15 @@ describe("NotificationsPage", () => {
     expect(screen.getByText("title b")).toBeInTheDocument();
   });
 
+  it("announces unread items with text a screen reader reads, not an aria-label on an empty span", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "score_drop"), item("b", "score_drop", true)]));
+    renderPage();
+    await screen.findByText("title a");
+
+    expect(screen.getAllByText("Unread")).toHaveLength(1);
+    expect(screen.getByText("Unread").className).toContain("sr-only");
+  });
+
   it("filters by kind and by unread, and says so when nothing matches", async () => {
     feedMock.mockResolvedValue(
       feed([item("a", "critical_alert"), item("b", "score_drop", true), item("c", "job_failed")]),

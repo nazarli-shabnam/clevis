@@ -106,7 +106,12 @@ export default function NotificationsPage() {
               <li key={n.id} className="flex items-start gap-3 px-4 py-2.5">
                 <Link href={n.href} className={`flex min-w-0 flex-1 flex-col gap-0.5 text-xs ${n.read ? "text-muted-foreground" : "text-foreground"}`}>
                   <span className="flex items-center gap-2">
-                    {!n.read && <span aria-label="Unread" className="size-1.5 shrink-0 rounded-full bg-primary" />}
+                    {!n.read && (
+                      <>
+                        <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />
+                        <span className="sr-only">Unread</span>
+                      </>
+                    )}
                     <span className="font-medium">{n.title}</span>
                   </span>
                   {n.detail && <span className="truncate text-muted-foreground">{n.detail}</span>}

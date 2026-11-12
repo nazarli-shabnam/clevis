@@ -176,7 +176,7 @@ describe("OverviewPage cockpit", () => {
     expect(cockpitMock).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the Actions cache size and clear success rate, both linking to /repos", async () => {
+  it("shows the Actions cache size and clear success rate, both linking to the /caches page", async () => {
     localStorage.setItem("default_org", "acme");
     tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
     cockpitMock.mockResolvedValue({ ...EMPTY_COCKPIT, total_cache_size_bytes: 3 * 1024 * 1024, cache_job_success_rate: 0.75 });
@@ -187,8 +187,8 @@ describe("OverviewPage cockpit", () => {
     expect(screen.getByText("Actions cache in use")).toBeInTheDocument();
     expect(screen.getByText("Cache clears succeeded")).toBeInTheDocument();
     expect(screen.getByText("75%")).toBeInTheDocument();
-    expect(screen.getByText("Actions cache in use").closest("a")).toHaveAttribute("href", "/repos");
-    expect(screen.getByText("Cache clears succeeded").closest("a")).toHaveAttribute("href", "/repos");
+    expect(screen.getByText("Actions cache in use").closest("a")).toHaveAttribute("href", "/caches");
+    expect(screen.getByText("Cache clears succeeded").closest("a")).toHaveAttribute("href", "/caches");
   });
 
   it("hides the clear success-rate card when there are no finished clear jobs (null rate)", async () => {
