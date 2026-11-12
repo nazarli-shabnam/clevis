@@ -607,6 +607,13 @@ export default function SecurityPage() {
                 <span className="stat-chip">{matrixMutation.data.summary.fully_compliant_count} fully compliant</span>
               )}
             </div>
+            {matrixMutation.data && matrixMutation.data.repos_scanned < matrixMutation.data.repos_total && (
+              <p className="px-4 py-2 text-xs text-yellow-400/80 border-b border-border flex items-center gap-1.5">
+                <Warning className="size-3 shrink-0" />
+                Showing {matrixMutation.data.repos_scanned} of {matrixMutation.data.repos_total} repositories. The
+                rest were not scanned, so these totals do not cover them.
+              </p>
+            )}
             {matrixMutation.isPending ? (
               <div className="p-4"><Skeleton className="h-32 w-full" /></div>
             ) : matrixMutation.error ? (

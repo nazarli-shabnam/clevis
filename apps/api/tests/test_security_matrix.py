@@ -158,10 +158,26 @@ def test_security_matrix_computes_rows_and_summary(client):
     assert row["code_scanning"] is True
     assert row["force_push_allowed"] is False
     assert row["score"] == 80  # 4 of 5 dimensions pass (dependabot has a critical alert)
+    assert (body["repos_total"], body["repos_scanned"]) == (1, 1)
     assert row["unknown_dimensions"] == []
     assert body["summary"]["critical_risk_count"] == 1
     assert body["summary"]["vuln_by_severity"]["critical"] == 1
     assert body["summary"]["fully_compliant_count"] == 0
+
+
+def test_security_matrix_reports_when_it_scanned_only_part_of_the_org(client):
+    from src.routers.security import _MAX_REPOS_FOR_MATRIX
+
+    total = _MAX_REPOS_FOR_MATRIX + 5
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        _set_repos(mock_client, [{"name": f"r{i}", "default_branch": "main"} for i in range(total)])
+        mock_client.return_value.request.return_value = {}
+        resp = client.get("/me/analytics/security-matrix/acme", headers={"X-GitHub-Token": "ghp_test"})
+
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["repos_total"] == total
+    assert body["repos_scanned"] == _MAX_REPOS_FOR_MATRIX == len(body["repos"])
 
 
 def test_security_matrix_excludes_unknown_dimensions_from_score(client):
