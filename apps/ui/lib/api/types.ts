@@ -1020,6 +1020,20 @@ export interface NotificationFeed {
   last_read_at: string | null
 }
 
+export interface AutomationScheduleSetting {
+  enabled: boolean | null
+  effective: boolean
+  cadence: "daily" | "weekly" | null
+  instance_cadence: "off" | "daily" | "weekly"
+}
+
+export interface AutomationSchedules {
+  pr_nudges: AutomationScheduleSetting
+  dependabot_triage: AutomationScheduleSetting
+  pr_nudge_repos: string[]
+  triage_repos: string[]
+}
+
 export interface DigestSettings {
   enabled: boolean | null
   effective: boolean

@@ -658,6 +658,29 @@ const CONFIG_FIELDS: {
     ],
   },
   { key: "scheduled_scan_poll_seconds", label: "Scheduled Scan Check Interval", description: "Seconds between checks for an org whose scan is due (default 3600).", type: "number" },
+  {
+    key: "pr_nudge_cadence",
+    label: "Scheduled Stale-PR Nudges",
+    description: "Run the stale-PR nudge automatically on every repository an org admin enabled it for, using the org's GitHub App installation (never a pasted token). Uses the nudge mode and stale days below; org admins can switch it per organization. Off by default.",
+    type: "select",
+    options: [
+      { value: "off", label: "Off" },
+      { value: "daily", label: "Daily" },
+      { value: "weekly", label: "Weekly" },
+    ],
+  },
+  {
+    key: "dependabot_triage_cadence",
+    label: "Scheduled Dependabot Triage",
+    description: "Run Dependabot auto-triage automatically on every repository an org admin enabled it for, using the org's GitHub App installation (never a pasted token). Org admins can switch it per organization. Off by default.",
+    type: "select",
+    options: [
+      { value: "off", label: "Off" },
+      { value: "daily", label: "Daily" },
+      { value: "weekly", label: "Weekly" },
+    ],
+  },
+  { key: "automation_poll_seconds", label: "Scheduled Automation Check Interval", description: "Seconds between checks for a due scheduled nudge or triage run (default 3600).", type: "number" },
   { key: "digest_poll_seconds", label: "Digest Check Interval", description: "Seconds between checks for a due leadership digest.", type: "number" },
   {
     key: "pr_nudge_mode",

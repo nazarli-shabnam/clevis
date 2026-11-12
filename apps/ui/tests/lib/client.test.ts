@@ -373,6 +373,25 @@ describe("optional token coercion (GitHub App installation fallback)", () => {
     expect(testInit.method).toBe("POST");
   });
 
+  it("GET/PUTs the org's automation schedules and a repo's PR-nudge opt-in", async () => {
+    stubOkJson({ pr_nudges: {}, dependabot_triage: {}, pr_nudge_repos: [], triage_repos: [] });
+    await api.orgs.automationSchedules("acme");
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain("/orgs/acme/automation-schedules");
+
+    stubOkJson({ pr_nudges: {}, dependabot_triage: {}, pr_nudge_repos: [], triage_repos: [] });
+    await api.orgs.setAutomationSchedules("acme", { dependabot_triage: true });
+    const [putUrl, putInit] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(putUrl).toContain("/orgs/acme/automation-schedules");
+    expect(putInit.method).toBe("PUT");
+    expect(JSON.parse(putInit.body as string)).toEqual({ dependabot_triage: true });
+
+    stubOkJson({ enabled: true });
+    await api.orgs.setPrNudgeRepo("acme", "acme", "web", true);
+    const [repoUrl, repoInit] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(repoUrl).toContain("/orgs/acme/repos/acme/web/automation/pr-nudge");
+    expect(JSON.parse(repoInit.body as string)).toEqual({ enabled: true });
+  });
+
   it("GET/PUTs the org's badge setting", async () => {
     stubOkJson({ enabled: false });
     await api.orgs.badge("acme");

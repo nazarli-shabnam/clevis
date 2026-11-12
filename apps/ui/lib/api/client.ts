@@ -5,6 +5,7 @@ import type {
   ApiToken,
   ApiTokenCreated,
   ScanChanges,
+  AutomationSchedules,
   DigestPreview,
   DigestSettings,
   ScheduledScanSettings,
@@ -722,6 +723,16 @@ export const api = {
     // enabled: null clears the org's override so it follows the instance cadence again.
     setScheduledScans: (orgLogin: string, enabled: boolean | null) =>
       put<ScheduledScanSettings>(`/orgs/${encodeURIComponent(orgLogin)}/scheduled-scans`, { enabled }),
+    automationSchedules: (orgLogin: string) =>
+      get<AutomationSchedules>(`/orgs/${encodeURIComponent(orgLogin)}/automation-schedules`),
+    // Only the fields passed change; null follows the instance cadence again.
+    setAutomationSchedules: (orgLogin: string, body: { pr_nudges?: boolean | null; dependabot_triage?: boolean | null }) =>
+      put<AutomationSchedules>(`/orgs/${encodeURIComponent(orgLogin)}/automation-schedules`, body),
+    setPrNudgeRepo: (orgLogin: string, owner: string, repo: string, enabled: boolean) =>
+      put<{ enabled: boolean }>(
+        `/orgs/${encodeURIComponent(orgLogin)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/automation/pr-nudge`,
+        { enabled },
+      ),
     digest: (orgLogin: string) => get<DigestSettings>(`/orgs/${encodeURIComponent(orgLogin)}/digest`),
     // Only the fields passed change: enabled null follows the instance, recipients null means every verified admin.
     setDigest: (orgLogin: string, body: { enabled?: boolean | null; recipients?: string[] | null }) =>
