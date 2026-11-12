@@ -325,7 +325,9 @@ export default function PullRequestsPage() {
       )
       prs.push(...batches.flat())
     }
-    if (failed.length === repoNames.length && repoNames.length > 0) {
+    // Actions that already happened are shown even when every repo stopped early: dropping them would hide
+    // comments that were really posted.
+    if (failed.length === repoNames.length && repoNames.length > 0 && prs.length === 0) {
       // Every repo failed — lead with the most likely cause when it's a permission
       // error, otherwise report the failure plainly rather than guessing.
       const detail = failed.map((f) => `${f.repo}: ${f.reason}`).join("; ")

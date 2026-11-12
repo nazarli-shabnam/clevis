@@ -477,6 +477,24 @@ describe("PullRequestsPage", () => {
       expect(await screen.findByText(/Couldn't nudge any repository \(1 failed\): .*GitHub API unreachable/)).toBeInTheDocument();
       expect(screen.queryByRole("region", { name: "Nudge details" })).not.toBeInTheDocument();
     });
+    it("keeps the PRs already nudged when the only repository then stops on a GitHub error", async () => {
+      await openPreview();
+      prNudgesSweepMock.mockResolvedValueOnce(wouldComment);
+      fireEvent.click(screen.getByRole("button", { name: "Nudge stale PRs" }));
+      const send = await screen.findByRole("button", { name: "Nudge 1 pull request" });
+
+      prNudgesSweepMock.mockResolvedValue({
+        ...wouldComment,
+        results: [
+          { number: 1, title: "Old PR", action: "commented" },
+          { number: 2, title: "Next PR", action: "error" },
+        ],
+      });
+      fireEvent.click(send);
+
+      expect(await screen.findByText(/Nudged 1 pull request\. 1 repository failed/)).toBeInTheDocument();
+      expect(screen.getByText(/stopped early/)).toBeInTheDocument();
+    });
   });
 
   it("exports every open PR as CSV with author, date and link", async () => {
