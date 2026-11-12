@@ -195,9 +195,12 @@ def test_a_recipient_that_keeps_failing_is_given_up_on_for_the_period(db):
     def sender(address, subject, body):
         raise RuntimeError("550 no such mailbox")
 
-    for _ in range(digest_sweep.MAX_ATTEMPTS_PER_RECIPIENT):
-        _run_with_sender(db, sender)
-    assert "digest.sent" in _actions(db, org.tenant_id)
+    for attempt in range(1, digest_sweep.MAX_ATTEMPTS_PER_RECIPIENT + 1):
+        assert _run_with_sender(db, sender).call_count == 1
+        actions = _actions(db, org.tenant_id)
+        assert actions.count("digest.recipient_failed") == attempt
+        # The give-up marker appears with the last failed attempt, not earlier.
+        assert ("digest.sent" in actions) == (attempt == digest_sweep.MAX_ATTEMPTS_PER_RECIPIENT)
 
     _run_with_sender(db, sender).assert_not_called()
 
