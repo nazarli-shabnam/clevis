@@ -10,8 +10,13 @@ It follows scheduled_scan_sweep.py and keeps its safety rails, because it writes
   both run the same org;
 - a ``<name>.scheduled_started`` marker is committed before the GitHub work, a failure is recorded as
   ``<name>.scheduled_failed`` and retried only after FAILURE_RETRY, and success as ``<name>.scheduled``;
-- every write to a PR is audited under the system actor, exactly like the manual run.
-The nudge mode (``pr_nudge_mode``) and stale-days settings apply as for a manual nudge, and mode ``off`` runs nothing.
+- every write to a PR is audited under the system actor, exactly like the manual run;
+- a run in which any repository or PR errored is recorded as failed (retried after FAILURE_RETRY), not as a
+  success that would hold the rest back for a whole cadence; a missing/unmintable token is recorded the same
+  way, so such orgs cannot occupy every per-tick slot;
+- when an org enables more than MAX_REPOS_PER_RUN repos, each run takes the next window of them.
+The nudge mode (``pr_nudge_mode``) and stale-days settings apply as for a manual nudge. Mode ``off`` runs
+nothing and records nothing, so the first run after it is turned on is not held back by a skipped one.
 """
 
 import logging
@@ -30,7 +35,7 @@ from src.services import dependabot_triage, notifications, pr_nudge
 from src.services.github_client import GitHubClient
 from src.services.scan_schedule import CADENCE_INTERVAL
 from src.services.sweep_lock import try_acquire_sweep_slot
-from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token
+from src.services.token_resolution import resolve_org_token
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +69,6 @@ def _repo_parts(full_repo: str) -> tuple[str, str]:
 
 def _run_pr_nudges(db: Session, client: GitHubClient, tenant_id: int, org_login: str, repos: list, actor: str) -> dict:
     mode = get_config(pr_nudge.MODE_KEY, pr_nudge.DEFAULT_MODE)
-    if mode not in pr_nudge.MODES or mode == "off":
-        return {"skipped": "pr_nudge_mode is off", "repos": 0, "nudged": 0}
     stale_days = pr_nudge.configured_stale_days()
     nudged_total, failed = 0, 0
     for setting in repos:
@@ -80,6 +83,8 @@ def _run_pr_nudges(db: Session, client: GitHubClient, tenant_id: int, org_login:
             )
             continue
         acted = [asdict(r) for r in results if r.action in ("commented", "labeled", "error")]
+        if any(r["action"] == "error" for r in acted):
+            failed += 1
         audit_repo.write(
             db, actor, "pr_nudge.sweep", setting.repo,
             {"mode": mode, "stale_days": stale_days, "results": acted}, tenant_id=tenant_id,
@@ -91,8 +96,8 @@ def _run_pr_nudges(db: Session, client: GitHubClient, tenant_id: int, org_login:
         except Exception:
             db.rollback()
             logger.exception("stale PR summary alert failed for %s", setting.repo)
-    if repos and failed == len(repos):
-        raise RuntimeError("every repository failed")
+    if failed:
+        raise RuntimeError(f"{failed} of {len(repos)} repositories failed")
     return {"repos": len(repos), "nudged": nudged_total, "failed": failed}
 
 
@@ -115,6 +120,8 @@ def _run_dependabot_triage(
                 db, actor, "dependabot_triage.error", setting.repo, {"reason": type(exc).__name__}, tenant_id=tenant_id
             )
             continue
+        if any(d.action in ("error", "merge_failed") for d in decisions):
+            failed += 1
         for d in decisions:
             acted += d.action in ("approved", "merged")
             # audit_repo.write commits per call, so a decision already acted on GitHub is never left unaudited.
@@ -122,8 +129,8 @@ def _run_dependabot_triage(
                 db, actor, f"dependabot_triage.{d.action}",
                 f"{setting.repo}#{d.number}" if d.number else setting.repo, {"reason": d.reason}, tenant_id=tenant_id,
             )
-    if repos and failed == len(repos):
-        raise RuntimeError("every repository failed")
+    if failed:
+        raise RuntimeError(f"{failed} of {len(repos)} repositories failed")
     return {"repos": len(repos), "acted": acted, "failed": failed}
 
 
@@ -134,14 +141,20 @@ class Automation:
     override_column: str  # orgs column; a constant, never user input
     feature: str  # automation_repo_settings.feature
     run: Callable[[Session, GitHubClient, int, str, list, str], dict]
+    # False while the automation is switched off instance-wide: nothing is selected, run or recorded.
+    available: Callable[[], bool] = lambda: True
 
     @property
     def actor(self) -> str:
         return f"system:{self.name}"
 
 
+def _pr_nudge_available() -> bool:
+    return get_config(pr_nudge.MODE_KEY, pr_nudge.DEFAULT_MODE) in pr_nudge.MODES and get_config(pr_nudge.MODE_KEY, pr_nudge.DEFAULT_MODE) != "off"
+
+
 AUTOMATIONS = (
-    Automation("pr_nudge", "pr_nudge_cadence", "pr_nudge_schedule", "pr_nudge", _run_pr_nudges),
+    Automation("pr_nudge", "pr_nudge_cadence", "pr_nudge_schedule", "pr_nudge", _run_pr_nudges, _pr_nudge_available),
     Automation(
         "dependabot_triage", "dependabot_triage_cadence", "dependabot_triage_schedule", "dependabot_triage",
         _run_dependabot_triage,
@@ -185,8 +198,12 @@ def _has_installation(db: Session, org_id: int) -> bool:
     )
 
 
-def _enabled_repos(db: Session, tenant_id: int, feature: str) -> list:
+def _enabled_repos(db: Session, tenant_id: int, feature: str, run_index: int = 0) -> list:
+    """The enabled repos for one run: all of them, or, past MAX_REPOS_PER_RUN, the window ``run_index`` selects."""
     rows = [s for s in automation_settings_repo.list_for_feature(db, tenant_id, feature) if s.enabled and "/" in s.repo]
+    if len(rows) > MAX_REPOS_PER_RUN:
+        start = (run_index * MAX_REPOS_PER_RUN) % len(rows)
+        rows = rows[start:] + rows[:start]
     return rows[:MAX_REPOS_PER_RUN]
 
 
@@ -210,13 +227,13 @@ def _run_one(db: Session, auto: Automation, org_id: int, tenant_id: int, org_log
         return False
     try:
         token = resolve_org_token(db, org_id=org_id, account_login=org_login, client_token=None)
-    except NoGitHubTokenAvailable:
-        logger.info("scheduled %s: %s has no GitHub App installation token; skipping", auto.name, org_login)
-        db.commit()
-        return False
     except Exception as exc:
+        # Includes NoGitHubTokenAvailable: record it so FAILURE_RETRY moves this org out of the candidates and
+        # the next ones get their slot, instead of the same unmintable orgs being picked every tick.
         return _record_failure(db, auto, tenant_id, org_login, exc)
-    repos = _enabled_repos(db, tenant_id, auto.feature)
+    # One window per cadence period, so a run after the previous one starts at the next repos.
+    run_index = int(now.timestamp() // CADENCE_INTERVAL[cadence].total_seconds())
+    repos = _enabled_repos(db, tenant_id, auto.feature, run_index)
     if not repos:
         db.commit()
         return False
@@ -236,6 +253,8 @@ def _run_one(db: Session, auto: Automation, org_id: int, tenant_id: int, org_log
 def run_automation_sweep(db: Session) -> None:
     now = datetime.now(timezone.utc)
     for auto in AUTOMATIONS:
+        if not auto.available():
+            continue
         instance = instance_cadence(auto.config_key)
         # tenants has no RLS (identity table) -- read freely, then scope per tenant below.
         rows = db.execute(

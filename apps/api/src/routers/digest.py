@@ -32,7 +32,7 @@ def _settings(db: Session, org) -> DigestSettings:
         cadence=cadence,
         instance_cadence=instance,
         recipients=org.digest_recipients,
-        resolved_recipients=sorted(digest_sweep.recipients_for(db, org.tenant_id, org.digest_recipients)),
+        resolved_recipients=sorted({r.lower() for r in digest_sweep.recipients_for(db, org.tenant_id, org.digest_recipients)}),
         available_recipients=sorted(notifications.verified_member_emails(db, org.tenant_id)),
         smtp_configured=email.is_configured(),
     )

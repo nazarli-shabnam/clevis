@@ -229,7 +229,9 @@ def _waiver_expired_items(db: Session, org_login: str, tenant_id: int, since: da
     ]
 
 
-def _sla_breach_items(db: Session, tenant_id: int, since: datetime, per_source: int) -> list[dict]:
+def _sla_breach_items(
+    db: Session, tenant_id: int, since: datetime, per_source: int, cursor: Cursor | None = None
+) -> list[dict]:
     """Open Dependabot alerts that passed their SLA window inside the feed window, dated by the breach
     moment (opened + window), so each is one item that appears when it crosses the line."""
     now = datetime.now(timezone.utc)
@@ -247,6 +249,8 @@ def _sla_breach_items(db: Session, tenant_id: int, since: datetime, per_source: 
                 SecurityAlert.severity == severity,
                 SecurityAlert.created_at >= since - window,
                 SecurityAlert.created_at <= now - window,
+                # Dated by the breach moment (opened + window), so the cursor applies to that, per severity.
+                *_after_cursor(SecurityAlert.created_at + window, SecurityAlert.id, "sla_breach", cursor),
             )
             .order_by(SecurityAlert.created_at.desc(), SecurityAlert.id.desc())
             .limit(per_source)
@@ -264,6 +268,36 @@ def _sla_breach_items(db: Session, tenant_id: int, since: datetime, per_source: 
             for r in rows
         ]
     return items
+
+
+def _sla_unread_beyond_limit(db: Session, tenant_id: int, since: datetime, last_read, items: list, dismissed) -> int:
+    """Unread SLA breaches the per-source LIMIT kept out of ``items``, with the same windows and dismissal rule."""
+    now = datetime.now(timezone.utc)
+    dismissed_ids = [int(d[len("sla_breach:"):]) for d in dismissed if d.startswith("sla_breach:")]
+    total = 0
+    for severity, days in dependabot_burndown.sla_days().items():
+        if days is None:
+            continue
+        window = timedelta(days=days)
+        q = db.query(func.count()).select_from(SecurityAlert).filter(
+            SecurityAlert.tenant_id == tenant_id,
+            SecurityAlert.kind == "dependabot",
+            SecurityAlert.state == "open",
+            SecurityAlert.severity == severity,
+            SecurityAlert.created_at >= since - window,
+            SecurityAlert.created_at <= now - window,
+        )
+        if dismissed_ids:
+            q = q.filter(SecurityAlert.id.notin_(dismissed_ids))
+        if last_read is not None:
+            q = q.filter(SecurityAlert.created_at + window > last_read)
+        total += q.scalar() or 0
+    listed = sum(
+        1
+        for i in items
+        if i.kind == "sla_breach" and i.id not in dismissed and (last_read is None or _aware(i.at) > _aware(last_read))
+    )
+    return max(0, total - listed)
 
 
 def _unread_beyond_limit(db: Session, filters: list, at_column, last_read, items: list, kind: str, dismissed) -> int:
@@ -339,7 +373,7 @@ def get_notifications(
     if is_admin and "waiver_expired" not in muted:
         raw += _waiver_expired_items(db, org_login, tenant_id, since)
     if "sla_breach" not in muted:
-        raw += _sla_breach_items(db, tenant_id, since, per_source)
+        raw += _sla_breach_items(db, tenant_id, since, per_source, cursor)
 
     if cursor is not None:
         # permission drift and waivers are not row-limited, so they are cut here instead of in a query.
@@ -363,6 +397,8 @@ def get_notifications(
         unread_count += _unread_beyond_limit(db, _critical_alert_filters(tenant_id, since), SecurityAlert.ingested_at, last_read, items, "critical_alert", dismissed)
     if is_admin and "job_failed" not in muted:
         unread_count += _unread_beyond_limit(db, _failed_job_filters(tenant_id, since), Job.updated_at, last_read, items, "job_failed", dismissed)
+    if "sla_breach" not in muted:
+        unread_count += _sla_unread_beyond_limit(db, tenant_id, since, last_read, items, dismissed)
     return NotificationFeed(
         org=org_login,
         unread_count=unread_count,

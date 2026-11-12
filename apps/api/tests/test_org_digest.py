@@ -154,3 +154,11 @@ def test_test_send_explains_missing_smtp_and_unverified_address(db, acme):
         resp = _client(db, unverified).post("/orgs/acme/digest/test")
     assert resp.status_code == 409 and "Verify your email" in resp.json()["detail"]
     assert _client(db, acme["member"]).post("/orgs/acme/digest/test").status_code == 403
+
+
+def test_default_recipients_use_the_same_casing_as_the_available_ones(db, acme):
+    db.query(User).filter(User.id == acme["admin"].id).update({"email": "Digest-Admin@E.com"})
+    db.commit()
+    with _instance("off"):
+        body = _client(db, acme["admin"]).get("/orgs/acme/digest").json()
+    assert set(body["resolved_recipients"]) <= set(body["available_recipients"])

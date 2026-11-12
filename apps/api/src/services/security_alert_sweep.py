@@ -40,6 +40,8 @@ def run_security_alert_sweep(db: Session) -> None:
                 sla_breach_sweep.announce_breaches(db, tenant_id, org_login)
             except Exception:
                 db.rollback()
+                # The rollback also undoes the plain SET from set_session_tenant above.
+                set_session_tenant(db, tenant_id)
                 logger.exception("SLA breach sweep: iteration failed for tenant %d", tenant_id)
             rows = list(
                 db.execute(

@@ -540,3 +540,19 @@ def test_before_id_cursor_reaches_items_sharing_one_timestamp(db, world):
         params = {"limit": 2, "before": page[-1]["at"], "before_id": page[-1]["id"]}
     assert len(paged) == len(set(paged)) == 5
     assert admin.get("/orgs/acme/notifications", params={"before_id": "critical_alert:1"}).status_code == 422
+
+
+def test_sla_breaches_page_past_the_per_source_limit_and_all_count_as_unread(db, world):
+    t = world["acme"].tenant_id
+    for n in range(60):
+        _alert(db, t, number=n, severity="high", when=NOW - timedelta(days=31, minutes=n))
+    member = _client(db, world["users"]["member"])
+
+    first = member.get("/orgs/acme/notifications").json()
+    assert len(first["items"]) == 50
+    assert first["unread_count"] == 60  # the 10 the per-source limit left out still count
+
+    last = first["items"][-1]
+    second = member.get("/orgs/acme/notifications", params={"before": last["at"], "before_id": last["id"]}).json()
+    seen = {i["id"] for i in first["items"]} | {i["id"] for i in second["items"]}
+    assert len(second["items"]) == 10 and len(seen) == 60

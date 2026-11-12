@@ -23,10 +23,13 @@ export function DigestCard({ orgLogin }: { orgLogin: string }) {
     mutationFn: (body: { enabled?: boolean | null; recipients?: string[] | null }) => api.orgs.setDigest(orgLogin, body),
     onSuccess: (data) => queryClient.setQueryData(queryKey, data),
   })
-  const [preview, setPreview] = useState<DigestPreview | null>(null)
+  // Tagged with the org it was built for, so another org's digest (or a completion that lands after the
+  // org changed) is never shown under this one.
+  const [previewState, setPreviewState] = useState<{ org: string; preview: DigestPreview } | null>(null)
+  const preview = previewState?.org === orgLogin ? previewState.preview : null
   const previewMutation = useMutation({
-    mutationFn: () => api.orgs.digestPreview(orgLogin),
-    onSuccess: setPreview,
+    mutationFn: (org: string) => api.orgs.digestPreview(org),
+    onSuccess: (data, org) => setPreviewState({ org, preview: data }),
   })
   const testMutation = useMutation({ mutationFn: () => api.orgs.sendTestDigest(orgLogin) })
 
@@ -95,6 +98,16 @@ export function DigestCard({ orgLogin }: { orgLogin: string }) {
                 {address}
               </label>
             ))}
+            {/* A stored address that stopped being a verified member would make every later save fail
+                validation, so it stays listed (checked) until the admin unchecks it. */}
+            {(chosen ?? [])
+              .filter((address) => !data.available_recipients.includes(address))
+              .map((address) => (
+                <label key={address} className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <input type="checkbox" checked onChange={() => toggleRecipient(address, false)} />
+                  {address} (no longer a verified member)
+                </label>
+              ))}
             {chosen !== null && (
               <button
                 type="button"
@@ -107,7 +120,7 @@ export function DigestCard({ orgLogin }: { orgLogin: string }) {
           </fieldset>
 
           <div className="flex items-center gap-2 flex-wrap">
-            <Button size="sm" variant="outline" disabled={previewMutation.isPending} onClick={() => previewMutation.mutate()}>
+            <Button size="sm" variant="outline" disabled={previewMutation.isPending} onClick={() => previewMutation.mutate(orgLogin)}>
               {previewMutation.isPending ? "Building…" : "Preview"}
             </Button>
             <Button

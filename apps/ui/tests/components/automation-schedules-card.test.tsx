@@ -67,6 +67,16 @@ describe("AutomationSchedulesCard", () => {
     await waitFor(() => expect(repoMock).toHaveBeenLastCalledWith("acme", "acme", "web", false));
   });
 
+  it("rejects a repository with extra path segments instead of enabling a different one", async () => {
+    renderCard();
+
+    fireEvent.change(await screen.findByLabelText("Repository to nudge"), { target: { value: "acme/api/extra" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/name or owner\/name/);
+    expect(repoMock).not.toHaveBeenCalled();
+  });
+
   it("says a scheduled run does nothing until a repository is added, and shows the triage repo count", async () => {
     renderCard();
 

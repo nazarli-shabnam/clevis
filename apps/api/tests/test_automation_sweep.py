@@ -133,7 +133,42 @@ def test_nudge_mode_off_runs_nothing_on_github(db, org):
     with stack:
         run_automation_sweep(db)
     m["nudge"].assert_not_called()
-    assert ("pr_nudge.scheduled", "system:pr_nudge") in _actions(db, org)
+    # Nothing is recorded, so the run stays due: turning the mode on later nudges at the next tick.
+    assert not [a for a, _ in _actions(db, org) if a.startswith("pr_nudge.")]
+    stack, m = _sweep(mode="comment")
+    with stack:
+        run_automation_sweep(db)
+    m["nudge"].assert_called_once()
+
+
+def test_an_unmintable_token_is_recorded_so_it_does_not_hold_a_slot_every_tick(db, org):
+    stack, m = _sweep(token=None)
+    with stack:
+        run_automation_sweep(db)
+        run_automation_sweep(db)
+    assert ("pr_nudge.scheduled_failed", "system:pr_nudge") in _actions(db, org)
+    assert [a for a, _ in _actions(db, org)].count("pr_nudge.scheduled_failed") == 1
+
+
+def test_a_pr_level_error_marks_the_run_failed_instead_of_scheduled(db, org):
+    stack, m = _sweep()
+    m["nudge"].return_value = [pr_nudge.NudgeResult(3, "Old PR", "error")]
+    m["triage"].return_value = [dependabot_triage.Decision(7, "Bump x", "merge_failed", "approved, but conflict")]
+    with stack:
+        run_automation_sweep(db)
+    actions = [a for a, _ in _actions(db, org)]
+    assert "pr_nudge.scheduled_failed" in actions and "pr_nudge.scheduled" not in actions
+    assert "dependabot_triage.scheduled_failed" in actions and "dependabot_triage.scheduled" not in actions
+
+
+def test_more_enabled_repos_than_the_cap_are_covered_over_successive_runs(db):
+    org = org_repo.get_or_create(db, github_login="acme")
+    for i in range(25):
+        automation_settings_repo.upsert(db, org.tenant_id, f"acme/r{i:02d}", "pr_nudge", enabled=True)
+    first = [s.repo for s in automation_sweep._enabled_repos(db, org.tenant_id, "pr_nudge", 0)]
+    second = [s.repo for s in automation_sweep._enabled_repos(db, org.tenant_id, "pr_nudge", 1)]
+    assert len(first) == len(second) == automation_sweep.MAX_REPOS_PER_RUN
+    assert {"acme/r24"} <= set(second) and "acme/r24" not in first
 
 
 def test_a_failure_is_recorded_and_not_retried_on_the_next_tick(db, org):

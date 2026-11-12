@@ -33,8 +33,10 @@ const settings = (over: Partial<DigestSettings> = {}): DigestSettings => ({
   ...over,
 });
 
+const testClient = () => new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+
 function renderCard() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const qc = testClient();
   return render(
     <QueryClientProvider client={qc}>
       <DigestCard orgLogin="acme" />
@@ -48,6 +50,36 @@ describe("DigestCard", () => {
     digestMock.mockResolvedValue(settings());
   });
   afterEach(cleanup);
+
+  it("keeps a preview scoped to the org it was built for (#835)", async () => {
+    previewMock.mockResolvedValue({ subject: "Acme digest", body: "acme body", empty: false });
+    const qc = testClient();
+    const { rerender } = render(
+      <QueryClientProvider client={qc}>
+        <DigestCard orgLogin="acme" />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Preview" }));
+    expect(await screen.findByText("Acme digest")).toBeInTheDocument();
+
+    rerender(
+      <QueryClientProvider client={qc}>
+        <DigestCard orgLogin="globex" />
+      </QueryClientProvider>,
+    );
+    await screen.findByRole("button", { name: "Preview" });
+    expect(screen.queryByText("Acme digest")).not.toBeInTheDocument();
+  });
+
+  it("lets an admin uncheck a stored recipient who is no longer a verified member (#835)", async () => {
+    digestMock.mockResolvedValue(settings({ recipients: ["admin@acme.com", "gone@acme.com"] }));
+    setDigestMock.mockResolvedValue(settings({ recipients: ["admin@acme.com"] }));
+    renderCard();
+
+    fireEvent.click(await screen.findByLabelText(/gone@acme.com/));
+
+    await waitFor(() => expect(setDigestMock).toHaveBeenCalledWith("acme", { recipients: ["admin@acme.com"] }));
+  });
 
   it("lets an admin opt the org out of the instance cadence (#835)", async () => {
     setDigestMock.mockResolvedValue(settings({ enabled: false, effective: false, cadence: null }));

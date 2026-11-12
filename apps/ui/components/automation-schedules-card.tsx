@@ -68,7 +68,10 @@ export function AutomationSchedulesCard({ orgLogin }: { orgLogin: string }) {
   const [newRepo, setNewRepo] = useState("")
   const setRepo = useMutation({
     mutationFn: ({ repo, enabled }: { repo: string; enabled: boolean }) => {
-      const [owner, name] = repo.includes("/") ? repo.split("/", 2) : [orgLogin, repo]
+      const parts = repo.split("/")
+      // Exactly `repo` or `owner/repo`: extra segments would otherwise be dropped and a different repo enabled.
+      if (parts.length > 2 || parts.some((p) => p === "")) throw new Error("Enter a repository as name or owner/name.")
+      const [owner, name] = parts.length === 2 ? parts : [orgLogin, parts[0]]
       return api.orgs.setPrNudgeRepo(orgLogin, owner, name, enabled)
     },
     onSuccess: () => {
