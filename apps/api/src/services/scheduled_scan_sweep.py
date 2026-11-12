@@ -90,7 +90,9 @@ def _has_installation(db: Session, org_id: int) -> bool:
 
 
 def _scan_one(db: Session, org_id: int, tenant_id: int, org_login: str, cadence: str, now: datetime) -> bool:
-    """Scan one org if it is still due once this replica holds its lock. True when a scan was stored."""
+    """Scan one org if it is still due once this replica holds its lock. True when a scan was attempted
+    (stored or failed after the GitHub work began), so it uses a slot of the per-tick budget; False when the org
+    was skipped or failed before any scan call."""
     set_session_tenant(db, tenant_id)
     if not try_acquire_sweep_slot(db, _SWEEP_KEY, tenant_id):
         return False
@@ -127,7 +129,8 @@ def _scan_one(db: Session, org_id: int, tenant_id: int, org_login: str, cadence:
             tenant_id=tenant_id,
         )
     except Exception as exc:
-        return _record_failure(db, tenant_id, org_login, exc)
+        # The GitHub calls were already spent, so the attempt still counts against MAX_SCANS_PER_TICK.
+        _record_failure(db, tenant_id, org_login, exc)
     return True
 
 

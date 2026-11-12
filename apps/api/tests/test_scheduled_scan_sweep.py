@@ -239,3 +239,15 @@ def test_a_scan_where_every_scored_check_errored_is_not_stored_and_retries_after
     assert db.query(ScanResult).count() == before
     actions = _actions(db, org)
     assert "scan.scheduled_failed" in actions and "scan.scheduled" not in actions
+
+
+def test_failed_attempts_use_the_per_tick_budget_too(db):
+    orgs = [_org(db, f"ss-failcap-{i}") for i in range(MAX_SCANS_PER_TICK + 2)]
+    for i, org in enumerate(orgs):
+        _scan(db, org, timedelta(days=10 + i))
+
+    def boom(owner, **k):
+        raise RuntimeError("rate limited")
+
+    get_overview, _ = _run(db, overview=boom)
+    assert get_overview.call_count == MAX_SCANS_PER_TICK
