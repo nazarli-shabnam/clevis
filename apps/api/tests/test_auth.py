@@ -68,6 +68,35 @@ def test_setup_required_with_user(auth_client):
     assert resp.json()["setup_required"] is False
 
 
+def test_setup_required_reports_registration_and_github_capabilities(auth_client, db):
+    from unittest.mock import patch
+
+    body = auth_client.get("/auth/setup-required").json()
+    assert body["registration_enabled"] is True  # no row = the code default
+
+    db.execute(text("INSERT INTO app_config (key, value, updated_at) VALUES ('registration_enabled', 'false', NOW())"))
+    db.flush()
+    with patch("src.routers.auth.github_oauth.is_configured", return_value=True):
+        body = auth_client.get("/auth/setup-required").json()
+    assert body["registration_enabled"] is False
+    assert body["github_oauth_enabled"] is True
+
+    with patch("src.routers.auth.github_oauth.is_configured", return_value=False):
+        assert auth_client.get("/auth/setup-required").json()["github_oauth_enabled"] is False
+
+
+def test_setup_required_still_answers_when_the_registration_flag_cannot_be_read(auth_client):
+    from unittest.mock import patch
+
+    from sqlalchemy.exc import SQLAlchemyError
+
+    # Only a UI hint: a failed read must not take the login page down (register still fails closed).
+    with patch("src.routers.auth.registration_enabled", side_effect=SQLAlchemyError("db blip")):
+        resp = auth_client.get("/auth/setup-required")
+    assert resp.status_code == 200
+    assert resp.json()["registration_enabled"] is True
+
+
 # setup
 
 def test_setup_returns_token_and_owner(auth_client):

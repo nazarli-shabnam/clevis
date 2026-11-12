@@ -811,7 +811,10 @@ export const api = {
       put<Record<string, string>>(`/config/${encodeURIComponent(key)}`, { value }),
   },
   auth: {
-    setupRequired: () => get<{ setup_required: boolean }>("/auth/setup-required"),
+    setupRequired: () =>
+      get<{ setup_required: boolean; registration_enabled?: boolean; github_oauth_enabled?: boolean }>(
+        "/auth/setup-required",
+      ),
     setup: (email: string, password: string, name?: string) =>
       post<{ access_token: string; user: { id: number; email: string; name: string | null; is_workspace_admin: boolean } }>(
         "/auth/setup",

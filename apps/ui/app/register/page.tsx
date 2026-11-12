@@ -22,11 +22,21 @@ function RegisterForm() {
   const [confirm, setConfirm] = useState("")
   const [error, setError] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
+  // Unknown until the server answers (the form shows meanwhile); false when an admin turned sign-ups off.
+  const [registrationEnabled, setRegistrationEnabled] = useState(true)
 
   useEffect(() => {
     if (isLoading) return
     if (user) router.replace(next)
   }, [isLoading, user, router, next])
+
+  useEffect(() => {
+    api.auth.setupRequired()
+      .then(({ registration_enabled }) => setRegistrationEnabled(registration_enabled !== false))
+      .catch(() => {
+        // API unreachable: keep the form; the register call reports its own error.
+      })
+  }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -67,6 +77,11 @@ function RegisterForm() {
           <h1 className="text-2xl font-semibold text-foreground">Create an account</h1>
         </div>
 
+        {!registrationEnabled ? (
+          <p role="status" className="text-sm text-muted-foreground">
+            New sign-ups are turned off on this server. Ask an admin to create an account or send an invitation.
+          </p>
+        ) : (
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <Field>
             <FieldLabel>Name (optional)</FieldLabel>
@@ -123,6 +138,7 @@ function RegisterForm() {
             )}
           </Button>
         </form>
+        )}
 
         <p className="text-xs text-muted-foreground mt-4 text-center">
           Already have an account?{" "}

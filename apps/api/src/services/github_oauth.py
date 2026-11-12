@@ -48,6 +48,11 @@ def _require_client() -> tuple[str, str]:
     return client_id, client_secret.get_secret_value()
 
 
+def is_configured() -> bool:
+    """Whether "Sign in with GitHub" can start at all (client id and secret are set)."""
+    return bool(settings.github_app_client_id and settings.github_app_client_secret)
+
+
 def _web_base() -> str:
     """OAuth authorize/token endpoints live on the web host, not the API host."""
     base = settings.github_api_base.rstrip("/")
