@@ -3,7 +3,8 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 
 const exportMock = vi.fn()
-vi.mock("@/lib/api/client", () => ({
+vi.mock("@/lib/api/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/client")>()),
   api: { analytics: { exportHistory: (...a: unknown[]) => exportMock(...a) } },
 }))
 
@@ -20,12 +21,12 @@ const scan = (id: number, created_at: string, score: number, checks: object[]) =
 })
 
 const NEWER = scan(2, "2026-11-03T10:00:00Z", 66, [
-  { id: "mfa", title: "MFA required", severity: "high", status: "fail", value: { type: "text", text: "2 members without MFA" } },
+  { id: "mfa", title: "MFA required", severity: "high", status: "fail", value: "2 members without MFA" },
   { id: "bp", title: "Branch protection", severity: "high", status: "pass", value: null },
 ])
 const OLDER = scan(1, "2026-10-20T10:00:00Z", 83, [
   { id: "mfa", title: "MFA required", severity: "high", status: "pass", value: null },
-  { id: "bp", title: "Branch protection", severity: "high", status: "fail", value: { type: "ratio", numerator: 3, denominator: 5 } },
+  { id: "bp", title: "Branch protection", severity: "high", status: "fail", value: { checked: 5, protected: 3 } },
 ])
 
 function renderExplorer(scanId: number | null, compareId: number | null, onChange = vi.fn()) {
@@ -111,7 +112,7 @@ describe("ScanExplorer", () => {
 
   it("lists errored and waived checks, tolerating a scan stored without checks", async () => {
     const odd = scan(3, "2026-11-04T10:00:00Z", 50, [
-      { id: "a", title: "A", severity: "low", status: "error", value: { type: "boolean", enabled: false }, waived: { reason: "x" } },
+      { id: "organization_members_mfa_required", title: "A", severity: "low", status: "error", value: false, waived: { reason: "x" } },
       { title: "No id", status: "fail", value: null },
     ])
     const bare = { ...scan(4, "2026-11-05T10:00:00Z", 40, []), checks: undefined, score: null }
@@ -132,10 +133,10 @@ describe("ScanExplorer", () => {
 
   it("shows checks whose value changed between two scans, and empty sections", async () => {
     const a = scan(5, "2026-11-01T10:00:00Z", 60, [
-      { id: "bp", title: "Branch protection", status: "fail", value: { type: "ratio", numerator: 1, denominator: 5 } },
+      { id: "bp", title: "Branch protection", status: "fail", value: { checked: 5, protected: 1 } },
     ])
     const b = scan(6, "2026-11-02T10:00:00Z", 55, [
-      { id: "bp", title: "Branch protection", status: "fail", value: { type: "ratio", numerator: 2, denominator: 5 } },
+      { id: "bp", title: "Branch protection", status: "fail", value: { checked: 5, protected: 2 } },
     ])
     const c = { ...scan(7, "2026-11-03T10:00:00Z", null as unknown as number, []), score: null }
     exportMock.mockResolvedValue({ truncated: false, row_count: 3, entries: [c, b, a] })
