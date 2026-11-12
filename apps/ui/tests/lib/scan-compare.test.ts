@@ -15,6 +15,9 @@ describe("checkValueSummary", () => {
   it("summarises each value shape and tolerates none", () => {
     expect(checkValueSummary(null)).toBe("")
     expect(checkValueSummary({ type: "text", text: "rate limited" })).toBe("rate limited")
+    expect(checkValueSummary({ type: "boolean", enabled: true })).toBe("Enabled")
+    expect(checkValueSummary({ type: "boolean", enabled: false })).toBe("Disabled")
+    expect(checkValueSummary({ type: "mystery" } as never)).toBe("")
     expect(checkValueSummary({ type: "ratio", numerator: 3, denominator: 5 })).toBe("3/5")
     expect(checkValueSummary({ type: "severity_counts", critical: 2, high: 1, medium: 0, low: 0 })).toBe("2 critical, 1 high")
     expect(checkValueSummary({ type: "severity_counts", critical: 0, high: 0, medium: 0, low: 0 })).toBe("No open alerts")

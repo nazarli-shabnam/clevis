@@ -89,4 +89,74 @@ describe("ScanExplorer", () => {
 
     expect(await screen.findByText(/That scan is not in the last 180 days/)).toBeInTheDocument()
   })
+
+  it("shows a loading state, then an error with Retry when the history fails", async () => {
+    exportMock.mockRejectedValue(new Error("boom"))
+    renderExplorer(null, null)
+
+    expect(screen.getByText("Loading…")).toBeInTheDocument()
+    expect(await screen.findByText(/boom/)).toBeInTheDocument()
+  })
+
+  it("says so when there are no scans, and when the history is capped", async () => {
+    exportMock.mockResolvedValue({ truncated: false, row_count: 0, entries: [] })
+    renderExplorer(null, null)
+    expect(await screen.findByText(/No scans in the last 180 days/)).toBeInTheDocument()
+    cleanup()
+
+    exportMock.mockResolvedValue({ truncated: true, row_count: 2, entries: [NEWER, OLDER] })
+    renderExplorer(null, null)
+    expect(await screen.findByText(/capped slice/)).toBeInTheDocument()
+  })
+
+  it("lists errored and waived checks, tolerating a scan stored without checks", async () => {
+    const odd = scan(3, "2026-11-04T10:00:00Z", 50, [
+      { id: "a", title: "A", severity: "low", status: "error", value: { type: "boolean", enabled: false }, waived: { reason: "x" } },
+      { title: "No id", status: "fail", value: null },
+    ])
+    const bare = { ...scan(4, "2026-11-05T10:00:00Z", 40, []), checks: undefined, score: null }
+    exportMock.mockResolvedValue({ truncated: false, row_count: 2, entries: [bare, odd] })
+    renderExplorer(3, null)
+
+    const detail = await screen.findByRole("region", { name: "Scan details" })
+    expect(detail).toHaveTextContent("1 failed, 1 errored, 1 waived")
+    expect(detail).toHaveTextContent("waived")
+    expect(detail).toHaveTextContent("Disabled")
+    expect(detail).toHaveTextContent("No id")
+    cleanup()
+
+    renderExplorer(4, null)
+    expect(await screen.findByRole("region", { name: "Scan details" })).toHaveTextContent("score n/a")
+    expect(screen.getByText("No failing or errored checks in this scan.")).toBeInTheDocument()
+  })
+
+  it("shows checks whose value changed between two scans, and empty sections", async () => {
+    const a = scan(5, "2026-11-01T10:00:00Z", 60, [
+      { id: "bp", title: "Branch protection", status: "fail", value: { type: "ratio", numerator: 1, denominator: 5 } },
+    ])
+    const b = scan(6, "2026-11-02T10:00:00Z", 55, [
+      { id: "bp", title: "Branch protection", status: "fail", value: { type: "ratio", numerator: 2, denominator: 5 } },
+    ])
+    const c = { ...scan(7, "2026-11-03T10:00:00Z", null as unknown as number, []), score: null }
+    exportMock.mockResolvedValue({ truncated: false, row_count: 3, entries: [c, b, a] })
+    renderExplorer(6, 5)
+
+    const diff = await screen.findByRole("region", { name: "Scan comparison" })
+    expect(diff).toHaveTextContent("Changed value (1)")
+    expect(diff).toHaveTextContent("1/5 → 2/5")
+    expect(diff).toHaveTextContent("Nothing newly failing.")
+    expect(diff).toHaveTextContent("Nothing fixed.")
+    cleanup()
+
+    renderExplorer(7, 6)
+    const none = await screen.findByRole("region", { name: "Scan comparison" })
+    expect(none).toHaveTextContent("No failing check changed value.")
+    expect(none).toHaveTextContent("score n/a")
+  })
+
+  it("disables the compare picker until a scan is open", async () => {
+    renderExplorer(null, null)
+    await screen.findAllByRole("button", { name: /View scan from/ })
+    expect(screen.getByLabelText("Compare with")).toBeDisabled()
+  })
 })
