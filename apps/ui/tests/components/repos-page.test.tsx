@@ -55,6 +55,7 @@ describe("ReposPage", () => {
   beforeEach(() => {
     mockIsWorkspaceAdmin = true;
     localStorage.clear();
+    window.history.replaceState(null, "", "/repos");
     tokensResolveMock.mockReset();
     tokensUpsertMock.mockReset();
     reposListMock.mockReset();
