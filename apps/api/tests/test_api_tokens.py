@@ -647,7 +647,7 @@ def test_a_non_owner_session_cannot_unlock_api_tokens_by_setting_the_old_lookup_
         db.execute(text("RESET ROLE"))
 
 
-def test_api_token_scan_holds_no_connection_while_queued_or_scanning_and_restores_context_to_persist(db, acme):
+def test_api_token_scan_releases_its_connection_before_the_lock_and_the_scan_and_restores_context_to_persist(db, acme):
     from src.core import db as db_module
 
     token = _new_token(db, acme)
