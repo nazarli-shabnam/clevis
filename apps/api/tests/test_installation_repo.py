@@ -216,3 +216,14 @@ def test_create_adopts_recent_tenantless_deliveries_for_the_installation(db):
 
     tenants = {d.delivery_id: d.tenant_id for d in db.query(WebhookDelivery).all()}
     assert tenants == {"mine": row.tenant_id, "other-installation": None, "too-old": None, "already-done": None}
+
+
+def test_adoption_does_nothing_once_the_installation_is_gone(db):
+    from src.core.db import WebhookDelivery
+
+    db.add(WebhookDelivery(delivery_id="late", event_type="push", installation_id=7, payload=b"{}", status="queued"))
+    db.commit()
+
+    # No github_installations row for (7, tenant): an uninstall committed between upsert and adoption.
+    assert installation_repo.adopt_orphan_deliveries(db, 7, tenant_id=_acme_org_id(db)) == 0
+    assert db.query(WebhookDelivery).one().tenant_id is None

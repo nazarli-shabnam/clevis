@@ -74,8 +74,10 @@ _DELETE_DELIVERIES = (
     "DELETE FROM webhook_deliveries WHERE id IN ("
     "SELECT id FROM webhook_deliveries WHERE status = ANY(:statuses) AND received_at < :cutoff LIMIT :limit)"
 )
+# The outer WHERE repeats the predicates: a row adopted (tenant bound) after the subquery picked it must
+# survive, and under READ COMMITTED only the outer conditions are re-checked against the updated row.
 _DELETE_ORPHAN_DELIVERIES = (
-    "DELETE FROM webhook_deliveries WHERE id IN ("
+    "DELETE FROM webhook_deliveries WHERE tenant_id IS NULL AND status = 'queued' AND id IN ("
     "SELECT id FROM webhook_deliveries WHERE status = 'queued' AND tenant_id IS NULL "
     "AND received_at < :cutoff LIMIT :limit)"
 )

@@ -108,7 +108,11 @@ def adopt_orphan_deliveries(db: Session, installation_id: int, tenant_id: int) -
         text(
             "UPDATE webhook_deliveries SET tenant_id = :tenant_id "
             "WHERE installation_id = :installation_id AND tenant_id IS NULL AND status = 'queued' "
-            "AND received_at >= now() - make_interval(days => :days)"
+            "AND received_at >= now() - make_interval(days => :days) "
+            # An uninstall can commit between upsert() and this statement; adopting then would bind
+            # deliveries to a tenant whose installation is already gone (and whose data was purged).
+            "AND EXISTS (SELECT 1 FROM github_installations "
+            "WHERE installation_id = :installation_id AND tenant_id = :tenant_id)"
         ),
         {"tenant_id": tenant_id, "installation_id": installation_id, "days": ORPHAN_DELIVERY_ADOPT_DAYS},
     ).rowcount
