@@ -50,3 +50,15 @@ describe("rankCommands", () => {
     expect(rankCommands(many, "acme", 10)).toHaveLength(10);
   });
 });
+
+describe("rankCommands with actions", () => {
+  it("keeps pages before actions before accounts before repos for an empty query", () => {
+    const all = [
+      cmd("r", "repo", "acme/api"),
+      cmd("s", "scope", "Switch to acme"),
+      cmd("a", "action", "Run security scan"),
+      cmd("p", "page", "Pull Requests"),
+    ];
+    expect(rankCommands(all, "").map((c) => c.id)).toEqual(["p", "a", "s", "r"]);
+  });
+});

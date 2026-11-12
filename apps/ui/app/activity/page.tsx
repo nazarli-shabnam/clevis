@@ -174,7 +174,7 @@ export default function ActivityPage() {
           <div className="lg:col-span-2">
             <ActivityByRepoCard org={org} />
           </div>
-          <div className="card">
+          <div className="card" id="ci-failures">
             <div className="px-4 py-3 border-b border-border">
               <span className="section-label">CI Failure Log</span>
             </div>

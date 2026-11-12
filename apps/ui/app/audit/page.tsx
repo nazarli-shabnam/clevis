@@ -44,11 +44,13 @@ export default function AuditPage() {
   // would just 403, so none is made and the page says why.
   const { user } = useAuth()
   const isAdmin = !!user?.is_workspace_admin
-  const [actionFilter, setActionFilter] = useState("")
-  const [form, setForm] = useState<FilterForm>(EMPTY_FORM)
-  // Filters apply on submit, not per keystroke: each change is a server query.
-  const [applied, setApplied] = useState<FilterForm>(EMPTY_FORM)
   const searchParams = useSearchParams()
+  // ?actor=<email> opens the log already filtered (the command palette's "filtered to me").
+  const initialForm: FilterForm = { ...EMPTY_FORM, actor: searchParams.get("actor") ?? "" }
+  const [actionFilter, setActionFilter] = useState("")
+  const [form, setForm] = useState<FilterForm>(initialForm)
+  // Filters apply on submit, not per keystroke: each change is a server query.
+  const [applied, setApplied] = useState<FilterForm>(initialForm)
   const highlightJobId = Number(searchParams.get("job_id")) || null
 
   const query = useInfiniteQuery({
