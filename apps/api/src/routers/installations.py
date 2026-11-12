@@ -237,12 +237,20 @@ def delete_org_installation(
     )
 
 
-def _live_org_role(org_login: str, installation_id: int, github_login: str) -> str | None:
+def _live_org_role(org_login: str, installation_id: int, db_user: User) -> str | None:
     """The caller's current role in the org per GitHub, read with the installation's own token.
-    Raises HTTPException when GitHub can't be asked."""
+    The caller is identified by their immutable GitHub id: the stored login can be stale (renamed
+    account) and the old name may now belong to someone else, so the name GitHub currently gives
+    that id is what gets looked up. Only a user row without an id (never produced by GitHub sign-in)
+    falls back to the stored login. Raises HTTPException when GitHub can't be asked."""
     try:
         installation_token = github_app.get_installation_token(installation_id)
-        return github_app.get_org_membership_role(installation_token, org_login, github_login)
+        login = db_user.github_login
+        if db_user.github_user_id is not None:
+            login = github_app.get_user_login_by_id(installation_token, db_user.github_user_id)
+        if not login:
+            return None
+        return github_app.get_org_membership_role(installation_token, org_login, login)
     except github_app.GitHubAppNotConfigured:
         raise HTTPException(status_code=503, detail="GitHub App is not configured")
     except httpx.HTTPStatusError as exc:
@@ -263,7 +271,7 @@ def _bootstrap_org_admin_from_installation(
     for the same org_login could both pass the live-admin check before either commits, then
     race to attach to (or duplicate) the same Org row."""
     db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:org_login))"), {"org_login": org_login.lower()})
-    role = _live_org_role(org_login, installation_id, db_user.github_login)
+    role = _live_org_role(org_login, installation_id, db_user)
     if role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -336,9 +344,9 @@ def sync_org_installation(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This GitHub organization is already connected under a different login",
             )
-        github_login = db.query(User.github_login).filter(User.id == user.id).scalar()
+        caller = db.query(User).filter(User.id == user.id).first()
         try:
-            role = _live_org_role(org_login, payload.installation_id, github_login) if github_login else None
+            role = _live_org_role(org_login, payload.installation_id, caller) if caller else None
         except HTTPException:
             role = None
         if role == "admin":
@@ -449,12 +457,22 @@ def sync_personal_installation(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Link your GitHub account before syncing a personal installation",
         )
-    if payload.account_login != db_user.github_login:
+    installation = _verify_installation(payload.installation_id, payload.account_login, payload.account_type)
+    if installation is not None:
+        # Identity is the immutable GitHub id, not the login string: users.github_login is only
+        # refreshed at sign-in, so a stale one could match whoever holds that name now.
+        account_id = (installation.get("account") or {}).get("id")
+        if db_user.github_user_id is None or account_id != db_user.github_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This installation does not belong to your own GitHub account",
+            )
+    elif payload.account_login != db_user.github_login:
+        # Nothing was verified against GitHub, so the stored login is all there is to compare.
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="account_login must match your own GitHub account",
         )
-    installation = _verify_installation(payload.installation_id, payload.account_login, payload.account_type)
     row = installation_repo.create(
         db,
         account_login=payload.account_login,

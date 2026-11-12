@@ -219,6 +219,26 @@ def test_delete_installation_propagates_other_http_errors(app_configured):
             github_app.delete_installation(42)
 
 
+def test_get_user_login_by_id_returns_the_current_login():
+    mock_resp = MagicMock(status_code=200)
+    mock_resp.json = MagicMock(return_value={"id": 111, "login": "alice-new"})
+    with patch("src.services.github_app.httpx.Client") as mock_cls:
+        mock_cls.return_value = _mock_get_client(mock_resp)
+        login = github_app.get_user_login_by_id("itok", 111)
+
+    assert login == "alice-new"
+    assert mock_cls.return_value.get.call_args.args[0].endswith("/user/111")
+    assert mock_cls.return_value.get.call_args.kwargs["headers"]["Authorization"] == "Bearer itok"
+
+
+def test_get_user_login_by_id_returns_none_for_an_unknown_id():
+    mock_resp = MagicMock(status_code=404)
+    with patch("src.services.github_app.httpx.Client") as mock_cls:
+        mock_cls.return_value = _mock_get_client(mock_resp)
+        assert github_app.get_user_login_by_id("itok", 111) is None
+    mock_resp.raise_for_status.assert_not_called()
+
+
 def test_get_org_membership_role_returns_role_for_active_membership():
     mock_resp = MagicMock(status_code=200)
     mock_resp.json = MagicMock(return_value={"state": "active", "role": "admin"})
