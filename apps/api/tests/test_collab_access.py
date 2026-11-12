@@ -97,12 +97,12 @@ def _insert_push_event(db, tenant_id, *, repo, actor, occurred_at, delivery_id):
     db.commit()
 
 
-def test_permission_audit_no_token_returns_400(client):
-    resp = client.get("/github/orgs/acme/permission-audit")
+def test_permission_audit_no_token_returns_400(admin_client):
+    resp = admin_client.get("/github/orgs/acme/permission-audit")
     assert resp.status_code == 400
 
 
-def test_permission_audit_flags_outside_collaborator_with_write_access(client):
+def test_permission_audit_flags_outside_collaborator_with_write_access(admin_client):
     def _paginated_side_effect(path, params=None):
         if path == "/orgs/acme/members":
             return [{"login": "alice"}]
@@ -119,7 +119,7 @@ def test_permission_audit_flags_outside_collaborator_with_write_access(client):
 
     with patch("src.routers.collab.GitHubClient") as mock_client:
         mock_client.return_value.request_paginated.side_effect = _paginated_side_effect
-        resp = client.get("/github/orgs/acme/permission-audit", headers={"X-GitHub-Token": "ghp_test"})
+        resp = admin_client.get("/github/orgs/acme/permission-audit", headers={"X-GitHub-Token": "ghp_test"})
 
     assert resp.status_code == 200
     body = resp.json()
@@ -135,7 +135,7 @@ def test_permission_audit_flags_outside_collaborator_with_write_access(client):
     assert body["risk_summary"]["total_outside_collaborators"] == 1
 
 
-def test_permission_audit_one_bad_repo_does_not_blank_others(client):
+def test_permission_audit_one_bad_repo_does_not_blank_others(admin_client):
     def _paginated_side_effect(path, params=None):
         if path == "/orgs/acme/members":
             return [{"login": "alice"}]
@@ -151,7 +151,7 @@ def test_permission_audit_one_bad_repo_does_not_blank_others(client):
 
     with patch("src.routers.collab.GitHubClient") as mock_client:
         mock_client.return_value.request_paginated.side_effect = _paginated_side_effect
-        resp = client.get("/github/orgs/acme/permission-audit", headers={"X-GitHub-Token": "ghp_test"})
+        resp = admin_client.get("/github/orgs/acme/permission-audit", headers={"X-GitHub-Token": "ghp_test"})
 
     assert resp.status_code == 200
     body = resp.json()
@@ -162,7 +162,7 @@ def test_permission_audit_one_bad_repo_does_not_blank_others(client):
     assert len(repos_by_name["repo-good"]["collaborators"]) == 1
 
 
-def test_permission_audit_skips_collaborator_entries_missing_login(client):
+def test_permission_audit_skips_collaborator_entries_missing_login(admin_client):
     def _paginated_side_effect(path, params=None):
         if path == "/orgs/acme/members":
             return [{"login": "alice"}]
@@ -179,7 +179,7 @@ def test_permission_audit_skips_collaborator_entries_missing_login(client):
 
     with patch("src.routers.collab.GitHubClient") as mock_client:
         mock_client.return_value.request_paginated.side_effect = _paginated_side_effect
-        resp = client.get("/github/orgs/acme/permission-audit", headers={"X-GitHub-Token": "ghp_test"})
+        resp = admin_client.get("/github/orgs/acme/permission-audit", headers={"X-GitHub-Token": "ghp_test"})
 
     assert resp.status_code == 200
     collaborators = resp.json()["repos"][0]["collaborators"]
@@ -495,6 +495,11 @@ def _insert_event(db, tenant_id, *, actor, repo, event_type, when, delivery):
         {"t": tenant_id, "d": delivery, "et": event_type, "actor": actor, "repo": repo, "at": when},
     )
     db.commit()
+
+
+def test_permission_audit_requires_org_admin(client, acme_org_with_installation):
+    # `client` is only a member of acme: per-repo collaborator permissions are admin-only, like the access review.
+    assert client.get("/github/orgs/acme/permission-audit").status_code == 403
 
 
 def test_member_access_requires_org_admin(client, acme_org_with_installation):

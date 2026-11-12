@@ -139,7 +139,10 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
   const router = useRouter()
   const searchParams = useSearchParams()
   const rawTab = searchParams.get("roster") ?? "members"
-  const tab = (ROSTER_TABS.some((t) => t.id === rawTab) ? rawTab : "members") as RosterTabId
+  // Outside collaborators, pending GitHub invitations and the permission audit are org-admin reads on the
+  // API (they expose invitee emails and per-repo access), so a member only gets the roster itself.
+  const tabs = canReview ? ROSTER_TABS : ROSTER_TABS.filter((t) => t.id === "members")
+  const tab = (tabs.some((t) => t.id === rawTab) ? rawTab : "members") as RosterTabId
   const [search, setSearch] = useState("")
   const [roleFilter, setRoleFilter] = useState<"all" | "member" | "admin">("all")
 
@@ -220,7 +223,7 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
 
       <div className="px-4 py-2.5 border-b border-border flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-1.5">
-          {ROSTER_TABS.map((t) => {
+          {tabs.map((t) => {
             const active = tab === t.id
             return (
               <button

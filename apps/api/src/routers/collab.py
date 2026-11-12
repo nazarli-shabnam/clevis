@@ -176,7 +176,7 @@ def list_members(
 @router.get("/github/orgs/{org_login}/outside_collaborators", response_model=OutsideCollaboratorsResponse)
 def list_outside_collaborators(
     org_login: str,
-    ctx: OrgContext = Depends(require_org_role(min_role="member")),
+    ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),
 ):
@@ -229,7 +229,7 @@ def list_outside_collaborators(
 @router.get("/github/orgs/{org_login}/invitations", response_model=OrgInvitationsResponse)
 def list_github_invitations(
     org_login: str,
-    ctx: OrgContext = Depends(require_org_role(min_role="member")),
+    ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),
 ):
@@ -356,7 +356,7 @@ def _collaborator_permission(raw: dict) -> str:
 @router.get("/github/orgs/{org_login}/permission-audit", response_model=PermissionAuditResponse)
 def permission_audit(
     org_login: str,
-    ctx: OrgContext = Depends(require_org_role(min_role="member")),
+    ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),
 ):

@@ -29,9 +29,11 @@ const outsideMock = vi.fn();
 const pendingInvitationsMock = vi.fn();
 const permissionAuditMock = vi.fn();
 const inactiveMembersMock = vi.fn();
+const mineMock = vi.fn();
 
 vi.mock("@/lib/api/client", () => ({
   api: {
+    orgs: { mine: (...args: unknown[]) => mineMock(...args) },
     invitations: {
       list: vi.fn().mockResolvedValue([]),
       revoke: vi.fn(),
@@ -71,6 +73,8 @@ describe("GithubRoster (Collaborators page)", () => {
     pendingInvitationsMock.mockReset();
     permissionAuditMock.mockReset();
     inactiveMembersMock.mockReset();
+    mineMock.mockReset();
+    mineMock.mockResolvedValue([{ org_login: "acme", role: "admin" }]);
     routerReplaceMock.mockClear();
     mockSearchParams = new URLSearchParams();
     outsideMock.mockResolvedValue({ org: "acme", collaborators: [], repos_scanned: 0, repos_total: 0 });
@@ -85,6 +89,22 @@ describe("GithubRoster (Collaborators page)", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+  });
+
+  it("offers a plain member only the Members tab, and never calls the admin-only reads (#899)", async () => {
+    mineMock.mockResolvedValue([{ org_login: "acme", role: "member" }]);
+    mockSearchParams = new URLSearchParams("roster=pending");
+    membersMock.mockResolvedValue({ org: "acme", members: [], two_factor_overlay_available: false });
+    renderPage();
+
+    await waitFor(() => expect(membersMock).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: "Members" })).toBeInTheDocument();
+    for (const name of ["Outside", "Pending GitHub invitations", "Audit"]) {
+      expect(screen.queryByRole("button", { name: name })).not.toBeInTheDocument();
+    }
+    expect(pendingInvitationsMock).not.toHaveBeenCalled();
+    expect(outsideMock).not.toHaveBeenCalled();
+    expect(permissionAuditMock).not.toHaveBeenCalled();
   });
 
   it("renders members with role badges and 2FA chips, and the footer count", async () => {
@@ -199,7 +219,7 @@ describe("GithubRoster (Collaborators page)", () => {
     expect(outsideMock).not.toHaveBeenCalled();
     expect(pendingInvitationsMock).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Outside" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Outside" }));
 
     await waitFor(() => {
       expect(outsideMock).toHaveBeenCalled();
@@ -216,7 +236,7 @@ describe("GithubRoster (Collaborators page)", () => {
     });
 
     renderPage();
-    fireEvent.click(screen.getByRole("button", { name: "Outside" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Outside" }));
 
     await waitFor(() => {
       expect(screen.getByText("Scanned 50 of 140 repos")).toBeInTheDocument();
@@ -238,7 +258,7 @@ describe("GithubRoster (Collaborators page)", () => {
       expect(screen.getByText("Clevis workspace invitations")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Pending GitHub invitations" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Pending GitHub invitations" }));
 
     await waitFor(() => {
       expect(screen.getByText("dave")).toBeInTheDocument();
@@ -254,7 +274,7 @@ describe("GithubRoster (Collaborators page)", () => {
       expect(screen.getByText("Clevis workspace invitations")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Pending GitHub invitations" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Pending GitHub invitations" }));
 
     await waitFor(() => {
       expect(screen.getByText("No pending GitHub invitations")).toBeInTheDocument();
@@ -330,7 +350,7 @@ describe("GithubRoster (Collaborators page)", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "Audit" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Audit" }));
 
     await waitFor(() => {
       expect(permissionAuditMock).toHaveBeenCalled();
@@ -349,7 +369,7 @@ describe("GithubRoster (Collaborators page)", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "Audit" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Audit" }));
 
     await waitFor(() => {
       expect(inactiveMembersMock).toHaveBeenCalled();
@@ -370,7 +390,7 @@ describe("GithubRoster (Collaborators page)", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "Audit" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Audit" }));
 
     expect(await screen.findByText(/Checked 100 of 250 members/)).toBeInTheDocument();
   });
@@ -387,7 +407,7 @@ describe("GithubRoster (Collaborators page)", () => {
     });
 
     renderPage();
-    fireEvent.click(screen.getByRole("button", { name: "Audit" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Audit" }));
 
     expect(await screen.findByText(/2 repos could not be scanned \(secret-repo, locked-repo\)/)).toBeInTheDocument();
   });
@@ -405,7 +425,7 @@ describe("GithubRoster (Collaborators page)", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "Audit" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Audit" }));
 
     await waitFor(() => {
       expect(permissionAuditMock).toHaveBeenCalled();
@@ -419,7 +439,7 @@ describe("GithubRoster (Collaborators page)", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "Audit" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Audit" }));
 
     await waitFor(() => {
       expect(inactiveMembersMock).toHaveBeenCalled();
@@ -435,7 +455,7 @@ describe("GithubRoster (Collaborators page)", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "Audit" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Audit" }));
 
     await waitFor(() => {
       expect(screen.getByText("GitHub API unreachable")).toBeInTheDocument();
@@ -453,7 +473,7 @@ describe("GithubRoster (Collaborators page)", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "Audit" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Audit" }));
 
     // A failed permission audit must not hide the independently loaded inactive-members section.
     await waitFor(() => {
@@ -472,7 +492,7 @@ describe("GithubRoster (Collaborators page)", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "Audit" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Audit" }));
 
     await waitFor(() => {
       expect(screen.getByText(/last commit 45d ago in acme\/api/)).toBeInTheDocument();
