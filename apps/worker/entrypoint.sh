@@ -9,7 +9,7 @@ fi
 # Percent-encodes so URI delimiters in the value (@, :, /, %, #, ...) aren't
 # misparsed as part of the connection URL's structure.
 _urlenc() {
-  python -c 'import sys, urllib.parse; sys.stdout.write(urllib.parse.quote_plus(sys.argv[1]))' "$1"
+  python -c 'import sys, urllib.parse; sys.stdout.write(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
 }
 
 _db_name_enc=$(_urlenc "$DB_NAME")
