@@ -46,6 +46,7 @@ def test_allowed_and_same_origin_pass(client):
 def test_requests_that_are_not_cookie_borne_csrf_pass(client):
     assert _post(client).status_code == 200  # no Origin: non-browser client
     assert _post(client, "https://evil.example", cookie=False).status_code == 200
-    bearer = {"Authorization": "Bearer x"}
-    assert _post(client, "https://evil.example", headers=bearer).status_code == 200
+    # A header does not exempt a cookie-bearing request from a foreign origin.
+    assert _post(client, "https://evil.example", headers={"Authorization": "Bearer x"}).status_code == 403
+    assert _post(client, UI, headers={"Authorization": "Bearer x"}).status_code == 200
     assert client.get("/read", headers={"Origin": "https://evil.example"}, cookies={SESSION_COOKIE_NAME: "t"}).status_code == 200

@@ -28,9 +28,8 @@ class CookieOriginMiddleware(BaseHTTPMiddleware):
     CORS only limits who may *read* a response, so a hostile page could still submit a body-less
     POST (logout, revoke sessions, ...). Browsers always send ``Origin`` on cross-site unsafe
     requests, so one that is neither a configured UI origin (``CORS_ORIGINS``) nor this API's own
-    origin is refused. Requests without a session cookie, with an ``Authorization`` header (Bearer
-    JWT / API token) or without ``Origin`` (non-browser clients, webhooks) are not cookie-borne CSRF
-    and pass through.
+    origin is refused. Requests without a session cookie or without ``Origin`` (non-browser clients,
+    webhooks, API-token CI) are not cookie-borne CSRF and pass through.
     """
 
     def __init__(self, app, allowed_origins: list[str]):
@@ -43,7 +42,6 @@ class CookieOriginMiddleware(BaseHTTPMiddleware):
             origin is not None
             and request.method not in _SAFE_METHODS
             and request.cookies.get(SESSION_COOKIE_NAME)
-            and "authorization" not in request.headers
             and origin.rstrip("/") not in self._allowed
             and origin != f"{request.url.scheme}://{request.headers.get('host', '')}"
         ):
