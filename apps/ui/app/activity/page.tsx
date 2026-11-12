@@ -1,6 +1,6 @@
 "use client"
 
-import { Suspense, useEffect, useState } from "react"
+import { Suspense, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { useQuery } from "@tanstack/react-query"
@@ -43,7 +43,10 @@ function ActivityView() {
   const [daysRestored, setDaysRestored] = useState(false)
   const searchParams = useSearchParams()
   const daysParam = searchParams?.get("days") ?? null
+  // The params update that follows our own replaceState lags behind state; skip a value we wrote ourselves.
+  const lastWritten = useRef<string | null>(null)
   useEffect(() => {
+    if ((daysParam ?? "") === lastWritten.current) return
     const fromUrl = Number(daysParam)
     setDays(WINDOW_OPTIONS.some((o) => o.days === fromUrl) ? fromUrl : DEFAULT_ACTIVITY_DAYS)
     setDaysRestored(true)
@@ -54,6 +57,7 @@ function ActivityView() {
     if (days === DEFAULT_ACTIVITY_DAYS) params.delete("days")
     else params.set("days", String(days))
     const qs = params.toString()
+    lastWritten.current = days === DEFAULT_ACTIVITY_DAYS ? "" : String(days)
     window.history.replaceState(null, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`)
   }, [daysRestored, days])
 
