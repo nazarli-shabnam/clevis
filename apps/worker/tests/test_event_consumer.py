@@ -354,7 +354,7 @@ _ALERT_PAYLOADS = [
             "alert": {
                 "number": 3,
                 "state": "open",
-                "rule": {"id": "js/sql-injection", "severity": "error"},
+                "rule": {"id": "js/sql-injection", "severity": "error", "security_severity_level": "high"},
                 "tool": {"name": "CodeQL"},
                 "created_at": "2026-08-20T11:00:00Z",
                 "updated_at": "2026-08-20T11:00:00Z",
@@ -401,6 +401,30 @@ def test_normalizes_each_security_alert_kind_into_security_alerts(event_type, ki
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM webhook_deliveries WHERE id = %s", (row_id,))
         assert cur.fetchone()[0] == "processed"
+
+
+def test_code_scanning_severity_prefers_the_security_severity_tier(pg_conn, tenant_id):
+    conn, state = pg_conn
+    base = _ALERT_PAYLOADS[1][2]
+
+    def with_rule(rule, number):
+        return {**base, "alert": {**base["alert"], "number": number, "rule": rule}}
+
+    cases = [
+        (30, {"id": "js/sql-injection", "severity": "error", "security_severity_level": "critical"}, "critical"),
+        (31, {"id": "js/unused-var", "severity": "warning", "security_severity_level": None}, "warning"),
+        (32, {"id": "js/style", "severity": "note"}, "note"),
+    ]
+    for n, (number, rule, _) in enumerate(cases):
+        row_id = _make_delivery(
+            conn, state, tenant_id=tenant_id, delivery_id=f"d-cs-severity-{number}",
+            event_type="code_scanning_alert", payload=with_rule(rule, number),
+        )
+        event_consumer._process_entry(
+            conn, _FakeRedis(), f"{n + 1}-0", _entry_fields(row_id, "code_scanning_alert", tenant_id)
+        )
+    for number, _, expected in cases:
+        assert _security_alert(conn, tenant_id, "acme/widgets", "code_scanning", number)[1] == expected
 
 
 def test_security_alert_severity_and_details_are_kind_specific(pg_conn, tenant_id):

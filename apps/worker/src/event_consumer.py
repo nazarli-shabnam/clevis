@@ -196,7 +196,10 @@ def _normalize_security_alert(event_type: str, payload: dict, received_at: datet
             "security_advisory": alert.get("security_advisory"),
         }
     elif kind == "code_scanning":
-        severity = (alert.get("rule") or {}).get("severity")
+        # rule.severity is error/warning/note; the critical/high/medium/low tier the alert sweep and
+        # the UI use is rule.security_severity_level (absent for non-security rules, which fall back).
+        rule = alert.get("rule") or {}
+        severity = rule.get("security_severity_level") or rule.get("severity")
         details = {
             "action": payload.get("action"),
             "rule": alert.get("rule"),
