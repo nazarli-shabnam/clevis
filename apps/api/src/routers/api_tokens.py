@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from src.core.api_token_auth import require_scope
 from src.core.auth import UserOut, require_auth
-from src.core.db import get_db
+from src.core.db import get_db, release_connection, set_session_tenant
 from src.core.rate_limit import check_account_rate_limit
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import api_token_repo, audit_repo, org_repo, scan_results_repo
@@ -174,8 +174,12 @@ def latest_score(org_login: str, token: ResolvedToken = Depends(require_scope("r
 @router.post("/api/v1/orgs/{org_login}/scan", response_model=ScoreOut)
 async def run_scan(org_login: str, token: ResolvedToken = Depends(require_scope("read")), db: Session = Depends(get_db)):
     _own_org(org_login, token)
+    # Auth left a transaction open on this connection. Hand it back before queueing, so callers waiting
+    # on the lock hold no pooled connection; each step below reconnects with the tenant context set.
+    release_connection(db)
     # Callers queue behind an in-flight scan, then find its result as the "recent" one and return it.
     async with _scan_locks.setdefault(token.org_login.lower(), asyncio.Lock()):
+        set_session_tenant(db, token.tenant_id)
         recent = await anyio.to_thread.run_sync(lambda: _recent_scan(db, token))
         if recent is not None:
             return _score_out(token.org_login, recent)
@@ -191,9 +195,11 @@ async def _scan_and_record(token: ResolvedToken, db: Session) -> ScoreOut:
         raise HTTPException(status_code=400, detail=str(exc))
     org = await anyio.to_thread.run_sync(lambda: org_repo.get_by_id(db, token.org_id))
     stored_identity = await anyio.to_thread.run_sync(lambda: load_stored_identity(db, token.tenant_id))
-    result = await _run_overview(
-        token.org_login, github_token, score_hygiene=org_scores_hygiene(org), stored_identity=stored_identity
-    )
+    score_hygiene = org_scores_hygiene(org)
+    # No DB connection is held across the GitHub calls (hundreds of them); see release_connection.
+    release_connection(db)
+    result = await _run_overview(token.org_login, github_token, score_hygiene=score_hygiene, stored_identity=stored_identity)
+    set_session_tenant(db, token.tenant_id)
 
     # Attributes the scan, and any alert it triggers, to this token rather than to "system".
     actor = f"api_token:{token.token_id}"
