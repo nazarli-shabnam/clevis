@@ -27,12 +27,15 @@ import {
   hasActiveRepoFilters,
   repoCsvColumns,
   repoLanguages,
+  repoViewFromParams,
+  repoViewToParams,
   type ProtectionMap,
+  type RepoSort,
   type RepoFilters,
 } from "@/lib/repo-filters"
 import type { InstallationMeta, RepoSecurityResponse, RepoSummary } from "@/lib/api/types"
 
-type SortKey = "pushed" | "stars" | "name"
+type SortKey = RepoSort
 
 const PROTECTION_BATCH_SIZE = 10
 
@@ -228,6 +231,23 @@ export default function ReposPage() {
   const [search, setSearch] = useState("")
   const [sort, setSort] = useState<SortKey>("pushed")
   const [filters, setFilters] = useState<RepoFilters>(NO_REPO_FILTERS)
+
+  // Search, sort and filters live in the query string so a view survives a refresh and can be shared. Read
+  // once after mount (not during render) to avoid a hydration mismatch, then mirrored back with
+  // replaceState, which needs no Suspense boundary and adds no history entries.
+  const [urlRestored, setUrlRestored] = useState(false)
+  useEffect(() => {
+    const view = repoViewFromParams(new URLSearchParams(window.location.search))
+    setSearch(view.search)
+    setSort(view.sort)
+    setFilters((f) => ({ ...view.filters, protection: f.protection }))
+    setUrlRestored(true)
+  }, [])
+  useEffect(() => {
+    if (!urlRestored) return
+    const qs = repoViewToParams({ search, sort, filters }).toString()
+    window.history.replaceState(null, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`)
+  }, [urlRestored, search, sort, filters])
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [protection, setProtection] = useState<ProtectionMap>(new Map())
   const [protectionProgress, setProtectionProgress] = useState<{ done: number; total: number } | null>(null)

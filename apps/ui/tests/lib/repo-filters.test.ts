@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { NO_REPO_FILTERS, filterRepos, hasActiveRepoFilters, repoLanguages, type RepoFilters } from "@/lib/repo-filters";
+import {
+  NO_REPO_FILTERS,
+  filterRepos,
+  hasActiveRepoFilters,
+  repoLanguages,
+  repoViewFromParams,
+  repoViewToParams,
+  type RepoFilters,
+} from "@/lib/repo-filters";
 import type { RepoSummary } from "@/lib/api/types";
 
 const NOW = Date.parse("2026-10-01T00:00:00Z");
@@ -81,5 +89,25 @@ describe("hasActiveRepoFilters", () => {
     expect(hasActiveRepoFilters(only({ visibility: "public" }))).toBe(true);
     expect(hasActiveRepoFilters(only({ status: "active" }))).toBe(true);
     expect(hasActiveRepoFilters(only({ stale: true }))).toBe(true);
+  });
+});
+
+describe("repo view <-> URL", () => {
+  it("keeps defaults out of the query string", () => {
+    expect(repoViewToParams({ search: "", sort: "pushed", filters: NO_REPO_FILTERS }).toString()).toBe("");
+  });
+
+  it("round-trips search, sort and filters", () => {
+    const view = {
+      search: "api",
+      sort: "stars" as const,
+      filters: { ...NO_REPO_FILTERS, language: "TypeScript", visibility: "private" as const, status: "active" as const, stale: true },
+    };
+    expect(repoViewFromParams(new URLSearchParams(repoViewToParams(view).toString()))).toEqual(view);
+  });
+
+  it("ignores unknown values and never restores the protection filter", () => {
+    const view = repoViewFromParams(new URLSearchParams("sort=bogus&visibility=x&status=y&protection=unprotected"));
+    expect(view).toEqual({ search: "", sort: "pushed", filters: NO_REPO_FILTERS });
   });
 });
