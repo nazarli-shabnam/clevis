@@ -378,7 +378,7 @@ def sync_org_installation(
         tenant_id=org.tenant_id,
         account_login=payload.account_login,
         account_type=payload.account_type,
-        resolve_token=lambda: resolve_org_token(db, org_id=org.id, account_login=payload.account_login, client_token=None),
+        resolve_token=lambda: resolve_org_token(db, org_id=org.id, account_login=payload.account_login, client_token=None, for_job=True),
     )
     return {"synced": True, "token_ref": row.token_ref}
 
@@ -497,7 +497,7 @@ def sync_personal_installation(
         account_login=payload.account_login,
         account_type=payload.account_type,
         resolve_token=lambda: resolve_personal_token(
-            db, owner_user_id=user.id, account_login=payload.account_login, client_token=None
+            db, owner_user_id=user.id, account_login=payload.account_login, client_token=None, for_job=True
         ),
     )
     return {"synced": True, "token_ref": row.token_ref}
