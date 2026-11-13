@@ -201,7 +201,17 @@ function useMyOrgMemberships() {
 }
 
 function OrgMembershipsSection() {
+  const queryClient = useQueryClient()
   const { data: memberships = [], isLoading, isError, error, isFetching, refetch } = useMyOrgMemberships()
+  const [leaving, setLeaving] = useState<MyOrgMembership | null>(null)
+  const leave = useMutation({
+    mutationFn: (orgLogin: string) => api.orgMemberships.leave(orgLogin),
+    onSuccess: () => {
+      toast.success("You left the organization")
+      return queryClient.invalidateQueries({ queryKey: ["my-orgs"] })
+    },
+    onSettled: () => setLeaving(null),
+  })
 
   return (
     <div className="card">
@@ -258,6 +268,17 @@ function OrgMembershipsSection() {
                           Activity log
                         </Link>
                       )}
+                      {/* Only a membership granted by an invitation can be left; a GitHub one follows the GitHub org. */}
+                      {m.source === "invite" && (
+                        <button
+                          type="button"
+                          onClick={() => setLeaving(m)}
+                          disabled={leave.isPending}
+                          className="text-xs text-destructive hover:underline"
+                        >
+                          Leave
+                        </button>
+                      )}
                     </span>
                   </td>
                 </tr>
@@ -266,6 +287,18 @@ function OrgMembershipsSection() {
           </table>
         </div>
       )}
+      {leave.isError && (
+        <p role="alert" className="px-4 pb-3 text-xs text-destructive">Couldn&apos;t leave: {leave.error.message}</p>
+      )}
+      <ConfirmDialog
+        open={leaving !== null}
+        onOpenChange={(open) => !open && setLeaving(null)}
+        title={`Leave ${leaving?.org_login ?? ""}?`}
+        description="You lose access to this organization in Clevis. An admin can invite you again."
+        confirmLabel="Leave"
+        pending={leave.isPending}
+        onConfirm={() => leaving && leave.mutate(leaving.org_login)}
+      />
     </div>
   )
 }

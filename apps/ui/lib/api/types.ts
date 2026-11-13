@@ -526,6 +526,8 @@ export interface SyncInstallationsResponse {
 export interface MyOrgMembership {
   org_login: string
   role: "admin" | "member"
+  /** "invite" memberships can be left; "github" ones follow the GitHub org. Absent from older API versions. */
+  source?: "invite" | "github"
 }
 
 export interface PendingInvitationSummary {

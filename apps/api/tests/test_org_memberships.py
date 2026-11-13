@@ -105,6 +105,38 @@ def test_github_sourced_members_cannot_be_changed_or_removed(db, org, admin):
     assert _audit(db, "membership.update") == [] and _audit(db, "membership.remove") == []
 
 
+def test_a_member_can_leave_an_org_they_joined_by_invitation_and_it_is_audited(db, org, admin, contractor):
+    assert _client(db, contractor).delete("/orgs/acme/members/me").status_code == 204
+    assert _role(db, org, contractor) is None
+    row = _audit(db, "membership.left")[0]
+    assert row.actor == "contractor@example.com" and row.target == "acme"
+    assert '"source": "invite"' in row.payload
+    # They are out: a second attempt finds no membership at all.
+    assert _client(db, contractor).delete("/orgs/acme/members/me").status_code == 403
+
+
+def test_a_github_sourced_membership_cannot_be_left_here(db, org, admin):
+    other_admin = _user(db, "second@example.com", github_login="second")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=other_admin.id, role="admin", source="github")
+    resp = _client(db, other_admin).delete("/orgs/acme/members/me")
+    assert resp.status_code == 409 and "GitHub" in resp.json()["detail"]
+    assert _role(db, org, other_admin) == "admin"
+
+
+def test_the_last_admin_cannot_leave(db, org):
+    only = _user(db, "only@example.com")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=only.id, role="admin", source="invite")
+    resp = _client(db, only).delete("/orgs/acme/members/me")
+    assert resp.status_code == 409 and "at least one admin" in resp.json()["detail"]
+    assert _role(db, org, only) == "admin"
+
+
+def test_leaving_does_not_touch_other_members_and_me_is_not_a_user_id(db, org, admin, contractor):
+    assert _client(db, contractor).delete("/orgs/acme/members/me").status_code == 204
+    assert _role(db, org, admin) == "admin"
+    assert _client(db, admin).delete("/orgs/acme/members/not-a-number").status_code == 422
+
+
 def test_the_last_admin_cannot_be_removed_or_demoted(db, org, admin):
     only = _user(db, "only-invited-admin@example.com")
     # make the invited user the sole admin: the github admin is demoted out of the way first

@@ -763,6 +763,8 @@ export const api = {
     setRole: (orgLogin: string, userId: number, role: "member" | "admin") =>
       put<OrgMembership>(`/orgs/${encodeURIComponent(orgLogin)}/members/${userId}`, { role }),
     remove: (orgLogin: string, userId: number) => del(`/orgs/${encodeURIComponent(orgLogin)}/members/${userId}`),
+    /** Leave an organization yourself (invite-sourced memberships only). */
+    leave: (orgLogin: string) => del(`/orgs/${encodeURIComponent(orgLogin)}/members/me`),
   },
   ingestionHealth: (orgLogin: string) => get<IngestionHealth>(`/orgs/${encodeURIComponent(orgLogin)}/ingestion-health`),
   invitations: {
