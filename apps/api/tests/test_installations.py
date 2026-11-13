@@ -212,6 +212,18 @@ def test_sync_personal_installation(db):
     assert resp.json()["synced"] is True
 
 
+def test_a_password_account_is_told_the_truth_about_connecting_github(db):
+    me = _make_user(db, "pw@e.com")  # no github_login: a password account
+    with _mock_installation("pw", "User"):
+        resp = _client(db, me).post(
+            "/me/installations/sync",
+            json={"account_login": "pw", "account_type": "User", "installation_id": 3},
+        )
+    assert resp.status_code == 403
+    detail = resp.json()["detail"]
+    assert "can't be linked" in detail and "Link your GitHub" not in detail  # there is no linking flow
+
+
 def test_sync_personal_installation_writes_audit_log(db):
     me = _make_user(db, "shabnam@e.com", github_login="shabnam", github_user_id=4242)
     with _mock_installation("shabnam", "User"):
