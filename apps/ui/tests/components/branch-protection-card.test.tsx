@@ -188,6 +188,21 @@ describe("BranchProtectionCard", () => {
     expect(body.preset.allow_deletions).toBe(true)
     expect(body.preset.required_pull_request_reviews.required_approving_review_count).toBe(3)
   })
+  it("refetches the saved preset after applying with Save preset (issue #985)", async () => {
+    mockBulk.mockResolvedValue(DRY_RUN_RESP)
+    renderCard()
+    await waitFor(() => expect(mockSavedPreset).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByLabelText("api"))
+    fireEvent.click(screen.getByRole("button", { name: /Preview changes/ }))
+    await waitFor(() => expect(screen.getByText("enforce_admins")).toBeInTheDocument())
+
+    mockBulk.mockResolvedValue({ dry_run: false, results: [{ repo: "api", applied: true, error: null }] })
+    fireEvent.click(screen.getByLabelText(/Save preset/))
+    fireEvent.click(screen.getByRole("button", { name: "Apply to 1 repo" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Click again to confirm" }))
+
+    await waitFor(() => expect(mockSavedPreset).toHaveBeenCalledTimes(2))
+  })
   it("sends allow_deletions when block-deletion is unticked", async () => {
     mockBulk.mockResolvedValue(DRY_RUN_RESP)
     renderCard()
