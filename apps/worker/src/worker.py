@@ -590,7 +590,7 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
                 if roster["outside_logins"] is not None:
                     org_membership_store.reconcile_repo_collaborator_outside_status(
                         cur, tenant_id=payload.tenant_id, member_logins=member_logins, outside_logins=roster["outside_logins"],
-                        synced_at=synced_at,
+                        synced_at=synced_at, prune=two_factor_disabled is not None,
                     )
                 # Upserted in the same transaction so a rollback doesn't advance the cursor.
                 cur.execute(

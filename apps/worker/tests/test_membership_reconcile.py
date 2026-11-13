@@ -567,7 +567,10 @@ def test_handler_backfills_is_outside_collaborator_on_existing_repo_collaborator
     assert rows == [("contractor", True), ("direct-member", False)]
 
 
-def test_handler_prunes_collaborators_that_are_neither_members_nor_outside_but_spares_newer_grants(pg_conn, tenant_id):
+@pytest.mark.parametrize("overlay_available", [True, False])
+def test_handler_prunes_collaborators_that_are_neither_members_nor_outside_but_spares_newer_grants(
+    pg_conn, tenant_id, overlay_available
+):
     from datetime import timedelta
 
     repo = f"acme/prune-{uuid.uuid4().hex[:8]}"
@@ -589,7 +592,7 @@ def test_handler_prunes_collaborators_that_are_neither_members_nor_outside_but_s
         )
     roster = {
         "members": [{"login": "prune-member", "avatar_url": "a", "role": "member"}],
-        "two_factor_disabled_logins": set(),
+        "two_factor_disabled_logins": set() if overlay_available else None,  # None: roster may be public-only
         "outside_logins": {"prune-contractor"},
     }
 
@@ -599,7 +602,9 @@ def test_handler_prunes_collaborators_that_are_neither_members_nor_outside_but_s
     with pg_conn.cursor() as cur:
         cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
         cur.execute("SELECT login FROM repo_collaborators WHERE tenant_id = %s AND repo = %s ORDER BY login", (tenant_id, repo))
-        assert [r[0] for r in cur.fetchall()] == ["prune-contractor", "prune-just-granted", "prune-member"]
+        remaining = [r[0] for r in cur.fetchall()]
+    expected = ["prune-contractor", "prune-just-granted", "prune-member"]
+    assert remaining == (expected if overlay_available else ["prune-contractor", "prune-ghost", "prune-just-granted", "prune-member"])
 
 
 def test_handler_preserves_two_factor_enabled_when_the_overlay_is_unavailable(pg_conn, tenant_id):
