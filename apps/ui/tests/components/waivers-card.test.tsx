@@ -7,6 +7,9 @@ const createMock = vi.fn()
 const revokeMock = vi.fn()
 const updateMock = vi.fn()
 
+let searchParams = new URLSearchParams();
+vi.mock("next/navigation", () => ({ useSearchParams: () => searchParams }));
+
 vi.mock("@/lib/api/client", () => ({
   api: {
     waivers: {
@@ -44,6 +47,7 @@ function renderCard() {
 }
 
 beforeEach(() => {
+  searchParams = new URLSearchParams()
   listMock.mockReset()
   createMock.mockReset()
   revokeMock.mockReset()
@@ -55,6 +59,15 @@ afterEach(() => {
 })
 
 describe("WaiversCard", () => {
+  it("marks the waiver a notification linked to (#955)", async () => {
+    searchParams = new URLSearchParams({ waiver: "2" })
+    listMock.mockResolvedValue([waiver({ id: 1 }), waiver({ id: 2, check_id: "repository_license_present" })])
+    renderCard()
+    await screen.findAllByText(/legacy repo/)
+    expect(document.getElementById("waiver-2")).toHaveAttribute("aria-current", "true")
+    expect(document.getElementById("waiver-1")).not.toHaveAttribute("aria-current")
+  })
+
   it("lists waivers with scope, owner and expiry, flagging an expired one", async () => {
     listMock.mockResolvedValue([
       waiver(),

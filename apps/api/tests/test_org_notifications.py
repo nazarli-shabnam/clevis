@@ -97,6 +97,28 @@ def test_members_see_alerts_and_score_drops_but_not_admin_only_items(db, world):
     assert drop["title"] == "Security score dropped from 90 to 70"
 
 
+def test_items_link_to_the_specific_scan_job_and_waiver(db, world):
+    from src.core.db import CheckWaiver, ScanResult
+
+    t = world["acme"].tenant_id
+    _scan(db, t, 90, age_days=2)
+    _scan(db, t, 70, age_days=1)
+    older, newer = [r.id for r in db.query(ScanResult).order_by(ScanResult.created_at).all()]
+    job = _failed_job(db, t)
+    waiver = CheckWaiver(
+        tenant_id=t, check_id="repository_license_present", repos=None, reason="legacy", owner="platform",
+        expires_at=NOW - timedelta(hours=1), created_by="a@e.com",
+    )
+    db.add(waiver)
+    db.commit()
+
+    items = {i["kind"]: i["href"] for i in _client(db, world["users"]["admin"]).get("/orgs/acme/notifications").json()["items"]}
+
+    assert items["score_drop"] == f"/security?scan={newer}&owner=acme&compare={older}"
+    assert items["job_failed"] == f"/settings/org/acme/activity?job={job}"
+    assert items["waiver_expired"] == f"/settings/org/acme/members?waiver={waiver.id}"
+
+
 def test_only_new_open_critical_dependabot_alerts_count(db, world):
     t = world["acme"].tenant_id
     _alert(db, t, number=1, severity="high")
