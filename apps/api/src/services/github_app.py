@@ -13,6 +13,7 @@ expire. Tokens are never persisted. The GITHUB_APP_* settings must be configured
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -20,8 +21,11 @@ from datetime import datetime
 
 import httpx
 import jwt
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
 from src.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 # GitHub rejects App JWTs with a lifetime over 10 minutes; stay comfortably under.
 _APP_JWT_TTL_SECONDS = 540  # 9 minutes
@@ -57,6 +61,26 @@ def _require_config() -> tuple[str, str]:
             "GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY must be set to use GitHub App auth"
         )
     return app_id, private_key.get_secret_value()
+
+
+def warn_if_private_key_invalid() -> None:
+    """Log once at startup if GITHUB_APP_PRIVATE_KEY is set but is not a PEM private key.
+
+    Otherwise the mistake only surfaces at the first installation-token request, as an org that looks
+    empty or a 5xx. Deliberately a log line, not a startup failure: the rest of Clevis works without the App."""
+    key = settings.github_app_private_key
+    if key is None or not key.get_secret_value():
+        return
+    try:
+        load_pem_private_key(key.get_secret_value().encode(), password=None)
+    except Exception as exc:
+        logger.error(
+            "GITHUB_APP_PRIVATE_KEY is set but is not a valid PEM private key (%s). Put the whole .pem on one line "
+            'in double quotes with a literal backslash-n between lines, e.g. '
+            'GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\\n...\\n-----END RSA PRIVATE KEY-----". '
+            "GitHub App sign-in and installation tokens will fail until fixed.",
+            exc,
+        )
 
 
 def generate_app_jwt(*, now: int | None = None) -> str:

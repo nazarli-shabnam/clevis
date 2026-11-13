@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import SecretStr
 
-from src.core.config import settings
+from src.core.config import Settings, settings
 from src.services import github_app
 
 _APP_ID = "123456"
@@ -287,3 +287,52 @@ def test_get_org_membership_role_propagates_other_http_errors():
         mock_cls.return_value = _mock_get_client(mock_resp)
         with pytest.raises(httpx.HTTPStatusError):
             github_app.get_org_membership_role("itok", "acme", "founder")
+
+
+# --- private-key format (issue #1032) ---
+
+def _settings_with_key(key: str) -> Settings:
+    return Settings(
+        _env_file=None,
+        database_url="postgresql+psycopg://u:p@localhost/db",
+        job_secret_key="k",
+        auth_secret="x" * 32,
+        redis_url="redis://localhost",
+        github_app_private_key=key,
+    )
+
+
+def test_single_line_key_with_literal_backslash_n_is_restored_and_signs(monkeypatch):
+    private_pem, public_pem = _make_keypair()
+    one_line = private_pem.strip().replace("\n", "\\n")
+    assert "\n" not in one_line
+
+    key = _settings_with_key(one_line).github_app_private_key
+    assert key.get_secret_value() == private_pem.strip()
+
+    monkeypatch.setattr(settings, "github_app_id", _APP_ID)
+    monkeypatch.setattr(settings, "github_app_private_key", key)
+    decoded = jwt.decode(github_app.generate_app_jwt(), public_pem, algorithms=["RS256"], options={"verify_exp": False})
+    assert decoded["iss"] == _APP_ID
+
+
+def test_multiline_key_is_left_unchanged():
+    private_pem, _ = _make_keypair()
+    assert _settings_with_key(private_pem).github_app_private_key.get_secret_value() == private_pem.strip()
+
+
+def test_warns_at_startup_for_an_invalid_key(monkeypatch, caplog):
+    monkeypatch.setattr(settings, "github_app_private_key", SecretStr("-----BEGIN RSA PRIVATE KEY-----\nnot-a-key"))
+    with caplog.at_level("ERROR", logger="src.services.github_app"):
+        github_app.warn_if_private_key_invalid()
+    assert "GITHUB_APP_PRIVATE_KEY is set but is not a valid PEM private key" in caplog.text
+
+
+def test_no_warning_for_a_valid_or_unset_key(app_configured, monkeypatch, caplog):
+    with caplog.at_level("ERROR", logger="src.services.github_app"):
+        github_app.warn_if_private_key_invalid()
+        monkeypatch.setattr(settings, "github_app_private_key", None)
+        github_app.warn_if_private_key_invalid()
+        monkeypatch.setattr(settings, "github_app_private_key", SecretStr(""))
+        github_app.warn_if_private_key_invalid()
+    assert caplog.text == ""

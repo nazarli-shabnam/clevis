@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _root = Path(__file__).resolve().parent
@@ -46,6 +46,16 @@ class Settings(BaseSettings):
     smtp_from: str | None = None
 
     model_config = SettingsConfigDict(env_file=_env_file, extra="ignore")
+
+    @field_validator("github_app_private_key")
+    @classmethod
+    def _unescape_private_key_newlines(cls, v: SecretStr | None) -> SecretStr | None:
+        # A PEM can't span several lines in an env file, so it is supplied on one line with a literal
+        # backslash-n between the lines (and some platforms hand it over that way even when quoted).
+        # Restore the real newlines.
+        if v is None:
+            return v
+        return SecretStr(v.get_secret_value().strip().replace("\\n", "\n"))
 
 
 settings = Settings()
