@@ -9,12 +9,13 @@ local row.
 import logging
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import Org, User, get_db
+from src.core.rate_limit import check_account_rate_limit
 from src.core.rbac import OrgContext, require_org_role, resolve_org_role, set_tenant_session_context
 from src.repositories import audit_repo, installation_repo, org_membership_repo, org_repo, tenant_repo
 from src.schemas.installation import (
@@ -31,6 +32,9 @@ from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_to
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# The install callback page makes one lookup per redirect; this leaves room for retries.
+_LOOKUP_LIMIT_PER_MINUTE = 20
 
 
 def _fetch_installation(installation_id: int) -> dict:
@@ -154,8 +158,15 @@ def _refresh_permissions(db: Session, installation_id: int):
 @router.get("/me/installations/lookup/{installation_id}", response_model=InstallationLookupOut)
 def lookup_installation(
     installation_id: int,
-    _user: UserOut = Depends(require_auth),
+    request: Request,
+    user: UserOut = Depends(require_auth),
 ):
+    # Any id is forwarded to GitHub with the App's own credentials, so cap how fast one user (or one
+    # address, across accounts) can walk ids. Keys deliberately omit the id: the path-keyed
+    # rate_limit() dependency would give every id its own bucket.
+    check_account_rate_limit(f"installation-lookup:user:{user.id}", max_requests=_LOOKUP_LIMIT_PER_MINUTE)
+    ip = request.client.host if request.client else "unknown"
+    check_account_rate_limit(f"installation-lookup:ip:{ip}", max_requests=_LOOKUP_LIMIT_PER_MINUTE)
     installation = _fetch_installation(installation_id)
     account = installation.get("account") or {}
     return {

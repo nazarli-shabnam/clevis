@@ -36,7 +36,9 @@ _MAX_PER_SWEEP = 20
 class NudgeResult:
     number: int
     title: str
-    action: str  # "commented" | "labeled" | "skipped-recent-nudge" | "skipped-not-stale"
+    # "commented" | "labeled" | "skipped-recent-nudge" | "skipped-not-stale" | "skipped-per-sweep-cap" | "error",
+    # or, in a dry run, "would-comment" | "would-label" for what a real run would post.
+    action: str
 
 
 def configured_stale_days() -> int:
@@ -86,6 +88,8 @@ def run_nudge_sweep(
     stale_days: int,
     mode: str,
     now: datetime | None = None,
+    dry_run: bool = False,
+    only_prs: frozenset[int] | None = None,
 ) -> list[NudgeResult]:
     """List open PRs in ``{owner}/{repo}`` and nudge the stale ones.
 
@@ -93,6 +97,13 @@ def run_nudge_sweep(
       - ``"off"``     — return an empty list without calling GitHub's write API
       - ``"comment"`` — post a nudge comment (once; skips PRs already nudged)
       - ``"label"``   — add the ``needs-review`` label (idempotent on GitHub's side)
+
+    ``dry_run`` reads exactly what a real run reads (open PRs and, in comment mode, each stale PR's comments, so
+    the per-sweep cap and already-nudged rules apply identically) but posts nothing: the PRs a real run would
+    act on come back as ``"would-comment"`` / ``"would-label"``.
+
+    ``only_prs`` restricts the sweep to those PR numbers (what a preview showed): every other PR is ignored, so a
+    run can never touch one that was not previewed. Eligibility is still re-checked for the ones listed.
     """
     if mode == "off":
         return []
@@ -109,17 +120,22 @@ def run_nudge_sweep(
         params={"state": "open", "sort": "created", "direction": "asc"},
     )
 
+    if only_prs is not None:
+        prs = [pr for pr in prs if pr["number"] in only_prs]
+
     results: list[NudgeResult] = []
     acted = 0
     for pr in prs:
         number, title = pr["number"], pr.get("title", "")
         try:
             acted += _nudge_pr(client, owner, repo, pr, results, cutoff=cutoff, now=now, mode=mode,
-                               cap_reached=acted >= _MAX_PER_SWEEP)
+                               cap_reached=acted >= _MAX_PER_SWEEP, dry_run=dry_run)
         except (httpx.HTTPStatusError, httpx.RequestError):
             # Nothing posted yet: let the caller map the error (e.g. a 403 permission hint).
             # Otherwise keep what was already posted so it's returned and audited, and stop.
-            if acted == 0:
+            # A dry run posts nothing (its `acted` counts planned actions), so a partial preview would
+            # silently hide the PRs it never got to: always surface the error.
+            if acted == 0 or dry_run:
                 raise
             results.append(NudgeResult(number, title, "error"))
             break
@@ -129,9 +145,9 @@ def run_nudge_sweep(
 
 def _nudge_pr(
     client: GitHubClient, owner: str, repo: str, pr: dict, results: list[NudgeResult], *,
-    cutoff: datetime, now: datetime, mode: str, cap_reached: bool,
+    cutoff: datetime, now: datetime, mode: str, cap_reached: bool, dry_run: bool = False,
 ) -> int:
-    """Appends this PR's result; returns 1 if a comment/label was posted."""
+    """Appends this PR's result; returns 1 if a comment/label was posted (or, in a dry run, would be)."""
     number, title = pr["number"], pr.get("title", "")
     if not _is_stale(pr, cutoff):
         results.append(NudgeResult(number, title, "skipped-not-stale"))
@@ -141,6 +157,9 @@ def _nudge_pr(
         return 0
 
     if mode == "label":
+        if dry_run:
+            results.append(NudgeResult(number, title, "would-label"))
+            return 1
         client.request(
             "POST",
             f"/repos/{owner}/{repo}/issues/{number}/labels",
@@ -153,6 +172,9 @@ def _nudge_pr(
     if _already_nudged(client, owner, repo, number):
         results.append(NudgeResult(number, title, "skipped-recent-nudge"))
         return 0
+    if dry_run:
+        results.append(NudgeResult(number, title, "would-comment"))
+        return 1
     age_days = (now - (_parse_ts(pr.get("created_at")) or now)).days
     client.request(
         "POST",

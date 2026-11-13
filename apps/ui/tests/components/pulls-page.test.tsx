@@ -319,11 +319,12 @@ describe("PullRequestsPage", () => {
       total: 1,
       pulls: [pull({ number: 7, title: "Waiting PR" })],
     });
-    prNudgesSweepMock.mockImplementation((_org: string, _owner: string, repo: string) =>
+    prNudgesSweepMock.mockImplementation((_org: string, _owner: string, repo: string, _token: string, dryRun?: boolean) =>
       Promise.resolve({
         mode: "comment",
         stale_days: 3,
-        results: repo === "api" ? [{ number: 1, title: "x", action: "commented" }] : [],
+        dry_run: !!dryRun,
+        results: repo === "api" ? [{ number: 1, title: "Old PR", action: dryRun ? "would-comment" : "commented" }] : [],
       }),
     );
 
@@ -332,12 +333,38 @@ describe("PullRequestsPage", () => {
     // Wait for the PR list to load so the button is enabled.
     await screen.findAllByText(/Waiting PR/);
     fireEvent.click(screen.getByRole("button", { name: "Nudge stale PRs" }));
-    // Two-step confirm.
-    fireEvent.click(await screen.findByRole("button", { name: "Click again to confirm" }));
 
+    // Step 1: a dry-run preview lists exactly what would be nudged, and posts nothing.
+    expect(await screen.findByText("These 1 pull request would be nudged:")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "api #1 Old PR" })).toHaveAttribute("href", "https://github.com/acme/api/pull/1");
+    expect(prNudgesSweepMock).toHaveBeenCalledWith("acme", "acme", "api", "", true);
+    expect(prNudgesSweepMock).not.toHaveBeenCalledWith("acme", "acme", "api", "");
+
+    // Step 2: confirming sends the real run and lists what was touched.
+    fireEvent.click(screen.getByRole("button", { name: "Nudge 1 pull request" }));
     await waitFor(() => expect(screen.getByText("Nudged 1 pull request.")).toBeInTheDocument());
-    expect(prNudgesSweepMock).toHaveBeenCalledWith("acme", "acme", "api", "");
-    expect(prNudgesSweepMock).toHaveBeenCalledWith("acme", "acme", "web", "");
+    // Only the previewed repository is called, and only for the previewed PR numbers.
+    expect(prNudgesSweepMock).toHaveBeenCalledWith("acme", "acme", "api", "", false, [1]);
+    expect(prNudgesSweepMock).not.toHaveBeenCalledWith("acme", "acme", "web", "", false, expect.anything());
+    expect(screen.getByRole("link", { name: "api #1 Old PR" })).toBeInTheDocument();
+  });
+
+  it("says so when the preview finds nothing to nudge, without offering to send", async () => {
+    localStorage.setItem("default_org", "acme");
+    reposListMock.mockResolvedValue({
+      org: "acme",
+      total: 1,
+      repos: [{ name: "api", full_name: "acme/api", private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: "https://github.com/acme/api" }],
+    });
+    reposPullsMock.mockResolvedValue({ repository: "acme/api", total: 1, pulls: [pull({ number: 7, title: "Waiting PR" })] });
+    prNudgesSweepMock.mockResolvedValue({ mode: "comment", stale_days: 3, dry_run: true, results: [{ number: 7, title: "x", action: "skipped-not-stale" }] });
+
+    renderPage();
+    await screen.findAllByText(/Waiting PR/);
+    fireEvent.click(screen.getByRole("button", { name: "Nudge stale PRs" }));
+
+    expect(await screen.findByText("No pull requests need a nudge right now.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Nudge \d/ })).not.toBeInTheDocument();
   });
 
   it("reports partial failures instead of hiding them behind the count (issue #289)", async () => {
@@ -355,9 +382,9 @@ describe("PullRequestsPage", () => {
       total: 1,
       pulls: [pull({ number: 7, title: "Waiting PR" })],
     });
-    prNudgesSweepMock.mockImplementation((_org: string, _owner: string, repo: string) =>
+    prNudgesSweepMock.mockImplementation((_org: string, _owner: string, repo: string, _token: string, dryRun?: boolean) =>
       repo === "api"
-        ? Promise.resolve({ mode: "comment", stale_days: 3, results: [{ number: 1, title: "x", action: "commented" }] })
+        ? Promise.resolve({ mode: "comment", stale_days: 3, results: [{ number: 1, title: "x", action: dryRun ? "would-comment" : "commented" }] })
         : Promise.reject(new Error("GitHub API unreachable")),
     );
 
@@ -365,11 +392,13 @@ describe("PullRequestsPage", () => {
 
     await screen.findAllByText(/Waiting PR/);
     fireEvent.click(screen.getByRole("button", { name: "Nudge stale PRs" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Click again to confirm" }));
+    // The preview already names the repository it could not check, and why.
+    expect(await screen.findByText(/web could not be checked: GitHub API unreachable/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Nudge 1 pull request" }));
 
-    await waitFor(() =>
-      expect(screen.getByText(/Nudged 1 pull request\. 1 repository failed: web\./)).toBeInTheDocument(),
-    );
+    // web could not be previewed, so the send never touches it (it could hold PRs nobody approved).
+    await waitFor(() => expect(screen.getByText("Nudged 1 pull request.")).toBeInTheDocument());
+    expect(prNudgesSweepMock).not.toHaveBeenCalledWith("acme", "acme", "web", "", false, expect.anything());
   });
 
   it("shows a permission hint when every repo's nudge call fails (issue #289)", async () => {
@@ -394,11 +423,96 @@ describe("PullRequestsPage", () => {
 
     await screen.findAllByText(/Waiting PR/);
     fireEvent.click(screen.getByRole("button", { name: "Nudge stale PRs" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Click again to confirm" }));
 
     await waitFor(() =>
       expect(screen.getByText(/Pull requests: write/)).toBeInTheDocument(),
     );
+  });
+
+  it("drops an open nudge preview when the organization changes", async () => {
+    localStorage.setItem("default_org", "acme");
+    reposListMock.mockImplementation((org: string) =>
+      Promise.resolve({ org, total: 1, repos: [{ name: "api", full_name: `${org}/api`, private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: `https://github.com/${org}/api` }] }),
+    );
+    reposPullsMock.mockResolvedValue({ repository: "acme/api", total: 1, pulls: [pull({ number: 7, title: "Waiting PR" })] });
+    prNudgesSweepMock.mockResolvedValue({ mode: "comment", stale_days: 3, results: [{ number: 1, title: "Old PR", action: "would-comment" }] });
+
+    renderPage();
+    await screen.findAllByText(/Waiting PR/);
+    fireEvent.click(screen.getByRole("button", { name: "Nudge stale PRs" }));
+    expect(await screen.findByRole("region", { name: "Nudge details" })).toBeInTheDocument();
+
+    localStorage.setItem("default_org", "other");
+    window.dispatchEvent(new Event("storage"));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Nudge details" })).not.toBeInTheDocument());
+  });
+
+  describe("nudge flow edges", () => {
+    const repo = { name: "api", full_name: "acme/api", private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: "https://github.com/acme/api" };
+    async function openPreview() {
+      localStorage.setItem("default_org", "acme");
+      reposListMock.mockResolvedValue({ org: "acme", total: 1, repos: [repo] });
+      reposPullsMock.mockResolvedValue({ repository: "acme/api", total: 1, pulls: [pull({ number: 7, title: "Waiting PR" })] });
+      renderPage();
+      await screen.findAllByText(/Waiting PR/);
+    }
+    const wouldComment = { mode: "comment", stale_days: 3, results: [{ number: 1, title: "Old PR", action: "would-comment" }] };
+
+    it("lets the preview be cancelled without sending anything", async () => {
+      await openPreview();
+      prNudgesSweepMock.mockResolvedValue(wouldComment);
+      fireEvent.click(screen.getByRole("button", { name: "Nudge stale PRs" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+
+      expect(screen.queryByRole("region", { name: "Nudge details" })).not.toBeInTheDocument();
+      expect(prNudgesSweepMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows progress while checking and while sending", async () => {
+      await openPreview();
+      let release: (v: unknown) => void = () => {};
+      prNudgesSweepMock.mockImplementationOnce(() => new Promise((r) => (release = r)));
+      fireEvent.click(screen.getByRole("button", { name: "Nudge stale PRs" }));
+      expect(await screen.findByRole("button", { name: "Checking…" })).toBeDisabled();
+      release(wouldComment);
+
+      prNudgesSweepMock.mockImplementationOnce(() => new Promise((r) => (release = r)));
+      fireEvent.click(await screen.findByRole("button", { name: "Nudge 1 pull request" }));
+      expect((await screen.findAllByRole("button", { name: "Nudging…" })).length).toBeGreaterThan(0);
+      release({ ...wouldComment, results: [{ number: 1, title: "Old PR", action: "commented" }] });
+      expect(await screen.findByText("Nudged 1 pull request.")).toBeInTheDocument();
+    });
+
+    it("reports a failed send, with the plain count when no permission error is involved", async () => {
+      await openPreview();
+      prNudgesSweepMock.mockResolvedValueOnce(wouldComment);
+      fireEvent.click(screen.getByRole("button", { name: "Nudge stale PRs" }));
+      const send = await screen.findByRole("button", { name: "Nudge 1 pull request" });
+
+      prNudgesSweepMock.mockRejectedValue(new Error("GitHub API unreachable"));
+      fireEvent.click(send);
+
+      expect(await screen.findByText(/Couldn't nudge any repository \(1 failed\): .*GitHub API unreachable/)).toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "Nudge details" })).not.toBeInTheDocument();
+    });
+    it("keeps the PRs already nudged when the only repository then stops on a GitHub error", async () => {
+      await openPreview();
+      prNudgesSweepMock.mockResolvedValueOnce(wouldComment);
+      fireEvent.click(screen.getByRole("button", { name: "Nudge stale PRs" }));
+      const send = await screen.findByRole("button", { name: "Nudge 1 pull request" });
+
+      prNudgesSweepMock.mockResolvedValue({
+        ...wouldComment,
+        results: [
+          { number: 1, title: "Old PR", action: "commented" },
+          { number: 2, title: "Next PR", action: "error" },
+        ],
+      });
+      fireEvent.click(send);
+
+      expect(await screen.findByText(/Nudged 1 pull request\. 1 repository failed/)).toBeInTheDocument();
+      expect(screen.getByText(/stopped early/)).toBeInTheDocument();
+    });
   });
 
   it("exports every open PR as CSV with author, date and link", async () => {

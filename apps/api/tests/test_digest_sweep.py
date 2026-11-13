@@ -142,3 +142,156 @@ def test_org_with_no_scan_history_is_skipped(db):
     send = _run(db)
     send.assert_not_called()
     assert _audit_rows(db, org.tenant_id) == 0
+
+
+def _actions(db, tenant_id):
+    db.execute(text(f"SET app.tenant_id = {int(tenant_id)}"))
+    return [
+        r[0]
+        for r in db.execute(
+            text("SELECT action FROM audit_logs WHERE tenant_id = :t AND action LIKE 'digest.%' ORDER BY id"),
+            {"t": tenant_id},
+        )
+    ]
+
+
+def _run_with_sender(db, sender):
+    with (
+        patch("src.services.digest_sweep.get_config", return_value="weekly"),
+        patch("src.services.digest_sweep.email.is_configured", return_value=True),
+        patch("src.services.digest_sweep.email.send_email", side_effect=sender) as send,
+    ):
+        run_digest_sweep(db)
+    return send
+
+
+def test_a_partial_smtp_failure_is_retried_for_the_failed_recipient_only(db):
+    org = _seed_org_with_scan(db, "digest-sweep-partial")
+    _admin(db, org.tenant_id, "ok-admin@e.com")
+    _admin(db, org.tenant_id, "flaky-admin@e.com")
+    flaky = {"down": True}
+
+    def sender(address, subject, body):
+        if address == "flaky-admin@e.com" and flaky["down"]:
+            raise RuntimeError("smtp blip")
+
+    first = _run_with_sender(db, sender)
+    assert sorted(c.args[0] for c in first.call_args_list) == ["flaky-admin@e.com", "ok-admin@e.com"]
+    assert "digest.sent" not in _actions(db, org.tenant_id)  # the period stays open
+
+    flaky["down"] = False
+    second = _run_with_sender(db, sender)
+    assert [c.args[0] for c in second.call_args_list] == ["flaky-admin@e.com"]  # nobody is emailed twice
+    assert _actions(db, org.tenant_id).count("digest.sent") == 1
+
+    third = _run_with_sender(db, sender)
+    third.assert_not_called()  # the period is closed
+
+
+def test_tenant_context_is_reapplied_after_each_recipient_commit(db):
+    org = _seed_org_with_scan(db, "digest-sweep-rls-ctx")
+    _admin(db, org.tenant_id, "a-admin@e.com")
+    _admin(db, org.tenant_id, "b-admin@e.com")
+    events = []
+    real_acquire = digest_sweep.try_acquire_sweep_slot
+
+    def acquire(*a, **k):
+        events.append("acquire")
+        return real_acquire(*a, **k)
+
+    with (
+        patch("src.services.digest_sweep.try_acquire_sweep_slot", side_effect=acquire),
+        patch("src.services.digest_sweep.set_session_tenant", side_effect=lambda *a, **k: events.append("tenant")),
+    ):
+        _run(db)
+
+    # every re-acquired slot (all but the initial one) is followed by the tenant context before state is re-read
+    assert events[:2] == ["tenant", "acquire"]
+    assert all(events[i + 1] == "tenant" for i, e in enumerate(events) if e == "acquire" and i > 1)
+    assert events.count("acquire") >= 3
+
+
+def test_a_recipient_that_keeps_failing_is_given_up_on_for_the_period(db):
+    org = _seed_org_with_scan(db, "digest-sweep-giveup")
+    _admin(db, org.tenant_id, "bad-mailbox@e.com")
+
+    def sender(address, subject, body):
+        raise RuntimeError("550 no such mailbox")
+
+    for attempt in range(1, digest_sweep.MAX_ATTEMPTS_PER_RECIPIENT + 1):
+        assert _run_with_sender(db, sender).call_count == 1
+        actions = _actions(db, org.tenant_id)
+        assert actions.count("digest.recipient_failed") == attempt
+        # The give-up marker appears with the last failed attempt, not earlier.
+        assert ("digest.sent" in actions) == (attempt == digest_sweep.MAX_ATTEMPTS_PER_RECIPIENT)
+
+    _run_with_sender(db, sender).assert_not_called()
+
+
+def test_is_due_treats_a_naive_timestamp_as_utc():
+    now = datetime(2026, 11, 12, tzinfo=timezone.utc)
+    assert digest_sweep._is_due(datetime(2026, 11, 1), now, 7)
+    assert not digest_sweep._is_due(datetime(2026, 11, 11), now, 7)
+
+
+def test_delivery_state_skips_audit_rows_with_an_unreadable_payload(db):
+    org = _seed_org_with_scan(db, "digest-sweep-badpayload")
+    db.execute(text(f"SET app.tenant_id = {int(org.tenant_id)}"))
+    for payload in ("not json", '{"to": "Ok@E.com"}'):
+        db.execute(
+            text(
+                "INSERT INTO audit_logs (actor, action, target, payload, tenant_id, created_at) "
+                "VALUES ('system:digest', 'digest.recipient_sent', 't', :p, :t, now())"
+            ),
+            {"p": payload, "t": org.tenant_id},
+        )
+
+    done, failures = digest_sweep._delivery_state(db, org.tenant_id, None)
+
+    assert done == {"ok@e.com"}
+    assert failures == {}
+
+
+def test_delivery_stops_when_a_peer_closes_the_period_midway(db):
+    org = _seed_org_with_scan(db, "digest-sweep-peerclose")
+    _admin(db, org.tenant_id, "a-admin@e.com")
+    _admin(db, org.tenant_id, "b-admin@e.com")
+
+    def sender(address, subject, body):
+        # A peer replica finishes the period while this one is partway through the recipient list.
+        db.execute(text(f"SET app.tenant_id = {int(org.tenant_id)}"))
+        db.execute(
+            text(
+                "INSERT INTO audit_logs (actor, action, target, payload, tenant_id, created_at) "
+                "VALUES ('system:digest', 'digest.sent', 'peer', '{}', :t, now())"
+            ),
+            {"t": org.tenant_id},
+        )
+
+    send = _run_with_sender(db, sender)
+
+    assert send.call_count == 1  # the second recipient is left to the peer
+    assert _actions(db, org.tenant_id).count("digest.sent") == 1
+
+
+def test_delivery_is_abandoned_when_the_slot_is_lost_between_recipients(db):
+    org = _seed_org_with_scan(db, "digest-sweep-slotlost")
+    _admin(db, org.tenant_id, "a-admin@e.com")
+    _admin(db, org.tenant_id, "b-admin@e.com")
+    real_acquire = digest_sweep.try_acquire_sweep_slot
+    calls = {"n": 0}
+
+    def acquire_once(session, key, tenant_id):
+        calls["n"] += 1
+        return real_acquire(session, key, tenant_id) if calls["n"] == 1 else False
+
+    with (
+        patch("src.services.digest_sweep.get_config", return_value="weekly"),
+        patch("src.services.digest_sweep.email.is_configured", return_value=True),
+        patch("src.services.digest_sweep.email.send_email") as send,
+        patch("src.services.digest_sweep.try_acquire_sweep_slot", side_effect=acquire_once),
+    ):
+        run_digest_sweep(db)
+
+    assert send.call_count == 1  # a peer holds the slot now, so the rest is its job
+    assert "digest.sent" not in _actions(db, org.tenant_id)

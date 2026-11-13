@@ -14,6 +14,9 @@ export function ingestionProblem(h: IngestionHealth): string | null {
   if (!h.has_deliveries) {
     return "No webhook delivery has ever arrived for this organization. Check that the GitHub App's webhook URL and secret are configured (see docs/self-hosting.md)."
   }
+  if (!h.has_webhook_deliveries) {
+    return "Event data is present, but no webhook delivery is on record (it may come from backfill, or old deliveries were purged). Check that the GitHub App's webhook URL and secret are configured (see docs/self-hosting.md)."
+  }
   const lost = h.queue_failed + h.queue_abandoned + h.dropped
   if (lost > 0) {
     return `${lost} webhook deliver${lost === 1 ? "y was" : "ies were"} lost in the last ${h.window_hours} hours, so some activity and alert data may be missing.`
@@ -56,7 +59,7 @@ export function IngestionHealthCard({ orgLogin }: { orgLogin: string }) {
             {problem ?? "Webhook deliveries are arriving and being processed."}
           </p>
           <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1">
-            <dt className="text-muted-foreground">Last webhook received</dt>
+            <dt className="text-muted-foreground">{h.has_webhook_deliveries ? "Last webhook received" : "Last event data"}</dt>
             <dd>{when(h.last_received_at)}</dd>
             <dt className="text-muted-foreground">Last webhook processed</dt>
             <dd>{when(h.last_processed_at)}</dd>

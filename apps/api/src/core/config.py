@@ -1,7 +1,12 @@
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+AUTH_SECRET_MIN_LENGTH = 32
+AUTH_SECRET_TOO_SHORT = (
+    f"AUTH_SECRET must be at least {AUTH_SECRET_MIN_LENGTH} characters (generate one with: openssl rand -hex 32)"
+)
 
 _root = Path(__file__).resolve().parent
 _env_file: str | None = None
@@ -27,6 +32,8 @@ class Settings(BaseSettings):
 
     # GitHub App: optional; the github_app service raises a clear error if used while unconfigured.
     github_app_id: str | None = None
+    # Public App slug. Optional: when unset it is read once from GitHub's `GET /app` (see github_app.get_app_slug).
+    github_app_slug: str | None = None
     github_app_client_id: str | None = None
     github_app_private_key: SecretStr | None = None
     github_app_client_secret: SecretStr | None = None
@@ -45,7 +52,25 @@ class Settings(BaseSettings):
     smtp_password: SecretStr | None = None
     smtp_from: str | None = None
 
-    model_config = SettingsConfigDict(env_file=_env_file, extra="ignore")
+    model_config = SettingsConfigDict(env_file=_env_file, extra="ignore", hide_input_in_errors=True)
+
+    @field_validator("auth_secret")
+    @classmethod
+    def _auth_secret_long_enough(cls, v: SecretStr) -> SecretStr:
+        # It signs every session JWT (HS256), so a short value can be brute-forced offline from one cookie.
+        if len(v.get_secret_value()) < AUTH_SECRET_MIN_LENGTH:
+            raise ValueError(AUTH_SECRET_TOO_SHORT)
+        return v
+
+    @field_validator("github_app_private_key")
+    @classmethod
+    def _unescape_private_key_newlines(cls, v: SecretStr | None) -> SecretStr | None:
+        # A PEM can't span several lines in an env file, so it is supplied on one line with a literal
+        # backslash-n between the lines (and some platforms hand it over that way even when quoted).
+        # Restore the real newlines.
+        if v is None:
+            return v
+        return SecretStr(v.get_secret_value().strip().replace("\\n", "\n"))
 
 
 settings = Settings()

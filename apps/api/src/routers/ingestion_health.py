@@ -2,8 +2,8 @@
 
 Several views (activity by repo, the Dependabot and code-scanning columns, the member access review, the
 burn-down) are filled from webhook deliveries, so "No events recorded" is ambiguous: a quiet org, or
-broken ingestion. This answers it from rows that already exist (``webhook_deliveries`` and the sync
-cursors); nothing is stored for it."""
+broken ingestion. This answers it from rows that already exist (``webhook_deliveries``, the event
+rollup and the sync cursors); nothing is stored for it."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from src.core.db import ActivitySyncCursor, OrgMembershipSyncCursor, WebhookDelivery, get_db
+from src.core.db import ActivitySyncCursor, OrgMembershipSyncCursor, RepoEventDailyCount, WebhookDelivery, get_db
 from src.core.rbac import OrgContext, require_org_role
 
 router = APIRouter()
@@ -21,9 +21,15 @@ _WINDOW = timedelta(hours=24)
 
 
 class IngestionHealth(BaseModel):
-    # Whether any verified delivery was ever stored for this org. False is the "webhook URL or secret not
-    # configured?" case.
+    # Whether GitHub data ever reached this org: a stored delivery, or (once the retention sweep has purged a
+    # quiet org's old deliveries) an event in the permanent daily rollup. False is the "webhook URL or secret
+    # not configured?" case.
     has_deliveries: bool
+    # Whether a webhook delivery row is stored for this org. False with has_deliveries true means the data
+    # came from backfill, or the quiet org's old deliveries were purged: not evidence the webhook works.
+    has_webhook_deliveries: bool
+    # Newest delivery, else the start of the newest day with a recorded event (day precision, and it also
+    # covers backfilled events, so it is a "data arrived" signal rather than strictly a webhook one).
     last_received_at: datetime | None
     # received_at of the newest delivery the worker has finished with (no separate processed time is kept).
     last_processed_at: datetime | None
@@ -50,6 +56,12 @@ def ingestion_health(
     mine = WebhookDelivery.tenant_id == tenant_id
 
     last_received, total = db.query(func.max(WebhookDelivery.received_at), func.count()).filter(mine).one()
+    if last_received is None:
+        # Retention deletes processed deliveries after `retention_webhook_deliveries_days`, so a quiet org can
+        # have none left although ingestion works; the daily rollup is never purged.
+        last_day = db.query(func.max(RepoEventDailyCount.day)).filter(RepoEventDailyCount.tenant_id == tenant_id).scalar()
+        if last_day is not None:
+            last_received = datetime(last_day.year, last_day.month, last_day.day, tzinfo=timezone.utc)
     last_processed = (
         db.query(func.max(WebhookDelivery.received_at)).filter(mine, WebhookDelivery.status == "processed").scalar()
     )
@@ -64,7 +76,8 @@ def ingestion_health(
         db.query(OrgMembershipSyncCursor.last_synced_at).filter(OrgMembershipSyncCursor.tenant_id == tenant_id).scalar()
     )
     return IngestionHealth(
-        has_deliveries=total > 0,
+        has_deliveries=total > 0 or last_received is not None,
+        has_webhook_deliveries=total > 0,
         last_received_at=last_received,
         last_processed_at=last_processed,
         window_hours=int(_WINDOW.total_seconds() // 3600),

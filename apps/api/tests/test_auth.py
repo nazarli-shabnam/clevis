@@ -5,6 +5,7 @@ from unittest.mock import ANY, MagicMock, patch
 
 import bcrypt
 import pytest
+from pydantic import SecretStr
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import text
@@ -59,6 +60,28 @@ def test_setup_required_no_users(auth_client):
     resp = auth_client.get("/auth/setup-required")
     assert resp.status_code == 200
     assert resp.json()["setup_required"] is True
+
+
+def test_setup_required_reports_github_app_slug_and_configuration(auth_client, monkeypatch):
+    from src.core.config import settings
+    from src.services import github_app
+
+    monkeypatch.setattr(settings, "github_app_id", "123")
+    monkeypatch.setattr(settings, "github_app_private_key", SecretStr("pem"))
+    monkeypatch.setattr(github_app, "get_app_slug", lambda: "clevis-app")
+    body = auth_client.get("/auth/setup-required").json()
+    assert body["github_app_configured"] is True
+    assert body["github_app_slug"] == "clevis-app"
+
+
+def test_setup_required_github_app_unconfigured(auth_client, monkeypatch):
+    from src.core.config import settings
+
+    monkeypatch.setattr(settings, "github_app_id", None)
+    monkeypatch.setattr(settings, "github_app_slug", None)
+    body = auth_client.get("/auth/setup-required").json()
+    assert body["github_app_configured"] is False
+    assert body["github_app_slug"] is None
 
 
 def test_setup_required_with_user(auth_client):

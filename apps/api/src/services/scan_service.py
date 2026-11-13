@@ -42,7 +42,7 @@ def comparable_scans(previous: dict, result: dict) -> bool:
     def scored_ids(checks: list[dict]) -> set[str]:
         return {c.get("id") for c in checks if c.get("scored", not c.get("informational"))}
 
-    if any(c.get("status") == "error" for c in (*previous["checks"], *result["checks"])):
+    if scan_results_repo.has_errored_check([*previous["checks"], *result["checks"]]):
         return False
     return scored_ids(previous["checks"]) == scored_ids(result["checks"])
 
@@ -52,12 +52,19 @@ def persist_scan_and_alert(db: Session, org, result: dict, tenant_id: int, *, ac
 
     The baseline matches on tenant and case-insensitive owner, so scans typed in different casing (UI
     vs CI token) see each other. Used by both the session and API-token scan paths. `actor` is who the
-    alert is audited as ("system" for a session scan, the token for a CI scan). Returns the baseline scan
-    (or None) so callers can record it."""
+    alert is audited as ("system" for a session scan, the token for a CI scan). Returns the previous scan
+    (or None) so callers can record it.
+
+    The alert compares against the newest scan *without* errored checks, not simply the newest: otherwise a
+    real drop that lands right after an errored scan would never be reported (the errored scan is not
+    comparable, and the next scan compares against the already-lowered one)."""
     previous = scan_results_repo.latest_with_checks(db, org.github_login, tenant_id)
+    baseline = previous
+    if previous and not scan_results_repo.is_clean_baseline(previous):
+        baseline = scan_results_repo.latest_without_errors(db, org.github_login, tenant_id)
     persist_scan(db, result, tenant_id=tenant_id)
-    if previous and comparable_scans(previous, result):
-        notify_score_drop_best_effort(db, org, previous["score"], result["score"], actor=actor)
+    if baseline and comparable_scans(baseline, result):
+        notify_score_drop_best_effort(db, org, baseline["score"], result["score"], actor=actor)
     return previous
 
 

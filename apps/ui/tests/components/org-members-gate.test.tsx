@@ -25,7 +25,7 @@ vi.mock("@/lib/api/client", () => ({
     },
     orgMemberships: { list: vi.fn().mockResolvedValue([]), setRole: vi.fn(), remove: vi.fn() },
     waivers: { list: vi.fn().mockResolvedValue([]), create: vi.fn(), revoke: vi.fn() },
-    ingestionHealth: vi.fn().mockResolvedValue({ has_deliveries: true, last_received_at: null, last_processed_at: null, window_hours: 24, received: 0, queue_failed: 0, queue_abandoned: 0, dropped: 0, pending: 0, last_backfill_at: null, last_membership_reconcile_at: null }),
+    ingestionHealth: vi.fn().mockResolvedValue({ has_deliveries: true, has_webhook_deliveries: true, last_received_at: null, last_processed_at: null, window_hours: 24, received: 0, queue_failed: 0, queue_abandoned: 0, dropped: 0, pending: 0, last_backfill_at: null, last_membership_reconcile_at: null }),
     invitations: {
       list: (...args: unknown[]) => listMock(...args),
       revoke: vi.fn(),

@@ -16,7 +16,7 @@ This is the infrastructure/ops guide — getting the Clevis stack itself running
    cp .env.example .env
    ```
 
-2. Fill in `.env`. Six vars are hard-required (the API fails to start without them) — `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JOB_SECRET_KEY` (`openssl rand -hex 32`), `AUTH_SECRET` (`openssl rand -hex 32`), `REDIS_PASSWORD` (`openssl rand -hex 32` — auths the `redis` service used for webhook ingestion, issue #191). Everything else in `.env.example` has a default and only needs overriding per environment (e.g. `CORS_ORIGINS` for your real UI domain, `GITHUB_API_BASE` plus `NEXT_PUBLIC_GITHUB_WEB_BASE` for GitHub Enterprise). For any real deployment, treat **`NEXT_PUBLIC_API_BASE`** as effectively required: it is your API's public URL (e.g. `https://api.yourdomain.com`), it is not checked at startup and falls back to `http://localhost:8080`, so if you skip it everything starts normally but the deployed UI cannot reach the API. It is baked into the UI at build time, so set it before building the UI image and rebuild after changing it.
+2. Fill in `.env`. Six vars are hard-required (the API fails to start without them) — `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JOB_SECRET_KEY` (`openssl rand -hex 32`), `AUTH_SECRET` (`openssl rand -hex 32`; the API refuses to start with fewer than 32 characters, and changing it later signs every user out), `REDIS_PASSWORD` (`openssl rand -hex 32` — auths the `redis` service used for webhook ingestion, issue #191). Everything else in `.env.example` has a default and only needs overriding per environment (e.g. `CORS_ORIGINS` for your real UI domain, `GITHUB_API_BASE` plus `NEXT_PUBLIC_GITHUB_WEB_BASE` for GitHub Enterprise). For any real deployment, treat **`NEXT_PUBLIC_API_BASE`** as effectively required: it is your API's public URL (e.g. `https://api.yourdomain.com`), it is not checked at startup and falls back to `http://localhost:8080`, so if you skip it everything starts normally but the deployed UI cannot reach the API. It is baked into the UI at build time, so set it before building the UI image and rebuild after changing it.
 
 3. Register a GitHub App on github.com (**Settings → Developer settings → GitHub Apps → New GitHub App**) so users can connect their orgs after the instance is running. The App form asks for three separate URLs — each one is where GitHub sends the browser back to at a different point in the flow, so don't reuse one URL for another's purpose:
    - **Homepage URL** — your deployed UI URL. Shown on the App's public listing page; not used in any redirect.
@@ -36,8 +36,8 @@ This is the infrastructure/ops guide — getting the Clevis stack itself running
    - **Optional — Workflow policy lint + auto-fix PR (issue #291):** the Automation page's "Lint workflows" button scans a repo's `.github/workflows/*.yml` for a `pull_request_target` trigger that checks out untrusted PR code (and for attacker-controlled text interpolated into `run:` scripts). Scanning is read-only and needs no extra permission. **"Open fix PR"** — which flips `pull_request_target` to `pull_request` when the workflow uses no secrets — needs the **Contents**, **Pull requests**, *and* **Workflows** repository permissions at **Read and write** (GitHub blocks pushing `.github/workflows/**` changes without the last). Org-admin only; without the scopes it returns a 400 pointing back here.
    - **Optional — Workflow dispatch (Automation page):** to let an org admin trigger GitHub Actions workflows from the Automation page — one workflow, or "Dispatch all" for every active workflow in the repo — grant the **Actions** repository permission at **Read and write**. Listing workflows and run history needs only **Actions: Read**; the `POST .../dispatches` call (single or bulk) needs **Read and write**, otherwise GitHub returns `403 Resource not accessible by integration` and the Automation page shows a "Workflow dispatch" entry in the "N automations need extra GitHub access" notice. On the legacy PAT fallback, a classic token needs the `repo` scope.
    - **Optional — Dependabot auto-triage (issue #290):** the Automation page can approve (and, if you opt in, merge) low-risk Dependabot PRs. Grant the **Pull requests** repository permission **Read and write** (to approve) and **Checks** plus **Commit statuses** at **Read-only** (to verify every check is green); for `approve_and_merge` mode also grant **Contents** **Read and write** (to merge). **It's disabled per repo by default** — enable it per repo in the Automation page and pick a mode. `approve_only` (the default) only approves; only `approve_and_merge` merges, and "Run for real" is a two-step confirm. A PR is acted on only when *all* hold: the author is `dependabot[bot]`, the bump is patch-level (parsed from the PR body; unparseable → skipped), every check on the head commit is a completed success, and there's no pending or requested-changes human review. There's a per-run cap (5), a dry-run preview, and every decision — acted on or skipped, with the reason — is written to the audit log. Without the permissions the run returns a 400 pointing back here.
-   - **Private key** — this is a separate secret from the webhook secret above; GitHub doesn't ask for it on the creation form. After the App is created, open its settings page, scroll to the **"Private keys"** section (near the bottom, under "General"), and click **"Generate a private key"**. This downloads a `<something>.pem` file — open it and copy the *entire* contents, including the `-----BEGIN RSA PRIVATE KEY-----` / `-----END RSA PRIVATE KEY-----` lines, into `.env` as `GITHUB_APP_PRIVATE_KEY`.
-   - Copy the remaining values into `.env`: `GITHUB_APP_ID`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` (all shown on the same settings page, near the top). Also set `NEXT_PUBLIC_GITHUB_APP_SLUG` to the App's slug (found in its public page URL) — the UI uses this slug to build the "Install GitHub App" button's link.
+   - **Private key** — this is a separate secret from the webhook secret above; GitHub doesn't ask for it on the creation form. After the App is created, open its settings page, scroll to the **"Private keys"** section (near the bottom, under "General"), and click **"Generate a private key"**. This downloads a `<something>.pem` file — open it and copy the *entire* contents, including the `-----BEGIN RSA PRIVATE KEY-----` / `-----END RSA PRIVATE KEY-----` lines, into `.env` as `GITHUB_APP_PRIVATE_KEY`. A `.env` / compose `env_file` value can't span several lines, so write it on **one line, in double quotes, with a literal `\n` between the lines**: `GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----"`. The API converts the `\n` back into newlines, which also covers platforms that inject the variable with literal `\n`. At startup it checks that the value parses as a PEM private key and logs `GITHUB_APP_PRIVATE_KEY is set but is not a valid PEM private key` if not, so a bad paste shows up in the API log immediately instead of as an empty org or a 5xx at the first install-token request.
+   - Copy the remaining values into `.env`: `GITHUB_APP_ID`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` (all shown on the same settings page, near the top). The App's slug (used for the "Install GitHub App" link) is read by the API from GitHub using the App credentials and served to the UI at runtime, so nothing needs to be set at UI build time; set `GITHUB_APP_SLUG` on the API only to override it. `NEXT_PUBLIC_GITHUB_APP_SLUG` is still honoured as a fallback.
 
    **If your GitHub App was registered before the Setup URL field above was documented here:** open the App's settings on github.com, go to the "Post installation" section, and add the Setup URL now. Orgs that already completed installation don't need to reinstall — only new installs and updates will use the new callback page going forward.
 
@@ -100,6 +100,8 @@ This is the infrastructure/ops guide — getting the Clevis stack itself running
    docker compose up --build -d
    ```
 
+   This starts the stack but publishes no host ports; see [Reaching the stack](#reaching-the-stack) for how to open it (for a quick local try: add `-f docker-compose.yml -f docker-compose.local.yml`).
+
    Or, on a tagged release, pull the pre-built API and worker images instead of building them from source:
 
    ```
@@ -109,13 +111,64 @@ This is the infrastructure/ops guide — getting the Clevis stack itself running
 
    `docker-compose.yml` only has `build:` entries, so to use these you add an `image:` override for `api` and `worker` (for example in a `docker-compose.override.yml`). The published `clevis-ui` image is **not** portable: `NEXT_PUBLIC_API_BASE` and `NEXT_PUBLIC_GITHUB_APP_SLUG` are inlined into the browser bundle at build time (see step 2), so that image calls the publisher's API URL and cannot reach yours. Always build the UI yourself with your own `NEXT_PUBLIC_*` values (`docker compose build ui`).
 
-8. Verify it's up:
+8. Verify it's up. The API image has no `curl` and the base compose file publishes no ports, so check from inside the container:
 
    ```bash
-   curl http://localhost:8080/healthz   # -> {"status": "ok"}
+   docker compose exec api python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8080/healthz').read().decode())"   # -> {"status": "ok"}
    ```
 
-   Then open the UI and continue with the [Get started](../README.md#get-started) flow in the README.
+   Then open the UI (see [Reaching the stack](#reaching-the-stack)) and continue with the [Get started](../README.md#get-started) flow in the README.
+
+## Reaching the stack
+
+The committed `docker-compose.yml` publishes **no host ports**: it is written for a reverse proxy (Traefik on Coolify) that routes to the `ui` (port 3000) and `api` (port 8080) containers over the internal `clevis` Docker network. Starting it on its own gives a healthy stack that nothing outside Docker can reach. Pick one:
+
+### Local trial over HTTP
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml up --build -d
+```
+
+`docker-compose.local.yml` publishes the UI on `http://localhost:3000` and the API on `http://localhost:8080` (bound to `127.0.0.1` only), builds the UI with `NEXT_PUBLIC_API_BASE=http://localhost:8080`, and sets `SESSION_COOKIE_SECURE=false` on the API so "Sign in with GitHub" works over plain HTTP. `CORS_ORIGINS` already defaults to `["http://localhost:3000"]`. Do not use it for anything exposed beyond your machine. (A `docker-compose.override.yml` of your own is only picked up when you do **not** pass `-f` flags; list it explicitly if you use both.)
+
+GitHub cannot deliver webhooks to `http://localhost:8080`, so webhook-driven updates (uninstall cleanup, security alerts) do not run in this setup. To test webhooks locally, use a forwarding service such as Smee and set the GitHub App webhook URL to its proxy URL. Smee is not secure and is for development only.
+
+### Real deployment behind a reverse proxy
+
+Give the UI and the API each a hostname, terminate TLS in the proxy, and set, in `.env` **before building the UI image**:
+
+```bash
+NEXT_PUBLIC_API_BASE=https://api.example.com     # baked into the UI bundle at build time; rebuild after changing it
+CORS_ORIGINS=["https://app.example.com"]          # JSON array; restart the API after changing it
+```
+
+Leave `SESSION_COOKIE_SECURE` at its default (`true`) since the proxy serves HTTPS. If the UI and API are on different sites (not subdomains of one site), also see `SESSION_COOKIE_SAMESITE` in `.env.example`. Any proxy that can reach the `clevis` network works; a minimal [Caddy](https://caddyserver.com) example, run as one more service attached to that network, for example in a `docker-compose.override.yml`:
+
+```yaml
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    networks: [clevis]
+
+volumes:
+  caddy_data:
+```
+
+```
+app.example.com {
+    reverse_proxy ui:3000
+}
+api.example.com {
+    reverse_proxy api:8080
+}
+```
+
+Register the same URLs in the GitHub App (step 3). On Coolify, Traefik does the routing for you; assign the two domains to the `ui` and `api` services instead.
 
 ## Leadership digest (optional, issue #292)
 
@@ -151,7 +204,7 @@ score-drop alert. It is **off by default**.
 
 - **Row-Level Security is opt-in, not on by default.** Tenant-scoped tables have RLS policies (`FORCE` is set on most; `orgs`, `saved_tokens`, `invitations` and `audit_logs` only have `ENABLE`, and `webhook_deliveries` has no RLS because the webhook receiver has no tenant context), but in the default deployment both the API and worker connect as the Postgres bootstrap superuser (`DB_USER`), which bypasses RLS unconditionally. Tenant isolation in a default deployment is enforced **entirely at the application layer** — every query is expected to filter by `tenant_id`, and that's the only thing standing between one tenant's data and another's. Set `API_DB_PASSWORD` (step 6) and `WORKER_DB_PASSWORD` (step 5) if you want RLS to actually enforce isolation as a second, independent layer. Both services log a one-time `Row-Level Security is NOT enforced` warning at startup while they connect as a superuser or `BYPASSRLS` role, so you can tell which posture you are in; see below to switch.
 - **How the session token is held depends on how the user signed in.** "Sign in with GitHub" sets the JWT as an httpOnly `clevis_session` cookie. Password sign-in (`/auth/setup`, `/auth/register`, `/auth/login`) returns the JWT in the response body instead; the UI keeps it in the browser's `localStorage` and sends it as an `Authorization: Bearer` header, so any script running on the UI's origin (for example via an XSS bug) can read it. The API accepts either form. Revoke sessions with sign-out (per session) or "sign out of all devices".
-- The session cookie is configured with `SESSION_COOKIE_SECURE` (default `true`; set `false` only for local HTTP dev, never in production — a `Secure` cookie is not sent over plain HTTP), `SESSION_COOKIE_SAMESITE` (default `lax`; use `none` when the UI and API are on different sites, which also requires `SESSION_COOKIE_SECURE=true`) and `SESSION_COOKIE_DOMAIN` (default unset, i.e. host-only). `SESSION_COOKIE_SECURE` and `SESSION_COOKIE_DOMAIN` also apply to the short-lived OAuth `state` cookie set at the start of GitHub sign-in; that cookie is always `SameSite=Lax` (it must be sent on the top-level redirect back from github.com), so `SESSION_COOKIE_SAMESITE` does not affect it. These are optional environment variables; see `.env.example`.
+- The session cookie is configured with `SESSION_COOKIE_SECURE` (default `true`; set `false` only for local HTTP dev, never in production — a `Secure` cookie is not sent over plain HTTP), `SESSION_COOKIE_SAMESITE` (default `lax`; use `none` when the UI and API are on different sites, which also requires `SESSION_COOKIE_SECURE=true`) and `SESSION_COOKIE_DOMAIN` (default unset, i.e. host-only). `SESSION_COOKIE_SECURE` and `SESSION_COOKIE_DOMAIN` also apply to the short-lived OAuth `state` cookie set at the start of GitHub sign-in; that cookie is always `SameSite=Lax` (it must be sent on the top-level redirect back from github.com), so `SESSION_COOKIE_SAMESITE` does not affect it. Because `none` makes the browser send the session cookie on cross-site requests, the API refuses any state-changing request (`POST`/`PUT`/`PATCH`/`DELETE`) that carries the session cookie, no `Authorization` header and an `Origin` that is neither listed in `CORS_ORIGINS` nor the API's own origin (403), so list every UI origin there. These are optional environment variables; see `.env.example`.
 - Restrict API ingress behind your reverse proxy/SSO; the base `docker-compose.yml` deliberately publishes no host ports (Traefik-only) for this reason.
 - Prefer GitHub App auth over the legacy personal-access-token path for anything beyond local testing — tokens are Fernet-encrypted at rest either way, but App installation tokens are short-lived and scoped per-org.
 

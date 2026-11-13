@@ -36,6 +36,10 @@ router = APIRouter()
 
 class NudgeRequest(BaseModel):
     token: SecretStr | None = None
+    # Preview: report the PRs a real run would act on without posting or notifying anyone.
+    dry_run: bool = False
+    # Real run only: act on just these PR numbers (the ones a preview listed), never on others.
+    only_prs: list[int] | None = None
 
 
 class NudgeItem(BaseModel):
@@ -47,6 +51,7 @@ class NudgeItem(BaseModel):
 class NudgeResponse(BaseModel):
     mode: str
     stale_days: int
+    dry_run: bool = False
     results: list[NudgeItem]
 
 
@@ -57,11 +62,14 @@ def _settings() -> tuple[int, str]:
     return pr_nudge.configured_stale_days(), mode
 
 
-def _run(client: GitHubClient, owner: str, repo: str) -> NudgeResponse:
+def _run(
+    client: GitHubClient, owner: str, repo: str, dry_run: bool = False, only_prs: list[int] | None = None
+) -> NudgeResponse:
     stale_days, mode = _settings()
     try:
         results = pr_nudge.run_nudge_sweep(
-            client, owner, repo, stale_days=stale_days, mode=mode
+            client, owner, repo, stale_days=stale_days, mode=mode, dry_run=dry_run,
+            only_prs=None if only_prs is None else frozenset(only_prs),
         )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 403:
@@ -79,27 +87,35 @@ def _run(client: GitHubClient, owner: str, repo: str) -> NudgeResponse:
     return NudgeResponse(
         mode=mode,
         stale_days=stale_days,
+        dry_run=dry_run,
         results=[NudgeItem(number=r.number, title=r.title, action=r.action) for r in results],
     )
 
 
 def _run_audited(
-    db: Session, user: UserOut, client: GitHubClient, owner: str, repo: str, tenant_id: int
+    db: Session, user: UserOut, client: GitHubClient, owner: str, repo: str, tenant_id: int, dry_run: bool = False,
+    only_prs: list[int] | None = None,
 ) -> NudgeResponse:
     """Run the sweep and write one audit row afterwards: what was actually posted on GitHub,
-    or -- when the sweep failed before posting anything -- the attempt and its error."""
+    or -- when the sweep failed before posting anything -- the attempt and its error. A dry run is
+    audited as ``pr_nudge.preview`` (what it found) and never sends the stale-PR summary alert."""
+    action = "pr_nudge.preview" if dry_run else "pr_nudge.sweep"
     try:
-        resp = _run(client, owner, repo)
+        resp = _run(client, owner, repo, dry_run, only_prs)
     except HTTPException as exc:
         stale_days, mode = _settings()
         payload = {"mode": mode, "stale_days": stale_days, "error": exc.detail}
-        audit_repo.write(db, user.email, "pr_nudge.sweep", f"{owner}/{repo}", payload, tenant_id=tenant_id)
+        audit_repo.write(db, user.email, action, f"{owner}/{repo}", payload, tenant_id=tenant_id)
         raise
-    acted = [r.model_dump() for r in resp.results if r.action in ("commented", "labeled", "error")]
+    acted = [
+        r.model_dump() for r in resp.results if r.action in ("commented", "labeled", "error", "would-comment", "would-label")
+    ]
     audit_repo.write(
-        db, user.email, "pr_nudge.sweep", f"{owner}/{repo}",
+        db, user.email, action, f"{owner}/{repo}",
         {"mode": resp.mode, "stale_days": resp.stale_days, "results": acted}, tenant_id=tenant_id,
     )
+    if dry_run:
+        return resp
     nudged = [r for r in acted if r["action"] in ("commented", "labeled")]
     try:
         notifications.notify_stale_prs(db, tenant_id, owner, repo, nudged, actor=user.email)
@@ -128,7 +144,7 @@ def nudge_stale_prs(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return _run_audited(db, user, GitHubClient(token), owner, repo, audit_tenant(db, user.id, owner))
+    return _run_audited(db, user, GitHubClient(token), owner, repo, audit_tenant(db, user.id, owner), body.dry_run, body.only_prs)
 
 
 @router.post(
@@ -153,4 +169,4 @@ def nudge_stale_prs_for_org(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return _run_audited(db, user, GitHubClient(token), owner, repo, ctx.org.tenant_id)
+    return _run_audited(db, user, GitHubClient(token), owner, repo, ctx.org.tenant_id, body.dry_run, body.only_prs)

@@ -21,6 +21,7 @@ import { useAuth } from "@/lib/auth-context"
 import { THEMES, useTheme } from "@/lib/theme"
 import type { InstallationMeta, MyOrgMembership, SavedTokenMeta } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
+import { useGithubAppSlug } from "@/lib/use-github-app-slug"
 import { invalidateInstallations, invalidateTokens } from "@/lib/query-invalidation"
 
 
@@ -329,7 +330,7 @@ function ConnectedOrgsSection() {
 
   const rowKey = (row: ConnectedInstallation) => `${row.scope}:${row.id}`
 
-  const slug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG
+  const { slug, appConfigured } = useGithubAppSlug()
   const installUrl = slug ? githubWebUrl(`apps/${slug}/installations/new`) : null
 
   return (
@@ -422,7 +423,9 @@ function ConnectedOrgsSection() {
           </Button>
         ) : (
           <p className="text-xs text-muted-foreground">
-            GitHub App integration isn&rsquo;t set up on this instance yet — ask a workspace admin to configure it.
+            {appConfigured
+              ? "The API has the GitHub App's credentials but could not determine its slug — ask a workspace admin to set GITHUB_APP_SLUG on the API."
+              : "GitHub App integration isn’t set up on this instance yet — the API has no GITHUB_APP_ID / GITHUB_APP_PRIVATE_KEY. Ask a workspace admin to configure it."}
           </p>
         )}
       </div>

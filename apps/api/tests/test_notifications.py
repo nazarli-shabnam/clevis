@@ -15,7 +15,7 @@ from sqlalchemy import text
 
 from src.core.auth import UserOut, require_auth
 from src.core.config import settings
-from src.core.db import AuditLog, NotificationDestination, User, get_db
+from src.core.db import AuditLog, NotificationDestination, ScanResult, User, get_db
 from src.repositories import notification_repo, org_membership_repo, org_repo
 from src.repositories import scan_results_repo
 from src.services.scan_service import notify_score_drop_best_effort as _notify_score_drop_best_effort
@@ -370,6 +370,17 @@ def test_baseline_matches_owner_case_insensitively(db, acme):
     assert _run_persist(db, org, _result(70, checks)).call_count == 1
 
 
+@pytest.mark.parametrize("blob", ["{not json", '{"a": 1}', ""])
+def test_unparseable_newest_scan_is_no_baseline_so_the_older_clean_one_is_used(db, acme, blob):
+    org = acme["org"]
+    _dest(db, org)
+    checks = [_chk("a"), _chk("b")]
+    _seed(db, org, 90, checks)
+    db.add(ScanResult(owner="acme", score=95, total_checks=2, failed_checks=0, checks_json=blob, tenant_id=org.tenant_id))
+    db.flush()
+    assert _run_persist(db, org, _result(70, checks)).call_count == 1
+
+
 def test_scan_with_no_score_is_stored_and_never_alerts(db, acme):
     org = acme["org"]
     _dest(db, org)
@@ -387,7 +398,34 @@ def test_no_alert_when_either_scan_has_errored_checks(db, acme):
     _dest(db, org)
     _seed(db, org, 90, [_chk("a"), _chk("b")])
     assert _run_persist(db, org, _result(50, [_chk("a"), _chk("b", "error")])).call_count == 0
-    # an errored *previous* scan is not a trustworthy baseline either
+
+
+def test_drop_after_an_errored_scan_is_compared_with_the_last_clean_scan(db, acme):
+    org = acme["org"]
+    _dest(db, org)
+    clean = [_chk("a"), _chk("b")]
+    _seed(db, org, 90, clean)
+    # B: a GitHub hiccup errors a check and lowers the score; intended: no alert
+    assert _run_persist(db, org, _result(70, [_chk("a"), _chk("b", "error")])).call_count == 0
+    # C: clean again but really at 70; the baseline is A (90), not the errored B, so the drop is reported
+    assert _run_persist(db, org, _result(70, clean)).call_count == 1
+    # D: unchanged, now compared with the clean C (70): nothing new to report
+    assert _run_persist(db, org, _result(70, clean)).call_count == 0
+
+
+def test_malformed_stored_checks_are_skipped_as_baseline_without_failing_the_scan(db, acme):
+    org = acme["org"]
+    _dest(db, org)
+    clean = [_chk("a"), _chk("b")]
+    _seed(db, org, 90, clean)
+    _seed(db, org, 70, ["not-a-dict"])  # newest row has a non-dict check element
+    assert _run_persist(db, org, _result(70, clean)).call_count == 1  # baseline is the clean 90 row
+
+
+def test_no_alert_when_no_clean_baseline_exists(db, acme):
+    org = acme["org"]
+    _dest(db, org)
+    _seed(db, org, 90, [_chk("a"), _chk("b", "error")])
     assert _run_persist(db, org, _result(10, [_chk("a", "fail"), _chk("b", "fail")])).call_count == 0
 
 
