@@ -21,3 +21,9 @@ def test_short_auth_secret_is_rejected():
 
 def test_auth_secret_at_the_minimum_length_is_accepted():
     assert _settings("x" * AUTH_SECRET_MIN_LENGTH).auth_secret.get_secret_value() == "x" * AUTH_SECRET_MIN_LENGTH
+
+
+def test_rejected_auth_secret_is_not_echoed_in_the_validation_error():
+    with pytest.raises(ValidationError) as exc:
+        _settings("short-secret-xyz")
+    assert "short-secret-xyz" not in str(exc.value)

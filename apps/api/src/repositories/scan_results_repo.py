@@ -128,6 +128,11 @@ def has_errored_check(checks: list[dict]) -> bool:
     return any(c.get("status") == "error" for c in checks)
 
 
+def is_clean_baseline(checks: list) -> bool:
+    """Well-formed (history has no shape guarantee: a non-dict element is malformed) and nothing errored."""
+    return all(isinstance(c, dict) for c in checks) and not has_errored_check(checks)
+
+
 def _newest_with_checks(db: Session, *criteria) -> dict | None:
     row = db.query(ScanResult).filter(*criteria).order_by(ScanResult.created_at.desc(), ScanResult.id.desc()).first()
     return _with_checks(row) if row is not None else None
@@ -150,7 +155,7 @@ def latest_without_errors(db: Session, owner: str, tenant_id: int, scan_limit: i
         .order_by(ScanResult.created_at.desc(), ScanResult.id.desc())
         .limit(scan_limit)
     )
-    return next((scan for scan in map(_with_checks, rows) if not has_errored_check(scan["checks"])), None)
+    return next((scan for scan in map(_with_checks, rows) if is_clean_baseline(scan["checks"])), None)
 
 
 def latest_for_org(db: Session, owner: str, org_tenant_id: int) -> dict | None:

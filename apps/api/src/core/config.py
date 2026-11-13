@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     smtp_password: SecretStr | None = None
     smtp_from: str | None = None
 
-    model_config = SettingsConfigDict(env_file=_env_file, extra="ignore")
+    model_config = SettingsConfigDict(env_file=_env_file, extra="ignore", hide_input_in_errors=True)
 
     @field_validator("auth_secret")
     @classmethod

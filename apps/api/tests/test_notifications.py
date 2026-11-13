@@ -402,6 +402,15 @@ def test_drop_after_an_errored_scan_is_compared_with_the_last_clean_scan(db, acm
     assert _run_persist(db, org, _result(70, clean)).call_count == 0
 
 
+def test_malformed_stored_checks_are_skipped_as_baseline_without_failing_the_scan(db, acme):
+    org = acme["org"]
+    _dest(db, org)
+    clean = [_chk("a"), _chk("b")]
+    _seed(db, org, 90, clean)
+    _seed(db, org, 70, ["not-a-dict"])  # newest row has a non-dict check element
+    assert _run_persist(db, org, _result(70, clean)).call_count == 1  # baseline is the clean 90 row
+
+
 def test_no_alert_when_no_clean_baseline_exists(db, acme):
     org = acme["org"]
     _dest(db, org)

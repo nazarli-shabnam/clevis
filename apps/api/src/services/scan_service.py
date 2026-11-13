@@ -60,7 +60,7 @@ def persist_scan_and_alert(db: Session, org, result: dict, tenant_id: int, *, ac
     comparable, and the next scan compares against the already-lowered one)."""
     previous = scan_results_repo.latest_with_checks(db, org.github_login, tenant_id)
     baseline = previous
-    if previous and scan_results_repo.has_errored_check(previous["checks"]):
+    if previous and not scan_results_repo.is_clean_baseline(previous["checks"]):
         baseline = scan_results_repo.latest_without_errors(db, org.github_login, tenant_id)
     persist_scan(db, result, tenant_id=tenant_id)
     if baseline and comparable_scans(baseline, result):
