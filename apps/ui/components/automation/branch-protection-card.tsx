@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useMutation, useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { api } from "@/lib/api/client"
@@ -29,6 +29,7 @@ export function BranchProtectionCard({ org, token, repos, initialSelected = [] }
   const [blockForcePush, setBlockForcePush] = useState(true)
   const [blockDeletion, setBlockDeletion] = useState(true)
   const [savePreset, setSavePreset] = useState(false)
+  const queryClient = useQueryClient()
 
   // Start from the preset last saved for this org, once per org.
   const saved = useQuery({
@@ -88,6 +89,11 @@ export function BranchProtectionCard({ org, token, repos, initialSelected = [] }
         save_preset: savePreset,
         token,
       }),
+    // The saved preset changed on the server; a stale cached copy would re-hydrate the form with old values
+    // the next time the card mounts.
+    onSuccess: () => {
+      if (savePreset) queryClient.invalidateQueries({ queryKey: ["branchProtection.savedPreset", org.trim()] })
+    },
   })
 
   // Apply is blocked until selection/knobs match the preview, so a bulk rewrite can't hit
