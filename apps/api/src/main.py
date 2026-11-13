@@ -53,6 +53,7 @@ from src.routers import (
 from src.services.automation_loop import automation_loop
 from src.services.digest_loop import digest_loop
 from src.services.gap_heal_loop import gap_heal_loop
+from src.services.github_app import warn_if_private_key_invalid
 from src.services.membership_reconcile_loop import membership_reconcile_loop
 from src.services.scheduled_scan_loop import scheduled_scan_loop
 from src.services.retention_loop import retention_loop
@@ -68,6 +69,7 @@ _cors_origins = settings.cors_origins
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     setup_logging()
+    warn_if_private_key_invalid()
     retention_sweep.stop_requested.clear()
     # Separate tasks: unrelated concerns, each tolerating its own iteration errors.
     tasks = [

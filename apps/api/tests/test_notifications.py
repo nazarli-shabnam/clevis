@@ -387,7 +387,34 @@ def test_no_alert_when_either_scan_has_errored_checks(db, acme):
     _dest(db, org)
     _seed(db, org, 90, [_chk("a"), _chk("b")])
     assert _run_persist(db, org, _result(50, [_chk("a"), _chk("b", "error")])).call_count == 0
-    # an errored *previous* scan is not a trustworthy baseline either
+
+
+def test_drop_after_an_errored_scan_is_compared_with_the_last_clean_scan(db, acme):
+    org = acme["org"]
+    _dest(db, org)
+    clean = [_chk("a"), _chk("b")]
+    _seed(db, org, 90, clean)
+    # B: a GitHub hiccup errors a check and lowers the score; intended: no alert
+    assert _run_persist(db, org, _result(70, [_chk("a"), _chk("b", "error")])).call_count == 0
+    # C: clean again but really at 70; the baseline is A (90), not the errored B, so the drop is reported
+    assert _run_persist(db, org, _result(70, clean)).call_count == 1
+    # D: unchanged, now compared with the clean C (70): nothing new to report
+    assert _run_persist(db, org, _result(70, clean)).call_count == 0
+
+
+def test_malformed_stored_checks_are_skipped_as_baseline_without_failing_the_scan(db, acme):
+    org = acme["org"]
+    _dest(db, org)
+    clean = [_chk("a"), _chk("b")]
+    _seed(db, org, 90, clean)
+    _seed(db, org, 70, ["not-a-dict"])  # newest row has a non-dict check element
+    assert _run_persist(db, org, _result(70, clean)).call_count == 1  # baseline is the clean 90 row
+
+
+def test_no_alert_when_no_clean_baseline_exists(db, acme):
+    org = acme["org"]
+    _dest(db, org)
+    _seed(db, org, 90, [_chk("a"), _chk("b", "error")])
     assert _run_persist(db, org, _result(10, [_chk("a", "fail"), _chk("b", "fail")])).call_count == 0
 
 
