@@ -8,7 +8,10 @@ const installationsListMock = vi.fn();
 const installationsListForOrgMock = vi.fn();
 const securityMock = vi.fn();
 
-vi.mock("next/navigation", () => ({ useParams: () => ({}) }));
+vi.mock("next/navigation", () => ({
+  useParams: () => ({}),
+  useSearchParams: () => new URLSearchParams(window.location.search),
+}));
 
 const downloadTextFileMock = vi.fn();
 vi.mock("@/lib/download", () => ({
@@ -86,6 +89,7 @@ describe("ReposPage filters", () => {
     downloadTextFileMock.mockReset();
     mockIsWorkspaceAdmin = true;
     localStorage.clear();
+    window.history.replaceState(null, "", "/repos");
     tokensResolveMock.mockReset();
     tokensResolveMock.mockRejectedValue(new Error("no saved token"));
     reposListMock.mockReset();
@@ -248,6 +252,7 @@ describe("ReposPage filters", () => {
 describe("ReposPage auto-load", () => {
   beforeEach(() => {
     localStorage.clear();
+    window.history.replaceState(null, "", "/repos");
     tokensResolveMock.mockReset();
     tokensResolveMock.mockRejectedValue(new Error("no saved token"));
     reposListMock.mockReset();

@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { Suspense, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
+import { useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { EmptyStateNoAccount } from "@/components/empty-state"
@@ -27,12 +28,15 @@ import {
   hasActiveRepoFilters,
   repoCsvColumns,
   repoLanguages,
+  repoViewFromParams,
+  repoViewToParams,
   type ProtectionMap,
+  type RepoSort,
   type RepoFilters,
 } from "@/lib/repo-filters"
 import type { InstallationMeta, RepoSecurityResponse, RepoSummary } from "@/lib/api/types"
 
-type SortKey = "pushed" | "stars" | "name"
+type SortKey = RepoSort
 
 const PROTECTION_BATCH_SIZE = 10
 
@@ -218,7 +222,7 @@ function RepoRow({
   )
 }
 
-export default function ReposPage() {
+function ReposView() {
   // Saved tokens are workspace-admin only on the API; for anyone else the button could only 403.
   const canSaveToken = !!useAuth().user?.is_workspace_admin
   const queryClient = useQueryClient()
@@ -228,6 +232,29 @@ export default function ReposPage() {
   const [search, setSearch] = useState("")
   const [sort, setSort] = useState<SortKey>("pushed")
   const [filters, setFilters] = useState<RepoFilters>(NO_REPO_FILTERS)
+
+  // Search, sort and filters live in the query string so a view survives a refresh and can be shared. Read
+  // after mount (not during render) to avoid a hydration mismatch, then mirrored back with replaceState (no
+  // history entries). The query string is re-read whenever the search params change, so Back/Forward or a link
+  // to /repos moves the view too; a query this page wrote itself is skipped (`lastWritten`), so the lagging
+  // params update that follows our own replaceState can't overwrite newer state.
+  const [urlRestored, setUrlRestored] = useState(false)
+  const lastWritten = useRef<string | null>(null)
+  const urlQuery = useSearchParams()?.toString() ?? ""
+  useEffect(() => {
+    if (window.location.search.slice(1) === lastWritten.current) return
+    const view = repoViewFromParams(new URLSearchParams(window.location.search))
+    setSearch(view.search)
+    setSort(view.sort)
+    setFilters((f) => ({ ...view.filters, protection: f.protection }))
+    setUrlRestored(true)
+  }, [urlQuery])
+  useEffect(() => {
+    if (!urlRestored) return
+    const qs = repoViewToParams({ search, sort, filters }).toString()
+    lastWritten.current = qs
+    window.history.replaceState(null, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`)
+  }, [urlRestored, search, sort, filters])
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [protection, setProtection] = useState<ProtectionMap>(new Map())
   const [protectionProgress, setProtectionProgress] = useState<{ done: number; total: number } | null>(null)
@@ -691,5 +718,14 @@ export default function ReposPage() {
         )}
       </div>
     </>
+  )
+}
+
+// useSearchParams must sit under a Suspense boundary or static prerendering bails out.
+export default function ReposPage() {
+  return (
+    <Suspense fallback={null}>
+      <ReposView />
+    </Suspense>
   )
 }

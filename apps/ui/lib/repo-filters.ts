@@ -79,3 +79,47 @@ export function repoCsvColumns(protection: ProtectionMap, now: number = Date.now
     { header: "URL", value: (r) => r.html_url },
   ]
 }
+
+export type RepoSort = "pushed" | "stars" | "name"
+export const DEFAULT_REPO_SORT: RepoSort = "pushed"
+
+/** What the Repositories page keeps in the URL so a view can be bookmarked or shared. The protection filter
+ * is deliberately left out: it only has meaning after an on-demand, per-repo GitHub check, which a link
+ * can't carry. */
+export interface RepoView {
+  search: string
+  sort: RepoSort
+  filters: RepoFilters
+}
+
+/** The view as a query string, with defaults omitted so an unfiltered page keeps a clean URL. */
+export function repoViewToParams(view: RepoView): URLSearchParams {
+  const params = new URLSearchParams()
+  const { filters } = view
+  if (view.search) params.set("q", view.search)
+  if (view.sort !== DEFAULT_REPO_SORT) params.set("sort", view.sort)
+  if (filters.language) params.set("lang", filters.language)
+  if (filters.visibility !== "all") params.set("visibility", filters.visibility)
+  if (filters.status !== "all") params.set("status", filters.status)
+  if (filters.stale) params.set("stale", "1")
+  return params
+}
+
+/** Reads a view back from the query string; unknown or malformed values fall back to the defaults. */
+export function repoViewFromParams(params: URLSearchParams): RepoView {
+  const pick = <T extends string>(key: string, allowed: readonly T[], fallback: T): T => {
+    const value = params.get(key)
+    return allowed.includes(value as T) ? (value as T) : fallback
+  }
+  return {
+    search: params.get("q") ?? "",
+    sort: pick<RepoSort>("sort", ["pushed", "stars", "name"], DEFAULT_REPO_SORT),
+    filters: {
+      ...NO_REPO_FILTERS,
+      language: params.get("lang") ?? "",
+      visibility: pick<VisibilityFilter>("visibility", ["public", "private"], "all"),
+      status: pick<StatusFilter>("status", ["active", "archived"], "all"),
+      stale: params.get("stale") === "1",
+    },
+  }
+}

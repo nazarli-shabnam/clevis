@@ -12,6 +12,7 @@ const installationsListForOrgMock = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({}),
+  useSearchParams: () => new URLSearchParams(window.location.search),
 }));
 
 // Workspace admin by default (saved tokens are admin-only); member tests flip it.
@@ -55,6 +56,7 @@ describe("ReposPage", () => {
   beforeEach(() => {
     mockIsWorkspaceAdmin = true;
     localStorage.clear();
+    window.history.replaceState(null, "", "/repos");
     tokensResolveMock.mockReset();
     tokensUpsertMock.mockReset();
     reposListMock.mockReset();
