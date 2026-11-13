@@ -168,6 +168,15 @@ describe("WaiversCard", () => {
     await waitFor(() => expect(revokeMock).toHaveBeenCalledWith("acme", 1))
   })
 
+  it("keeps the waiver when the revoke confirmation is cancelled", async () => {
+    listMock.mockResolvedValue([waiver()])
+    renderCard()
+    fireEvent.click(await screen.findByRole("button", { name: /Revoke waiver for/ }))
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Cancel" }))
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument())
+    expect(revokeMock).not.toHaveBeenCalled()
+  })
+
   it("leaves edit mode when the waiver being edited is revoked", async () => {
     listMock.mockResolvedValue([waiver()])
     revokeMock.mockResolvedValue(undefined)
