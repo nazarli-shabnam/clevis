@@ -45,7 +45,8 @@ The repo uses `.gitattributes` so text files are stored with **LF**. On Windows,
 
 After `npm ci` at the **repository root**, Git uses Husky (`core.hooksPath` → `.husky/_`). Then:
 
-- **`pre-commit`** runs before the commit is recorded. It runs `bun run typecheck` in `apps/ui`. Install UI deps (`cd apps/ui && bun install --frozen-lockfile`) so this can succeed.
+- **`pre-commit`** runs before the commit is recorded. It runs `bun run typecheck && bun run lint && bun run build` in `apps/ui`, so every commit includes a full production Next.js build. Install UI deps (`cd apps/ui && bun install --frozen-lockfile`) so this can succeed.
+- **`pre-push`** runs before a push. It runs `bun run test && bun run build` in `apps/ui`, then `pytest -q` from the repo root. The Python tests hit a real Postgres, so start one first (`docker compose up db`, with `DB_*` / `DATABASE_URL` set); see [AGENTS.md](AGENTS.md) (Running locally and Commands).
 - **`commit-msg`** runs **immediately after** you supply a message—whether from `git commit -m "your subject"` or from the editor. It runs the same [Commitlint](https://commitlint.js.org/) rules as CI ([Conventional Commits](https://www.conventionalcommits.org/) via `@commitlint/config-conventional`), with **`--verbose`** output like the workflow.
 
 If Commitlint fails, **Git does not create the commit**. You will see the errors in your terminal; fix the message and run `git commit` again (no need to wait for CI to discover the problem).
