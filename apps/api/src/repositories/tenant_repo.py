@@ -109,6 +109,17 @@ def get_membership(
     return query.first()
 
 
+def count_admins_locked(db: Session, tenant_id: int) -> int:
+    """Admins of the tenant (any source), their rows locked until the transaction ends so two concurrent
+    removals or demotions cannot both see a spare admin."""
+    return len(
+        db.query(Membership.id)
+        .filter(Membership.tenant_id == tenant_id, Membership.role == "admin")
+        .with_for_update()
+        .all()
+    )
+
+
 def list_org_memberships_for_user(db: Session, user_id: int) -> list[tuple[Org, Membership]]:
     """All of a user's org-tenant memberships, joined back to each Org row -- for callers
     that need to enumerate a user's orgs rather than check one specific org."""
