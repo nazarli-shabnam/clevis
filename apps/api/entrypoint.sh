@@ -6,6 +6,12 @@ if [ -z "$DB_USER" ] || [ -z "$DB_NAME" ] || [ -z "$DB_PASSWORD" ] || [ -z "$JOB
   exit 1
 fi
 
+# Keep in step with AUTH_SECRET_MIN_LENGTH in src/core/config.py.
+if [ "${#AUTH_SECRET}" -lt 32 ]; then
+  echo "ERROR: AUTH_SECRET must be at least 32 characters (generate one with: openssl rand -hex 32)" >&2
+  exit 1
+fi
+
 # Percent-encodes so URI delimiters in the value (@, :, /, %, #, ...) aren't
 # misparsed as part of the connection URL's structure.
 _urlenc() {

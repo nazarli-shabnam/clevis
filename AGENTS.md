@@ -94,7 +94,7 @@ Key variables:
 - `DB_USER`, `DB_PASSWORD`, `DB_NAME` — Postgres credentials. Docker Compose maps these to `POSTGRES_USER/PASSWORD/DB` for the db container; entrypoints construct `DATABASE_URL` from them (host = `db`).
 - `DATABASE_URL` — local dev only (outside Docker); format: `postgresql+psycopg://<user>:<pass>@localhost:5432/<db>`.
 - `JOB_SECRET_KEY` — Fernet key for token encryption; generate with `openssl rand -hex 32`
-- `AUTH_SECRET` — JWT signing secret; generate with `openssl rand -hex 32`
+- `AUTH_SECRET` — JWT signing secret; generate with `openssl rand -hex 32`. Must be at least 32 characters: `Settings` (`apps/api/src/core/config.py`) and `apps/api/entrypoint.sh` both reject a shorter value at startup.
 - `REDIS_PASSWORD` — the webhook ingestion queue's (Redis Streams) credential. Auths the `redis` Compose service (`--requirepass`, so any other container on the shared network can't read/inject stream entries); `apps/api/entrypoint.sh` builds `REDIS_URL` from it, same pattern as `DB_USER`/`DB_PASSWORD`/`DB_NAME` → `DATABASE_URL`. `REDIS_URL` itself is local-dev-only (outside Docker), same as `DATABASE_URL`.
 - `API_PORT` / `UI_PORT` — `8080` / `3000`
 
