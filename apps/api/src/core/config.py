@@ -60,5 +60,15 @@ class Settings(BaseSettings):
             raise ValueError(AUTH_SECRET_TOO_SHORT)
         return v
 
+    @field_validator("github_app_private_key")
+    @classmethod
+    def _unescape_private_key_newlines(cls, v: SecretStr | None) -> SecretStr | None:
+        # A PEM can't span several lines in an env file, so it is supplied on one line with a literal
+        # backslash-n between the lines (and some platforms hand it over that way even when quoted).
+        # Restore the real newlines.
+        if v is None:
+            return v
+        return SecretStr(v.get_secret_value().strip().replace("\\n", "\n"))
+
 
 settings = Settings()
