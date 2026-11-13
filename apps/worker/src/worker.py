@@ -589,7 +589,8 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
                 # outside from a missing list would be wrong, so leave the flags as they are.
                 if roster["outside_logins"] is not None:
                     org_membership_store.reconcile_repo_collaborator_outside_status(
-                        cur, tenant_id=payload.tenant_id, member_logins=member_logins, outside_logins=roster["outside_logins"]
+                        cur, tenant_id=payload.tenant_id, member_logins=member_logins, outside_logins=roster["outside_logins"],
+                        synced_at=synced_at,
                     )
                 # Upserted in the same transaction so a rollback doesn't advance the cursor.
                 cur.execute(

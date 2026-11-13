@@ -216,16 +216,25 @@ def reconcile_org_members(cur: psycopg.Cursor, *, tenant_id: int, members: list[
 
 
 def reconcile_repo_collaborator_outside_status(
-    cur: psycopg.Cursor, *, tenant_id: int, member_logins: set[str], outside_logins: set[str]
+    cur: psycopg.Cursor, *, tenant_id: int, member_logins: set[str], outside_logins: set[str], synced_at: datetime
 ) -> None:
-    """Fill in is_outside_collaborator on existing repo_collaborators rows.
+    """Fill in is_outside_collaborator on existing repo_collaborators rows, and drop rows for logins that are
+    neither an org member nor an outside collaborator (a missed `member` removed webhook would otherwise keep
+    their old permission, e.g. an outside admin, forever).
 
     Same heuristic as collab.py's permission_audit: outside iff not an org member or in
-    outside_logins. Two-step UPDATE (mark all outside, then correct members). Never creates rows."""
+    outside_logins. Two-step UPDATE (mark all outside, then correct members). Never creates rows. The delete
+    spares rows granted at or after `synced_at`: a grant webhook processed since the roster was read is newer
+    than it."""
     if not member_logins:
         # An empty roster is never legitimate; bail before the unconditional UPDATE marks
         # everyone outside.
         return
+    cur.execute(
+        "DELETE FROM repo_collaborators WHERE tenant_id = %(tenant_id)s AND granted_at < %(synced_at)s "
+        "AND NOT (login = ANY(%(logins)s))",
+        {"tenant_id": tenant_id, "synced_at": synced_at, "logins": list(member_logins | outside_logins)},
+    )
     cur.execute(
         "UPDATE repo_collaborators SET is_outside_collaborator = TRUE WHERE tenant_id = %(tenant_id)s",
         {"tenant_id": tenant_id},

@@ -567,6 +567,41 @@ def test_handler_backfills_is_outside_collaborator_on_existing_repo_collaborator
     assert rows == [("contractor", True), ("direct-member", False)]
 
 
+def test_handler_prunes_collaborators_that_are_neither_members_nor_outside_but_spares_newer_grants(pg_conn, tenant_id):
+    from datetime import timedelta
+
+    repo = f"acme/prune-{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
+    with pg_conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        cur.execute(
+            "INSERT INTO repo_collaborators (tenant_id, repo, login, permission, source, is_outside_collaborator, granted_at) "
+            "VALUES (%s, %s, 'prune-member', 'push', 'direct', NULL, %s), "
+            "(%s, %s, 'prune-contractor', 'push', 'direct', NULL, %s), "
+            "(%s, %s, 'prune-ghost', 'admin', 'direct', TRUE, %s), "
+            "(%s, %s, 'prune-just-granted', 'admin', 'direct', NULL, %s)",
+            (
+                tenant_id, repo, now - timedelta(hours=1),
+                tenant_id, repo, now - timedelta(hours=1),
+                tenant_id, repo, now - timedelta(hours=1),  # removal webhook missed
+                tenant_id, repo, now + timedelta(hours=1),  # granted after the roster snapshot
+            ),
+        )
+    roster = {
+        "members": [{"login": "prune-member", "avatar_url": "a", "role": "member"}],
+        "two_factor_disabled_logins": set(),
+        "outside_logins": {"prune-contractor"},
+    }
+
+    with patch("worker.membership_reconcile.fetch_org_roster", return_value=roster), patch("worker.httpx.Client"):
+        worker._handle_reconcile_org_membership(pg_conn, 140, _payload_for(tenant_id, "prune-org"), 0)
+
+    with pg_conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        cur.execute("SELECT login FROM repo_collaborators WHERE tenant_id = %s AND repo = %s ORDER BY login", (tenant_id, repo))
+        assert [r[0] for r in cur.fetchall()] == ["prune-contractor", "prune-just-granted", "prune-member"]
+
+
 def test_handler_preserves_two_factor_enabled_when_the_overlay_is_unavailable(pg_conn, tenant_id):
     first = {
         "members": [{"login": "reconcile-2fa", "avatar_url": "a", "role": "member"}],
