@@ -824,6 +824,8 @@ export interface RunSummary {
   head_branch: string
   created_at: string
   duration_ms: number | null
+  /** The run's page on GitHub. */
+  html_url?: string | null
 }
 
 export interface RunsResponse {

@@ -103,6 +103,7 @@ def _list_runs(owner: str, repo: str, token: str, per_page: int) -> RunsResponse
             head_branch=r.get("head_branch", ""),
             created_at=r["created_at"],
             duration_ms=_run_duration_ms(r),
+            html_url=r.get("html_url"),
         )
         for r in data.get("workflow_runs", [])
     ]
