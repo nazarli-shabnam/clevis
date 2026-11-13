@@ -15,7 +15,7 @@ from sqlalchemy import text
 
 from src.core.auth import UserOut, require_auth
 from src.core.config import settings
-from src.core.db import AuditLog, NotificationDestination, User, get_db
+from src.core.db import AuditLog, NotificationDestination, ScanResult, User, get_db
 from src.repositories import notification_repo, org_membership_repo, org_repo
 from src.repositories import scan_results_repo
 from src.services.scan_service import notify_score_drop_best_effort as _notify_score_drop_best_effort
@@ -367,6 +367,17 @@ def test_baseline_matches_owner_case_insensitively(db, acme):
     _dest(db, org)
     checks = [_chk("a"), _chk("b")]
     _seed(db, org, 90, checks, owner="ACME")  # stored by a scan typed in another casing
+    assert _run_persist(db, org, _result(70, checks)).call_count == 1
+
+
+@pytest.mark.parametrize("blob", ["{not json", '{"a": 1}', ""])
+def test_unparseable_newest_scan_is_no_baseline_so_the_older_clean_one_is_used(db, acme, blob):
+    org = acme["org"]
+    _dest(db, org)
+    checks = [_chk("a"), _chk("b")]
+    _seed(db, org, 90, checks)
+    db.add(ScanResult(owner="acme", score=95, total_checks=2, failed_checks=0, checks_json=blob, tenant_id=org.tenant_id))
+    db.flush()
     assert _run_persist(db, org, _result(70, checks)).call_count == 1
 
 

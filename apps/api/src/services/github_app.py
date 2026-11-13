@@ -252,6 +252,15 @@ def credentials_configured() -> bool:
 _SLUG_TTL_SECONDS = 3600
 _SLUG_MISS_TTL_SECONDS = 60
 _slug_cache: tuple[str | None, float] | None = None  # (slug, monotonic expiry)
+# Serialises the GET /app lookup itself (not just the cache value) so concurrent misses share one call.
+# Separate from _lock, which must never be held across an HTTP request.
+_slug_lookup_lock = threading.Lock()
+
+
+def _fresh_cached_slug() -> tuple[str | None] | None:
+    with _lock:
+        cached = _slug_cache
+    return (cached[0],) if cached is not None and time.monotonic() < cached[1] else None
 
 
 def get_app_slug() -> str | None:
@@ -263,27 +272,30 @@ def get_app_slug() -> str | None:
         return settings.github_app_slug
     if not credentials_configured():
         return None
-    with _lock:
-        cached = _slug_cache
-    if cached is not None and time.monotonic() < cached[1]:
-        return cached[0]
-    slug: str | None = None
-    try:
-        headers = {
-            "Authorization": f"Bearer {generate_app_jwt()}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
-        with httpx.Client(timeout=5) as client:
-            resp = client.get(f"{settings.github_api_base}/app", headers=headers)
-        resp.raise_for_status()
-        slug = resp.json().get("slug") or None
-    except (httpx.HTTPError, ValueError, jwt.PyJWTError, GitHubAppNotConfigured):
-        logger.warning("could not read the GitHub App slug from GitHub", exc_info=True)
-    ttl = _SLUG_TTL_SECONDS if slug else _SLUG_MISS_TTL_SECONDS
-    with _lock:
-        _slug_cache = (slug, time.monotonic() + ttl)
-    return slug
+    if (hit := _fresh_cached_slug()) is not None:
+        return hit[0]
+    with _slug_lookup_lock:
+        # A peer may have filled (or negative-cached) the slug while this thread waited.
+        if (hit := _fresh_cached_slug()) is not None:
+            return hit[0]
+        slug: str | None = None
+        try:
+            headers = {
+                "Authorization": f"Bearer {generate_app_jwt()}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            }
+            with httpx.Client(timeout=5) as client:
+                resp = client.get(f"{settings.github_api_base}/app", headers=headers)
+            resp.raise_for_status()
+            slug = resp.json().get("slug") or None
+        # TypeError: an encrypted PEM (jwt loads the key without a password).
+        except (httpx.HTTPError, ValueError, TypeError, jwt.PyJWTError, GitHubAppNotConfigured):
+            logger.warning("could not read the GitHub App slug from GitHub", exc_info=True)
+        ttl = _SLUG_TTL_SECONDS if slug else _SLUG_MISS_TTL_SECONDS
+        with _lock:
+            _slug_cache = (slug, time.monotonic() + ttl)
+        return slug
 
 
 def clear_cache() -> None:

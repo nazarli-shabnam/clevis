@@ -188,6 +188,29 @@ def test_a_partial_smtp_failure_is_retried_for_the_failed_recipient_only(db):
     third.assert_not_called()  # the period is closed
 
 
+def test_tenant_context_is_reapplied_after_each_recipient_commit(db):
+    org = _seed_org_with_scan(db, "digest-sweep-rls-ctx")
+    _admin(db, org.tenant_id, "a-admin@e.com")
+    _admin(db, org.tenant_id, "b-admin@e.com")
+    events = []
+    real_acquire = digest_sweep.try_acquire_sweep_slot
+
+    def acquire(*a, **k):
+        events.append("acquire")
+        return real_acquire(*a, **k)
+
+    with (
+        patch("src.services.digest_sweep.try_acquire_sweep_slot", side_effect=acquire),
+        patch("src.services.digest_sweep.set_session_tenant", side_effect=lambda *a, **k: events.append("tenant")),
+    ):
+        _run(db)
+
+    # every re-acquired slot (all but the initial one) is followed by the tenant context before state is re-read
+    assert events[:2] == ["tenant", "acquire"]
+    assert all(events[i + 1] == "tenant" for i, e in enumerate(events) if e == "acquire" and i > 1)
+    assert events.count("acquire") >= 3
+
+
 def test_a_recipient_that_keeps_failing_is_given_up_on_for_the_period(db):
     org = _seed_org_with_scan(db, "digest-sweep-giveup")
     _admin(db, org.tenant_id, "bad-mailbox@e.com")

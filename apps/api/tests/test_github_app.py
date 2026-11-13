@@ -338,6 +338,39 @@ def test_app_slug_failure_is_none_and_briefly_cached(app_configured, monkeypatch
         assert github_app.get_app_slug() is None
     assert mock_client.get.call_count == 1
 
+def test_app_slug_encrypted_key_typeerror_is_none_and_cached(app_configured, monkeypatch):
+    monkeypatch.setattr(settings, "github_app_slug", None)
+    calls = []
+
+    def boom():
+        calls.append(1)
+        raise TypeError("Password was not given but private key is encrypted")
+
+    monkeypatch.setattr(github_app, "generate_app_jwt", boom)
+    assert github_app.get_app_slug() is None
+    assert github_app.get_app_slug() is None
+    assert len(calls) == 1
+
+
+def test_concurrent_slug_misses_share_one_lookup(app_configured, monkeypatch):
+    import threading
+    import time as _time
+
+    monkeypatch.setattr(settings, "github_app_slug", None)
+    with patch("src.services.github_app.httpx.Client") as mock_cls:
+        mock_client = _mock_get_client(_slug_response("clevis-app"))
+        mock_client.get.side_effect = lambda *a, **k: (_time.sleep(0.2), _slug_response("clevis-app"))[1]
+        mock_cls.return_value = mock_client
+        results = []
+        threads = [threading.Thread(target=lambda: results.append(github_app.get_app_slug())) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    assert results == ["clevis-app"] * 5
+    assert mock_client.get.call_count == 1
+
+
 # --- private-key format (issue #1032) ---
 
 def _settings_with_key(key: str) -> Settings:

@@ -159,6 +159,9 @@ def _deliver(db, tenant_id, org_login, cadence, interval_days, recipients, conte
         )
         if not try_acquire_sweep_slot(db, _SWEEP_KEY, tenant_id):
             return
+        # The commit released the connection; the retaken one may be another pooled connection without
+        # this tenant's RLS context, which would hide the audit rows the next round reads.
+        set_session_tenant(db, tenant_id)
 
 
 def run_digest_sweep(db: Session) -> None:

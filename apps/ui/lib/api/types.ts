@@ -217,6 +217,7 @@ export interface OrgMembership {
 /** GET /orgs/{org}/ingestion-health: whether GitHub data is reaching Clevis. */
 export interface IngestionHealth {
   has_deliveries: boolean
+  has_webhook_deliveries: boolean
   last_received_at: string | null
   last_processed_at: string | null
   window_hours: number

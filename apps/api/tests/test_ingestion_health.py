@@ -59,7 +59,7 @@ def _delivery(db, tenant_id, status: str, age: timedelta):
 def test_a_tenant_that_never_received_a_delivery_says_so(db, org, admin):
     body = _client(db, admin).get("/orgs/acme/ingestion-health").json()
 
-    assert body["has_deliveries"] is False
+    assert body["has_deliveries"] is False and body["has_webhook_deliveries"] is False
     assert body["last_received_at"] is None and body["last_processed_at"] is None
     assert body["received"] == 0 and body["last_backfill_at"] is None and body["last_membership_reconcile_at"] is None
 
@@ -94,6 +94,7 @@ def test_a_quiet_org_whose_deliveries_were_purged_is_not_reported_as_never_recei
     body = _client(db, admin).get("/orgs/acme/ingestion-health").json()
 
     assert body["has_deliveries"] is True
+    assert body["has_webhook_deliveries"] is False  # rollup-only: not evidence the webhook works
     assert datetime.fromisoformat(body["last_received_at"]).date() == last_active
     assert body["received"] == 0 and body["last_processed_at"] is None
 

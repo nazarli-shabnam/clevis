@@ -10,6 +10,7 @@ import { IngestionHealthCard } from "@/components/ingestion-health-card"
 const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
 const health = (over: Record<string, unknown> = {}) => ({
   has_deliveries: true,
+  has_webhook_deliveries: true,
   last_received_at: ago(5 * 60_000),
   last_processed_at: ago(6 * 60_000),
   window_hours: 24,
@@ -49,13 +50,23 @@ describe("IngestionHealthCard", () => {
 
   it("hints that the webhook may not be configured when nothing has ever arrived", async () => {
     healthMock.mockResolvedValue(
-      health({ has_deliveries: false, last_received_at: null, last_processed_at: null, received: 0, pending: 0, last_backfill_at: null, last_membership_reconcile_at: null }),
+      health({ has_deliveries: false, has_webhook_deliveries: false, last_received_at: null, last_processed_at: null, received: 0, pending: 0, last_backfill_at: null, last_membership_reconcile_at: null }),
     )
     renderCard()
 
     expect(await screen.findByText(/No webhook delivery has ever arrived/)).toBeInTheDocument()
     expect(screen.getByText(/webhook URL and secret/)).toBeInTheDocument()
     expect(screen.getAllByText("never").length).toBeGreaterThanOrEqual(2)
+  })
+
+  it("does not call rollup-only activity a webhook delivery", async () => {
+    healthMock.mockResolvedValue(health({ has_webhook_deliveries: false }))
+    renderCard()
+
+    expect(await screen.findByText(/no webhook delivery is on record/)).toBeInTheDocument()
+    expect(screen.getByText("Last event data")).toBeInTheDocument()
+    expect(screen.queryByText("Last webhook received")).not.toBeInTheDocument()
+    expect(screen.queryByText("Webhook deliveries are arriving and being processed.")).not.toBeInTheDocument()
   })
 
   it("warns when deliveries were lost in the window", async () => {

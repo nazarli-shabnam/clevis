@@ -25,6 +25,9 @@ class IngestionHealth(BaseModel):
     # quiet org's old deliveries) an event in the permanent daily rollup. False is the "webhook URL or secret
     # not configured?" case.
     has_deliveries: bool
+    # Whether a webhook delivery row is stored for this org. False with has_deliveries true means the data
+    # came from backfill, or the quiet org's old deliveries were purged: not evidence the webhook works.
+    has_webhook_deliveries: bool
     # Newest delivery, else the start of the newest day with a recorded event (day precision, and it also
     # covers backfilled events, so it is a "data arrived" signal rather than strictly a webhook one).
     last_received_at: datetime | None
@@ -74,6 +77,7 @@ def ingestion_health(
     )
     return IngestionHealth(
         has_deliveries=total > 0 or last_received is not None,
+        has_webhook_deliveries=total > 0,
         last_received_at=last_received,
         last_processed_at=last_processed,
         window_hours=int(_WINDOW.total_seconds() // 3600),

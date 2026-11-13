@@ -121,6 +121,7 @@ def _with_checks(row: ScanResult) -> dict:
         "failed_checks": row.failed_checks,
         "scanned_at": row.created_at.isoformat() if row.created_at else None,
         "checks": _parse_checks(row.checks_json),
+        "checks_parseable": _parse_checks_strict(row.checks_json) is not None,
     }
 
 
@@ -128,9 +129,11 @@ def has_errored_check(checks: list[dict]) -> bool:
     return any(c.get("status") == "error" for c in checks)
 
 
-def is_clean_baseline(checks: list) -> bool:
-    """Well-formed (history has no shape guarantee: a non-dict element is malformed) and nothing errored."""
-    return all(isinstance(c, dict) for c in checks) and not has_errored_check(checks)
+def is_clean_baseline(scan: dict) -> bool:
+    """A ``_with_checks`` scan whose stored blob parsed to a list (history has no shape guarantee: invalid or
+    non-list JSON is no baseline), of dicts only, with nothing errored."""
+    checks = scan["checks"]
+    return scan["checks_parseable"] and all(isinstance(c, dict) for c in checks) and not has_errored_check(checks)
 
 
 def _newest_with_checks(db: Session, *criteria) -> dict | None:
@@ -155,7 +158,7 @@ def latest_without_errors(db: Session, owner: str, tenant_id: int, scan_limit: i
         .order_by(ScanResult.created_at.desc(), ScanResult.id.desc())
         .limit(scan_limit)
     )
-    return next((scan for scan in map(_with_checks, rows) if is_clean_baseline(scan["checks"])), None)
+    return next((scan for scan in map(_with_checks, rows) if is_clean_baseline(scan)), None)
 
 
 def latest_for_org(db: Session, owner: str, org_tenant_id: int) -> dict | None:
@@ -164,17 +167,23 @@ def latest_for_org(db: Session, owner: str, org_tenant_id: int) -> dict | None:
     return _newest_with_checks(db, org_scope_filter(owner, org_tenant_id))
 
 
+def _parse_checks_strict(checks_json: str | None) -> list | None:
+    """The stored blob as a list, or None when it is empty, invalid JSON, or not a list."""
+    if not checks_json:
+        return None
+    try:
+        parsed = json.loads(checks_json)
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, list) else None
+
+
 def _parse_checks(checks_json: str | None) -> list[dict]:
     """Best-effort parse of a stored ``checks_json`` blob; unparseable rows yield an empty list.
 
     Historical data has no shape guarantee, and one bad row must not 500 the whole export."""
-    if not checks_json:
-        return []
-    try:
-        parsed = json.loads(checks_json)
-    except ValueError:
-        return []
-    return parsed if isinstance(parsed, list) else []
+    parsed = _parse_checks_strict(checks_json)
+    return [] if parsed is None else parsed
 
 
 def list_for_export(
