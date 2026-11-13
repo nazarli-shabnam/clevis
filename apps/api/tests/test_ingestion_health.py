@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.core.auth import UserOut, require_auth
-from src.core.db import ActivitySyncCursor, OrgMembershipSyncCursor, User, WebhookDelivery, get_db, set_session_user
+from src.core.db import ActivitySyncCursor, OrgMembershipSyncCursor, RepoEventDailyCount, User, WebhookDelivery, get_db, set_session_user
 from src.repositories import org_membership_repo, org_repo
 from src.routers.ingestion_health import router
 
@@ -82,6 +82,28 @@ def test_summarises_the_last_24_hours_by_outcome(db, org, admin):
     assert body["last_received_at"] > body["last_processed_at"]  # the newest delivery is the pending one
     age = datetime.now(timezone.utc) - datetime.fromisoformat(body["last_processed_at"])
     assert timedelta(minutes=55) < age < timedelta(minutes=65)
+
+
+def test_a_quiet_org_whose_deliveries_were_purged_is_not_reported_as_never_received(db, org, admin):
+    # Retention deleted the old deliveries, but the permanent daily rollup still records the org's last activity.
+    last_active = (datetime.now(timezone.utc) - timedelta(days=45)).date()
+    db.add(RepoEventDailyCount(tenant_id=org.tenant_id, repo="acme/api", event_type="push", day=last_active, count=3))
+    db.add(RepoEventDailyCount(tenant_id=org.tenant_id, repo="acme/web", event_type="push", day=last_active - timedelta(days=9), count=1))
+    db.commit()
+
+    body = _client(db, admin).get("/orgs/acme/ingestion-health").json()
+
+    assert body["has_deliveries"] is True
+    assert datetime.fromisoformat(body["last_received_at"]).date() == last_active
+    assert body["received"] == 0 and body["last_processed_at"] is None
+
+
+def test_another_tenants_rollup_does_not_count(db, org, admin):
+    other = org_repo.get_or_create(db, github_login="other-org")
+    db.add(RepoEventDailyCount(tenant_id=other.tenant_id, repo="other-org/x", event_type="push", day=datetime.now(timezone.utc).date(), count=1))
+    db.commit()
+
+    assert _client(db, admin).get("/orgs/acme/ingestion-health").json()["has_deliveries"] is False
 
 
 def test_reports_the_sync_cursors(db, org, admin):
