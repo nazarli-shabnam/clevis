@@ -191,12 +191,14 @@ def revoke_invitation(
     if invitation.status != "pending":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Invitation is not pending")
     invitation.status = "revoked"
-    db.commit()
-    db.refresh(invitation)
+    # The revoke and its audit row commit together: a failure between two commits would leave a revoked
+    # invitation with no audit trail.
     audit_repo.write(
         db, user.email, "invitation.revoke", ctx.org.github_login, {"email": invitation.email},
-        tenant_id=ctx.org.tenant_id,
+        tenant_id=ctx.org.tenant_id, commit=False,
     )
+    db.commit()
+    db.refresh(invitation)
     return invitation
 
 
@@ -324,11 +326,14 @@ def accept_invitation(
     role = membership.role
     invitation.status = "accepted"
     invitation.accepted_at = datetime.now(timezone.utc)
-    db.commit()
 
     org = db.query(Org).filter(Org.id == invitation.org_id).first()
+    org_login = org.github_login  # read before the commit expires the row
+    # The membership, the accepted status and the audit row commit together, so a failed audit write can't
+    # leave a new member that nothing retries.
     audit_repo.write(
-        db, user.email, "invitation.accept", org.github_login, {"role": role},
-        tenant_id=org.tenant_id,
+        db, user.email, "invitation.accept", org_login, {"role": role},
+        tenant_id=org.tenant_id, commit=False,
     )
-    return {"org_login": org.github_login, "role": role}
+    db.commit()
+    return {"org_login": org_login, "role": role}

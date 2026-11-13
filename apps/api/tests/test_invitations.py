@@ -316,6 +316,35 @@ def test_accept_defers_the_membership_commit_to_the_status_change(db, acme_org):
     assert spy.call_args.kwargs["commit"] is False
 
 
+def test_a_failed_audit_write_rolls_back_the_revoke(db, acme_org):
+    from src.core.db import Invitation
+    from src.repositories import audit_repo
+
+    created = _client(db, acme_org["admin"]).post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+    invitation_id = created["invitation"]["id"]
+
+    with patch.object(audit_repo, "write", side_effect=RuntimeError("audit down")), pytest.raises(RuntimeError):
+        _client(db, acme_org["admin"]).post(f"/orgs/acme/invitations/{invitation_id}/revoke")
+    db.rollback()  # what the request's session teardown does
+
+    assert db.query(Invitation).filter(Invitation.id == invitation_id).one().status == "pending"
+
+
+def test_a_failed_audit_write_rolls_back_the_accept(db, acme_org):
+    from src.core.db import Invitation
+    from src.repositories import audit_repo
+
+    created = _client(db, acme_org["admin"]).post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+    token = created["invite_link"].rsplit("/", 1)[-1]
+
+    with patch.object(audit_repo, "write", side_effect=RuntimeError("audit down")), pytest.raises(RuntimeError):
+        _client(db, acme_org["invitee"]).post(f"/invitations/{token}/accept")
+    db.rollback()
+
+    assert db.query(Invitation).filter(Invitation.id == created["invitation"]["id"]).one().status == "pending"
+    assert org_membership_repo.get(db, acme_org["org"].id, acme_org["invitee"].id) is None
+
+
 def _expire_invitation(db, invitation_id: int) -> None:
     from src.core.db import Invitation
 
