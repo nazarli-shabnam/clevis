@@ -220,6 +220,44 @@ def test_a_complete_listing_closes_stored_open_alerts_it_no_longer_contains(pg_c
     assert _state(pg_conn, tenant_id, 1) == "open"  # still listed
 
 
+def _insert_alert_in(conn, tenant_id, repo, number):
+    with conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        cur.execute(
+            "INSERT INTO security_alerts (tenant_id, repo, kind, number, state, severity, created_at, updated_at, ingested_at) "
+            "VALUES (%s, %s, 'dependabot', %s, 'open', 'critical', now(), now(), now() - interval '1 day')",
+            (tenant_id, repo, number),
+        )
+    conn.commit()
+
+
+def _state_in(conn, tenant_id, repo, number):
+    with conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        cur.execute("SELECT state FROM security_alerts WHERE tenant_id = %s AND repo = %s AND number = %s", (tenant_id, repo, number))
+        return cur.fetchone()[0]
+
+
+def test_open_alerts_of_a_repo_that_left_the_listing_are_closed_but_other_accounts_are_not(pg_conn, tenant_id):
+    _insert_alert_in(pg_conn, tenant_id, "acme/old-name", 5)  # renamed away: no longer listed
+    _insert_alert_in(pg_conn, tenant_id, "other/elsewhere", 6)  # another account's repo on the same tenant
+
+    _run(pg_conn, _Client(_routes()), tenant_id)
+
+    assert _state_in(pg_conn, tenant_id, "acme/old-name", 5) == "fixed"
+    assert _state_in(pg_conn, tenant_id, "other/elsewhere", 6) == "open"
+    assert _state_in(pg_conn, tenant_id, "acme/api", 1) == "open"  # still listed
+
+
+def test_a_repo_listing_cut_off_at_the_cap_closes_nothing(pg_conn, tenant_id, monkeypatch):
+    _insert_alert_in(pg_conn, tenant_id, "acme/old-name", 5)
+    monkeypatch.setattr(sab, "_MAX_REPOS", 2)  # the two listed repos fill the cap, so more may exist
+
+    _run(pg_conn, _Client(_routes()), tenant_id)
+
+    assert _state_in(pg_conn, tenant_id, "acme/old-name", 5) == "open"
+
+
 def test_a_list_that_could_not_be_read_closes_nothing(pg_conn, tenant_id):
     _insert_open_alert(pg_conn, tenant_id, 99, "now() - interval '1 day'")
     routes = _routes(**{"acme/api/dependabot/alerts": _Resp({}, status_code=403)})  # unreadable: not a complete listing
