@@ -89,6 +89,7 @@ def run_nudge_sweep(
     mode: str,
     now: datetime | None = None,
     dry_run: bool = False,
+    only_prs: frozenset[int] | None = None,
 ) -> list[NudgeResult]:
     """List open PRs in ``{owner}/{repo}`` and nudge the stale ones.
 
@@ -100,6 +101,9 @@ def run_nudge_sweep(
     ``dry_run`` reads exactly what a real run reads (open PRs and, in comment mode, each stale PR's comments, so
     the per-sweep cap and already-nudged rules apply identically) but posts nothing: the PRs a real run would
     act on come back as ``"would-comment"`` / ``"would-label"``.
+
+    ``only_prs`` restricts the sweep to those PR numbers (what a preview showed): every other PR is ignored, so a
+    run can never touch one that was not previewed. Eligibility is still re-checked for the ones listed.
     """
     if mode == "off":
         return []
@@ -115,6 +119,9 @@ def run_nudge_sweep(
         f"/repos/{owner}/{repo}/pulls",
         params={"state": "open", "sort": "created", "direction": "asc"},
     )
+
+    if only_prs is not None:
+        prs = [pr for pr in prs if pr["number"] in only_prs]
 
     results: list[NudgeResult] = []
     acted = 0

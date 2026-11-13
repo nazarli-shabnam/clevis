@@ -304,17 +304,29 @@ export default function PullRequestsPage() {
   // Nudging posts public comments on teammates' PRs, so it is two steps: a dry-run preview lists exactly which
   // PRs would be touched, and only confirming that list sends the real run.
   const [nudgeMsg, setNudgeMsg] = useState<string | null>(null)
-  const [panel, setPanel] = useState<{ kind: "preview" | "done"; outcome: SweepOutcome } | null>(null)
+  // The panel remembers the organization it was produced for: the page stays mounted across a scope switch,
+  // and a preview (or a late result) for one org must never be shown or confirmed under another.
+  const [panel, setPanel] = useState<{ org: string; kind: "preview" | "done"; outcome: SweepOutcome } | null>(null)
+  useEffect(() => {
+    setPanel(null)
+    setNudgeMsg(null)
+  }, [org])
 
-  async function sweepAll(dryRun: boolean): Promise<SweepOutcome> {
+  // A real run is limited to the PRs the user was shown: `approved` (the preview's would-... rows) picks the
+  // repositories to call and, per repository, the PR numbers the server may act on.
+  async function sweepAll(dryRun: boolean, approved?: NudgedPr[]): Promise<SweepOutcome> {
     const prs: NudgedPr[] = []
     const failed: { repo: string; reason: string }[] = []
     let sawPermissionError = false
-    for (let i = 0; i < repoNames.length; i += REPO_BATCH_SIZE) {
-      const batch = repoNames.slice(i, i + REPO_BATCH_SIZE)
+    const targets = approved ? [...new Set(approved.map((p) => p.repo))] : repoNames
+    for (let i = 0; i < targets.length; i += REPO_BATCH_SIZE) {
+      const batch = targets.slice(i, i + REPO_BATCH_SIZE)
       const batches = await Promise.all(
         batch.map((repo) =>
-          (dryRun ? api.prNudges.sweep(org, org, repo, token, true) : api.prNudges.sweep(org, org, repo, token))
+          (dryRun
+            ? api.prNudges.sweep(org, org, repo, token, true)
+            : api.prNudges.sweep(org, org, repo, token, false, approved?.filter((p) => p.repo === repo).map((p) => p.number))
+          )
             .then((r) => {
               // The API stops a repository's sweep at a GitHub error after some PRs were handled.
               if (r.results.some((x) => x.action === "error")) {
@@ -336,7 +348,7 @@ export default function PullRequestsPage() {
     }
     // Actions that already happened are shown even when every repo stopped early: dropping them would hide
     // comments that were really posted.
-    if (failed.length === repoNames.length && repoNames.length > 0 && prs.length === 0) {
+    if (failed.length === targets.length && targets.length > 0 && prs.length === 0) {
       // Every repo failed — lead with the most likely cause when it's a permission
       // error, otherwise report the failure plainly rather than guessing.
       const detail = failed.map((f) => `${f.repo}: ${f.reason}`).join("; ")
@@ -350,13 +362,13 @@ export default function PullRequestsPage() {
   }
 
   const preview = useMutation({
-    mutationFn: () => sweepAll(true),
-    onSuccess: (outcome) => setPanel({ kind: "preview", outcome }),
+    mutationFn: async () => ({ org, outcome: await sweepAll(true) }),
+    onSuccess: ({ org: forOrg, outcome }) => setPanel({ org: forOrg, kind: "preview", outcome }),
     onError: (e) => setNudgeMsg(e instanceof Error ? e.message : "Nudge preview failed."),
   })
   const nudge = useMutation({
-    mutationFn: () => sweepAll(false),
-    onSuccess: (outcome) => setPanel({ kind: "done", outcome }),
+    mutationFn: async (approved: NudgedPr[]) => ({ org, outcome: await sweepAll(false, approved) }),
+    onSuccess: ({ org: forOrg, outcome }) => setPanel({ org: forOrg, kind: "done", outcome }),
     onError: (e) => {
       setPanel(null)
       setNudgeMsg(e instanceof Error ? e.message : "Nudge failed.")
@@ -423,13 +435,13 @@ export default function PullRequestsPage() {
         {nudgeMsg && (
           <p className="px-4 py-2 text-xs text-muted-foreground border-b border-border">{nudgeMsg}</p>
         )}
-        {panel && (
+        {panel && panel.org === org && (
           <NudgePanel
             org={org}
             kind={panel.kind}
             outcome={panel.outcome}
             sending={nudge.isPending}
-            onConfirm={() => nudge.mutate()}
+            onConfirm={() => nudge.mutate(panel.outcome.prs)}
             onDismiss={() => setPanel(null)}
           />
         )}

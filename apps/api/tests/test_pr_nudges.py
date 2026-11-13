@@ -424,6 +424,22 @@ def test_dry_run_in_label_mode_reports_would_label(client, db, user):
     assert not [c for c in inst.request.call_args_list if c[0][0] == "POST"]
 
 
+def test_only_prs_limits_a_real_run_to_the_previewed_pull_requests(client, db, user):
+    _admin_org(db, user)
+    set_config("pr_nudge_stale_days", "3")
+    set_config("pr_nudge_mode", "comment")
+    prs = [_pr(1, 10), _pr(2, 10), _pr(3, 10)]  # all stale; only #1 was previewed
+
+    with patch("src.routers.pr_nudges.GitHubClient") as mock:
+        inst = _wire(mock, prs=prs)
+        resp = client.post("/me/repos/acme/api/pr-nudges", json={"token": "ghp_admin", "only_prs": [1]})
+
+    assert resp.status_code == 200
+    assert [(r["number"], r["action"]) for r in resp.json()["results"]] == [(1, "commented")]
+    posts = [c for c in inst.request.call_args_list if c[0][0] == "POST"]
+    assert [p[0][1] for p in posts] == ["/repos/acme/api/issues/1/comments"]
+
+
 def test_dry_run_read_error_after_a_planned_action_is_raised_not_truncated():
     now = datetime.now(timezone.utc)
     stale = [
