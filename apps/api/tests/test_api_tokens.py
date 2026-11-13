@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import event, text
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import ApiToken, AuditLog, User, get_db
@@ -105,6 +105,25 @@ def test_management_requires_org_admin(db, acme):
     client = _client(db, acme["member"])
     assert client.post("/orgs/acme/api-tokens", json={"name": "ci"}).status_code == 403
     assert client.get("/orgs/acme/api-tokens").status_code == 403
+
+
+def test_api_token_creation_takes_the_tenant_lock_before_counting(db, acme):
+    # The cap is a read-then-insert: without a per-tenant lock two concurrent creates both read a count under it.
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    bind = db.get_bind()
+    event.listen(bind, "before_cursor_execute", record)
+    try:
+        assert _client(db, acme["admin"]).post("/orgs/acme/api-tokens", json={"name": "ci"}).status_code == 201
+    finally:
+        event.remove(bind, "before_cursor_execute", record)
+
+    lock = next(i for i, s in enumerate(statements) if "pg_advisory_xact_lock" in s and "api_tokens" in s)
+    count = next(i for i, s in enumerate(statements) if "FROM api_tokens" in s)
+    assert lock < count
 
 
 def test_active_token_cap(db, acme):

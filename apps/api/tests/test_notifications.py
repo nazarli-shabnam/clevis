@@ -11,7 +11,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import event, text
 
 from src.core.auth import UserOut, require_auth
 from src.core.config import settings
@@ -203,6 +203,25 @@ def test_create_rejects_unsafe_url_with_422(db, acme):
 def test_secret_is_only_kept_for_generic_destinations(db, acme):
     body = _create(_client(db, acme["admin"]), kind="slack", secret="ignored").json()
     assert body["signed"] is False
+
+
+def test_destination_creation_takes_the_tenant_lock_before_counting(db, acme):
+    # The cap is a read-then-insert: without a per-tenant lock two concurrent creates both read a count under it.
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    bind = db.get_bind()
+    event.listen(bind, "before_cursor_execute", record)
+    try:
+        assert _create(_client(db, acme["admin"])).status_code == 201
+    finally:
+        event.remove(bind, "before_cursor_execute", record)
+
+    lock = next(i for i, s in enumerate(statements) if "pg_advisory_xact_lock" in s and "notification_destinations" in s)
+    count = next(i for i, s in enumerate(statements) if "FROM notification_destinations" in s)
+    assert lock < count
 
 
 def test_create_caps_destinations_per_org(db, acme):
