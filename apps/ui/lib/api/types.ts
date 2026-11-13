@@ -168,6 +168,8 @@ export interface PrNudgeResult {
 export interface PrNudgeResponse {
   mode: string
   stale_days: number
+  /** True when this was a preview: results then use "would-comment" / "would-label" and nothing was posted. */
+  dry_run?: boolean
   results: PrNudgeResult[]
 }
 

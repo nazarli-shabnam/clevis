@@ -435,10 +435,11 @@ export const api = {
   },
   prNudges: {
     // Needs `Pull requests: write`; a GitHub 403 surfaces as a 400. Org-admin gated.
-    sweep: (org: string, owner: string, repo: string, token?: string) =>
+    // `dryRun` previews which PRs a real run would comment on or label, without posting anything.
+    sweep: (org: string, owner: string, repo: string, token?: string, dryRun?: boolean) =>
       post<PrNudgeResponse>(
         `/orgs/${encodeURIComponent(org)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pr-nudges`,
-        { token: token || undefined },
+        { token: token || undefined, ...(dryRun ? { dry_run: true } : {}) },
       ),
   },
   cache: {

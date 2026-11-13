@@ -1067,6 +1067,16 @@ describe("api.prNudges.sweep (issue #289)", () => {
     expect(result).toEqual(body);
   });
 
+  it("asks for a dry run when previewing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response(JSON.stringify({ mode: "comment", stale_days: 3, results: [] }), { status: 200 }))),
+    );
+    await api.prNudges.sweep("acme", "acme", "api", "t", true);
+    const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ token: "t", dry_run: true });
+  });
+
   it("omits the token when none is supplied", async () => {
     vi.stubGlobal(
       "fetch",
