@@ -92,6 +92,7 @@ def test_admin_downloads_a_zip_with_every_section_and_a_manifest(db, world):
     z, manifest = _bundle(resp)
     assert sorted(z.namelist()) == [
         "audit_log.csv", "failed_checks.csv", "manifest.json", "members.csv", "outside_collaborators.csv", "scan_history.csv",
+        "waivers.csv",
     ]
     assert manifest["org"] == "acme-ev" and manifest["generated_by"] == "ev-admin@e.com"
     assert manifest["clevis_version"] and manifest["truncated"] is False
@@ -104,6 +105,35 @@ def test_admin_downloads_a_zip_with_every_section_and_a_manifest(db, world):
     assert members["alice"]["two_factor_enabled"] == "true" and members["bob"]["two_factor_enabled"] == ""
     assert [r["login"] for r in _rows(z, "outside_collaborators.csv")] == ["contractor"]
     assert any(r["action"] == "token.created" for r in _rows(z, "audit_log.csv"))
+    assert manifest["files"]["waivers.csv"] == {"rows": 0, "truncated": False}
+
+
+def test_waiver_register_lists_every_waiver_even_ones_masking_nothing_or_expired_and_ignores_the_range(db, world):
+    from src.core.db import CheckWaiver
+
+    acme, other = world["acme"], world["other"]
+
+    def waiver(tenant, check, *, repos, expires, owner="platform", reason="legacy"):
+        db.add(CheckWaiver(tenant_id=tenant.tenant_id, check_id=check, repos=repos, reason=reason, owner=owner,
+                           expires_at=expires, created_by="ev-admin@e.com"))
+
+    waiver(acme, "repository_license_present", repos=None, expires=NOW + timedelta(days=10))  # masks no failing check
+    waiver(acme, "repository_secret_scanning_enabled", repos=["api", "web"], expires=NOW - timedelta(days=2), reason="=cmd|' /C calc'!A0")
+    waiver(other, "repository_license_present", repos=None, expires=NOW + timedelta(days=5))  # another org's
+    db.commit()
+
+    # A range that excludes everything must not hide the register: it is the state as of the export.
+    resp = _client(db, world["users"]["admin"]).get("/orgs/acme-ev/evidence?since=2001-01-01&until=2001-01-02")
+    z, manifest = _bundle(resp)
+
+    rows = {r["check_id"]: r for r in _rows(z, "waivers.csv")}
+    assert set(rows) == {"repository_license_present", "repository_secret_scanning_enabled"}
+    assert rows["repository_license_present"]["status"] == "active"
+    assert rows["repository_license_present"]["repos"] == "whole organization"
+    assert rows["repository_secret_scanning_enabled"]["status"] == "expired"
+    assert rows["repository_secret_scanning_enabled"]["repos"] == "api; web"
+    assert rows["repository_secret_scanning_enabled"]["reason"].startswith("'=")  # formula defence applies here too
+    assert manifest["files"]["waivers.csv"] == {"rows": 2, "truncated": False}
 
 
 def test_range_limits_scans_and_audit_rows(db, world):

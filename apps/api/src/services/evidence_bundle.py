@@ -5,6 +5,8 @@ Contents (all scoped to one org's tenant, over an optional date range):
   (with any waiver that excluded it from the score);
 - ``members.csv`` and ``outside_collaborators.csv``: the org roster with role and 2FA status, and the
   repository access held by outside collaborators;
+- ``waivers.csv``: the waiver (accepted-risk) register as it stands, whether or not a waiver currently masks a
+  failing check; a revoked waiver is deleted, so its revocation is in ``audit_log.csv`` instead;
 - ``audit_log.csv``: the org's audit slice, read server-side with the same tenant filter as
   ``GET /orgs/{org}/audit`` (not whatever rows a browser happened to load);
 - ``manifest.json``: when, for whom, what range, which Clevis version, row counts and truncation flags.
@@ -26,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from src.core.version import VERSION
 from src.core.db import OrgMember, OrgMembershipSyncCursor, RepoCollaborator
-from src.repositories import audit_repo, scan_results_repo
+from src.repositories import audit_repo, scan_results_repo, waiver_repo
 
 SCAN_LIMIT = 5000
 AUDIT_LIMIT = 10000
@@ -140,6 +142,21 @@ def build_bundle(
     )
     files["outside_collaborators.csv"] = {"rows": len(outside), "truncated": outside_truncated}
 
+    # The register is the current state, so the date range does not apply. A tenant is capped at a handful of
+    # waivers, so it is never truncated.
+    waivers = waiver_repo.list_for_tenant(db, tenant_id)
+    contents["waivers.csv"] = to_csv(
+        ["check_id", "repos", "reason", "owner", "created_by", "created_at", "expires_at", "status"],
+        [
+            [
+                w.check_id, "; ".join(w.repos) if w.repos else "whole organization", w.reason, w.owner,
+                w.created_by, _iso(w.created_at), _iso(w.expires_at), "active" if w.expires_at > now else "expired",
+            ]
+            for w in waivers
+        ],
+    )
+    files["waivers.csv"] = {"rows": len(waivers), "truncated": False}
+
     # list_for_tenant treats `until` as exclusive, so step past the inclusive end-of-day instant.
     try:
         audit_until = until + timedelta(microseconds=1) if until else None
@@ -159,6 +176,8 @@ def build_bundle(
         "members.csv and outside_collaborators.csv are Clevis's ingested copy (GitHub webhooks plus the "
         "membership reconciliation poll), not a live GitHub read; see roster_last_synced_at.",
         "two_factor_enabled is empty when the reconciliation poll has not read it yet (unknown, not off).",
+        "waivers.csv is the register as of generated_at, regardless of the date range; a revoked waiver is "
+        "deleted from it, and its waiver.revoke audit row is in audit_log.csv.",
         "audit_log.csv lists the rows that existed when this export was generated; the export itself is "
         "recorded as an evidence.export row afterwards.",
     ]
