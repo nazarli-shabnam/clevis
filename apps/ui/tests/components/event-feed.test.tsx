@@ -63,3 +63,21 @@ describe("EventFeed", () => {
     expect(screen.queryByText(/opened PR #42/)).not.toBeInTheDocument();
   });
 });
+
+describe("EventFeed links", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("links the repo to its Clevis page and a PR number to GitHub", () => {
+    render(<EventFeed events={events} isLoading={false} />);
+
+    expect(screen.getByRole("link", { name: "acme/api" })).toHaveAttribute("href", "/repos/acme~api");
+    expect(screen.getByRole("link", { name: "Open #42 on GitHub" })).toHaveAttribute(
+      "href",
+      "https://github.com/acme/worker/pull/42",
+    );
+    // A push names no item, so only the PR row gets an item link.
+    expect(screen.getAllByRole("link", { name: /on GitHub/ })).toHaveLength(1);
+  });
+});
