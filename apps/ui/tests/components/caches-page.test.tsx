@@ -189,6 +189,26 @@ describe("CachesPage", () => {
     expect(screen.getByRole("checkbox", { name: "Select api" })).toBeChecked();
   }, 15000);
 
+  it("keeps a repo whose clear request was rejected selected when the other jobs finish", async () => {
+    seed({ api: [entry(MB, 1)], web: [entry(MB, 1)] });
+    cacheClearMock.mockImplementation((_o: string, r: string) =>
+      r === "web" ? Promise.reject(new Error("403 forbidden")) : Promise.resolve({ queued: true, dry_run: false, job_id: 5 }),
+    );
+    jobsGetMock.mockResolvedValue({ id: 5, status: "done", result: "{}" });
+    renderPage();
+    await screen.findByText("api");
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select api" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select web" }));
+    fireEvent.click(screen.getByRole("button", { name: /clear selected \(2\)/i }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Cache cleared for 1 repo."), { timeout: 8000 });
+    expect(screen.getByRole("button", { name: /clear selected \(1\)/i })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select web" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select api" })).not.toBeChecked();
+  }, 15000);
+
   it("does not point non-workspace-admins to the audit log", async () => {
     mockIsWorkspaceAdmin = false;
     seed({ api: [entry(MB, 1)] });

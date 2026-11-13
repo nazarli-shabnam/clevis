@@ -42,8 +42,10 @@ export default function CachesPage() {
   const [staleOnly, setStaleOnly] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [confirmOpen, setConfirmOpen] = useState(false)
-  // Jobs enqueued by the last real clear (with their repo), polled until every one finishes.
-  const [clearJobs, setClearJobs] = useState<{ repo: string; jobId: number }[]>([])
+  // The last real clear: the org it was submitted for, the jobs it enqueued (with their repo), polled until
+  // every one finishes, and the repos whose request was rejected (they have no job but stay selected to retry).
+  const [clearOp, setClearOp] = useState<{ org: string; jobs: { repo: string; jobId: number }[]; rejected: string[] } | null>(null)
+  const clearJobs = clearOp?.jobs ?? []
   const jobIds = clearJobs.map((j) => j.jobId)
 
   // Clearing deletes caches through the repo clear route, which needs org admin; a plain member would 403.
@@ -140,7 +142,7 @@ export default function CachesPage() {
         toast.info(`Dry run complete for ${okCount} repo${okCount === 1 ? "" : "s"} (${formatBytes(bytes)} would be deleted). Nothing was changed.${failNote}`)
       } else {
         const queued = results.flatMap((r) => (r.jobId != null ? [{ repo: r.repo, jobId: r.jobId }] : []))
-        setClearJobs(queued)
+        setClearOp({ org, jobs: queued, rejected: failed.map((f) => f.repo) })
         toast.info(`Cache clear queued for ${queued.length} repo${queued.length === 1 ? "" : "s"}.${failNote}`)
       }
     },
@@ -177,9 +179,10 @@ export default function CachesPage() {
     } else {
       toast.success(`Cache cleared for ${jobs.length} repo${jobs.length === 1 ? "" : "s"}.`)
     }
-    setClearJobs([])
-    // Keep the failed repos selected so the admin can retry just those.
-    setSelected(new Set(failed.map((f) => f.repo)))
+    // Keep the repos that failed (a failed job, or a rejected request) selected so the admin can retry just
+    // those; if the org was switched meanwhile the selection already belongs to the other org, so leave it.
+    if (clearOp?.org === org) setSelected(new Set([...failed.map((f) => f.repo), ...clearOp.rejected]))
+    setClearOp(null)
     cachesQuery.refetch()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settled])
