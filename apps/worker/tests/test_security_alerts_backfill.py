@@ -191,6 +191,24 @@ def test_an_alert_created_within_the_last_hour_is_left_for_the_alert_sweep_to_an
     assert announced[2] is not None  # long-standing: not "new"
 
 
+def test_backfill_stamps_sla_notified_only_for_dependabot_alerts_already_past_their_window(pg_conn, tenant_id):
+    from datetime import datetime, timedelta, timezone
+
+    inside = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")  # critical window is 7d
+    routes = _routes(**{"acme/api/dependabot/alerts": _Resp([_alert(1), _alert(2, created_at=inside), _alert(3, "low")])})
+
+    _run(pg_conn, _Client(routes), tenant_id)
+
+    with pg_conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        cur.execute("SELECT kind, number, sla_notified_at FROM security_alerts WHERE tenant_id = %s", (tenant_id,))
+        stamped = {(k, n): a is not None for k, n, a in cur.fetchall()}
+    assert stamped[("dependabot", 1)] is True  # old critical: already breached
+    assert stamped[("dependabot", 2)] is False  # 2 days old: still inside the 7-day window, breaches later
+    assert stamped[("dependabot", 3)] is False  # low severity has no SLA window
+    assert stamped[("code_scanning", 7)] is False
+
+
 def _insert_open_alert(conn, tenant_id, number, ingested_offset_sql):
     with conn.cursor() as cur:
         cur.execute(f"SET app.tenant_id = {int(tenant_id)}")

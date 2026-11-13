@@ -106,13 +106,37 @@ def is_old(created_at: datetime, received_at: datetime) -> bool:
     return created_at <= received_at - _RECENT
 
 
-def mark_announced(cur, *, tenant_id: int, repo: str, kind: str, number: int) -> None:
+# Defaults and config keys mirror the API's dependabot_burndown.sla_days(), which the SLA-breach sweep uses.
+_SLA_DEFAULTS = {"critical": 7, "high": 30}
+
+
+def sla_windows(read_config) -> dict[str, int]:
+    """Critical/high SLA windows in days from app_config (`read_config(key, default) -> str`); a bad stored
+    value falls back to the default, like the API's reader."""
+    out = {}
+    for severity, default in _SLA_DEFAULTS.items():
+        try:
+            value = int(read_config(f"dependabot_sla_{severity}_days", str(default)))
+        except ValueError:
+            value = default
+        out[severity] = value if value >= 1 else default
+    return out
+
+
+def mark_announced(
+    cur, *, tenant_id: int, repo: str, kind: str, number: int, sla_days: int | None = None
+) -> None:
     """Stamp a backfilled, pre-existing alert as already announced. Without this the alert sweep would message
-    every destination about each old critical/high alert at once. Only for alerts old enough (is_old)."""
+    every destination about each old critical/high alert at once. Only for alerts old enough (is_old).
+
+    A Dependabot alert already past its SLA window (`sla_days`, None = no window) is also stamped as SLA-announced,
+    so the SLA sweep does not replay the backlog either; one still inside its window is left to breach later."""
     cur.execute(
-        "UPDATE security_alerts SET alert_notified_at = NOW() "
+        "UPDATE security_alerts SET alert_notified_at = NOW(), "
+        "sla_notified_at = CASE WHEN kind = 'dependabot' AND created_at <= NOW() - make_interval(days => %s::int) "
+        "THEN NOW() ELSE sla_notified_at END "
         "WHERE tenant_id = %s AND repo = %s AND kind = %s AND number = %s AND alert_notified_at IS NULL",
-        (tenant_id, repo, kind, number),
+        (sla_days, tenant_id, repo, kind, number),
     )
 
 
