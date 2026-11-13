@@ -11,10 +11,17 @@ permissions:
   packages: write
   actions: read
 
+# One release at a time: overlapping runs would race on the mutable `:latest` tag. Queue, never
+# cancel, so a started publish is not left half-pushed.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   publish:
     name: Build + Push
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,8 +59,8 @@ jobs:
           file: apps/api/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}-api:latest
             ghcr.io/${{ github.repository }}-api:${{ github.ref_name }}
+            ${{ github.ref_type == 'tag' && format('ghcr.io/{0}-api:latest', github.repository) || '' }}
 
       - name: Build + Push Worker
         uses: docker/build-push-action@v6
@@ -62,8 +69,8 @@ jobs:
           file: apps/worker/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}-worker:latest
             ghcr.io/${{ github.repository }}-worker:${{ github.ref_name }}
+            ${{ github.ref_type == 'tag' && format('ghcr.io/{0}-worker:latest', github.repository) || '' }}
 
       - name: Build + Push UI
         uses: docker/build-push-action@v6
@@ -77,5 +84,5 @@ jobs:
             NEXT_PUBLIC_GITHUB_APP_SLUG=${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
             NEXT_PUBLIC_GITHUB_WEB_BASE=${{ vars.NEXT_PUBLIC_GITHUB_WEB_BASE || 'https://github.com' }}
           tags: |
-            ghcr.io/${{ github.repository }}-ui:latest
             ghcr.io/${{ github.repository }}-ui:${{ github.ref_name }}
+            ${{ github.ref_type == 'tag' && format('ghcr.io/{0}-ui:latest', github.repository) || '' }}
