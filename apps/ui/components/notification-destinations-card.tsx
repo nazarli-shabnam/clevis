@@ -4,6 +4,7 @@ import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { CircleNotch } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
+import { EmptyStateAction } from "@/components/empty-state-action"
 import { SectionError } from "@/components/section-error"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
@@ -199,7 +200,11 @@ export function NotificationDestinationsCard({ orgLogin }: { orgLogin: string })
           retrying={query.isFetching}
         />
       ) : query.data.length === 0 ? (
-        <p className="px-4 py-3 text-xs text-muted-foreground">No destinations.</p>
+        <EmptyStateAction
+          message="No destinations yet. Get a Slack, Teams, email or webhook message when the score drops, a critical alert lands or a waiver expires."
+          actionLabel="Add a destination"
+          focusId="dest-name"
+        />
       ) : (
         <ul className="divide-y divide-border">
           {query.data.map((d) => (

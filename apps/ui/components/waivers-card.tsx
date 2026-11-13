@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { CircleNotch } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { dueTime } from "@/lib/format"
+import { EmptyStateAction } from "@/components/empty-state-action"
 import { SectionError } from "@/components/section-error"
 import { Button } from "@/components/ui/button"
 import { MAX_WAIVER_DAYS, WAIVABLE_CHECKS, WaiverForm, daysRemaining } from "@/components/waiver-form"
@@ -43,7 +44,11 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
           retrying={query.isFetching}
         />
       ) : query.data.length === 0 ? (
-        <p className="px-4 py-3 text-xs text-muted-foreground">No waivers.</p>
+        <EmptyStateAction
+          message="No waivers. Record an accepted risk so a check you've chosen to live with stops lowering the score until it expires."
+          actionLabel="Add a waiver"
+          focusId="waiver-new-check"
+        />
       ) : (
         <ul className="divide-y divide-border">
           {query.data.map((w) => {

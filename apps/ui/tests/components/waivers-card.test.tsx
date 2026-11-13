@@ -55,6 +55,14 @@ afterEach(() => {
 })
 
 describe("WaiversCard", () => {
+  it("explains an empty register and the button takes you to the add form (#993)", async () => {
+    listMock.mockResolvedValue([])
+    renderCard()
+    await screen.findByText(/No waivers/)
+    fireEvent.click(screen.getByRole("button", { name: "Add a waiver" }))
+    expect(document.getElementById("waiver-new-check")).toHaveFocus()
+  })
+
   it("lists waivers with scope, owner and expiry, flagging an expired one", async () => {
     listMock.mockResolvedValue([
       waiver(),
@@ -71,7 +79,7 @@ describe("WaiversCard", () => {
     listMock.mockResolvedValue([])
     createMock.mockResolvedValue(waiver())
     renderCard()
-    await screen.findByText("No waivers.")
+    await screen.findByText(/No waivers/)
     expect(screen.getByLabelText(/Repositories/)).toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText("Check"), { target: { value: "repository_license_present" } })
@@ -89,7 +97,7 @@ describe("WaiversCard", () => {
     listMock.mockResolvedValue([])
     createMock.mockResolvedValue(waiver())
     renderCard()
-    await screen.findByText("No waivers.")
+    await screen.findByText(/No waivers/)
     const add = screen.getByRole("button", { name: "Add waiver" })
     expect(add).toBeDisabled() // reason and owner are required
 
@@ -116,7 +124,7 @@ describe("WaiversCard", () => {
     renderCard()
     expect(await screen.findByText(/Couldn't load waivers: boom/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Retry" }))
-    expect(await screen.findByText("No waivers.")).toBeInTheDocument()
+    expect(await screen.findByText(/No waivers/)).toBeInTheDocument()
     expect(listMock).toHaveBeenCalledTimes(2)
   })
 
@@ -143,7 +151,7 @@ describe("WaiversCard", () => {
     let finish: (v: unknown) => void = () => {}
     createMock.mockReturnValue(new Promise((resolve) => { finish = resolve }))
     renderCard()
-    await screen.findByText("No waivers.")
+    await screen.findByText(/No waivers/)
     fireEvent.change(screen.getByLabelText("Check"), { target: { value: "repository_license_present" } })
     fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "r" } })
     fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "o" } })
@@ -169,7 +177,7 @@ describe("WaiversCard", () => {
     listMock.mockResolvedValue([])
     createMock.mockRejectedValue(new Error("A waiver can last at most 90 days"))
     renderCard()
-    await screen.findByText("No waivers.")
+    await screen.findByText(/No waivers/)
     fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "r" } })
     fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "o" } })
     fireEvent.click(screen.getByRole("button", { name: "Add waiver" }))
