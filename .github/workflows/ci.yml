@@ -167,6 +167,15 @@ jobs:
         working-directory: apps/api
         run: python -m alembic check
 
+      # Rolling back is an operator's recovery path, so prove every downgrade() still runs, then
+      # that the schema comes back identical (the drift check passes again).
+      - name: Check alembic downgrade round trip
+        working-directory: apps/api
+        run: |
+          python -m alembic downgrade base
+          python -m alembic upgrade head
+          python -m alembic check
+
       # Reuses the same script an operator runs by hand for an existing deployment
       # (docs/self-hosting.md) instead of duplicating its grant SQL -- keeps CI's provisioning
       # and the documented manual path from drifting apart. Connects over TCP to the service
