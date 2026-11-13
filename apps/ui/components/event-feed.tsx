@@ -1,7 +1,9 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { relativeTime } from "@/lib/format"
+import { eventItemHref, repoPageHref } from "@/lib/activity-links"
 import type { OrgEvent } from "@/lib/api/types"
 
 const FILTERS = [
@@ -17,6 +19,34 @@ type FilterId = (typeof FILTERS)[number]["id"]
 interface EventFeedProps {
   events: OrgEvent[]
   isLoading: boolean
+}
+
+function RepoLink({ repo }: { repo: string }) {
+  const href = repoPageHref(repo)
+  return href ? (
+    <Link href={href} className="hover:text-foreground hover:underline transition-colors">
+      {repo}
+    </Link>
+  ) : (
+    <>{repo}</>
+  )
+}
+
+/** Opens the pull request or issue on GitHub when the event's summary names one. */
+function ItemLink({ repo, summary }: { repo: string; summary: string }) {
+  const item = eventItemHref(repo, summary)
+  if (!item) return null
+  return (
+    <a
+      href={item.href}
+      target="_blank"
+      rel="noreferrer"
+      aria-label={`Open ${item.label} on GitHub`}
+      className="ml-2 hover:text-foreground hover:underline transition-colors"
+    >
+      {item.label} ↗
+    </a>
+  )
 }
 
 export function EventFeed({ events, isLoading }: EventFeedProps) {
@@ -79,7 +109,8 @@ export function EventFeed({ events, isLoading }: EventFeedProps) {
                   <span className="font-medium">{event.actor}</span> {event.summary}
                 </p>
                 <p className="text-[0.6875rem] text-muted-foreground/60 font-mono mt-0.5 truncate">
-                  {event.repo}
+                  <RepoLink repo={event.repo} />
+                  <ItemLink repo={event.repo} summary={event.summary} />
                 </p>
               </div>
               <span className="text-[0.6875rem] text-muted-foreground whitespace-nowrap shrink-0 mt-0.5">

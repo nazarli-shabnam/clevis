@@ -1,13 +1,15 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import Link from "next/link"
 import { useQuery } from "@tanstack/react-query"
+import { repoPageHref } from "@/lib/activity-links"
 import { SectionError } from "@/components/section-error"
 import { api } from "@/lib/api/client"
 import { activitySummaryKey, useActivityStream, type StreamStatus } from "@/lib/use-activity-stream"
 import type { ActivitySummary } from "@/lib/api/types"
 
-const DAYS = 7
+export const DEFAULT_ACTIVITY_DAYS = 7
 const TOP_REPOS = 8
 
 export interface RepoActivity {
@@ -35,6 +37,17 @@ export function topRepos(summary: ActivitySummary, limit = TOP_REPOS): RepoActiv
     .slice(0, limit)
 }
 
+function RepoName({ repo }: { repo: string }) {
+  const href = repoPageHref(repo)
+  return href ? (
+    <Link href={href} className="text-foreground/90 truncate hover:underline">
+      {repo}
+    </Link>
+  ) : (
+    <span className="text-foreground/90 truncate">{repo}</span>
+  )
+}
+
 const STATUS_LABEL: Record<StreamStatus, string> = {
   live: "Live",
   connecting: "Connecting…",
@@ -44,10 +57,18 @@ const STATUS_LABEL: Record<StreamStatus, string> = {
 
 /** `quiet` is for pages that already have their own fallback (Overview): the card then renders only
  * once the org has webhook data, instead of explaining how to get it. */
-export function ActivityByRepoCard({ org, quiet = false }: { org: string; quiet?: boolean }) {
+export function ActivityByRepoCard({
+  org,
+  quiet = false,
+  days = DEFAULT_ACTIVITY_DAYS,
+}: {
+  org: string
+  quiet?: boolean
+  days?: number
+}) {
   const query = useQuery({
-    queryKey: activitySummaryKey(org, DAYS),
-    queryFn: () => api.github.activitySummary(org, DAYS),
+    queryKey: activitySummaryKey(org, days),
+    queryFn: () => api.github.activitySummary(org, days),
     enabled: org.trim().length > 0,
     retry: false,
     // Streamed frames are newer than any refetch, which could briefly overwrite them with older counts.
@@ -62,7 +83,7 @@ export function ActivityByRepoCard({ org, quiet = false }: { org: string; quiet?
   useEffect(() => {
     if (connected) setStreamingOrg(org)
   }, [connected, org])
-  const status = useActivityStream(org, DAYS, connected || streamingOrg === org)
+  const status = useActivityStream(org, days, connected || streamingOrg === org)
   const rows = useMemo(() => (query.data ? topRepos(query.data) : []), [query.data])
 
   if (quiet && !connected) return null
@@ -70,7 +91,7 @@ export function ActivityByRepoCard({ org, quiet = false }: { org: string; quiet?
   return (
     <div className="card">
       <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
-        <span className="section-label">Activity by repo (last {DAYS} days)</span>
+        <span className="section-label">Activity by repo (last {days === 1 ? "24 hours" : `${days} days`})</span>
         {query.data?.connected && (
           <span
             className={`stat-chip ${status === "live" ? "text-accent" : "text-muted-foreground"}`}
@@ -95,13 +116,13 @@ export function ActivityByRepoCard({ org, quiet = false }: { org: string; quiet?
           GitHub token or per-repo calls are needed. The feed above still works without it.
         </p>
       ) : rows.length === 0 ? (
-        <p className="p-4 text-sm text-muted-foreground">No events recorded in the last {DAYS} days.</p>
+        <p className="p-4 text-sm text-muted-foreground">No events recorded in the last {days === 1 ? "24 hours" : `${days} days`}.</p>
       ) : (
         <ul className="divide-y divide-border">
           {rows.map((r) => (
             <li key={r.repo} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
               <span className="flex flex-col min-w-0">
-                <span className="text-foreground/90 truncate">{r.repo}</span>
+                <RepoName repo={r.repo} />
                 <span className="text-[0.6875rem] text-muted-foreground truncate">
                   {r.byType.map(([type, n]) => `${type} ${n}`).join(" · ")}
                 </span>

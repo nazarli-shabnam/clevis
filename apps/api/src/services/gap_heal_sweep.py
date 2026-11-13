@@ -96,10 +96,10 @@ def run_gap_heal_sweep(db: Session) -> None:
 
         try:
             if kind == "org":
-                token = resolve_org_token(db, org_id=org_id, account_login=account_login, client_token=None)
+                token = resolve_org_token(db, org_id=org_id, account_login=account_login, client_token=None, for_job=True)
             else:
                 token = resolve_personal_token(
-                    db, owner_user_id=personal_user_id, account_login=account_login, client_token=None
+                    db, owner_user_id=personal_user_id, account_login=account_login, client_token=None, for_job=True
                 )
             backfill_service.enqueue(
                 db, tenant_id=tenant_id, account_login=account_login, account_type=account_type, token=token

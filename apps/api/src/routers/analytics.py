@@ -47,7 +47,7 @@ from src.schemas.analytics import (
     ScanExportResponse,
     ScanHistoryEntry,
 )
-from src.services import api_job_runner, notifications, scan_limiter, scan_service
+from src.services import api_job_runner, notifications, scan_limiter, scan_service  # noqa: F401 - tests patch src.routers.analytics.notifications
 from src.services.stored_identity import load_stored_identity
 from src.services.analytics_service import (
     get_account_type,

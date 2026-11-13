@@ -13,6 +13,7 @@ import { SectionError } from "@/components/section-error"
 import { EmptyStateNoAccount } from "@/components/empty-state"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
+import { useAuth } from "@/lib/auth-context"
 import { isOrgMemberOnly } from "@/lib/members-href"
 import { formatBytes, relativeTime } from "@/lib/format"
 import { rankByCacheSize, summarizeCaches, type RepoCacheStats } from "@/lib/cache-rank"
@@ -34,14 +35,18 @@ async function inBatches<T>(items: string[], run: (item: string) => Promise<T>):
 
 export default function CachesPage() {
   const { scope } = useActiveScope()
+  const { user } = useAuth()
   const org = scope?.kind === "org" ? scope.login : ""
   const hasOrg = org.trim().length > 0
 
   const [staleOnly, setStaleOnly] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [confirmOpen, setConfirmOpen] = useState(false)
-  // Jobs enqueued by the last real clear, polled until every one finishes.
-  const [jobIds, setJobIds] = useState<number[]>([])
+  // The last real clear: the org it was submitted for, the jobs it enqueued (with their repo), polled until
+  // every one finishes, and the repos whose request was rejected (they have no job but stay selected to retry).
+  const [clearOp, setClearOp] = useState<{ org: string; jobs: { repo: string; jobId: number }[]; rejected: string[] } | null>(null)
+  const clearJobs = clearOp?.jobs ?? []
+  const jobIds = clearJobs.map((j) => j.jobId)
 
   // Clearing deletes caches through the repo clear route, which needs org admin; a plain member would 403.
   const { data: memberships } = useQuery<MyOrgMembership[]>({
@@ -136,9 +141,9 @@ export default function CachesPage() {
         const bytes = rows.filter((r) => succeeded.has(r.repo)).reduce((sum, r) => sum + r.totalBytes, 0)
         toast.info(`Dry run complete for ${okCount} repo${okCount === 1 ? "" : "s"} (${formatBytes(bytes)} would be deleted). Nothing was changed.${failNote}`)
       } else {
-        const ids = results.flatMap((r) => (r.jobId != null ? [r.jobId] : []))
-        setJobIds(ids)
-        toast.info(`Cache clear queued for ${ids.length} repo${ids.length === 1 ? "" : "s"}.${failNote}`)
+        const queued = results.flatMap((r) => (r.jobId != null ? [{ repo: r.repo, jobId: r.jobId }] : []))
+        setClearOp({ org, jobs: queued, rejected: failed.map((f) => f.repo) })
+        toast.info(`Cache clear queued for ${queued.length} repo${queued.length === 1 ? "" : "s"}.${failNote}`)
       }
     },
     onError: (e) => {
@@ -165,11 +170,19 @@ export default function CachesPage() {
 
   useEffect(() => {
     if (!settled) return
-    const failed = jobs.filter((j) => j.status === "failed").length
-    if (failed > 0) toast.error(`${failed} of ${jobs.length} cache clears failed. Check the Audit Log for details.`)
-    else toast.success(`Cache cleared for ${jobs.length} repo${jobs.length === 1 ? "" : "s"}.`)
-    setJobIds([])
-    setSelected(new Set())
+    // Jobs come back in jobIds order, so index i belongs to clearJobs[i].repo.
+    const failed = jobs.flatMap((j, i) => (j.status === "failed" ? [{ repo: clearJobs[i].repo, error: j.result || "unknown error" }] : []))
+    if (failed.length > 0) {
+      const detail = failed.map((f) => `${f.repo}: ${f.error}`).join("; ")
+      const auditNote = user?.is_workspace_admin ? " Check the Audit Log for details." : ""
+      toast.error(`${failed.length} of ${jobs.length} cache clears failed — ${detail}.${auditNote}`)
+    } else {
+      toast.success(`Cache cleared for ${jobs.length} repo${jobs.length === 1 ? "" : "s"}.`)
+    }
+    // Keep the repos that failed (a failed job, or a rejected request) selected so the admin can retry just
+    // those; if the org was switched meanwhile the selection already belongs to the other org, so leave it.
+    if (clearOp?.org === org) setSelected(new Set([...failed.map((f) => f.repo), ...clearOp.rejected]))
+    setClearOp(null)
     cachesQuery.refetch()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settled])

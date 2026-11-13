@@ -160,7 +160,8 @@ def test_sweep_survives_a_token_resolution_failure_for_one_tenant(db):
     _seed_cursor(db, org_fail.tenant_id, "acme-sweep-no-token", "Organization", stale)
     _seed_cursor(db, org_ok.tenant_id, "acme-sweep-ok", "Organization", stale)
 
-    def _resolve(_db, *, org_id, account_login, client_token):
+    def _resolve(_db, *, org_id, account_login, client_token, for_job=False):
+        assert for_job
         if account_login == "acme-sweep-no-token":
             raise NoGitHubTokenAvailable("no installation")
         return "tok"

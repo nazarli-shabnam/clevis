@@ -1,0 +1,33 @@
+# Weekly update PRs, grouped per ecosystem to keep review volume low. Actions are pinned to commit
+# SHAs (with a version comment); Dependabot keeps both the SHA and the comment current.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      actions: { patterns: ["*"] }
+
+  - package-ecosystem: pip
+    directories: [/apps/api, /apps/worker, /packages/checks, /]
+    schedule: { interval: weekly }
+    groups:
+      python: { patterns: ["*"] }
+
+  - package-ecosystem: bun
+    directory: /apps/ui
+    schedule: { interval: weekly }
+    groups:
+      ui: { patterns: ["*"] }
+
+  - package-ecosystem: npm
+    directory: / # commitlint + husky only
+    schedule: { interval: weekly }
+    groups:
+      root-tooling: { patterns: ["*"] }
+
+  - package-ecosystem: docker
+    directories: [/apps/api, /apps/worker, /apps/ui]
+    schedule: { interval: weekly }
+    groups:
+      docker: { patterns: ["*"] }

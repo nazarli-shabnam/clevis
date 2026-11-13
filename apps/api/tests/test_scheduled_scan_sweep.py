@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import text
 
-from src.core.db import Org, ScanResult
+from src.core.db import ScanResult
 import itertools
 
 from src.repositories import audit_repo, installation_repo, org_repo, scan_results_repo

@@ -10,7 +10,6 @@ from unittest.mock import patch
 
 import httpx
 import pytest
-import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 

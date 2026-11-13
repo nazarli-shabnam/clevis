@@ -49,10 +49,12 @@ class InsufficientOrgRole(RuntimeError):
     ("admin") on privileged org actions)."""
 
 
-def _from_installation(installation: GitHubInstallation | None) -> str | None:
+def _from_installation(installation: GitHubInstallation | None, for_job: bool = False) -> str | None:
     if installation is None or installation.installation_id is None:
         return None
     try:
+        if for_job:
+            return github_app.get_installation_token(installation.installation_id, github_app.JOB_TOKEN_MIN_TTL_SECONDS)
         return github_app.get_installation_token(installation.installation_id)
     except github_app.GitHubAppNotConfigured:
         # Deployment-wide: the App isn't set up at all -- worth a log line since every
@@ -117,9 +119,18 @@ def _no_token_error(account_login: str, installation_exists: bool, *, personal: 
 
 
 def resolve_org_token(
-    db: Session, *, org_id: int, account_login: str, client_token: str | None, allow_client_token: bool = True
+    db: Session,
+    *,
+    org_id: int,
+    account_login: str,
+    client_token: str | None,
+    allow_client_token: bool = True,
+    for_job: bool = False,
 ) -> str:
     """Installation token first; else the caller's own token.
+
+    `for_job=True` is for a token that will be stored in a background job payload: an installation
+    token is then guaranteed enough remaining lifetime to outlast the worker's retries.
 
     `allow_client_token=False` refuses that fallback with InsufficientOrgRole (callers map it to 403)
     instead of silently using a token the caller isn't trusted to supply: a client token is attacker-
@@ -130,7 +141,7 @@ def resolve_org_token(
         if _github_app_configured()
         else None
     )
-    token = _from_installation(installation)
+    token = _from_installation(installation, for_job)
     if token:
         return token
     if client_token:
@@ -146,13 +157,15 @@ def resolve_org_token(
     raise _no_token_error(account_login, installation is not None, personal=False)
 
 
-def resolve_personal_token(db: Session, *, owner_user_id: int, account_login: str, client_token: str | None) -> str:
+def resolve_personal_token(
+    db: Session, *, owner_user_id: int, account_login: str, client_token: str | None, for_job: bool = False
+) -> str:
     installation = (
         installation_repo.get_for_user(db, owner_user_id=owner_user_id, account_login=account_login)
         if _github_app_configured()
         else None
     )
-    token = _from_installation(installation)
+    token = _from_installation(installation, for_job)
     if token:
         return token
     if client_token:

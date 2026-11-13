@@ -43,6 +43,13 @@ MAX_RETRIES = 5
 # the installation token a job payload carries.
 _RETRY_BACKOFF_BASE_SECONDS = 30
 _RETRY_BACKOFF_CAP_SECONDS = 480
+# The token a job carries may lapse while the job waits in the queue or between retries, and the worker (which has
+# no GitHub App key) cannot mint another. When the payload carries ``token_expires_at``, process_job refuses to
+# start an attempt within this many seconds of it. Keep the message's prefix in step with api/services/sweep_lock.py.
+_TOKEN_EXPIRY_SKEW_SECONDS = 60
+TOKEN_EXPIRED_MESSAGE = (
+    "installation token expired before the job could run (it waited or was retried for too long); start it again"
+)
 # A 'processing' job older than this, with a stale heartbeat, is presumed crashed.
 RECLAIM_TIMEOUT_MINUTES = 30
 
@@ -190,11 +197,25 @@ def _requeue_for_retry(conn: psycopg.Connection, job_id: int, retry_count: int, 
     )
 
 
+def _token_expired(payload_raw: str) -> bool:
+    """Whether the payload's installation token has expired (or is about to). A payload without a usable
+    ``token_expires_at`` (a PAT, an older job, malformed JSON) is never refused here; the handler validates it."""
+    try:
+        expires_at = json.loads(payload_raw).get("token_expires_at")
+    except (ValueError, AttributeError):
+        return False
+    return isinstance(expires_at, (int, float)) and time.time() >= expires_at - _TOKEN_EXPIRY_SKEW_SECONDS
+
+
 def process_job(conn: psycopg.Connection, job_id: int, job_type: str, payload_raw: str, retry_count: int = 0) -> None:
     handler = JOB_HANDLERS.get(job_type)
     if handler is None:
         log.error("job %d has no handler registered for job_type %r", job_id, job_type)
         _mark_failed(conn, job_id, f"no handler registered for job_type {job_type!r}", retry_count)
+        return
+    if _token_expired(payload_raw):
+        log.error("job %d: its installation token expired before attempt %d", job_id, retry_count + 1)
+        _mark_failed(conn, job_id, TOKEN_EXPIRED_MESSAGE, retry_count)
         return
     try:
         handler(conn, job_id, payload_raw, retry_count)

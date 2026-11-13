@@ -4,7 +4,9 @@ Three tables grow with traffic and never shrank before this sweep:
 
 * ``webhook_deliveries`` -- raw payloads up to 5 MB each. Only rows the pipeline is finished with are
   purged (``processed``, ``dropped``, ``queue_abandoned``); ``queued`` / ``queue_failed`` rows are still
-  waiting for the requeue sweep and are never touched.
+  waiting for the requeue sweep and are never touched -- except ``queued`` rows with no tenant, which
+  nothing reprocesses (the consumer skips them and the requeue sweep needs a tenant_id), so they are
+  purged on the same window.
 * ``jobs`` -- terminal rows (``done``, ``failed``). The worker already scrubs the encrypted token from
   them; this removes the rows themselves.
 * ``repo_events`` -- the normalized event store. The per-day rollup ``repo_event_daily_counts`` is kept.
@@ -72,6 +74,13 @@ _DELETE_DELIVERIES = (
     "DELETE FROM webhook_deliveries WHERE id IN ("
     "SELECT id FROM webhook_deliveries WHERE status = ANY(:statuses) AND received_at < :cutoff LIMIT :limit)"
 )
+# The outer WHERE repeats the predicates: a row adopted (tenant bound) after the subquery picked it must
+# survive, and under READ COMMITTED only the outer conditions are re-checked against the updated row.
+_DELETE_ORPHAN_DELIVERIES = (
+    "DELETE FROM webhook_deliveries WHERE tenant_id IS NULL AND status = 'queued' AND id IN ("
+    "SELECT id FROM webhook_deliveries WHERE status = 'queued' AND tenant_id IS NULL "
+    "AND received_at < :cutoff LIMIT :limit)"
+)
 _DELETE_JOBS = (
     "DELETE FROM jobs WHERE id IN ("
     "SELECT id FROM jobs WHERE status = ANY(:statuses) AND updated_at < :cutoff LIMIT :limit)"
@@ -118,7 +127,10 @@ def _delete_in_batches(db: Session, sql: str, params: dict) -> int:
 
 
 def _purge_deliveries(db: Session, cutoff: datetime) -> int:
-    return _delete_in_batches(db, _DELETE_DELIVERIES, {"statuses": list(_TERMINAL_DELIVERY_STATUSES), "cutoff": cutoff})
+    finished = _delete_in_batches(
+        db, _DELETE_DELIVERIES, {"statuses": list(_TERMINAL_DELIVERY_STATUSES), "cutoff": cutoff}
+    )
+    return finished + _delete_in_batches(db, _DELETE_ORPHAN_DELIVERIES, {"cutoff": cutoff})
 
 
 def _purge_jobs(db: Session, cutoff: datetime) -> int:

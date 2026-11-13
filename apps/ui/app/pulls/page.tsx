@@ -13,6 +13,7 @@ import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
 import { isOrgMemberOnly } from "@/lib/members-href"
 import { relativeTime } from "@/lib/format"
+import { FlowRankingCard } from "@/components/flow-ranking-card"
 import { PULL_SORT_LABELS, ageDays, isStale, sortPulls, type PullSort } from "@/lib/pull-triage"
 import type { MyOrgMembership, PullSummary } from "@/lib/api/types"
 
@@ -157,6 +158,14 @@ export default function PullRequestsPage() {
   })
 
   const repoNames = reposQuery.data?.repos.map((r) => r.name) ?? []
+  // The flow ranking covers the most recently pushed repositories, so it needs them in that order.
+  const recentlyPushedRepos = useMemo(
+    () =>
+      [...(reposQuery.data?.repos ?? [])]
+        .sort((a, b) => (b.pushed_at ?? "").localeCompare(a.pushed_at ?? ""))
+        .map((r) => r.name),
+    [reposQuery.data],
+  )
 
   const pullsQuery = useQuery({
     queryKey: ["repos.pulls.all", org, repoNames.join(",")],
@@ -396,6 +405,7 @@ export default function PullRequestsPage() {
           />
         )}
       </div>
+      {hasOrg && repoNames.length > 0 && <FlowRankingCard key={org} org={org} repos={recentlyPushedRepos} token={token} />}
     </>
   )
 }

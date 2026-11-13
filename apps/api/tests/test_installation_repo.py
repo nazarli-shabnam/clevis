@@ -183,3 +183,66 @@ def test_last_uninstall_purges_the_tenants_github_data(db):
     assert count == 1
     assert automation_settings_repo.list_for_feature(db, tenant_id, "dependabot_triage") == []
     assert db.execute(text("SELECT count(*) FROM org_members WHERE tenant_id = :t"), {"t": tenant_id}).scalar() == 0
+
+
+def test_create_adopts_recent_tenantless_deliveries_for_the_installation(db):
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import text
+
+    from src.core.db import WebhookDelivery
+
+    def delivery(name, installation_id, status="queued", age_days=0):
+        row = WebhookDelivery(
+            delivery_id=name, event_type="push", installation_id=installation_id, payload=b"{}", status=status
+        )
+        db.add(row)
+        db.commit()
+        db.execute(
+            text("UPDATE webhook_deliveries SET received_at = :ts WHERE id = :id"),
+            {"ts": datetime.now(timezone.utc) - timedelta(days=age_days), "id": row.id},
+        )
+        db.commit()
+
+    delivery("mine", 7)
+    delivery("other-installation", 8)
+    delivery("too-old", 7, age_days=30)
+    delivery("already-done", 7, status="processed")
+
+    row = installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=7,
+        org_id=_acme_org_id(db),
+    )
+
+    tenants = {d.delivery_id: d.tenant_id for d in db.query(WebhookDelivery).all()}
+    assert tenants == {"mine": row.tenant_id, "other-installation": None, "too-old": None, "already-done": None}
+
+
+def test_adoption_does_nothing_once_the_installation_is_gone(db):
+    from src.core.db import WebhookDelivery
+
+    db.add(WebhookDelivery(delivery_id="late", event_type="push", installation_id=7, payload=b"{}", status="queued"))
+    db.commit()
+
+    # No github_installations row for (7, tenant): an uninstall committed between upsert and adoption.
+    assert installation_repo.adopt_orphan_deliveries(db, 7, tenant_id=_acme_org_id(db)) == 0
+    assert db.query(WebhookDelivery).one().tenant_id is None
+
+
+def test_adoption_waits_for_a_concurrent_uninstall_holding_the_tenant_lock(db, _engine):
+    import pytest
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError
+
+    tenant_id = _acme_org_id(db)
+    with _engine.connect() as other_conn:
+        other_conn.begin()
+        # What delete_by_installation_id holds from its row delete until its purge commits.
+        other_conn.execute(
+            text("SELECT pg_advisory_xact_lock(:ns, :t)"),
+            {"ns": installation_repo._TENANT_INSTALL_LOCK_NS, "t": tenant_id},
+        )
+        db.execute(text("SET LOCAL lock_timeout = '300ms'"))
+        with pytest.raises(DBAPIError):
+            installation_repo.adopt_orphan_deliveries(db, 7, tenant_id=tenant_id)
+        other_conn.rollback()
