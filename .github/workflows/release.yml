@@ -46,14 +46,14 @@ jobs:
           fi
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build + Push API
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: apps/api/Dockerfile
@@ -63,7 +63,7 @@ jobs:
             ${{ github.ref_type == 'tag' && format('ghcr.io/{0}-api:latest', github.repository) || '' }}
 
       - name: Build + Push Worker
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: apps/worker/Dockerfile
@@ -73,7 +73,7 @@ jobs:
             ${{ github.ref_type == 'tag' && format('ghcr.io/{0}-worker:latest', github.repository) || '' }}
 
       - name: Build + Push UI
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: apps/ui
           file: apps/ui/Dockerfile
