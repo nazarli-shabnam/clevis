@@ -543,6 +543,22 @@ describe("SecurityPage", () => {
     await waitFor(() => expect(box.value).toBe("gamma"));
   });
 
+  it("re-applies the linked owner when only the scan id changes", async () => {
+    renderPage();
+    const box = screen.getByPlaceholderText("e.g. octocat") as HTMLInputElement;
+    const navigate = (qs: string) =>
+      act(() => {
+        mockSearchParams = new URLSearchParams(qs);
+        searchParamsListeners.forEach((l) => l());
+      });
+
+    navigate("scan=42&owner=beta");
+    await waitFor(() => expect(box.value).toBe("beta"));
+    fireEvent.change(box, { target: { value: "manual" } });
+    navigate("scan=43&owner=beta");
+    await waitFor(() => expect(box.value).toBe("beta"));
+  });
+
   async function runScan() {
     analyticsOverviewMock.mockResolvedValue({
       owner: "acme", score: 90, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [],

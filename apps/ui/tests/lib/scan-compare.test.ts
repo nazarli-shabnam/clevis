@@ -66,6 +66,13 @@ describe("diffScans", () => {
     expect(diff.changed[0].before).toContain("affected repos changed")
   })
 
+  it("flags a failing severity check whose affected repos moved at equal counts", () => {
+    const sev = (repos: string[]) => ({ type: "severity_counts" as const, critical: 1, high: 0, medium: 0, low: 0, repos })
+    const diff = diffScans([check("a", "fail", sev(["repo-a"]))], [check("a", "fail", sev(["repo-b"]))])
+    expect(diff.changed).toHaveLength(1)
+    expect(diff.changed[0].before).toContain("affected repos changed")
+  })
+
   it("shows a change in unknown repos without calling it a repo move", () => {
     const ratio = (unknown: number) => ({ type: "ratio" as const, numerator: 2, denominator: 5, repos: ["repo-a"], unknown })
     const diff = diffScans([check("a", "fail", ratio(1))], [check("a", "fail", ratio(2))])

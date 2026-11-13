@@ -29,7 +29,7 @@ export function checkValueSummary(value: CheckResult["value"] | undefined): stri
   }
 }
 
-const reposOf = (value: CheckResult["value"] | undefined) => (value?.type === "ratio" ? (value.repos ?? []).join(",") : "")
+const reposOf = (value: CheckResult["value"] | undefined) => (value?.type === "ratio" || value?.type === "severity_counts" ? (value.repos ?? []).join(",") : "")
 
 export interface ScanCounts {
   failed: number

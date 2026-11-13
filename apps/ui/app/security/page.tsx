@@ -122,7 +122,7 @@ export default function SecurityPage() {
     } else {
       params.set("scan", String(scan))
       params.set("owner", lookupOwner)
-      appliedOwner.current = lookupOwner
+      appliedOwner.current = `${scan}|${lookupOwner}`
     }
     if (scan === null || compare === null) params.delete("compare")
     else params.set("compare", String(compare))
@@ -158,13 +158,17 @@ export default function SecurityPage() {
   // A shared ?scan= link names its org (?owner=); it wins over the active scope, on first load (after the
   // scope effect above has filled the box) and again whenever client-side navigation changes the linked
   // owner. Unrelated URL changes leave a manual owner edit alone.
-  const urlOwner = searchParams.get("scan") ? searchParams.get("owner") : null
+  // The link's identity is the scan id plus its owner, so moving to another scan of the same org also
+  // re-applies the owner after a manual edit.
+  const urlScan = searchParams.get("scan")
+  const urlOwner = urlScan ? searchParams.get("owner") : null
+  const urlLink = urlOwner ? `${urlScan}|${urlOwner}` : null
   const appliedOwner = useRef<string | null>(null)
   useEffect(() => {
     if (!scopeChecked) return
-    if (urlOwner && urlOwner !== appliedOwner.current) setOwner(urlOwner)
-    appliedOwner.current = urlOwner
-  }, [scopeChecked, urlOwner])
+    if (urlOwner && urlLink !== appliedOwner.current) setOwner(urlOwner)
+    appliedOwner.current = urlLink
+  }, [scopeChecked, urlOwner, urlLink])
 
   // The owner box drives token resolution, the installation lookup and the history query; follow it
   // only once typing pauses, so each keystroke doesn't fire a request per query.
