@@ -27,6 +27,8 @@ interface CachePanelProps {
   active?: boolean
 }
 
+const QUEUED_STALL_MS = 2 * 60_000
+
 /** Actions-cache list/clear UI for the /repos/{repo}/cache route and the repo detail tab. */
 export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
   const { user } = useAuth()
@@ -160,6 +162,15 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
       return null
     }
   })()
+
+  // A job that stays queued this long usually means the worker is down (or the job keeps retrying).
+  const [queuedTooLong, setQueuedTooLong] = useState(false)
+  useEffect(() => {
+    setQueuedTooLong(false)
+    if (jobId == null || (job?.status && job.status !== "queued")) return
+    const timer = setTimeout(() => setQueuedTooLong(true), QUEUED_STALL_MS)
+    return () => clearTimeout(timer)
+  }, [jobId, job?.status])
 
   useEffect(() => {
     if (job?.status === "done") {
@@ -449,6 +460,14 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
                 <p className="text-sm text-muted-foreground flex items-center gap-2">
                   <CircleNotch className="size-3.5 animate-spin" />
                   {job?.status === "processing" ? "Clearing caches…" : "Queued…"} (Job #{jobId})
+                </p>
+              )}
+              {job?.status === "queued" && job.result && (
+                <p className="text-xs text-muted-foreground">Retrying after: {job.result}</p>
+              )}
+              {queuedTooLong && job?.status === "queued" && (
+                <p className="text-xs text-amber-400">
+                  Still queued — the background worker may be down.
                 </p>
               )}
               {user?.is_workspace_admin && <Link

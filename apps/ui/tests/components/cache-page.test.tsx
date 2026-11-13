@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -283,6 +283,61 @@ describe("CachePage", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: /^delete$/i }));
 
     expect(await screen.findByText(/queued…/i)).toBeInTheDocument();
+  });
+
+  it("shows the retry reason while a failed attempt is being retried", async () => {
+    cacheClearMock.mockResolvedValue({ queued: true, dry_run: false, job_id: 42 });
+    jobsGetMock.mockResolvedValue({
+      id: 42,
+      job_type: "github.clear_actions_cache",
+      status: "queued",
+      result: "GitHub returned 502",
+      created_at: "",
+      updated_at: "",
+    });
+
+    renderPage();
+
+    const clearButton = await screen.findByRole("button", { name: /^clear$/i });
+    await waitFor(() => expect(clearButton).not.toBeDisabled());
+    fireEvent.click(clearButton);
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /^delete$/i }));
+
+    expect(await screen.findByText(/retrying after: github returned 502/i)).toBeInTheDocument();
+  });
+
+  it("warns that the worker may be down once a job stays queued for two minutes", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      cacheClearMock.mockResolvedValue({ queued: true, dry_run: false, job_id: 42 });
+      jobsGetMock.mockResolvedValue({
+        id: 42,
+        job_type: "github.clear_actions_cache",
+        status: "queued",
+        result: null,
+        created_at: "",
+        updated_at: "",
+      });
+
+      renderPage();
+
+      const clearButton = await screen.findByRole("button", { name: /^clear$/i });
+      await waitFor(() => expect(clearButton).not.toBeDisabled());
+      fireEvent.click(clearButton);
+      const dialog = await screen.findByRole("alertdialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: /^delete$/i }));
+
+      expect(await screen.findByText(/queued…/i)).toBeInTheDocument();
+      expect(screen.queryByText(/worker may be down/i)).not.toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(2 * 60_000);
+      });
+      expect(await screen.findByText(/worker may be down/i)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows a retryable error when polling the job status fails", async () => {
