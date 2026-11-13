@@ -834,7 +834,7 @@ export default function SecurityPage() {
 
       {/* Same gating as "Fix this": plain members would only get a 403 from the API. */}
       {matrixMutation.data && !isOrgMemberOnly(memberships, matrixMutation.data.owner) && (
-        <BulkFixPanel owner={matrixMutation.data.owner} repos={matrixMutation.data.repos} token={token || undefined} />
+        <BulkFixPanel owner={matrixMutation.data.owner} repos={matrixMutation.data.repos} token={token || undefined} onApplied={() => runScan()} />
       )}
     </>
   )

@@ -84,6 +84,23 @@ vi.mock("@/components/charts/area-time-chart", () => ({
     ) : null,
 }));
 
+// Keeps the real panel and adds a button that fires its onApplied hook, so the page's reaction to a
+// finished bulk fix can be checked without driving the panel's whole preview/apply flow.
+vi.mock("@/components/bulk-fix-panel", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/components/bulk-fix-panel")>();
+  return {
+    ...actual,
+    BulkFixPanel: (props: React.ComponentProps<typeof actual.BulkFixPanel>) => (
+      <>
+        <actual.BulkFixPanel {...props} />
+        <button type="button" onClick={() => props.onApplied?.()}>
+          bulk-applied
+        </button>
+      </>
+    ),
+  };
+});
+
 import SecurityPage from "@/app/security/page";
 
 function renderPage() {
@@ -371,6 +388,31 @@ describe("SecurityPage", () => {
 
     await waitFor(() => expect(screen.queryByText("Acme-only check")).not.toBeInTheDocument());
     expect(secretScanningMock).not.toHaveBeenCalled();
+  });
+
+  it("rescans the matrix and score after a bulk fix is applied (#986)", async () => {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 1, checks: [],
+    });
+    securityMatrixMock.mockResolvedValue({
+      owner: "acme",
+      repos: [{
+        repo: "acme-repo", branch_protection: false, secret_scanning: true, dependabot_enabled: true,
+        dependabot_critical_count: 0, dependabot_high_count: 0, code_scanning: true, force_push_allowed: false,
+        score: 80, unknown_dimensions: [], alerts_source: "github",
+      }],
+      summary: { fully_compliant_count: 0, critical_risk_count: 0, secret_hits_count: 0, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } },
+    });
+
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+    fireEvent.click(await screen.findByRole("button", { name: "bulk-applied" }));
+
+    await waitFor(() => expect(analyticsOverviewMock).toHaveBeenCalledTimes(2));
+    expect(securityMatrixMock).toHaveBeenCalledTimes(2);
   });
 
   it("says when the matrix covers only some of the org's repositories (#897)", async () => {
