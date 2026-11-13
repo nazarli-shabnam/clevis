@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useSyncExternalStore } from "react";
@@ -521,6 +521,26 @@ describe("SecurityPage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "trend-point" }));
     expect(routerReplaceMock).toHaveBeenLastCalledWith("?scan=1&owner=acme", { scroll: false });
+  });
+
+  it("follows a scan link's owner when client-side navigation changes it, but not unrelated URL changes", async () => {
+    renderPage();
+    const box = screen.getByPlaceholderText("e.g. octocat") as HTMLInputElement;
+    const navigate = (qs: string) =>
+      act(() => {
+        mockSearchParams = new URLSearchParams(qs);
+        searchParamsListeners.forEach((l) => l());
+      });
+
+    navigate("scan=42&owner=beta");
+    await waitFor(() => expect(box.value).toBe("beta"));
+
+    fireEvent.change(box, { target: { value: "manual" } });
+    navigate("scan=42&owner=beta&tab=fail");
+    expect(box.value).toBe("manual");
+
+    navigate("scan=43&owner=gamma");
+    await waitFor(() => expect(box.value).toBe("gamma"));
   });
 
   async function runScan() {
