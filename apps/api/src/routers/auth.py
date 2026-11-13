@@ -33,7 +33,7 @@ from src.core.config import settings
 from src.core.db import Org, User, get_db, set_session_user
 from src.core.rate_limit import check_account_rate_limit, rate_limit
 from src.repositories import invitation_repo, session_repo, tenant_repo
-from src.services import github_oauth
+from src.services import github_app, github_oauth
 from src.services.email import EmailNotConfigured, send_verification_email
 
 logger = logging.getLogger(__name__)
@@ -150,6 +150,11 @@ class SetupRequiredResponse(BaseModel):
     # would only fail after the user filled in a form or went through the GitHub redirect.
     registration_enabled: bool = True
     github_oauth_enabled: bool = False
+    # The App's slug is public (it is in its github.com URL); the UI builds install links from it.
+    # github_app_configured says whether the API holds the App's credentials, so a missing slug can be
+    # told apart from an App that was never set up.
+    github_app_configured: bool = False
+    github_app_slug: str | None = None
 
 
 class VerifyEmailRequest(BaseModel):
@@ -194,6 +199,8 @@ def setup_required(db: Session = Depends(get_db)):
         "setup_required": count == 0,
         "registration_enabled": signup_open,
         "github_oauth_enabled": github_oauth.is_configured(),
+        "github_app_configured": github_app.credentials_configured(),
+        "github_app_slug": github_app.get_app_slug(),
     }
 
 

@@ -13,6 +13,7 @@ expire. Tokens are never persisted. The GITHUB_APP_* settings must be configured
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -22,6 +23,8 @@ import httpx
 import jwt
 
 from src.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 # GitHub rejects App JWTs with a lifetime over 10 minutes; stay comfortably under.
 _APP_JWT_TTL_SECONDS = 540  # 9 minutes
@@ -203,8 +206,54 @@ def get_org_membership_role(installation_token: str, org_login: str, username: s
     return data.get("role")
 
 
+def credentials_configured() -> bool:
+    """Whether the App's id and private key are set (what minting tokens needs)."""
+    return bool(settings.github_app_id and settings.github_app_private_key)
+
+
+# GET /app is cached because the slug is requested by an unauthenticated endpoint: a hit lasts an
+# hour (a slug rarely changes), a miss a minute so an outage is retried without a request flood.
+_SLUG_TTL_SECONDS = 3600
+_SLUG_MISS_TTL_SECONDS = 60
+_slug_cache: tuple[str | None, float] | None = None  # (slug, monotonic expiry)
+
+
+def get_app_slug() -> str | None:
+    """The App's public slug: ``GITHUB_APP_SLUG`` if set, else asked from GitHub with the App JWT.
+
+    None when the App is not configured or GitHub can't be asked; never raises."""
+    global _slug_cache
+    if settings.github_app_slug:
+        return settings.github_app_slug
+    if not credentials_configured():
+        return None
+    with _lock:
+        cached = _slug_cache
+    if cached is not None and time.monotonic() < cached[1]:
+        return cached[0]
+    slug: str | None = None
+    try:
+        headers = {
+            "Authorization": f"Bearer {generate_app_jwt()}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        with httpx.Client(timeout=5) as client:
+            resp = client.get(f"{settings.github_api_base}/app", headers=headers)
+        resp.raise_for_status()
+        slug = resp.json().get("slug") or None
+    except (httpx.HTTPError, ValueError, jwt.PyJWTError, GitHubAppNotConfigured):
+        logger.warning("could not read the GitHub App slug from GitHub", exc_info=True)
+    ttl = _SLUG_TTL_SECONDS if slug else _SLUG_MISS_TTL_SECONDS
+    with _lock:
+        _slug_cache = (slug, time.monotonic() + ttl)
+    return slug
+
+
 def clear_cache() -> None:
-    """Drop all cached installation tokens (used by tests and on config change)."""
+    """Drop all cached installation tokens and the cached slug (used by tests and on config change)."""
+    global _slug_cache
     with _lock:
         _cache.clear()
         _mint_locks.clear()
+        _slug_cache = None

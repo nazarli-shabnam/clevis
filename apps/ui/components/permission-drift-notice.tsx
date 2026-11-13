@@ -1,10 +1,10 @@
 import { Warning, ArrowSquareOut } from "@phosphor-icons/react"
 import type { InstallationMeta } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
+import { useGithubAppSlug } from "@/lib/use-github-app-slug"
 
 // Per-installation page on GitHub where the owner can approve updated permissions.
-export function reviewUrl(install: InstallationMeta): string | null {
-  const slug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG
+export function reviewUrl(install: InstallationMeta, slug: string | null): string | null {
   if (!slug || install.installation_id == null) return null
   return githubWebUrl(`apps/${slug}/installations/${install.installation_id}`)
 }
@@ -21,6 +21,7 @@ export function PermissionDriftNotice({
   install: InstallationMeta
   className?: string
 }) {
+  const { slug } = useGithubAppSlug()
   const wrap = ["text-xs", className].filter(Boolean).join(" ")
 
   if (install.permissions_synced_at === null) {
@@ -35,7 +36,7 @@ export function PermissionDriftNotice({
   const blocked = install.blocked_features ?? []
   if (blocked.length === 0) return null
 
-  const url = reviewUrl(install)
+  const url = reviewUrl(install, slug)
   const labels = blocked.map((f) => f.label)
 
   return (

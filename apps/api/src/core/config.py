@@ -27,6 +27,8 @@ class Settings(BaseSettings):
 
     # GitHub App: optional; the github_app service raises a clear error if used while unconfigured.
     github_app_id: str | None = None
+    # Public App slug. Optional: when unset it is read once from GitHub's `GET /app` (see github_app.get_app_slug).
+    github_app_slug: str | None = None
     github_app_client_id: str | None = None
     github_app_private_key: SecretStr | None = None
     github_app_client_secret: SecretStr | None = None

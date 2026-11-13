@@ -831,9 +831,13 @@ export const api = {
   },
   auth: {
     setupRequired: () =>
-      get<{ setup_required: boolean; registration_enabled?: boolean; github_oauth_enabled?: boolean }>(
-        "/auth/setup-required",
-      ),
+      get<{
+        setup_required: boolean
+        registration_enabled?: boolean
+        github_oauth_enabled?: boolean
+        github_app_configured?: boolean
+        github_app_slug?: string | null
+      }>("/auth/setup-required"),
     setup: (email: string, password: string, name?: string) =>
       post<{ access_token: string; user: { id: number; email: string; name: string | null; is_workspace_admin: boolean } }>(
         "/auth/setup",

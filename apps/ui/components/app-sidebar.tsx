@@ -23,6 +23,7 @@ import { readActivityLastSeen } from "@/lib/activity-last-seen"
 import { inviteMembersHref, membersHref } from "@/lib/members-href"
 import type { InstallationMeta, MyOrgMembership, SavedTokenMeta } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
+import { useGithubAppSlug } from "@/lib/use-github-app-slug"
 import { NAV_GROUPS } from "@/lib/nav-items"
 
 
@@ -217,7 +218,7 @@ export function AppSidebar() {
   })
   const savedTokensReady = !isWorkspaceAdmin || savedTokensSuccess
   const personalInstall = installs.find((i) => i.account_type === "User")
-  const slug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG
+  const { slug } = useGithubAppSlug()
   // Always offer installing on another account/org; there's no cap on how many can be connected.
   const addInstallUrl = slug ? githubWebUrl(`apps/${slug}/installations/new`) : null
 
