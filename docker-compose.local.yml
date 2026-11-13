@@ -1,0 +1,20 @@
+# Local quickstart override. The base docker-compose.yml publishes no host ports (Traefik/Coolify route
+# traffic to the containers), so on its own a fresh clone is unreachable. This publishes the UI and API on
+# localhost only, points the UI bundle at the published API, and lets the session cookie work over plain HTTP.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.local.yml up --build -d
+# Not for production: for a real deployment put a TLS reverse proxy in front instead (docs/self-hosting.md).
+services:
+  api:
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      # "Sign in with GitHub" sets a Secure cookie by default, which browsers drop over http://.
+      SESSION_COOKIE_SECURE: "false"
+
+  ui:
+    build:
+      args:
+        # Baked into the UI bundle at build time; must be the API URL as the browser reaches it.
+        NEXT_PUBLIC_API_BASE: http://localhost:8080
+    ports:
+      - "127.0.0.1:3000:3000"

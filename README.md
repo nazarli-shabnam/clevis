@@ -76,10 +76,10 @@ Clevis is three independently deployable services around one shared check librar
 git clone https://github.com/nazarli-shabnam/clevis
 cd clevis
 cp .env.example .env        # fill in the six required variables (DB_USER, DB_PASSWORD, DB_NAME, JOB_SECRET_KEY, AUTH_SECRET, REDIS_PASSWORD); the rest have defaults
-docker compose up --build -d
+docker compose -f docker-compose.yml -f docker-compose.local.yml up --build -d
 ```
 
-Then open the UI at **`http://localhost:3000`**.
+Then open the UI at **`http://localhost:3000`**. The base `docker-compose.yml` publishes no host ports (a reverse proxy such as Traefik is expected to route to the containers), so the `docker-compose.local.yml` override is what makes the stack reachable on `localhost`; for a real deployment see [Reaching the stack](docs/self-hosting.md#reaching-the-stack).
 
 Full env var reference, GitHub App registration, and production hardening notes live in [`docs/self-hosting.md`](docs/self-hosting.md). Local dev without Docker is covered in [`AGENTS.md`](AGENTS.md#running-locally).
 

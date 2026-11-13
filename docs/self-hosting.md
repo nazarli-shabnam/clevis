@@ -100,6 +100,8 @@ This is the infrastructure/ops guide — getting the Clevis stack itself running
    docker compose up --build -d
    ```
 
+   This starts the stack but publishes no host ports; see [Reaching the stack](#reaching-the-stack) for how to open it (for a quick local try: add `-f docker-compose.yml -f docker-compose.local.yml`).
+
    Or, on a tagged release, pull the pre-built API and worker images instead of building them from source:
 
    ```
@@ -109,13 +111,57 @@ This is the infrastructure/ops guide — getting the Clevis stack itself running
 
    `docker-compose.yml` only has `build:` entries, so to use these you add an `image:` override for `api` and `worker` (for example in a `docker-compose.override.yml`). The published `clevis-ui` image is **not** portable: `NEXT_PUBLIC_API_BASE` and `NEXT_PUBLIC_GITHUB_APP_SLUG` are inlined into the browser bundle at build time (see step 2), so that image calls the publisher's API URL and cannot reach yours. Always build the UI yourself with your own `NEXT_PUBLIC_*` values (`docker compose build ui`).
 
-8. Verify it's up:
+8. Verify it's up. The API image has no `curl` and the base compose file publishes no ports, so check from inside the container:
 
    ```bash
-   curl http://localhost:8080/healthz   # -> {"status": "ok"}
+   docker compose exec api python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8080/healthz').read().decode())"   # -> {"status": "ok"}
    ```
 
-   Then open the UI and continue with the [Get started](../README.md#get-started) flow in the README.
+   Then open the UI (see [Reaching the stack](#reaching-the-stack)) and continue with the [Get started](../README.md#get-started) flow in the README.
+
+## Reaching the stack
+
+The committed `docker-compose.yml` publishes **no host ports**: it is written for a reverse proxy (Traefik on Coolify) that routes to the `ui` (port 3000) and `api` (port 8080) containers over the internal `clevis` Docker network. Starting it on its own gives a healthy stack that nothing outside Docker can reach. Pick one:
+
+### Local trial over HTTP
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml up --build -d
+```
+
+`docker-compose.local.yml` publishes the UI on `http://localhost:3000` and the API on `http://localhost:8080` (bound to `127.0.0.1` only), builds the UI with `NEXT_PUBLIC_API_BASE=http://localhost:8080`, and sets `SESSION_COOKIE_SECURE=false` on the API so "Sign in with GitHub" works over plain HTTP. `CORS_ORIGINS` already defaults to `["http://localhost:3000"]`. Do not use it for anything exposed beyond your machine. (A `docker-compose.override.yml` of your own is only picked up when you do **not** pass `-f` flags; list it explicitly if you use both.)
+
+### Real deployment behind a reverse proxy
+
+Give the UI and the API each a hostname, terminate TLS in the proxy, and set, in `.env` **before building the UI image**:
+
+```bash
+NEXT_PUBLIC_API_BASE=https://api.example.com     # baked into the UI bundle at build time; rebuild after changing it
+CORS_ORIGINS=["https://app.example.com"]          # JSON array; restart the API after changing it
+```
+
+Leave `SESSION_COOKIE_SECURE` at its default (`true`) since the proxy serves HTTPS. If the UI and API are on different sites (not subdomains of one site), also see `SESSION_COOKIE_SAMESITE` in `.env.example`. Any proxy that can reach the `clevis` network works; a minimal [Caddy](https://caddyserver.com) example, run as one more service attached to that network, for example in a `docker-compose.override.yml`:
+
+```yaml
+services:
+  caddy:
+    image: caddy:2
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    networks: [clevis]
+```
+
+```
+app.example.com {
+    reverse_proxy ui:3000
+}
+api.example.com {
+    reverse_proxy api:8080
+}
+```
+
+Register the same URLs in the GitHub App (step 3). On Coolify, Traefik does the routing for you; assign the two domains to the `ui` and `api` services instead.
 
 ## Leadership digest (optional, issue #292)
 
