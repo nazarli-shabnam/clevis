@@ -11,7 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
-from src.core.db import Membership, Org, Tenant, get_db
+from src.core.db import Membership, Org, Tenant, get_db, set_session_tenant
 from src.repositories import org_repo, tenant_repo
 
 _ROLE_RANK = {"member": 0, "admin": 1}
@@ -29,9 +29,10 @@ class PersonalTenantContext:
 
 
 def set_tenant_session_context(db: Session, tenant_id: int, user_id: int) -> None:
-    # Plain SET, not SET LOCAL: a request can commit more than once. Read by the RLS policies.
+    # Read by the RLS policies. The tenant goes through set_session_tenant so it follows the session across
+    # commits (a request can commit more than once) and stays the single source of truth for app.tenant_id.
     # SET can't take bind params; both values are int PKs, so formatting them in is safe.
-    db.execute(text(f"SET app.tenant_id = {int(tenant_id)}"))
+    set_session_tenant(db, tenant_id)
     db.execute(text(f"SET app.user_id = {int(user_id)}"))
 
 

@@ -279,7 +279,7 @@ async def test_stream_opens_and_tears_down_a_fresh_session_per_poll(monkeypatch)
     assert len(sessions) >= 2
     for s in sessions:
         executed_sql = [c.args[0].text for c in s.execute.call_args_list]
-        assert "SET app.tenant_id = 42" in executed_sql
+        assert "SET LOCAL app.tenant_id = 42" in executed_sql
         assert "SET app.user_id = 7" in executed_sql
         assert any(sql.startswith("SET LOCAL statement_timeout") for sql in executed_sql)
         assert "RESET app.tenant_id" in executed_sql

@@ -1,10 +1,9 @@
 """Bearer-token auth for machine callers (CI jobs): ``Authorization: Bearer clv_...``."""
 
 from fastapi import Depends, Header, HTTPException, status
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from src.core.db import get_db
+from src.core.db import get_db, set_session_tenant
 from src.repositories import api_token_repo
 from src.repositories.api_token_repo import ResolvedToken
 
@@ -24,7 +23,7 @@ def require_api_token(authorization: str | None = Header(default=None), db: Sess
             headers={"WWW-Authenticate": "Bearer"},
         )
     # The RLS policies key off this; tokens are bound to exactly one org's tenant.
-    db.execute(text(f"SET app.tenant_id = {int(resolved.tenant_id)}"))
+    set_session_tenant(db, resolved.tenant_id)
     return resolved
 
 
