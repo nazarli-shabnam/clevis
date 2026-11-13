@@ -200,6 +200,18 @@ score-drop alert. It is **off by default**.
   check, so a large instance spreads its GitHub API usage across checks. Each run is recorded in
   the audit log as `scan.scheduled`.
 
+## Recovering a forgotten password
+
+Users reset their own password from the login page (**Forgot password?**): Clevis emails a single-use link that expires in an hour and signs the account out everywhere, so it needs SMTP (see step 4 above). Signed-in users can change their password under Settings > Profile.
+
+Without SMTP, or if the workspace admin is locked out, an operator with shell access sets it directly:
+
+```bash
+docker compose exec api python -m src.cli.set_password owner@example.com
+```
+
+It prompts for the new password twice (never taken from the command line), signs the account out everywhere and writes an `auth.password_reset` audit row marked `via: operator-cli`. Accounts created through "Sign in with GitHub" have no password to reset.
+
 ## Security notes
 
 - **Row-Level Security is opt-in, not on by default.** Tenant-scoped tables have RLS policies (`FORCE` is set on most; `orgs`, `saved_tokens`, `invitations` and `audit_logs` only have `ENABLE`, and `webhook_deliveries` has no RLS because the webhook receiver has no tenant context), but in the default deployment both the API and worker connect as the Postgres bootstrap superuser (`DB_USER`), which bypasses RLS unconditionally. Tenant isolation in a default deployment is enforced **entirely at the application layer** — every query is expected to filter by `tenant_id`, and that's the only thing standing between one tenant's data and another's. Set `API_DB_PASSWORD` (step 6) and `WORKER_DB_PASSWORD` (step 5) if you want RLS to actually enforce isolation as a second, independent layer. Both services log a one-time `Row-Level Security is NOT enforced` warning at startup while they connect as a superuser or `BYPASSRLS` role, so you can tell which posture you are in; see below to switch.

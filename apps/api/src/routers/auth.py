@@ -10,7 +10,7 @@ import logging
 import secrets
 
 import bcrypt
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -33,8 +33,8 @@ from src.core.config import settings
 from src.core.db import Org, User, get_db, set_session_user
 from src.core.rate_limit import check_account_rate_limit, rate_limit
 from src.repositories import invitation_repo, session_repo, tenant_repo
-from src.services import auth_audit, github_app, github_oauth
-from src.services.email import EmailNotConfigured, send_verification_email
+from src.services import auth_audit, github_app, github_oauth, password_reset
+from src.services.email import EmailNotConfigured, send_password_reset_email, send_verification_email
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -108,6 +108,20 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     name: str | None = Field(default=None, max_length=_MAX_NAME_LEN)
     password: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(max_length=2000)
+    password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
 
 
 class LoginRequest(BaseModel):
@@ -315,6 +329,96 @@ def verify_email(body: VerifyEmailRequest, db: Session = Depends(get_db)):
     user.email_verify_token_expires_at = None
     db.commit()
     return {"ok": True}
+
+
+def _check_new_password(password: str) -> None:
+    """The same length rules as registration (bcrypt only reads the first 72 bytes)."""
+    if len(password) < _MIN_PASSWORD_LEN:
+        raise HTTPException(status_code=422, detail=f"Password must be at least {_MIN_PASSWORD_LEN} characters")
+    if len(password.encode()) > _MAX_PASSWORD_LEN:
+        raise HTTPException(status_code=422, detail=f"Password must be at most {_MAX_PASSWORD_LEN} bytes")
+
+
+def _send_password_reset_email(to_email: str, reset_url: str) -> None:
+    """Runs after the response, so the time to answer does not depend on whether the account exists or the
+    mail server is slow. Never raises."""
+    try:
+        send_password_reset_email(to_email, reset_url)
+    except EmailNotConfigured:
+        logger.warning("SMTP not configured -- cannot send a password reset email to %s", to_email)
+    except Exception:
+        logger.exception("failed to send a password reset email to %s", to_email)
+
+
+@router.post("/forgot-password", response_model=VerifyEmailResponse, dependencies=[Depends(rate_limit())])
+def forgot_password(body: ForgotPasswordRequest, background: BackgroundTasks, db: Session = Depends(get_db)):
+    """Email a password-reset link. Always answers the same 200, whether or not the account exists (or has a
+    password at all; GitHub-only accounts have none to reset), so it cannot be used to find registered emails."""
+    check_account_rate_limit(f"forgot-password:{body.email.lower()}")
+    user = db.query(User).filter(func.lower(User.email) == body.email.lower()).first()
+    if user is not None and user.password_hash:
+        token = password_reset.make_token(user.id, user.password_hash)
+        background.add_task(_send_password_reset_email, user.email, f"{settings.cors_origins[0]}/reset-password?token={token}")
+    return {"ok": True}
+
+
+@router.post("/reset-password", response_model=VerifyEmailResponse, dependencies=[Depends(rate_limit())])
+def reset_password(body: ResetPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    """Set a new password with the emailed token. The token stops working once it is used (the password hash it
+    was issued against has changed), every existing session is signed out, and, because the link reached the
+    mailbox, the email is marked verified."""
+    invalid = HTTPException(status_code=400, detail="This reset link is invalid or has expired")
+    parsed = password_reset.user_id_from_token(body.token)
+    if parsed is None:
+        raise invalid
+    user_id, fingerprint = parsed
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None or not password_reset.matches_current_password(fingerprint, user.password_hash):
+        raise invalid
+    _check_new_password(body.password)
+    user.password_hash = _hash_password(body.password)
+    user.token_version += 1
+    user.email_verified = True
+    user.email_verify_token = None
+    user.email_verify_token_expires_at = None
+    session_repo.forget_all(db, user.id)
+    # Committed with the change: a reset is never applied without its audit row.
+    auth_audit.record(db, user, "auth.password_reset", request=request, commit=False)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/me/password", response_model=TokenResponse, dependencies=[Depends(rate_limit())])
+def change_password(
+    body: ChangePasswordRequest,
+    request: Request,
+    current_user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Change the caller's password (their current one is required). Every other session is signed out; the
+    caller gets a fresh token so this one stays signed in."""
+    # A stolen session must not be able to guess the current password at full speed.
+    check_account_rate_limit(f"change-password:{current_user.id}")
+    user = db.query(User).filter(User.id == current_user.id).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not user.password_hash:
+        raise HTTPException(status_code=400, detail="This account signs in with GitHub and has no password")
+    if not _verify_password(body.current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    _check_new_password(body.new_password)
+    user.password_hash = _hash_password(body.new_password)
+    user.token_version += 1
+    session_repo.forget_all(db, user.id)
+    auth_audit.record(db, user, "auth.password_changed", request=request, commit=False)
+    db.commit()
+    db.refresh(user)
+    token = start_session(db, request, user)
+    return {
+        "access_token": token,
+        "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin),
+        "pending_invitations": [],
+    }
 
 
 @router.post("/resend-verification", response_model=ResendVerificationResponse, dependencies=[Depends(rate_limit())])
