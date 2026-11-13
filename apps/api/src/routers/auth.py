@@ -35,7 +35,7 @@ from src.core.db import Org, User, get_db, set_session_user
 from src.core.rate_limit import check_account_rate_limit, rate_limit
 from src.repositories import audit_repo, invitation_repo, session_repo, tenant_repo
 from src.services import github_app, github_oauth
-from src.services.email import EmailNotConfigured, send_verification_email
+from src.services.email import EmailNotConfigured, is_configured as smtp_configured, send_verification_email
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -329,7 +329,13 @@ def admin_verify_email(
     db: Session = Depends(get_db),
 ):
     """Mark an account's email verified without the emailed link: the way out on a deployment with no SMTP,
-    where an invited password user could otherwise never accept an invitation. Workspace admins only, audited."""
+    where an invited password user could otherwise never accept an invitation. Workspace admins only, audited.
+    Refused when SMTP is configured: the emailed link proves ownership of the address, and this must not become
+    a way around it."""
+    if smtp_configured():
+        raise HTTPException(
+            status_code=409, detail="Email is configured on this server: the user can verify with the emailed link"
+        )
     user = db.query(User).filter(func.lower(User.email) == body.email.lower()).first()
     if user is None:
         raise HTTPException(status_code=404, detail="No account with that email")
