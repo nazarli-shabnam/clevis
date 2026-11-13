@@ -21,7 +21,7 @@ export default function InviteAcceptPage() {
   const params = useParams<{ token: string }>()
   const router = useRouter()
   const queryClient = useQueryClient()
-  const { user, isLoading: authLoading, removePendingInvitation } = useAuth()
+  const { user, isLoading: authLoading, removePendingInvitation, logout } = useAuth()
   const token = params.token
 
   const { data: preview, isLoading, isError, error } = useQuery({
@@ -114,6 +114,22 @@ export default function InviteAcceptPage() {
                 <Button onClick={() => accept.mutate()} disabled={accept.isPending}>
                   {accept.isPending ? "Joining…" : "Accept invitation"}
                 </Button>
+              )}
+              {user && !accept.isSuccess && (
+                <p className="text-xs text-muted-foreground">
+                  Signed in as <span className="font-medium text-foreground">{user.email}</span>.{" "}
+                  <button
+                    type="button"
+                    className="text-primary hover:underline"
+                    onClick={() => {
+                      // Back to this invite after signing in as the invited address.
+                      logout()
+                      router.push(`/login?next=${encodeURIComponent(`/invite/${token}`)}`)
+                    }}
+                  >
+                    Use another account
+                  </button>
+                </p>
               )}
               {accept.isError && (
                 <div className="flex flex-col gap-1.5">

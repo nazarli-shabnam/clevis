@@ -199,6 +199,16 @@ def test_accept_invitation_wrong_email_forbidden(db, acme_org):
     assert resp.status_code == 403
 
 
+def test_accept_invitation_mismatch_says_which_address_without_revealing_it_in_full(db, acme_org):
+    created = _client(db, acme_org["admin"]).post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
+    token = created["invite_link"].rsplit("/", 1)[-1]
+    resp = _client(db, acme_org["wrong_email"]).post(f"/invitations/{token}/accept")
+    assert resp.status_code == 403
+    detail = resp.json()["detail"]
+    assert "b***@acme.com" in detail and "carol@acme.com" in detail  # the invited address, masked; the signed-in one
+    assert "bob@acme.com" not in detail
+
+
 def test_accept_invitation_ok(db, acme_org):
     created = _client(db, acme_org["admin"]).post("/orgs/acme/invitations", json={"email": "bob@acme.com"}).json()
     token = created["invite_link"].rsplit("/", 1)[-1]
