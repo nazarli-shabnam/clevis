@@ -465,7 +465,7 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
               {job?.status === "queued" && job.result && (
                 <p className="text-xs text-muted-foreground">Retrying after: {job.result}</p>
               )}
-              {queuedTooLong && job?.status !== "processing" && (
+              {queuedTooLong && job?.status === "queued" && (
                 <p className="text-xs text-amber-400">
                   Still queued — the background worker may be down.
                 </p>
