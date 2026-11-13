@@ -486,6 +486,7 @@ def _handle_backfill_security_alerts(conn: psycopg.Connection, job_id: int, payl
         return
 
     received_at = security_alerts_backfill.now()
+    sla_windows = security_alerts_backfill.sla_windows(_read_app_config)
     stored = 0
     try:
         with conn.cursor() as cur:
@@ -497,7 +498,8 @@ def _handle_backfill_security_alerts(conn: psycopg.Connection, job_id: int, payl
                         inserted = security_alerts_store.upsert_security_alert(cur, tenant_id=payload.tenant_id, **normalized)
                         if inserted and security_alerts_backfill.is_old(normalized["created_at"], received_at):
                             security_alerts_backfill.mark_announced(
-                                cur, tenant_id=payload.tenant_id, repo=full_name, kind=kind, number=normalized["number"]
+                                cur, tenant_id=payload.tenant_id, repo=full_name, kind=kind, number=normalized["number"],
+                                sla_days=sla_windows.get(normalized["severity"]),
                             )
                         stored += 1
                 # A complete listing is the whole truth for open alerts: close the stored ones it lacks.
