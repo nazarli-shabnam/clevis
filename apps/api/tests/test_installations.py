@@ -11,11 +11,19 @@ from sqlalchemy import text
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import AuditLog, Job, User, get_db
+from src.core.rate_limit import _account_buckets
 from src.repositories import installation_repo, org_membership_repo, org_repo
 from src.routers.installations import router as inst_router
 from src.services import app_permissions, github_app
 
 _OUTSIDER = UserOut(id=99999, email="outsider@e.com", name=None, is_workspace_admin=False)
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    _account_buckets.clear()
+    yield
+    _account_buckets.clear()
 
 
 def _mock_installation(account_login: str, account_type: str, account_id: int | None = 4242):
@@ -644,6 +652,24 @@ def test_lookup_installation_org_account(db):
         resp = _client(db, me).get("/me/installations/lookup/7")
     assert resp.status_code == 200
     assert resp.json() == {"account_login": "acme", "account_type": "Organization"}
+
+
+def test_lookup_installation_is_rate_limited_per_user_across_ids(db):
+    me = _make_user(db, "shabnam@e.com", github_login="shabnam")
+    client = _client(db, me)
+    with _mock_installation("acme", "Organization") as mock_get:
+        codes = [client.get(f"/me/installations/lookup/{i}").status_code for i in range(1, 23)]
+    assert codes[:20] == [200] * 20
+    assert codes[20:] == [429, 429]
+    # The throttled requests never reached GitHub.
+    assert mock_get.call_count == 20
+
+
+def test_lookup_installation_is_rate_limited_per_ip_across_users(db):
+    users = [_make_user(db, f"u{i}@e.com", github_login=f"u{i}") for i in range(3)]
+    with _mock_installation("acme", "Organization"):
+        codes = [_client(db, users[i % 3]).get(f"/me/installations/lookup/{i}").status_code for i in range(22)]
+    assert codes[20:] == [429, 429]
 
 
 def test_lookup_installation_requires_auth(db):
