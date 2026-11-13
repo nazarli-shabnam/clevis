@@ -861,6 +861,11 @@ export const api = {
     // Ends one other session; 204. The current session is refused (use logout).
     revokeSession: (id: string) => del(`/auth/me/sessions/${encodeURIComponent(id)}`),
     verifyEmail: (token: string) => post<{ ok: boolean }>("/auth/verify-email", { token }),
+    requestEmailChange: (newEmail: string, password: string) =>
+      post<{ ok: boolean }>("/auth/me/email", { new_email: newEmail, password }),
+    confirmEmailChange: (token: string) => post<{ ok: boolean }>("/auth/confirm-email-change", { token }),
+    deleteAccount: (confirmEmail: string, password?: string) =>
+      post<void>("/auth/me/delete", { confirm_email: confirmEmail, password }),
     forgotPassword: (email: string) => post<{ ok: boolean }>("/auth/forgot-password", { email }),
     resetPassword: (token: string, password: string) => post<{ ok: boolean }>("/auth/reset-password", { token, password }),
     changePassword: (currentPassword: string, newPassword: string) =>

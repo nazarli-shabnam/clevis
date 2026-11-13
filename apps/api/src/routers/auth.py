@@ -33,8 +33,14 @@ from src.core.config import settings
 from src.core.db import Org, User, get_db, set_session_user
 from src.core.rate_limit import check_account_rate_limit, rate_limit
 from src.repositories import invitation_repo, session_repo, tenant_repo
-from src.services import auth_audit, github_app, github_oauth, password_reset
-from src.services.email import EmailNotConfigured, send_password_reset_email, send_verification_email
+from src.services import account_deletion, auth_audit, email_change, github_app, github_oauth, password_reset
+from src.services.email import (
+    EmailNotConfigured,
+    is_configured as smtp_configured,
+    send_email_change_email,
+    send_password_reset_email,
+    send_verification_email,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -122,6 +128,22 @@ class ResetPasswordRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
+
+
+class ChangeEmailRequest(BaseModel):
+    new_email: EmailStr
+    password: str
+
+
+class ConfirmEmailChangeRequest(BaseModel):
+    token: str = Field(max_length=2000)
+
+
+class DeleteAccountRequest(BaseModel):
+    # Typing the account's own address guards against a mis-click or a copied request; the password (when the
+    # account has one) proves it is really the owner.
+    confirm_email: str
+    password: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -419,6 +441,113 @@ def change_password(
         "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin),
         "pending_invitations": [],
     }
+
+
+def _send_email_change_email(to_email: str, confirm_url: str) -> None:
+    """Runs after the response. Never raises."""
+    try:
+        send_email_change_email(to_email, confirm_url)
+    except EmailNotConfigured:
+        logger.warning("SMTP not configured -- cannot send an email-change confirmation to %s", to_email)
+    except Exception:
+        logger.exception("failed to send an email-change confirmation to %s", to_email)
+
+
+@router.post("/me/email", response_model=VerifyEmailResponse, dependencies=[Depends(rate_limit())])
+def request_email_change(
+    body: ChangeEmailRequest,
+    background: BackgroundTasks,
+    current_user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Ask to change the account email. A confirmation link goes to the NEW address and nothing changes until it
+    is opened (so a typo can't lock the account out, and nobody can claim an address they don't control). Needs
+    the account password and a configured mail server; pending invitations stay bound to the old address."""
+    check_account_rate_limit(f"change-email:{current_user.id}")
+    user = db.query(User).filter(User.id == current_user.id).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not user.password_hash:
+        raise HTTPException(status_code=400, detail="This account signs in with GitHub, and its email follows GitHub")
+    if not _verify_password(body.password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Password is incorrect")
+    if not smtp_configured():
+        raise HTTPException(
+            status_code=409, detail="Email isn't configured on this server, so a confirmation link can't be sent"
+        )
+    new_email = body.new_email.lower()
+    if new_email == user.email.lower():
+        raise HTTPException(status_code=400, detail="That is already your email address")
+    if db.query(User).filter(func.lower(User.email) == new_email).first():
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+    token = email_change.make_token(user.id, user.email, new_email)
+    background.add_task(
+        _send_email_change_email, new_email, f"{settings.cors_origins[0]}/confirm-email-change?token={token}"
+    )
+    return {"ok": True}
+
+
+@router.post("/confirm-email-change", response_model=VerifyEmailResponse, dependencies=[Depends(rate_limit())])
+def confirm_email_change(body: ConfirmEmailChangeRequest, request: Request, db: Session = Depends(get_db)):
+    """Apply a confirmed email change. The link reached the new mailbox, so the address is verified; every
+    session is signed out (the session tokens carry the old address), and the link works once."""
+    invalid = HTTPException(status_code=400, detail="This confirmation link is invalid or has expired")
+    parsed = email_change.parse_token(body.token)
+    if parsed is None:
+        raise invalid
+    user_id, new_email, fingerprint = parsed
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None or not email_change.matches_current_email(fingerprint, user.email):
+        raise invalid
+    if db.query(User).filter(func.lower(User.email) == new_email, User.id != user.id).first():
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+    old_email = user.email
+    user.email = new_email
+    user.email_verified = True
+    user.email_verify_token = None
+    user.email_verify_token_expires_at = None
+    user.token_version += 1
+    session_repo.forget_all(db, user.id)
+    auth_audit.record(db, user, "auth.email_changed", request=request, extra={"from": old_email, "to": new_email}, commit=False)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="An account with this email already exists") from None
+    return {"ok": True}
+
+
+@router.post("/me/delete", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(rate_limit())])
+def delete_my_account(
+    body: DeleteAccountRequest,
+    response: Response,
+    current_user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Delete the caller's own account and personal data (see ``services/account_deletion``). Needs the
+    account's email typed back and, for a password account, the password. Refused (409) for the workspace admin
+    and for the only admin of an organization. A POST, not a DELETE with a body, so every client can send it."""
+    check_account_rate_limit(f"delete-account:{current_user.id}")
+    user = db.query(User).filter(User.id == current_user.id).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if body.confirm_email.strip().lower() != user.email.lower():
+        raise HTTPException(status_code=400, detail="Type your account's email address to confirm")
+    if user.password_hash and not _verify_password(body.password or "", user.password_hash):
+        raise HTTPException(status_code=400, detail="Password is incorrect")
+    try:
+        account_deletion.delete_account(db, user)
+        db.commit()
+    except account_deletion.AccountDeletionRefused as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="; ".join(exc.reasons)) from None
+    except IntegrityError:
+        db.rollback()
+        logger.exception("account deletion hit a reference it does not clear")
+        raise HTTPException(
+            status_code=409, detail="This account is still referenced by other data; ask an administrator to remove it"
+        ) from None
+    clear_session_cookie(response)
 
 
 @router.post("/resend-verification", response_model=ResendVerificationResponse, dependencies=[Depends(rate_limit())])
