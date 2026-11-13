@@ -3,6 +3,7 @@ from datetime import date, datetime
 import logging
 
 from sqlalchemy import (
+    event,
     Boolean,
     CheckConstraint,
     Date,
@@ -715,8 +716,21 @@ def set_session_tenant(db: Session, tenant_id: int) -> None:
 
     Only sets session state for RLS; tenant_id must come from a trusted resolution
     (e.g. resolve_installation_tenant_id()).
+
+    The tenant is remembered on the Session and re-applied by `_reapply_session_tenant` at the start of
+    every later transaction: a commit hands the connection back to the pool and the next statement may
+    draw a different one, so a one-off SET would be silently lost mid-sweep. SET LOCAL (transaction
+    scoped) also means no connection is ever returned to the pool carrying the setting.
     """
-    db.execute(text(f"SET app.tenant_id = {int(tenant_id)}"))
+    db.execute(text(f"SET LOCAL app.tenant_id = {int(tenant_id)}"))
+    db.info["tenant_id"] = int(tenant_id)
+
+
+@event.listens_for(Session, "after_begin")
+def _reapply_session_tenant(session: Session, transaction, connection) -> None:
+    tenant_id = session.info.get("tenant_id")
+    if tenant_id is not None:
+        connection.execute(text(f"SET LOCAL app.tenant_id = {int(tenant_id)}"))
 
 
 def release_connection(db: Session) -> None:
