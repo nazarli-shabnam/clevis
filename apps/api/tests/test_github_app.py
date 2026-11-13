@@ -289,6 +289,56 @@ def test_get_org_membership_role_propagates_other_http_errors():
             github_app.get_org_membership_role("itok", "acme", "founder")
 
 
+# ── get_app_slug ──────────────────────────────────────────────────────────────
+
+def _slug_response(slug):
+    resp = MagicMock()
+    resp.json = MagicMock(return_value={"slug": slug})
+    return resp
+
+
+def test_app_slug_setting_wins_without_calling_github(app_configured, monkeypatch):
+    monkeypatch.setattr(settings, "github_app_slug", "from-env")
+    with patch("src.services.github_app.httpx.Client") as mock_cls:
+        assert github_app.get_app_slug() == "from-env"
+    mock_cls.assert_not_called()
+
+
+def test_app_slug_is_read_from_github_with_the_app_jwt_and_cached(app_configured, monkeypatch):
+    monkeypatch.setattr(settings, "github_app_slug", None)
+    with patch("src.services.github_app.httpx.Client") as mock_cls:
+        mock_client = _mock_get_client(_slug_response("clevis-app"))
+        mock_cls.return_value = mock_client
+        assert github_app.get_app_slug() == "clevis-app"
+        assert github_app.get_app_slug() == "clevis-app"
+    assert mock_client.get.call_count == 1
+    assert mock_client.get.call_args.args[0].endswith("/app")
+    token = mock_client.get.call_args.kwargs["headers"]["Authorization"].removeprefix("Bearer ")
+    assert jwt.decode(token, app_configured, algorithms=["RS256"], options={"verify_exp": False})["iss"] == _APP_ID
+
+
+def test_app_slug_is_none_when_app_not_configured(monkeypatch):
+    monkeypatch.setattr(settings, "github_app_slug", None)
+    monkeypatch.setattr(settings, "github_app_id", None)
+    github_app.clear_cache()
+    with patch("src.services.github_app.httpx.Client") as mock_cls:
+        assert github_app.get_app_slug() is None
+    mock_cls.assert_not_called()
+
+
+def test_app_slug_failure_is_none_and_briefly_cached(app_configured, monkeypatch):
+    monkeypatch.setattr(settings, "github_app_slug", None)
+    with patch("src.services.github_app.httpx.Client") as mock_cls:
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.get = MagicMock(side_effect=httpx.ConnectError("down"))
+        mock_cls.return_value = mock_client
+        assert github_app.get_app_slug() is None
+        assert github_app.get_app_slug() is None
+    assert mock_client.get.call_count == 1
+
+
 def test_job_ttl_replaces_a_cached_token_that_is_about_to_expire(app_configured):
     soon = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
     later = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")

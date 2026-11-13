@@ -1,8 +1,16 @@
-import { cleanup, render, screen } from "@testing-library/react"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { cleanup, render as rtlRender, screen } from "@testing-library/react"
+import type { ReactElement } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { PermissionDriftNotice } from "@/components/permission-drift-notice"
 import type { InstallationMeta } from "@/lib/api/types"
+
+// The notice reads the App slug through a query; without a stubbed API it falls back to the env var.
+function render(ui: ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return rtlRender(<QueryClientProvider client={client}>{ui}</QueryClientProvider>)
+}
 
 function install(overrides: Partial<InstallationMeta> = {}): InstallationMeta {
   return {
@@ -21,6 +29,7 @@ beforeEach(() => vi.stubEnv("NEXT_PUBLIC_GITHUB_APP_SLUG", "clevis"))
 afterEach(() => {
   cleanup()
   vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
 })
 
 describe("PermissionDriftNotice", () => {
@@ -78,5 +87,29 @@ describe("PermissionDriftNotice", () => {
     )
     expect(screen.queryByRole("link")).not.toBeInTheDocument()
     expect(screen.getByText(/slug isn.t configured/i)).toBeInTheDocument()
+  })
+
+  it("builds the link from the slug the API serves, with no build-time env var", async () => {
+    vi.unstubAllEnvs()
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ setup_required: false, github_app_configured: true, github_app_slug: "from-api" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    )
+    render(
+      <PermissionDriftNotice
+        install={install({
+          blocked_features: [
+            { feature: "stale_pr_nudges", label: "Stale pull-request nudges", missing: { pull_requests: "write" } },
+          ],
+        })}
+      />,
+    )
+    const link = await screen.findByRole("link", { name: /review on github/i })
+    expect(link).toHaveAttribute("href", expect.stringContaining("/apps/from-api/installations/42"))
   })
 })
