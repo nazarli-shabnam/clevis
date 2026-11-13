@@ -127,8 +127,8 @@ def tenant_id(pg_conn):
     return result
 
 
-def _payload(tenant_id, account_type="Organization"):
-    enc = encrypt_job_token("secret", settings.job_secret_key.get_secret_value())
+def _payload(tenant_id, account_type="Organization", token="ghs_secret"):
+    enc = encrypt_job_token(token, settings.job_secret_key.get_secret_value())
     return json.dumps({"tenant_id": tenant_id, "account_login": "acme", "account_type": account_type, "token": enc})
 
 
@@ -247,6 +247,16 @@ def test_open_alerts_of_a_repo_that_left_the_listing_are_closed_but_other_accoun
     assert _state_in(pg_conn, tenant_id, "acme/old-name", 5) == "fixed"
     assert _state_in(pg_conn, tenant_id, "other/elsewhere", 6) == "open"
     assert _state_in(pg_conn, tenant_id, "acme/api", 1) == "open"  # still listed
+
+
+def test_a_listing_read_with_a_pasted_token_closes_nothing(pg_conn, tenant_id):
+    _insert_alert_in(pg_conn, tenant_id, "acme/old-name", 5)  # a PAT may simply not see this repo
+    with patch("worker.httpx.Client") as cls, patch("backfill.time.sleep"):
+        cls.return_value.__enter__ = MagicMock(return_value=_Client(_routes()))
+        cls.return_value.__exit__ = MagicMock(return_value=False)
+        worker._handle_backfill_security_alerts(pg_conn, 4243, _payload(tenant_id, token="ghp_pat"), 0)
+
+    assert _state_in(pg_conn, tenant_id, "acme/old-name", 5) == "open"
 
 
 def test_a_repo_listing_cut_off_at_the_cap_closes_nothing(pg_conn, tenant_id, monkeypatch):
