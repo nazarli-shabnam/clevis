@@ -287,6 +287,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   )
 }
 
+/** The auth state, or null outside an AuthProvider, for a component that only adds an optional control. */
+export function useOptionalAuth(): AuthContextValue | null {
+  return useContext(AuthContext)
+}
+
 export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext)
   if (!ctx) throw new Error("useAuth must be used within AuthProvider")

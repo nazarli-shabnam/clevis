@@ -26,13 +26,14 @@ from src.core.auth import (
     clear_session_cookie,
     current_session_id,
     require_auth,
+    require_workspace_admin,
     revoke_presented_tokens,
     start_session,
 )
 from src.core.config import settings
 from src.core.db import Org, User, get_db, set_session_user
 from src.core.rate_limit import check_account_rate_limit, rate_limit
-from src.repositories import invitation_repo, session_repo, tenant_repo
+from src.repositories import audit_repo, invitation_repo, session_repo, tenant_repo
 from src.services import github_app, github_oauth
 from src.services.email import EmailNotConfigured, send_verification_email
 
@@ -163,6 +164,10 @@ class VerifyEmailRequest(BaseModel):
 
 class VerifyEmailResponse(BaseModel):
     ok: bool
+
+
+class AdminVerifyEmailRequest(BaseModel):
+    email: EmailStr
 
 
 class ResendVerificationResponse(BaseModel):
@@ -314,6 +319,36 @@ def verify_email(body: VerifyEmailRequest, db: Session = Depends(get_db)):
     user.email_verify_token = None
     user.email_verify_token_expires_at = None
     db.commit()
+    return {"ok": True}
+
+
+@router.post("/admin/verify-email", response_model=ResendVerificationResponse, dependencies=[Depends(rate_limit())])
+def admin_verify_email(
+    body: AdminVerifyEmailRequest,
+    admin: UserOut = Depends(require_workspace_admin),
+    db: Session = Depends(get_db),
+):
+    """Mark an account's email verified without the emailed link: the way out on a deployment with no SMTP,
+    where an invited password user could otherwise never accept an invitation. Workspace admins only, audited."""
+    user = db.query(User).filter(func.lower(User.email) == body.email.lower()).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="No account with that email")
+    if user.email_verified:
+        return {"ok": True, "already_verified": True}
+    user.email_verified = True
+    user.email_verify_token = None
+    user.email_verify_token_expires_at = None
+    # The change and its audit row commit together, attributed to the acting admin's personal tenant (as
+    # config.update is): this is an instance-level action.
+    try:
+        audit_repo.write(
+            db, admin.email, "user.email_verified_by_admin", user.email, {"user_id": user.id},
+            tenant_id=tenant_repo.ensure_personal_tenant(db, admin.id, commit=False).id, commit=False,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     return {"ok": True}
 
 

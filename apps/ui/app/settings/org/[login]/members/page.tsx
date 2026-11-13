@@ -18,6 +18,7 @@ import { SectionError } from "@/components/section-error"
 import { HygieneScoringCard } from "@/components/hygiene-scoring-card"
 import { ScheduledScansCard } from "@/components/scheduled-scans-card"
 import { DigestCard } from "@/components/digest-card"
+import { SmtpVerifyNotice } from "@/components/smtp-verify-notice"
 import { AutomationSchedulesCard } from "@/components/automation-schedules-card"
 import { WaiversCard } from "@/components/waivers-card"
 import { ClevisMembersCard } from "@/components/clevis-members-card"
@@ -647,6 +648,7 @@ export default function OrgMembersPage() {
         <HygieneScoringCard orgLogin={orgLogin} />
         <ScheduledScansCard orgLogin={orgLogin} />
         <DigestCard orgLogin={orgLogin} />
+        <SmtpVerifyNotice orgLogin={orgLogin} />
         <AutomationSchedulesCard orgLogin={orgLogin} />
         <ClevisMembersCard orgLogin={orgLogin} />
         <WaiversCard orgLogin={orgLogin} />
