@@ -115,10 +115,27 @@ def test_email_change_links_are_rejected_when_forged_or_taken(client, db):
     reset = password_reset.make_token(member.id, member.password_hash)
     assert client.post("/auth/confirm-email-change", json={"token": reset}).status_code == 400
     # The address was taken between the request and the click.
-    taken = email_change.make_token(member.id, member.email, "owner@example.com")
+    taken = email_change.make_token(member, "owner@example.com")
     assert client.post("/auth/confirm-email-change", json={"token": taken}).status_code == 409
     assert db.query(User).filter(User.id == member.id).one().email == "member@example.com"
     assert client.get("/auth/me", headers=headers).status_code == 200
+
+
+def test_a_pending_email_change_is_cancelled_by_a_password_reset_or_sign_out_everywhere(client, db):
+    _setup_owner(client)
+    headers = _register(client)
+    member = db.query(User).filter(User.email == "member@example.com").one()
+    token = email_change.make_token(member, "new@example.com")
+    assert client.post("/auth/me/password", headers=headers, json={"current_password": "supersecret1234", "new_password": "a-brand-new-password"}).status_code == 200
+    assert client.post("/auth/confirm-email-change", json={"token": token}).status_code == 400
+
+    db.expire_all()
+    member = db.query(User).filter(User.email == "member@example.com").one()
+    token = email_change.make_token(member, "new@example.com")
+    member.token_version += 1  # signed out everywhere
+    db.commit()
+    assert client.post("/auth/confirm-email-change", json={"token": token}).status_code == 400
+    assert db.query(User).filter(User.email == "member@example.com").first() is not None
 
 
 # --- delete account -------------------------------------------------------------------------------------

@@ -480,7 +480,7 @@ def request_email_change(
         raise HTTPException(status_code=400, detail="That is already your email address")
     if db.query(User).filter(func.lower(User.email) == new_email).first():
         raise HTTPException(status_code=409, detail="An account with this email already exists")
-    token = email_change.make_token(user.id, user.email, new_email)
+    token = email_change.make_token(user, new_email)
     background.add_task(
         _send_email_change_email, new_email, f"{settings.cors_origins[0]}/confirm-email-change?token={token}"
     )
@@ -497,7 +497,7 @@ def confirm_email_change(body: ConfirmEmailChangeRequest, request: Request, db: 
         raise invalid
     user_id, new_email, fingerprint = parsed
     user = db.query(User).filter(User.id == user_id).first()
-    if user is None or not email_change.matches_current_email(fingerprint, user.email):
+    if user is None or not email_change.matches_current_state(fingerprint, user):
         raise invalid
     if db.query(User).filter(func.lower(User.email) == new_email, User.id != user.id).first():
         raise HTTPException(status_code=409, detail="An account with this email already exists")
