@@ -65,7 +65,7 @@ def test_sweep_skips_a_fresh_cursor(db):
 
 def test_sweep_survives_a_token_resolution_failure_for_one_tenant(db):
     org_fail = org_repo.get_or_create(db, github_login="acme-reconcile-no-token")
-    org_ok = org_repo.get_or_create(db, github_login="acme-reconcile-ok")
+    org_repo.get_or_create(db, github_login="acme-reconcile-ok")
 
     def _resolve(_db, *, org_id, account_login, client_token):
         if account_login == "acme-reconcile-no-token":
@@ -82,7 +82,7 @@ def test_sweep_survives_a_token_resolution_failure_for_one_tenant(db):
 
 
 def test_sweep_does_not_double_enqueue_while_a_reconcile_job_is_still_active(db):
-    org = org_repo.get_or_create(db, github_login="acme-reconcile-dedupe")
+    org_repo.get_or_create(db, github_login="acme-reconcile-dedupe")
 
     with patch("src.services.membership_reconcile_sweep.resolve_org_token", return_value="tok"):
         run_membership_reconcile_sweep(db)
@@ -143,7 +143,7 @@ def test_sweep_does_not_re_enqueue_while_the_last_reconcile_failed_within_the_st
 
 def test_sweep_survives_a_generic_error_during_enqueue_for_one_tenant(db):
     org_boom = org_repo.get_or_create(db, github_login="acme-reconcile-boom")
-    org_fine = org_repo.get_or_create(db, github_login="acme-reconcile-fine")
+    org_repo.get_or_create(db, github_login="acme-reconcile-fine")
 
     real_enqueue = membership_reconcile_service.enqueue
 

@@ -9,7 +9,6 @@ from src.core.config import settings
 from src.core.db import AuditLog, SavedToken, User, set_session_user
 from src.repositories import org_membership_repo, org_repo
 from src.services.token_resolution import (
-    InsufficientOrgRole,
     NoGitHubTokenAvailable,
     resolve_org_token,
     resolve_owner_token,

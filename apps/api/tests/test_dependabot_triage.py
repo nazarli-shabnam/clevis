@@ -16,7 +16,7 @@ from src.core.db import AuditLog, User, get_db
 from src.repositories import automation_settings_repo, org_membership_repo, org_repo
 from src.routers.dependabot_triage import router
 from src.services import dependabot_triage
-from src.services.dependabot_triage import Decision, triage
+from src.services.dependabot_triage import triage
 
 
 def _pr(number=1, *, login="dependabot[bot]", body="Bumps foo from 1.2.3 to 1.2.4.", draft=False,
