@@ -3,6 +3,7 @@
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from src.core._crypto import decrypt_job_token, encrypt_job_token
@@ -79,6 +80,9 @@ def create_destination(
         except notifications.UnsafeDestinationURL as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         stored = url
+    # Serialize creations per tenant for this transaction, so two concurrent requests can't both read a
+    # count under the cap and both insert past it (same as waivers).
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext('notification_destinations'), :t)"), {"t": ctx.org.tenant_id})
     if notification_repo.count_for_tenant(db, ctx.org.tenant_id) >= _MAX_DESTINATIONS_PER_ORG:
         raise HTTPException(status_code=409, detail=f"At most {_MAX_DESTINATIONS_PER_ORG} destinations per organization")
 

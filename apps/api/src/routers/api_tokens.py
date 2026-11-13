@@ -75,6 +75,9 @@ def create_token(
     db: Session = Depends(get_db),
 ):
     now = datetime.now(timezone.utc)
+    # Serialize creations per tenant for this transaction, so two concurrent requests can't both read a
+    # count under the cap and both insert past it (same as waivers).
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext('api_tokens'), :t)"), {"t": ctx.org.tenant_id})
     active = [
         t
         for t in api_token_repo.list_for_tenant(db, ctx.org.tenant_id)
