@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useSyncExternalStore } from "react";
@@ -72,6 +72,16 @@ vi.mock("@/lib/api/client", () => ({
       listForOrg: (...args: unknown[]) => installationsListForOrgMock(...args),
     },
   },
+}));
+
+// Recharts can't be clicked meaningfully in jsdom; expose the point-click hook as a button instead.
+vi.mock("@/components/charts/area-time-chart", () => ({
+  AreaTimeChart: ({ onPointClick }: { onPointClick?: (i: number) => void }) =>
+    onPointClick ? (
+      <button type="button" onClick={() => onPointClick(0)}>
+        trend-point
+      </button>
+    ) : null,
 }));
 
 import SecurityPage from "@/app/security/page";
@@ -493,6 +503,44 @@ describe("SecurityPage", () => {
     fireEvent.click(scanButton);
 
     await waitFor(() => expect(screen.getByText(/Score trend \(last 2 scans\)/)).toBeInTheDocument());
+  });
+
+  it("opens a stored scan from the history list and from a score-trend point, keeping it in the URL", async () => {
+    const history = [
+      { id: 2, owner: "acme", score: 90, total_checks: 3, failed_checks: 0, created_at: "2026-07-17T00:00:00Z" },
+      { id: 1, owner: "acme", score: 70, total_checks: 3, failed_checks: 1, created_at: "2026-07-10T00:00:00Z" },
+    ];
+    analyticsHistoryMock.mockResolvedValue(history);
+    analyticsExportMock.mockResolvedValue({ truncated: false, row_count: 2, entries: history.map((h) => ({ ...h, checks: [] })) });
+    renderPage();
+    await runScan();
+
+    const views = await screen.findAllByRole("button", { name: /View scan from/ });
+    fireEvent.click(views[0]);
+    expect(routerReplaceMock).toHaveBeenLastCalledWith("?scan=2&owner=acme", { scroll: false });
+
+    fireEvent.click(await screen.findByRole("button", { name: "trend-point" }));
+    expect(routerReplaceMock).toHaveBeenLastCalledWith("?scan=1&owner=acme", { scroll: false });
+  });
+
+  it("follows a scan link's owner when client-side navigation changes it, but not unrelated URL changes", async () => {
+    renderPage();
+    const box = screen.getByPlaceholderText("e.g. octocat") as HTMLInputElement;
+    const navigate = (qs: string) =>
+      act(() => {
+        mockSearchParams = new URLSearchParams(qs);
+        searchParamsListeners.forEach((l) => l());
+      });
+
+    navigate("scan=42&owner=beta");
+    await waitFor(() => expect(box.value).toBe("beta"));
+
+    fireEvent.change(box, { target: { value: "manual" } });
+    navigate("scan=42&owner=beta&tab=fail");
+    expect(box.value).toBe("manual");
+
+    navigate("scan=43&owner=gamma");
+    await waitFor(() => expect(box.value).toBe("gamma"));
   });
 
   async function runScan() {

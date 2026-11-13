@@ -1,11 +1,12 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { ScanChangesCard, scanChangesKey } from "@/components/scan-changes-card"
+import { ScanExplorer } from "@/components/scan-explorer"
 import { EmptyStateNoAccount } from "@/components/empty-state"
 import { CheckCard } from "@/components/check-card"
 import { BulkFixPanel } from "@/components/bulk-fix-panel"
@@ -104,6 +105,31 @@ export default function SecurityPage() {
   const severityFilter = (searchParams.get("severity") ?? "all") as "all" | "high" | "medium" | "low"
   const statusFilter = tab === "fail" ? "fail" : "all"
 
+  // Which stored scan is open (and the one it is compared with) lives in the URL, so "see the scan from
+  // Nov 3" can be shared in a review: ?scan=<id>[&compare=<id>].
+  const idParam = (key: string) => {
+    const n = Number(searchParams.get(key))
+    return Number.isInteger(n) && n > 0 ? n : null
+  }
+  const scanId = idParam("scan")
+  const compareId = scanId === null ? null : idParam("compare")
+  function selectScans(scan: number | null, compare: number | null) {
+    const params = new URLSearchParams(searchParams.toString())
+    // The owner travels with the scan id: a recipient's active scope may be a different org.
+    if (scan === null) {
+      params.delete("scan")
+      params.delete("owner")
+    } else {
+      params.set("scan", String(scan))
+      params.set("owner", lookupOwner)
+      appliedOwner.current = lookupOwner
+    }
+    if (scan === null || compare === null) params.delete("compare")
+    else params.set("compare", String(compare))
+    router.replace(`?${params.toString()}`, { scroll: false })
+    document.getElementById("scan-history")?.scrollIntoView?.({ behavior: "smooth", block: "nearest" })
+  }
+
   function setFilter(key: "tab" | "severity", value: string) {
     const params = new URLSearchParams(searchParams.toString())
     if (value === "all") params.delete(key)
@@ -129,6 +155,16 @@ export default function SecurityPage() {
   useEffect(() => {
     setScopeChecked(true)
   }, [])
+  // A shared ?scan= link names its org (?owner=); it wins over the active scope, on first load (after the
+  // scope effect above has filled the box) and again whenever client-side navigation changes the linked
+  // owner. Unrelated URL changes leave a manual owner edit alone.
+  const urlOwner = searchParams.get("scan") ? searchParams.get("owner") : null
+  const appliedOwner = useRef<string | null>(null)
+  useEffect(() => {
+    if (!scopeChecked) return
+    if (urlOwner && urlOwner !== appliedOwner.current) setOwner(urlOwner)
+    appliedOwner.current = urlOwner
+  }, [scopeChecked, urlOwner])
 
   // The owner box drives token resolution, the installation lookup and the history query; follow it
   // only once typing pauses, so each keystroke doesn't fire a request per query.
@@ -199,6 +235,7 @@ export default function SecurityPage() {
     onSuccess: (_data, forOwner) => {
       queryClient.invalidateQueries({ queryKey: ["analytics.latest-scan", forOwner] })
       queryClient.invalidateQueries({ queryKey: ["analytics.history", forOwner] })
+      queryClient.invalidateQueries({ queryKey: ["analytics.scans", forOwner] })
       queryClient.invalidateQueries({ queryKey: scanChangesKey(forOwner) })
     },
   })
@@ -278,7 +315,13 @@ export default function SecurityPage() {
     .flatMap((h) =>
       h.score === null
         ? []
-        : [{ week: new Date(h.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }), value: h.score }]
+        : [
+            {
+              id: h.id,
+              week: new Date(h.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+              value: h.score,
+            },
+          ]
     )
 
   // Passing checks per scan over the last N scans: an approximation of remediation progress,
@@ -470,6 +513,9 @@ export default function SecurityPage() {
         </div>
 
         {scopeOrgLogin !== "" && owner === scopeOrgLogin && <ScanChangesCard org={scopeOrgLogin} />}
+        {((historyQuery.data?.length ?? 0) > 0 || scanId !== null) && hasOrgLogin(lookupOwner) && (
+          <ScanExplorer owner={lookupOwner} scanId={scanId} compareId={compareId} onChange={selectScans} />
+        )}
 
         {(shown || (scanIsForOwner && scan.isPending)) && (
           <div className="card lg:col-span-2">
@@ -502,9 +548,14 @@ export default function SecurityPage() {
             {trendData.length > 1 && (
               <div className="px-4 py-4 border-b border-border">
                 <span className="text-xs font-medium text-muted-foreground block mb-2">
-                  Score trend (last {trendData.length} scans)
+                  Score trend (last {trendData.length} scans) — click a point to see that scan
                 </span>
-                <AreaTimeChart data={trendData} label="score" height={140} />
+                <AreaTimeChart
+                  data={trendData}
+                  label="score"
+                  height={140}
+                  onPointClick={(i) => selectScans(trendData[i].id, null)}
+                />
               </div>
             )}
 
