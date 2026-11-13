@@ -142,6 +142,10 @@ interface NudgedPr {
 interface SweepOutcome {
   prs: NudgedPr[]
   failed: { repo: string; reason: string }[]
+  /** Repositories where the per-sweep cap left more stale pull requests than were handled. */
+  capped: string[]
+  /** The instance's pr_nudge_mode is "off": the API did nothing. */
+  modeOff: boolean
 }
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many)
@@ -161,13 +165,15 @@ function NudgePanel({
   onConfirm: () => void
   onDismiss: () => void
 }) {
-  const { prs, failed } = outcome
+  const { prs, failed, capped, modeOff } = outcome
   const n = prs.length
   const failedText = `${failed.length} ${plural(failed.length, "repository", "repositories")} failed`
   return (
     <div className="px-4 py-3 border-b border-border text-xs space-y-2" role="region" aria-label="Nudge details">
       <p className="text-foreground">
-        {kind === "preview"
+        {modeOff
+          ? "Nudging is turned off for this instance (pr_nudge_mode is off), so nothing was checked or sent."
+          : kind === "preview"
           ? n === 0
             ? failed.length > 0
               ? "No pull requests need a nudge in the repositories that were checked."
@@ -191,6 +197,12 @@ function NudgePanel({
             </li>
           ))}
         </ul>
+      )}
+      {capped.length > 0 && (
+        <p className="text-muted-foreground">
+          Only the oldest stale pull requests in {capped.join(", ")} {kind === "preview" ? "are" : "were"} included (a
+          sweep handles a limited number per repository). Run it again for the rest.
+        </p>
       )}
       {failed.length > 0 && (
         <ul className="text-destructive space-y-0.5">
@@ -317,6 +329,8 @@ export default function PullRequestsPage() {
   async function sweepAll(dryRun: boolean, approved?: NudgedPr[]): Promise<SweepOutcome> {
     const prs: NudgedPr[] = []
     const failed: { repo: string; reason: string }[] = []
+    const capped: string[] = []
+    let modeOff = false
     let sawPermissionError = false
     const targets = approved ? [...new Set(approved.map((p) => p.repo))] : repoNames
     for (let i = 0; i < targets.length; i += REPO_BATCH_SIZE) {
@@ -328,6 +342,8 @@ export default function PullRequestsPage() {
             : api.prNudges.sweep(org, org, repo, token, false, approved?.filter((p) => p.repo === repo).map((p) => p.number))
           )
             .then((r) => {
+              if (r.mode === "off") modeOff = true
+              if (r.results.some((x) => x.action === "skipped-per-sweep-cap")) capped.push(repo)
               // The API stops a repository's sweep at a GitHub error after some PRs were handled.
               if (r.results.some((x) => x.action === "error")) {
                 failed.push({ repo, reason: "the sweep stopped early after a GitHub error; later pull requests were not processed" })
@@ -358,7 +374,7 @@ export default function PullRequestsPage() {
           : `Couldn't nudge any repository (${failed.length} failed): ${detail}`,
       )
     }
-    return { prs, failed }
+    return { prs, failed, capped, modeOff }
   }
 
   const preview = useMutation({
@@ -368,7 +384,12 @@ export default function PullRequestsPage() {
   })
   const nudge = useMutation({
     mutationFn: async (approved: NudgedPr[]) => ({ org, outcome: await sweepAll(false, approved) }),
-    onSuccess: ({ org: forOrg, outcome }) => setPanel({ org: forOrg, kind: "done", outcome }),
+    onSuccess: ({ org: forOrg, outcome }) => {
+      setPanel({ org: forOrg, kind: "done", outcome })
+      // A nudge comment bumps the PR's updated_at, which the Stale badges depend on.
+      queryClient.invalidateQueries({ queryKey: ["repo-pulls", forOrg] })
+      queryClient.invalidateQueries({ queryKey: ["repos.pulls.all", forOrg] })
+    },
     onError: (e) => {
       setPanel(null)
       setNudgeMsg(e instanceof Error ? e.message : "Nudge failed.")
