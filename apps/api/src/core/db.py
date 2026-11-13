@@ -743,6 +743,7 @@ def release_connection(db: Session) -> None:
     anything needed from ORM objects first: committing expires them.
     """
     db.commit()
+    db.info.pop("tenant_id", None)
     db.execute(text("RESET app.tenant_id"))
     db.execute(text("RESET app.user_id"))
     db.commit()
