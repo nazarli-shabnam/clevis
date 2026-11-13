@@ -1,4 +1,7 @@
-export type CommandKind = "page" | "scope" | "repo"
+export type CommandKind = "page" | "action" | "scope" | "repo"
+
+/** Things the palette does itself instead of navigating. */
+export type CommandAction = "scan" | "mark-notifications-read"
 
 export interface Command {
   id: string
@@ -6,9 +9,10 @@ export interface Command {
   label: string
   /** Secondary text, shown dimmed and searched too. */
   hint: string
-  /** Route to open; exactly one of href / scope is set. */
+  /** Route to open; exactly one of href / scope / action is set. */
   href?: string
   scope?: { kind: "org" | "personal"; login: string }
+  action?: CommandAction
 }
 
 /** 3 = starts with the query, 2 = a word starts with it, 1 = contains it, 0.5 = its letters appear in
@@ -25,9 +29,9 @@ export function matchScore(text: string, query: string): number | null {
   return i === q.length ? 0.5 : null
 }
 
-const KIND_ORDER: Record<CommandKind, number> = { page: 0, scope: 1, repo: 2 }
+const KIND_ORDER: Record<CommandKind, number> = { page: 0, action: 1, scope: 2, repo: 3 }
 
-/** Matching commands, best first; ties keep pages before accounts before repos, then input order. */
+/** Matching commands, best first; ties keep pages before actions before accounts before repos, then input order. */
 export function rankCommands(commands: Command[], query: string, limit = Infinity): Command[] {
   return commands
     .map((c, index) => {
