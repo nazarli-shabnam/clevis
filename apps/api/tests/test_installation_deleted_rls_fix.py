@@ -12,7 +12,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from src.core.config import settings
-from src.core.db import GitHubInstallation, Org, Tenant, User, set_session_user
+from src.core.db import Org, Tenant, User, set_session_user
 from src.core.rbac import set_tenant_session_context
 from src.repositories import installation_repo, org_repo
 

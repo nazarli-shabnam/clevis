@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from src.core.auth import UserOut, require_auth
-from src.core.db import ScanResult, User, get_db
+from src.core.db import User, get_db
 from src.repositories import org_membership_repo, org_repo, scan_results_repo
 from src.routers.analytics import router
 

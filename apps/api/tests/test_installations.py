@@ -830,7 +830,7 @@ def test_sync_org_installation_captures_granted_permissions(db, acme_org):
 
 
 def test_list_org_installations_reports_blocked_features(db, acme_org):
-    row = installation_repo.create(
+    installation_repo.create(
         db, account_login="acme", account_type="Organization", auth_mode="app",
         installation_id=42, org_id=acme_org["org"].id,
     )

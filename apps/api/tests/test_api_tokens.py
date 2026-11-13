@@ -4,7 +4,6 @@ import http.client
 import importlib.util
 import json
 import ssl
-import urllib.request
 from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch

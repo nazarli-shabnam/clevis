@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import statistics
 from collections import defaultdict
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from src.core.app_config import get_config
 

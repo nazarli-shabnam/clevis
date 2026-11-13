@@ -1,0 +1,4 @@
+# Minimal on purpose: pyflakes (unused/undefined names, F) and syntax errors (E9). Grow the rule set
+# deliberately; existing `# noqa` markers for rules not selected here are harmless.
+[lint]
+select = ["F", "E9"]
