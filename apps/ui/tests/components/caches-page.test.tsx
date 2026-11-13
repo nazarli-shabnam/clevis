@@ -20,6 +20,12 @@ vi.mock("@/components/ui/toast", () => ({
   },
 }));
 
+// Workspace admin by default; the failure-toast tests flip it to cover an org admin without the audit log.
+let mockIsWorkspaceAdmin = true;
+vi.mock("@/lib/auth-context", () => ({
+  useAuth: () => ({ user: { is_workspace_admin: mockIsWorkspaceAdmin } }),
+}));
+
 vi.mock("@/lib/api/client", () => ({
   api: {
     tokens: { resolve: (...a: unknown[]) => tokensResolveMock(...a) },
@@ -64,6 +70,7 @@ const rowRepos = () => screen.getAllByRole("link").map((l) => l.textContent).fil
 
 describe("CachesPage", () => {
   beforeEach(() => {
+    mockIsWorkspaceAdmin = true;
     localStorage.clear();
     localStorage.setItem("default_org", "acme");
     [tokensResolveMock, reposListMock, cacheListMock, cacheClearMock, jobsGetMock, orgsMineMock, toastInfo, toastSuccess, toastError].forEach((m) => m.mockReset());
@@ -154,7 +161,36 @@ describe("CachesPage", () => {
     expect(screen.getByRole("button", { name: /clear selected \(0\)/i })).toBeDisabled();
   }, 15000);
 
-  it("reports failed clear jobs as failures, not success", async () => {
+  it("names the failed repos and their errors, keeps them selected, and points admins to the audit log", async () => {
+    seed({ api: [entry(MB, 1)], web: [entry(MB, 1)] });
+    cacheClearMock.mockImplementation((_o: string, r: string) =>
+      Promise.resolve({ queued: true, dry_run: false, job_id: r === "api" ? 5 : 6 }),
+    );
+    jobsGetMock.mockImplementation((id: number) =>
+      Promise.resolve(id === 5 ? { id, status: "failed", result: "Resource not accessible" } : { id, status: "done", result: "{}" }),
+    );
+    renderPage();
+    await screen.findByText("api");
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select api" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select web" }));
+    fireEvent.click(screen.getByRole("button", { name: /clear selected \(2\)/i }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Delete" }));
+
+    await waitFor(
+      () =>
+        expect(toastError).toHaveBeenCalledWith(
+          "1 of 2 cache clears failed — api: Resource not accessible. Check the Audit Log for details.",
+        ),
+      { timeout: 8000 },
+    );
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /clear selected \(1\)/i })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select api" })).toBeChecked();
+  }, 15000);
+
+  it("does not point non-workspace-admins to the audit log", async () => {
+    mockIsWorkspaceAdmin = false;
     seed({ api: [entry(MB, 1)] });
     cacheClearMock.mockResolvedValue({ queued: true, dry_run: false, job_id: 5 });
     jobsGetMock.mockResolvedValue({ id: 5, status: "failed", result: "boom" });
@@ -165,9 +201,8 @@ describe("CachesPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /clear selected \(1\)/i }));
     fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Delete" }));
 
-    await waitFor(() => expect(toastError).toHaveBeenCalledWith(expect.stringContaining("1 of 1 cache clears failed")));
-    expect(toastSuccess).not.toHaveBeenCalled();
-  });
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("1 of 1 cache clears failed — api: boom."), { timeout: 8000 });
+  }, 15000);
 
   it("lists at most five failed repos, then retries the load", async () => {
     const names = ["a", "b", "c", "d", "e", "f", "ok"];
