@@ -2,10 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Dialog } from "@base-ui/react/dialog"
 import { MagnifyingGlass } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
+import { toast } from "@/components/ui/toast"
+import { notificationsKey } from "@/lib/use-notifications"
 import { useActiveScope } from "@/lib/active-scope"
 import { useAuth } from "@/lib/auth-context"
 import { membersHref } from "@/lib/members-href"
@@ -14,11 +16,12 @@ import { rankCommands, type Command } from "@/lib/command-palette"
 import type { InstallationMeta, MyOrgMembership } from "@/lib/api/types"
 
 const MAX_RESULTS = 50
-const KIND_LABEL = { page: "Page", scope: "Account", repo: "Repository" } as const
+const KIND_LABEL = { page: "Page", action: "Action", scope: "Account", repo: "Repository" } as const
 
-/** Cmd/Ctrl+K palette: jump to a page, switch account, or open a repository of the active org. */
+/** Cmd/Ctrl+K palette: jump to a page, run a quick action, switch account, or open a repository of the active org. */
 export function CommandPalette() {
   const router = useRouter()
+  const queryClient = useQueryClient()
   const { user } = useAuth()
   const { scope, setScope } = useActiveScope()
   const [open, setOpen] = useState(false)
@@ -62,6 +65,26 @@ export function CommandPalette() {
     retry: false,
   })
 
+  // Quick actions run in the background and report through a toast, so the palette can close at once.
+  const scanMutation = useMutation({
+    mutationFn: (target: string) => api.analytics.overview(target, ""),
+    onSuccess: (data, target) => {
+      for (const key of ["analytics.latest-scan", "analytics.history", "analytics.changes", "analytics.scans"]) {
+        queryClient.invalidateQueries({ queryKey: [key, target] })
+      }
+      toast.success(`Scan of ${target} finished${data.score != null ? `: score ${data.score}` : ""}.`)
+    },
+    onError: (e, target) => toast.error(e instanceof Error ? e.message : `Scan of ${target} failed.`),
+  })
+  const markReadMutation = useMutation({
+    mutationFn: (target: string) => api.notifications.markRead(target),
+    onSuccess: (_data, target) => {
+      queryClient.invalidateQueries({ queryKey: notificationsKey(target) })
+      toast.success(`Marked ${target}'s notifications as read.`)
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't mark notifications as read."),
+  })
+
   const commands = useMemo<Command[]>(() => {
     const pages: Command[] = NAV_GROUPS.flat()
       .filter((item) => item.href !== "/audit" || user?.is_workspace_admin)
@@ -73,6 +96,26 @@ export function CommandPalette() {
         href: item.href === "/collaborators" ? membersHref(memberships, scope) : item.href,
       }))
     pages.push({ id: "page:/settings", kind: "page", label: "Settings", hint: "", href: "/settings" })
+
+    // Offered only where the caller's role allows them: org actions to members of the active org (the API
+    // still enforces it), the audit log to workspace admins (it 403s for everyone else).
+    const actions: Command[] = []
+    if (org !== "" && memberships.some((m) => m.org_login === org)) {
+      actions.push(
+        { id: "action:scan", kind: "action", label: "Run security scan", hint: `Scan ${org}`, action: "scan" },
+        { id: "action:mark-read", kind: "action", label: "Mark all notifications read", hint: org, action: "mark-notifications-read" },
+        { id: "action:failing-ci", kind: "action", label: "Open failing CI", hint: `CI failures in ${org}`, href: "/activity#ci-failures" },
+      )
+    }
+    if (user?.is_workspace_admin && user.email) {
+      actions.push({
+        id: "action:audit-me",
+        kind: "action",
+        label: "Open the audit log filtered to me",
+        hint: "Audit log · your actions",
+        href: `/audit?actor=${encodeURIComponent(user.email)}`,
+      })
+    }
 
     const personal = installs.find((i) => i.account_type === "User")
     const scopes: Command[] = [
@@ -98,8 +141,8 @@ export function CommandPalette() {
         href: `/repos/${encodeURIComponent(owner)}~${encodeURIComponent(name)}`,
       }
     })
-    return [...pages, ...scopes, ...repos]
-  }, [user?.is_workspace_admin, memberships, installs, scope, reposQuery.data])
+    return [...pages, ...actions, ...scopes, ...repos]
+  }, [user?.is_workspace_admin, user?.email, memberships, installs, scope, org, reposQuery.data])
 
   const ranked = useMemo(() => rankCommands(commands, query), [commands, query])
   const results = useMemo(() => ranked.slice(0, MAX_RESULTS), [ranked])
@@ -112,6 +155,10 @@ export function CommandPalette() {
   function run(cmd: Command) {
     changeOpen(false)
     if (cmd.scope) setScope(cmd.scope)
+    else if (cmd.action === "scan") {
+      toast.info(`Scanning ${org}…`)
+      scanMutation.mutate(org)
+    } else if (cmd.action === "mark-notifications-read") markReadMutation.mutate(org)
     else if (cmd.href) router.push(cmd.href)
   }
 
@@ -142,7 +189,7 @@ export function CommandPalette() {
         <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/30 transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0" />
         <Dialog.Popup className="fixed left-1/2 top-[15vh] z-50 w-[min(36rem,calc(100vw-2rem))] -translate-x-1/2 rounded-lg border border-border bg-popover text-popover-foreground shadow-xl outline-none transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0">
           <Dialog.Title className="sr-only">Command palette</Dialog.Title>
-          <Dialog.Description className="sr-only">Search pages, accounts and repositories, then press Enter.</Dialog.Description>
+          <Dialog.Description className="sr-only">Search pages, actions, accounts and repositories, then press Enter.</Dialog.Description>
           <div className="flex items-center gap-2 border-b border-border px-3">
             <MagnifyingGlass className="size-4 text-muted-foreground" aria-hidden />
             <input

@@ -33,6 +33,9 @@ _APP_JWT_TTL_SECONDS = 540  # 9 minutes
 _APP_JWT_BACKDATE_SECONDS = 60
 # Refresh an installation token slightly before GitHub's stated expiry to avoid edge races.
 _TOKEN_EXPIRY_MARGIN_SECONDS = 60
+# A token baked into a background job must outlive the worker's whole retry budget (~23 min of backoff,
+# see worker.MAX_RETRIES) plus the run itself, so a cached token with less than this left is not reused.
+JOB_TOKEN_MIN_TTL_SECONDS = 30 * 60
 
 
 class GitHubAppNotConfigured(RuntimeError):
@@ -150,16 +153,19 @@ def delete_installation(installation_id: int) -> None:
     resp.raise_for_status()
 
 
-def _cached_token(installation_id: int) -> str | None:
+def _cached_token(installation_id: int, min_ttl_seconds: int = _TOKEN_EXPIRY_MARGIN_SECONDS) -> str | None:
     with _lock:
         cached = _cache.get(installation_id)
-    if cached and cached.expires_at - _TOKEN_EXPIRY_MARGIN_SECONDS > time.time():
+    if cached and cached.expires_at - min_ttl_seconds > time.time():
         return cached.token
     return None
 
 
-def get_installation_token(installation_id: int) -> str:
+def get_installation_token(installation_id: int, min_ttl_seconds: int = _TOKEN_EXPIRY_MARGIN_SECONDS) -> str:
     """Return a valid installation access token, minting and caching it as needed.
+
+    A cached token with less than ``min_ttl_seconds`` left is replaced by a fresh mint (pass
+    ``JOB_TOKEN_MIN_TTL_SECONDS`` when the token is stored in a job payload).
 
     The blocking mint (`_request_installation_token` -- an httpx POST to GitHub,
     up to a 20s timeout) is done *outside* `_lock`. Holding the shared cache lock
@@ -167,7 +173,7 @@ def get_installation_token(installation_id: int) -> str:
     single slow GitHub response. A per-installation `_mint_locks` entry still
     collapses a concurrent stampede for the same uncached installation into one
     mint, and the cache is re-checked after acquiring it."""
-    hit = _cached_token(installation_id)
+    hit = _cached_token(installation_id, min_ttl_seconds)
     if hit is not None:
         return hit
 
@@ -176,13 +182,22 @@ def get_installation_token(installation_id: int) -> str:
 
     with mint_lock:
         # Another thread may have minted while we waited for mint_lock.
-        hit = _cached_token(installation_id)
+        hit = _cached_token(installation_id, min_ttl_seconds)
         if hit is not None:
             return hit
         fresh = _request_installation_token(installation_id)
         with _lock:
             _cache[installation_id] = fresh
         return fresh.token
+
+
+def token_expires_at(token: str) -> float | None:
+    """When ``token`` expires (epoch seconds) if this process minted it, or None for any other token (a PAT).
+
+    Lets a job payload carry the real expiry of the installation token it embeds, so the worker can refuse to
+    run (or retry) a job whose token has lapsed instead of failing with an opaque 401."""
+    with _lock:
+        return next((c.expires_at for c in _cache.values() if c.token == token), None)
 
 
 def get_user_login_by_id(installation_token: str, github_user_id: int) -> str | None:

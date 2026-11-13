@@ -102,7 +102,7 @@ def test_get_installation_token_rechecks_cache_after_acquiring_mint_lock(app_con
     # check must short-circuit and no HTTP mint should happen.
     calls: list[int] = []
 
-    def fake_cached(installation_id: int):
+    def fake_cached(installation_id: int, min_ttl_seconds: int = 60):
         calls.append(installation_id)
         return None if len(calls) == 1 else "ghs_raced"
 
@@ -336,3 +336,29 @@ def test_no_warning_for_a_valid_or_unset_key(app_configured, monkeypatch, caplog
         monkeypatch.setattr(settings, "github_app_private_key", SecretStr(""))
         github_app.warn_if_private_key_invalid()
     assert caplog.text == ""
+
+
+def test_job_ttl_replaces_a_cached_token_that_is_about_to_expire(app_configured):
+    soon = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    later = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    with patch("src.services.github_app.httpx.Client") as mock_cls:
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post = MagicMock(
+            side_effect=[
+                MagicMock(json=MagicMock(return_value={"token": "ghs_short", "expires_at": soon})),
+                MagicMock(json=MagicMock(return_value={"token": "ghs_long", "expires_at": later})),
+            ]
+        )
+        mock_cls.return_value = mock_client
+
+        assert github_app.get_installation_token(5) == "ghs_short"
+        # Fine for an interactive request, too short-lived to bake into a job.
+        assert github_app.get_installation_token(5) == "ghs_short"
+        assert github_app.get_installation_token(5, github_app.JOB_TOKEN_MIN_TTL_SECONDS) == "ghs_long"
+        # The fresh token is now what everyone gets from the cache.
+        assert github_app.get_installation_token(5, github_app.JOB_TOKEN_MIN_TTL_SECONDS) == "ghs_long"
+
+    assert mock_client.post.call_count == 2

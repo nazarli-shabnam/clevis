@@ -43,8 +43,8 @@ def _tenant(db, email: str) -> int:
     return tenant_repo.ensure_personal_tenant(db, user.id).id
 
 
-def _delivery(db, *, status: str, age_days: float, name: str) -> None:
-    row = WebhookDelivery(delivery_id=name, event_type="push", payload=b"{}", status=status)
+def _delivery(db, *, status: str, age_days: float, name: str, tenant_id: int | None = None) -> None:
+    row = WebhookDelivery(tenant_id=tenant_id, delivery_id=name, event_type="push", payload=b"{}", status=status)
     db.add(row)
     db.commit()
     db.execute(
@@ -88,7 +88,8 @@ def test_finished_webhook_deliveries_past_the_window_are_deleted(db):
 
 
 def test_webhook_deliveries_still_in_the_pipeline_are_never_deleted(db):
-    _delivery(db, status="queued", age_days=400, name="old-queued")
+    tenant_id = _tenant(db, "pipeline@example.com")
+    _delivery(db, status="queued", age_days=400, name="old-queued", tenant_id=tenant_id)
     _delivery(db, status="queue_failed", age_days=400, name="old-queue-failed")
     _run(db)
 
@@ -96,6 +97,14 @@ def test_webhook_deliveries_still_in_the_pipeline_are_never_deleted(db):
         "old-queued",
         "old-queue-failed",
     }
+
+
+def test_queued_deliveries_with_no_tenant_are_purged_past_the_window_only(db):
+    _delivery(db, status="queued", age_days=45, name="old-orphan")
+    _delivery(db, status="queued", age_days=2, name="new-orphan")
+    _run(db)
+
+    assert _left(db, WebhookDelivery, WebhookDelivery.delivery_id, ["old-orphan", "new-orphan"]) == {"new-orphan"}
 
 
 def test_recent_finished_webhook_deliveries_are_kept(db):

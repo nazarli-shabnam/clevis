@@ -5,11 +5,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const push = vi.fn();
 const setScope = vi.fn();
 const listMock = vi.fn();
+const overviewMock = vi.fn();
+const markReadMock = vi.fn();
+const toastSuccess = vi.fn();
+const toastInfo = vi.fn();
+const toastError = vi.fn();
 let scope: { kind: "org" | "personal"; login: string } | null = { kind: "org", login: "acme" };
 let isAdmin = false;
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
-vi.mock("@/lib/auth-context", () => ({ useAuth: () => ({ user: { is_workspace_admin: isAdmin } }) }));
+vi.mock("@/lib/auth-context", () => ({ useAuth: () => ({ user: { email: "me@acme.test", is_workspace_admin: isAdmin } }) }));
+vi.mock("@/components/ui/toast", () => ({
+  toast: {
+    success: (...a: unknown[]) => toastSuccess(...a),
+    info: (...a: unknown[]) => toastInfo(...a),
+    error: (...a: unknown[]) => toastError(...a),
+  },
+}));
 vi.mock("@/lib/active-scope", () => ({ useActiveScope: () => ({ scope, setScope }) }));
 vi.mock("@/lib/api/client", () => ({
   api: {
@@ -17,6 +29,8 @@ vi.mock("@/lib/api/client", () => ({
     installations: { list: () => Promise.resolve([{ account_type: "User", account_login: "octocat" }]) },
     tokens: { resolve: () => Promise.reject(new Error("none")) },
     repos: { list: (...a: unknown[]) => listMock(...a) },
+    analytics: { overview: (...a: unknown[]) => overviewMock(...a) },
+    notifications: { markRead: (...a: unknown[]) => markReadMock(...a) },
   },
 }));
 
@@ -38,6 +52,11 @@ describe("CommandPalette", () => {
     push.mockReset();
     setScope.mockReset();
     listMock.mockReset();
+    overviewMock.mockReset();
+    markReadMock.mockReset();
+    toastSuccess.mockReset();
+    toastInfo.mockReset();
+    toastError.mockReset();
     scope = { kind: "org", login: "acme" };
     isAdmin = false;
     listMock.mockResolvedValue({ org: "acme", repos: [{ name: "api", full_name: "acme/api", description: "the api" }] });
@@ -130,5 +149,61 @@ describe("CommandPalette", () => {
     openWithKey();
     await waitFor(() => expect(screen.getByText(/Couldn't load acme's repositories/)).toBeInTheDocument());
     expect(screen.getByRole("option", { name: /Overview/ })).toBeInTheDocument();
+  });
+
+  it("offers quick actions to members of the active org and navigates for 'failing CI'", async () => {
+    renderPalette();
+    openWithKey();
+    const input = await screen.findByRole("combobox");
+    fireEvent.change(input, { target: { value: "failing" } });
+    await waitFor(() => expect(screen.getByRole("option", { name: /Open failing CI/ })).toBeInTheDocument());
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(push).toHaveBeenCalledWith("/activity#ci-failures");
+  });
+
+  it("runs a scan from the palette and reports the result", async () => {
+    overviewMock.mockResolvedValue({ owner: "acme", score: 83 });
+    renderPalette();
+    openWithKey();
+    const input = await screen.findByRole("combobox");
+    fireEvent.change(input, { target: { value: "run security scan" } });
+    fireEvent.click(await screen.findByRole("option", { name: /Run security scan/ }));
+
+    await waitFor(() => expect(overviewMock).toHaveBeenCalledWith("acme", ""));
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Scan of acme finished: score 83."));
+    expect(toastInfo).toHaveBeenCalledWith("Scanning acme…");
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("marks all notifications read and surfaces a failure", async () => {
+    markReadMock.mockRejectedValue(new Error("nope"));
+    renderPalette();
+    openWithKey();
+    const input = await screen.findByRole("combobox");
+    fireEvent.change(input, { target: { value: "mark all" } });
+    fireEvent.click(await screen.findByRole("option", { name: /Mark all notifications read/ }));
+
+    await waitFor(() => expect(markReadMock).toHaveBeenCalledWith("acme"));
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("nope"));
+  });
+
+  it("hides org actions when the caller is not a member of the active org", async () => {
+    scope = { kind: "org", login: "not-mine" };
+    renderPalette();
+    openWithKey();
+    const input = await screen.findByRole("combobox");
+    fireEvent.change(input, { target: { value: "scan" } });
+    await waitFor(() => expect(screen.getByText("No matches")).toBeInTheDocument());
+  });
+
+  it("offers the audit log filtered to me to workspace admins only", async () => {
+    isAdmin = true;
+    renderPalette();
+    openWithKey();
+    const input = await screen.findByRole("combobox");
+    fireEvent.change(input, { target: { value: "filtered to me" } });
+    await waitFor(() => expect(screen.getByRole("option", { name: /audit log filtered to me/i })).toBeInTheDocument());
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(push).toHaveBeenCalledWith("/audit?actor=me%40acme.test");
   });
 });
