@@ -131,6 +131,8 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up --build -d
 
 `docker-compose.local.yml` publishes the UI on `http://localhost:3000` and the API on `http://localhost:8080` (bound to `127.0.0.1` only), builds the UI with `NEXT_PUBLIC_API_BASE=http://localhost:8080`, and sets `SESSION_COOKIE_SECURE=false` on the API so "Sign in with GitHub" works over plain HTTP. `CORS_ORIGINS` already defaults to `["http://localhost:3000"]`. Do not use it for anything exposed beyond your machine. (A `docker-compose.override.yml` of your own is only picked up when you do **not** pass `-f` flags; list it explicitly if you use both.)
 
+GitHub cannot deliver webhooks to `http://localhost:8080`, so webhook-driven updates (uninstall cleanup, security alerts) do not run in this setup. To test webhooks locally, use a forwarding service such as Smee and set the GitHub App webhook URL to its proxy URL. Smee is not secure and is for development only.
+
 ### Real deployment behind a reverse proxy
 
 Give the UI and the API each a hostname, terminate TLS in the proxy, and set, in `.env` **before building the UI image**:
@@ -146,10 +148,15 @@ Leave `SESSION_COOKIE_SECURE` at its default (`true`) since the proxy serves HTT
 services:
   caddy:
     image: caddy:2
+    restart: unless-stopped
     ports: ["80:80", "443:443"]
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
     networks: [clevis]
+
+volumes:
+  caddy_data:
 ```
 
 ```
