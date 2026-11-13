@@ -21,7 +21,7 @@ from src.core.auth import SETUP_LOCK_KEY, set_session_cookie, start_session
 from src.core.config import settings
 from src.core.db import User, get_db, set_session_user
 from src.core.rate_limit import rate_limit
-from src.repositories import tenant_repo
+from src.repositories import invitation_repo, tenant_repo
 from src.services import github_oauth, org_provisioning
 
 logger = logging.getLogger(__name__)
@@ -82,7 +82,9 @@ def find_or_create_user(db: Session, identity: github_oauth.GitHubIdentity) -> U
         db.refresh(user)
         return user
     is_workspace_admin = db.query(User).count() == 0
-    if not is_workspace_admin and not registration_enabled(db):
+    # A GitHub-verified email that has a pending invitation is the invited person, so a closed registration
+    # does not apply to them.
+    if not is_workspace_admin and not registration_enabled(db) and not invitation_repo.list_pending_for_email(db, identity.email):
         db.rollback()
         raise RegistrationDisabled(identity.email)
     user = User(

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { currentLocationNext, safeNextPath, withNext } from "@/lib/safe-next";
+import { currentLocationNext, inviteTokenFromNext, safeNextPath, withNext } from "@/lib/safe-next";
 
 describe("safeNextPath", () => {
   it("keeps same-site relative paths, including a query string", () => {
@@ -30,5 +30,15 @@ describe("currentLocationNext", () => {
   it("is the current path plus query string", () => {
     window.history.pushState({}, "", "/settings/github-callback?installation_id=123&setup_action=install");
     expect(currentLocationNext()).toBe("/settings/github-callback?installation_id=123&setup_action=install");
+  });
+});
+
+describe("inviteTokenFromNext", () => {
+  it("extracts the token of an invite page destination, and nothing else", () => {
+    expect(inviteTokenFromNext("/invite/abc_123-XY")).toBe("abc_123-XY");
+    expect(inviteTokenFromNext("/invite/abc?x=1")).toBe("abc");
+    expect(inviteTokenFromNext("/settings")).toBeNull();
+    expect(inviteTokenFromNext("/invite/")).toBeNull();
+    expect(inviteTokenFromNext("/invite/a/b")).toBeNull();
   });
 });

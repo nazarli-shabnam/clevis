@@ -845,12 +845,12 @@ export const api = {
         "/auth/setup",
         { email, password, name },
       ),
-    register: (email: string, password: string, name?: string) =>
+    register: (email: string, password: string, name?: string, inviteToken?: string) =>
       post<{
         access_token: string
         user: { id: number; email: string; name: string | null; is_workspace_admin: boolean }
         pending_invitations: PendingInvitationSummary[]
-      }>("/auth/register", { email, password, name }),
+      }>("/auth/register", { email, password, name, invite_token: inviteToken }),
     me: () =>
       get<{ id: number; email: string; name: string | null; is_workspace_admin: boolean; email_verified: boolean }>("/auth/me"),
     patchMe: (name: string) =>

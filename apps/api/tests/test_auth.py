@@ -330,6 +330,45 @@ def test_register_disabled_returns_403(auth_client, db):
     assert resp.status_code == 403
 
 
+def test_an_invitation_token_opens_a_closed_registration_for_its_own_address_only(auth_client, db):
+    owner = _setup_owner(auth_client)
+    org = org_repo.get_or_create(db, github_login="acme")
+    invitation = invitation_repo.create(
+        db, org_id=org.id, email="newcomer@example.com", invited_by_user_id=owner["user"]["id"]
+    )
+    token = invitation.token
+    db.execute(text("INSERT INTO app_config (key, value, updated_at) VALUES ('registration_enabled', 'false', NOW())"))
+
+    def attempt(email, invite_token):
+        return auth_client.post(
+            "/auth/register",
+            json={"email": email, "password": "supersecret1234", "invite_token": invite_token},
+        )
+
+    assert attempt("newcomer@example.com", None).status_code == 403  # no token: still closed
+    assert attempt("newcomer@example.com", "not-the-token").status_code == 403
+    assert attempt("someone-else@example.com", token).status_code == 403  # a token opens only its own address
+    resp = attempt("Newcomer@Example.com", token)
+    assert resp.status_code == 201 and resp.json()["user"]["email"] == "newcomer@example.com"
+
+
+def test_a_revoked_invitation_token_no_longer_opens_registration(auth_client, db):
+    owner = _setup_owner(auth_client)
+    org = org_repo.get_or_create(db, github_login="acme")
+    invitation = invitation_repo.create(
+        db, org_id=org.id, email="newcomer@example.com", invited_by_user_id=owner["user"]["id"]
+    )
+    invitation.status = "revoked"
+    db.commit()
+    db.execute(text("INSERT INTO app_config (key, value, updated_at) VALUES ('registration_enabled', 'false', NOW())"))
+
+    resp = auth_client.post(
+        "/auth/register",
+        json={"email": "newcomer@example.com", "password": "supersecret1234", "invite_token": invitation.token},
+    )
+    assert resp.status_code == 403
+
+
 def test_register_ignores_a_stale_cached_enabled_value(auth_client, db):
     # Another replica switched registration off; this process still holds "true" in its 60s cache.
     import time
