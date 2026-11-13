@@ -1,7 +1,12 @@
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+AUTH_SECRET_MIN_LENGTH = 32
+AUTH_SECRET_TOO_SHORT = (
+    f"AUTH_SECRET must be at least {AUTH_SECRET_MIN_LENGTH} characters (generate one with: openssl rand -hex 32)"
+)
 
 _root = Path(__file__).resolve().parent
 _env_file: str | None = None
@@ -46,6 +51,14 @@ class Settings(BaseSettings):
     smtp_from: str | None = None
 
     model_config = SettingsConfigDict(env_file=_env_file, extra="ignore")
+
+    @field_validator("auth_secret")
+    @classmethod
+    def _auth_secret_long_enough(cls, v: SecretStr) -> SecretStr:
+        # It signs every session JWT (HS256), so a short value can be brute-forced offline from one cookie.
+        if len(v.get_secret_value()) < AUTH_SECRET_MIN_LENGTH:
+            raise ValueError(AUTH_SECRET_TOO_SHORT)
+        return v
 
 
 settings = Settings()
