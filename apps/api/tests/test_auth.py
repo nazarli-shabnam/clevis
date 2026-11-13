@@ -1,4 +1,5 @@
 """Tests for auth router and config router."""
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock, patch
@@ -751,6 +752,66 @@ def test_revoke_sessions_invalidates_existing_token(auth_client):
 
     resp = auth_client.get("/auth/me", headers=headers)
     assert resp.status_code == 401
+
+
+def _auth_rows(db, action):
+    from src.core.db import AuditLog
+
+    return db.query(AuditLog).filter(AuditLog.action == action).order_by(AuditLog.id).all()
+
+
+def test_successful_login_is_audited_with_the_client_but_no_credentials(auth_client, db):
+    _setup_owner(auth_client)
+    auth_client.post(
+        "/auth/login",
+        json={"email": "owner@example.com", "password": "supersecret1234"},
+        headers={"User-Agent": "pytest-agent"},
+    )
+    row = _auth_rows(db, "auth.login")[-1]
+    payload = json.loads(row.payload)
+    assert row.actor == "owner@example.com" and row.target == "owner@example.com" and row.tenant_id is not None
+    assert payload["method"] == "password" and payload["user_agent"] == "pytest-agent"
+    assert "supersecret1234" not in row.payload
+
+
+def test_failed_logins_are_audited_per_account_without_flooding_or_recording_unknown_emails(auth_client, db):
+    _setup_owner(auth_client)
+    for _ in range(5):
+        assert auth_client.post("/auth/login", json={"email": "owner@example.com", "password": "wrong-password-1"}).status_code == 401
+    for i in range(3):
+        auth_client.post("/auth/login", json={"email": f"nobody{i}@example.com", "password": "wrong-password-1"})
+
+    rows = _auth_rows(db, "auth.login_failed")
+    assert [r.actor for r in rows] == ["owner@example.com"]  # one row for five failures; unknown emails not recorded
+    assert "wrong-password-1" not in rows[0].payload
+
+    # Once the window passes, the next failure is recorded again.
+    rows[0].created_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    db.commit()
+    auth_client.post("/auth/login", json={"email": "owner@example.com", "password": "wrong-password-1"})
+    assert len(_auth_rows(db, "auth.login_failed")) == 2
+
+
+def test_sign_out_everywhere_and_single_session_revoke_are_audited(auth_client, db):
+    token = _setup_owner(auth_client)["access_token"]
+    auth_client.post("/auth/login", json={"email": "owner@example.com", "password": "supersecret1234"})  # a second session
+    headers = {"Authorization": f"Bearer {token}"}
+    sessions = auth_client.get("/auth/me/sessions", headers=headers).json()
+    other_id = next(s["id"] for s in sessions if not s["current"])
+
+    assert auth_client.delete(f"/auth/me/sessions/{other_id}", headers=headers).status_code == 204
+    revoked = _auth_rows(db, "auth.session_revoked")
+    assert [json.loads(r.payload)["session_id"] for r in revoked] == [other_id]
+
+    assert auth_client.post("/auth/me/revoke-sessions", headers=headers).status_code == 200
+    assert len(_auth_rows(db, "auth.sessions_revoked_all")) == 1
+
+
+def test_a_failed_audit_write_does_not_block_signing_in(auth_client, db):
+    _setup_owner(auth_client)
+    with patch("src.services.auth_audit.audit_repo.write", side_effect=RuntimeError("audit down")):
+        resp = auth_client.post("/auth/login", json={"email": "owner@example.com", "password": "supersecret1234"})
+    assert resp.status_code == 200 and resp.json()["access_token"]
 
 
 def test_revoke_sessions_new_login_still_works(auth_client):
