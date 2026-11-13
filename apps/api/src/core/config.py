@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -48,6 +49,9 @@ class Settings(BaseSettings):
     # SMTP: optional; if unset, register() still creates the account, it just stays unverified.
     smtp_host: str | None = None
     smtp_port: int = 587
+    # How the connection is secured: "starttls" (upgrade after connecting; port 587), "ssl" (implicit TLS from the
+    # first byte; port 465) or "none" (plaintext, for a trusted internal relay only).
+    smtp_security: Literal["starttls", "ssl", "none"] = "starttls"
     smtp_user: str | None = None
     smtp_password: SecretStr | None = None
     smtp_from: str | None = None

@@ -100,3 +100,49 @@ def test_sends_without_login_when_no_smtp_credentials(monkeypatch):
 
     mock_smtp.login.assert_not_called()
     mock_smtp.send_message.assert_called_once()
+
+
+def _fake_smtp():
+    mock_smtp = MagicMock()
+    mock_smtp.__enter__ = MagicMock(return_value=mock_smtp)
+    mock_smtp.__exit__ = MagicMock(return_value=False)
+    return mock_smtp
+
+
+def _configure(monkeypatch, security, port):
+    monkeypatch.setattr(settings, "smtp_host", "smtp.example.com")
+    monkeypatch.setattr(settings, "smtp_port", port)
+    monkeypatch.setattr(settings, "smtp_from", "clevis@example.com")
+    monkeypatch.setattr(settings, "smtp_user", None)
+    monkeypatch.setattr(settings, "smtp_password", None)
+    monkeypatch.setattr(settings, "smtp_security", security)
+
+
+def test_ssl_security_uses_implicit_tls_with_a_verifying_context(monkeypatch):
+    _configure(monkeypatch, "ssl", 465)
+    mock_smtp = _fake_smtp()
+
+    with patch("src.services.email.smtplib.SMTP_SSL", return_value=mock_smtp) as mock_cls, patch(
+        "src.services.email.smtplib.SMTP"
+    ) as plain:
+        send_verification_email("user@example.com", "https://app.example.com/verify-email?token=abc")
+
+    plain.assert_not_called()
+    assert mock_cls.call_args.args == ("smtp.example.com", 465)
+    context = mock_cls.call_args.kwargs["context"]
+    assert context.verify_mode == ssl.CERT_REQUIRED and context.check_hostname is True
+    mock_smtp.starttls.assert_not_called()  # already encrypted
+    mock_smtp.send_message.assert_called_once()
+
+
+def test_none_security_sends_over_plain_smtp_without_starttls(monkeypatch):
+    _configure(monkeypatch, "none", 1025)
+    mock_smtp = _fake_smtp()
+
+    with patch("src.services.email.smtplib.SMTP", return_value=mock_smtp) as mock_cls:
+        send_verification_email("user@example.com", "https://app.example.com/verify-email?token=abc")
+
+    mock_cls.assert_called_once_with("smtp.example.com", 1025, timeout=10)
+    mock_smtp.starttls.assert_not_called()
+    mock_smtp.send_message.assert_called_once()
+

@@ -35,10 +35,17 @@ def send_email(to_email: str, subject: str, text_body: str, html_body: str | Non
     if html_body is not None:
         message.add_alternative(html_body, subtype="html")
 
-    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
-        # Verify the server cert + hostname on the STARTTLS upgrade -- without a context,
-        # smtplib skips validation and an intercepted connection could capture credentials.
-        smtp.starttls(context=ssl.create_default_context())
+    # Verify the server cert + hostname on the TLS handshake -- without a context, smtplib skips
+    # validation and an intercepted connection could capture credentials.
+    if settings.smtp_security == "ssl":
+        connection = smtplib.SMTP_SSL(
+            settings.smtp_host, settings.smtp_port, timeout=10, context=ssl.create_default_context()
+        )
+    else:
+        connection = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10)
+    with connection as smtp:
+        if settings.smtp_security == "starttls":
+            smtp.starttls(context=ssl.create_default_context())
         if settings.smtp_user and settings.smtp_password:
             smtp.login(settings.smtp_user, settings.smtp_password.get_secret_value())
         smtp.send_message(message)
