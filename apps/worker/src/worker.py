@@ -478,6 +478,12 @@ def _handle_backfill_security_alerts(conn: psycopg.Connection, job_id: int, payl
         log.warning("job %d hit a network error (attempt %d): %s", job_id, retry_count + 1, error)
         _requeue_for_retry(conn, job_id, retry_count, sanitize_error(error))
         return
+    except security_alerts_backfill.IncompleteListing as error:
+        # Only the repo listing raises this out here (a per-list one is handled above): without the full set of
+        # repos nothing below can be trusted, so try again rather than store against a partial picture.
+        log.warning("job %d could not read the repo listing (attempt %d): %s", job_id, retry_count + 1, error)
+        _requeue_for_retry(conn, job_id, retry_count, sanitize_error(error))
+        return
 
     received_at = security_alerts_backfill.now()
     stored = 0
@@ -503,6 +509,15 @@ def _handle_backfill_security_alerts(conn: psycopg.Connection, job_id: int, payl
                 # After the alerts, in the same transaction: a rollback never leaves a repo marked complete
                 # without its rows.
                 security_alerts_backfill.mark_synced(cur, tenant_id=payload.tenant_id, repo=full_name, kind=kind)
+            # Repos that left the listing (renamed, deleted, removed from the installation) have no list to
+            # close their alerts from. Only trust a listing that was not cut off at the repo cap (and is not
+            # empty, which cannot be told apart from a failed read). And only for an installation token (ghs_):
+            # the job can carry a pasted PAT instead, whose view of the repos may be narrower than the install's.
+            if token.startswith("ghs_") and repos and len(repos) < security_alerts_backfill._MAX_REPOS:
+                security_alerts_backfill.close_unlisted_repos(
+                    cur, tenant_id=payload.tenant_id, account_login=payload.account_login,
+                    listed_repos=repos, fetched_before=fetch_started,
+                )
         conn.commit()
     except psycopg.Error as error:
         conn.rollback()

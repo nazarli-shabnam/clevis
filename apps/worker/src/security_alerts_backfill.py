@@ -51,7 +51,7 @@ def list_repos(client: httpx.Client, base: str, headers: dict, account_login: st
         body = resp.json()
         page = body.get(items_key, []) if items_key and isinstance(body, dict) else body
         if not isinstance(page, list):
-            break
+            raise IncompleteListing(f"{path} returned a body that is not a list")
         repos.extend(r for r in page if isinstance(r, dict))
         next_link = resp.links.get("next")
         if not next_link or len(repos) >= _MAX_REPOS:
@@ -125,6 +125,24 @@ def close_missing(cur, *, tenant_id: int, repo: str, kind: str, open_numbers: li
         "WHERE tenant_id = %s AND repo = %s AND kind = %s AND state = 'open' "
         "AND NOT (number = ANY(%s)) AND ingested_at < %s",
         (tenant_id, repo, kind, open_numbers, fetched_before),
+    )
+
+
+def close_unlisted_repos(
+    cur, *, tenant_id: int, account_login: str, listed_repos: list[str], fetched_before
+) -> None:
+    """Close stored ``open`` alerts of this account's repos that a complete repo listing no longer contains
+    (renamed, deleted, transferred away or removed from the installation, none of which has a webhook here), so
+    they are not counted twice or kept alive in the burn-down, digest and SLA items.
+
+    Scoped to the account's own repos (a personal tenant may hold webhook alerts for another installation), and
+    like close_missing only to rows stored before the listing began. The caller must only pass a listing that
+    was read in full (not truncated at _MAX_REPOS)."""
+    cur.execute(
+        "UPDATE security_alerts SET state = 'fixed', updated_at = NOW() "
+        "WHERE tenant_id = %s AND kind = ANY(%s) AND state = 'open' "
+        "AND lower(split_part(repo, '/', 1)) = lower(%s) AND NOT (repo = ANY(%s)) AND ingested_at < %s",
+        (tenant_id, list(_ALERT_PATHS), account_login, listed_repos, fetched_before),
     )
 
 
