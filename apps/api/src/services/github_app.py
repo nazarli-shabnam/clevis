@@ -167,6 +167,15 @@ def get_installation_token(installation_id: int, min_ttl_seconds: int = _TOKEN_E
         return fresh.token
 
 
+def token_expires_at(token: str) -> float | None:
+    """When ``token`` expires (epoch seconds) if this process minted it, or None for any other token (a PAT).
+
+    Lets a job payload carry the real expiry of the installation token it embeds, so the worker can refuse to
+    run (or retry) a job whose token has lapsed instead of failing with an opaque 401."""
+    with _lock:
+        return next((c.expires_at for c in _cache.values() if c.token == token), None)
+
+
 def get_user_login_by_id(installation_token: str, github_user_id: int) -> str | None:
     """The login GitHub currently gives the account with this immutable id, or None if no such
     account exists. Logins are mutable and reusable, so identity checks key on the id and use this

@@ -11,9 +11,8 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from src.core._crypto import encrypt_job_token
-from src.core.config import settings
 from src.repositories import job_repo
+from src.services.job_token import job_token_fields
 from src.services.sweep_lock import has_blocking_job
 
 ALERTS_JOB_TYPE = "github.backfill_security_alerts"
@@ -29,9 +28,9 @@ def enqueue(db: Session, *, tenant_id: int, account_login: str, account_type: st
     """Enqueue the activity backfill and, if this tenant's open security alerts were never read, the alert
     backfill too. Both call sites (install time, gap-heal) go through here, so existing installs pick up the
     alert backfill on their next gap-heal pass."""
-    encrypted_token = encrypt_job_token(token, settings.job_secret_key.get_secret_value())
+    token_fields = job_token_fields(token)
     _enqueue_security_alerts_if_needed(
-        db, tenant_id=tenant_id, account_login=account_login, account_type=account_type, encrypted_token=encrypted_token
+        db, tenant_id=tenant_id, account_login=account_login, account_type=account_type, token_fields=token_fields
     )
     return job_repo.enqueue(
         db,
@@ -40,14 +39,14 @@ def enqueue(db: Session, *, tenant_id: int, account_login: str, account_type: st
             "tenant_id": tenant_id,
             "account_login": account_login,
             "account_type": account_type,
-            "token": encrypted_token,
+            **token_fields,
         },
         tenant_id=tenant_id,
     )
 
 
 def _enqueue_security_alerts_if_needed(
-    db: Session, *, tenant_id: int, account_login: str, account_type: str, encrypted_token: str
+    db: Session, *, tenant_id: int, account_login: str, account_type: str, token_fields: dict
 ) -> None:
     """Skipped while a (repo, kind) is recorded as read recently (security_alert_syncs, within ALERT_SYNC_TTL),
     while a job is queued or running, or after a recent failed/empty run. New alerts arrive by webhook, so it
@@ -81,7 +80,7 @@ def _enqueue_security_alerts_if_needed(
             "tenant_id": tenant_id,
             "account_login": account_login,
             "account_type": account_type,
-            "token": encrypted_token,
+            **token_fields,
         },
         tenant_id=tenant_id,
     )

@@ -1,6 +1,7 @@
 """Worker job processing: unit-style tests with mocked GitHub HTTP and psycopg connection."""
 
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -8,7 +9,7 @@ import httpx
 
 from _crypto import encrypt_job_token
 from config import settings
-from worker import MAX_RETRIES, RECLAIM_TIMEOUT_MINUTES, _mark_done, _mark_failed, _reclaim_stale_jobs, _requeue_for_retry, process_job
+from worker import TOKEN_EXPIRED_MESSAGE, MAX_RETRIES, RECLAIM_TIMEOUT_MINUTES, _mark_done, _mark_failed, _reclaim_stale_jobs, _requeue_for_retry, process_job
 
 
 class _FakeCursor:
@@ -635,3 +636,24 @@ def test_handler_does_not_log_done_when_fence_no_ops(caplog):
 
     assert "job 7 done" not in caplog.text
     assert "already claimed by another worker" in caplog.text
+
+
+def test_a_job_whose_installation_token_expired_is_failed_without_running_its_handler():
+    conn = _FakeConn()
+    handler = MagicMock()
+    expired = _global_payload(token_expires_at=time.time() - 5)
+    with patch.dict("worker.JOB_HANDLERS", {"github.clear_actions_cache": handler}):
+        process_job(conn, 1, "github.clear_actions_cache", expired, retry_count=2)
+
+    handler.assert_not_called()
+    sql, params = conn._cursor.calls[-1]
+    assert "status='failed'" in sql and "jobs_scrub_token" in sql
+    assert params[0] == TOKEN_EXPIRED_MESSAGE
+
+
+def test_a_job_with_a_live_or_unknown_token_expiry_still_runs():
+    handler = MagicMock()
+    with patch.dict("worker.JOB_HANDLERS", {"github.clear_actions_cache": handler}):
+        process_job(_FakeConn(), 1, "github.clear_actions_cache", _global_payload(token_expires_at=time.time() + 3000))
+        process_job(_FakeConn(), 2, "github.clear_actions_cache", _global_payload())  # a PAT: no expiry recorded
+    assert handler.call_count == 2
