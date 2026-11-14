@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from src.core.auth import create_access_token
 from src.core.config import settings
-from src.core.db import AuditLog, Membership, ScanResult, Tenant, User, UserSession, get_db
+from src.core.db import AuditLog, Membership, ScanResult, Tenant, User, UserSession, get_db, set_session_tenant
 from src.core.rate_limit import _account_buckets as _account_rate_limit_buckets
 from src.core.rate_limit import _buckets as _rate_limit_buckets
 from src.repositories import invitation_repo, org_membership_repo, org_repo
@@ -173,9 +173,10 @@ def test_a_member_deletes_their_account_and_what_hangs_off_it(client, db):
     assert db.query(UserSession).filter(UserSession.user_id == member_id).count() == 0
     assert db.query(ScanResult).filter(ScanResult.tenant_id == org_tenant).one().scanned_by_user_id is None
     assert not invitation_repo.list_pending_for_email(db, "friend@example.com")
+    assert db.query(AuditLog).filter(AuditLog.tenant_id == personal).count() == 0  # their own sign-in rows went
+    set_session_tenant(db, org_tenant)  # RLS: the session still points at the deleted personal tenant
     left = db.query(AuditLog).filter(AuditLog.action == "account.deleted").one()
     assert left.actor == "member@example.com" and left.tenant_id == org_tenant  # the org keeps a trace
-    assert db.query(AuditLog).filter(AuditLog.tenant_id == personal).count() == 0  # their own sign-in rows went
     assert client.get("/auth/me", headers=headers).status_code == 401
 
 
