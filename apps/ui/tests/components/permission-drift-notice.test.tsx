@@ -136,6 +136,77 @@ describe("PermissionDriftNotice", () => {
     )
   })
 
+  it("'Check now' re-reads a never-checked personal account through the /me endpoint", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify(install()), { status: 200, headers: { "Content-Type": "application/json" } }),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+    render(<PermissionDriftNotice install={install({ account_type: "User", permissions_synced_at: null })} />)
+    fireEvent.click(screen.getByRole("button", { name: /check now/i }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    expect(String((fetchMock.mock.calls as unknown as string[][])[0][0])).toContain(
+      "/me/installations/42/refresh-permissions",
+    )
+  })
+
+  it("shows the error when re-checking fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ detail: "GitHub is unreachable" }), {
+          status: 502,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    )
+    render(
+      <PermissionDriftNotice
+        install={install({
+          blocked_features: [
+            { feature: "stale_pr_nudges", label: "Stale pull-request nudges", missing: { pull_requests: "write" } },
+          ],
+        })}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: /i approved it/i }))
+    expect(await screen.findByText(/github is unreachable/i)).toBeInTheDocument()
+  })
+
+  it("keeps the copy button usable when the clipboard is blocked", async () => {
+    const writeText = vi.fn(async () => {
+      throw new Error("denied")
+    })
+    vi.stubGlobal("navigator", { clipboard: { writeText } })
+    render(
+      <PermissionDriftNotice
+        install={install({
+          blocked_features: [
+            { feature: "stale_pr_nudges", label: "Stale pull-request nudges", missing: { pull_requests: "write" } },
+          ],
+        })}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: /copy request for owner/i }))
+    await waitFor(() => expect(writeText).toHaveBeenCalled())
+    expect(screen.getByRole("button", { name: /copy request for owner/i })).toBeInTheDocument()
+  })
+
+  it("offers no link or check button for an install without a GitHub installation id", () => {
+    render(
+      <PermissionDriftNotice
+        install={install({
+          installation_id: null,
+          blocked_features: [
+            { feature: "stale_pr_nudges", label: "Stale pull-request nudges", missing: { pull_requests: "write" } },
+          ],
+        })}
+      />,
+    )
+    expect(screen.queryByRole("link")).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /check now/i })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /copy request for owner/i })).toBeInTheDocument()
+  })
+
   it("re-checks permissions when the user returns from GitHub", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify(install()), { status: 200, headers: { "Content-Type": "application/json" } }),
