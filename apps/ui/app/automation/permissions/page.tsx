@@ -5,11 +5,10 @@ import { ArrowClockwise, ArrowSquareOut, CheckCircle, Warning, XCircle } from "@
 import { PageHeader } from "@/components/page-header"
 import { SectionError } from "@/components/section-error"
 import { Button } from "@/components/ui/button"
-import { reviewUrl } from "@/components/permission-drift-notice"
+import { approvalUrl } from "@/components/permission-drift-notice"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
 import { relativeTime } from "@/lib/format"
-import { useGithubAppSlug } from "@/lib/use-github-app-slug"
 import { invalidateInstallations } from "@/lib/query-invalidation"
 import type { InstallationMeta } from "@/lib/api/types"
 
@@ -18,7 +17,6 @@ const formatPermissions = (perms: Record<string, string>) =>
 
 export default function PermissionsPage() {
   const { scope } = useActiveScope()
-  const { slug } = useGithubAppSlug()
   const queryClient = useQueryClient()
   const queryKey = ["installations.permissions", scope?.kind, scope?.login]
 
@@ -60,7 +58,7 @@ export default function PermissionsPage() {
       <div className="flex flex-col gap-5">
         {installs.map((install) => {
           const syncedAt = install.permissions_synced_at
-          const url = reviewUrl(install, slug)
+          const url = approvalUrl(install)
           const refreshingThis = refresh.variables === install.installation_id
           return (
             <section key={install.id} className="card">
@@ -80,7 +78,7 @@ export default function PermissionsPage() {
                       className="text-xs text-primary hover:underline inline-flex items-center gap-1"
                     >
                       <ArrowSquareOut className="size-3.5" />
-                      Review on GitHub
+                      Approve on GitHub
                     </a>
                   )}
                   <Button

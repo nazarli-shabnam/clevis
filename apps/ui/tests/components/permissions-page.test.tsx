@@ -68,9 +68,9 @@ describe("PermissionsPage", () => {
     expect(listForOrgMock).toHaveBeenCalledWith("acme")
     expect(screen.getByText("Ready")).toBeInTheDocument()
     expect(screen.getByText("Missing administration: write")).toBeInTheDocument()
-    expect(screen.getByRole("link", { name: /Review on GitHub/ })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /Approve on GitHub/ })).toHaveAttribute(
       "href",
-      expect.stringContaining("/apps/clevis/installations/42"),
+      expect.stringContaining("/organizations/acme/settings/installations/42/permissions/update"),
     )
   })
 

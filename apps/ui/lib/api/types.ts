@@ -496,6 +496,8 @@ export interface AutomationPermission {
   feature: string
   label: string
   required: Record<string, string>
+  // Plain-language reason, shown to whoever approves the permission on GitHub.
+  description?: string
   // Empty when everything is granted *or* permissions were never synced (see permissions_synced_at).
   missing: Record<string, string>
 }

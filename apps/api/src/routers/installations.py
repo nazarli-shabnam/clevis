@@ -128,6 +128,7 @@ def _to_installation_out(row) -> InstallationOut:
             feature=feature_id,
             label=spec.label,
             required=spec.permissions,
+            description=spec.description,
             missing=app_permissions.missing_permissions(row.granted_permissions, spec.permissions) if synced else {},
         )
         for feature_id, spec in app_permissions.FEATURE_PERMISSIONS.items()
