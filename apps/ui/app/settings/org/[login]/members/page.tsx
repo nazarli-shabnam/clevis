@@ -515,6 +515,16 @@ const splitEmails = (text: string) => {
 const EMAIL_STATUS_LABEL: Record<InvitationEmailStatus, string> = {
   sent: "emailed",
   failed: "email failed, share the link",
+  limited: "email limit reached, share the link",
+}
+
+// What the single-invite result says about the link, by whether (and how) the invitation was emailed.
+const LINK_NOTE: Record<InvitationEmailStatus | "none", string> = {
+  sent: "The invitation was emailed. The link is shown only now, so copy it if you also want to share it yourself.",
+  failed: "The email couldn't be sent, so share this link yourself. It is shown only now, so copy it before you leave this page.",
+  limited:
+    "This organization has reached its hourly limit on invitation emails, so no email was sent. Share this link yourself. It is shown only now, so copy it before you leave this page.",
+  none: "Share this link — no email is sent automatically. It is shown only now, so copy it before you leave this page.",
 }
 
 const BULK_STATUS_LABEL: Record<InvitationBulkItem["status"], string> = {
@@ -757,11 +767,7 @@ export default function OrgMembersPage() {
                 <div className="text-xs text-muted-foreground break-all bg-muted/30 border border-border/50 rounded-md p-2">
                   <div className="flex items-center justify-between gap-2">
                     <span>
-                      {lastLink.emailed === "sent"
-                        ? "The invitation was emailed. The link is shown only now, so copy it if you also want to share it yourself."
-                        : lastLink.emailed === "failed"
-                          ? "The email couldn't be sent, so share this link yourself. It is shown only now, so copy it before you leave this page."
-                          : "Share this link — no email is sent automatically. It is shown only now, so copy it before you leave this page."}
+                      {LINK_NOTE[lastLink.emailed ?? "none"]}
                     </span>
                     {/* keyed by the link so a new invitation never inherits "Copied" from the previous one */}
                     <span className="shrink-0">

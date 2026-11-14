@@ -487,6 +487,22 @@ describe("OrgMembersPage invitations", () => {
       expect(await screen.findByText(/couldn't be sent, so share this link yourself/)).toBeInTheDocument();
     });
 
+    it("explains that the hourly email limit was reached and the link must be shared by hand", async () => {
+      smtpOn();
+      listMock.mockResolvedValue([]);
+      createMock.mockResolvedValue({
+        invitation: invitation(9, "new@example.com", "pending", inFuture(7 * DAY)),
+        invite_link: "https://clevis.example/invite/tok_abc",
+        email_status: "limited",
+      });
+      renderPage();
+      await typeAddresses("new@example.com");
+      await screen.findByLabelText("Email the invitation link to the invitee");
+      fireEvent.click(screen.getByRole("button", { name: /send invite/i }));
+      expect(await screen.findByText(/reached its hourly limit on invitation emails/)).toBeInTheDocument();
+      expect(screen.getByText("https://clevis.example/invite/tok_abc")).toBeInTheDocument();
+    });
+
     it("reports delivery per address for a bulk invite", async () => {
       smtpOn();
       listMock.mockResolvedValue([]);
@@ -494,15 +510,19 @@ describe("OrgMembersPage invitations", () => {
         results: [
           { email: "a@example.com", status: "created", invitation: invitation(1, "a@example.com", "pending", inFuture(DAY)), invite_link: "https://clevis.example/invite/a", email_status: "sent" },
           { email: "b@example.com", status: "created", invitation: invitation(2, "b@example.com", "pending", inFuture(DAY)), invite_link: "https://clevis.example/invite/b", email_status: "failed" },
+          { email: "c@example.com", status: "created", invitation: invitation(3, "c@example.com", "pending", inFuture(DAY)), invite_link: "https://clevis.example/invite/c", email_status: "limited" },
         ],
       });
       renderPage();
-      await typeAddresses("a@example.com, b@example.com");
+      await typeAddresses("a@example.com, b@example.com, c@example.com");
       expect(await screen.findByLabelText("Email the invitation link to the invitees")).toBeChecked();
-      fireEvent.click(screen.getByRole("button", { name: /send 2 invites/i }));
-      await waitFor(() => expect(createManyMock).toHaveBeenCalledWith("acme", ["a@example.com", "b@example.com"], true));
+      fireEvent.click(screen.getByRole("button", { name: /send 3 invites/i }));
+      await waitFor(() =>
+        expect(createManyMock).toHaveBeenCalledWith("acme", ["a@example.com", "b@example.com", "c@example.com"], true),
+      );
       expect(await screen.findByText(/invited · emailed/)).toBeInTheDocument();
       expect(screen.getByText(/invited · email failed, share the link/)).toBeInTheDocument();
+      expect(screen.getByText(/invited · email limit reached, share the link/)).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Copy invitation link for b@example.com" })).toBeInTheDocument();
     });
   });

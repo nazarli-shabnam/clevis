@@ -42,9 +42,13 @@ def acme_org(db):
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter():
     """The per-IP buckets are process-wide; the invitation routes are rate limited, so reset between tests."""
+    from src.core.rate_limit import _account_buckets
+
     _rate_limit_buckets.clear()
+    _account_buckets.clear()
     yield
     _rate_limit_buckets.clear()
+    _account_buckets.clear()
 
 
 def _client(db, user):
@@ -763,3 +767,33 @@ def test_the_audit_row_records_that_an_email_was_requested(db, acme_org):
     rows = {p["email"]: p for p in payloads}
     assert rows["bob@acme.com"].get("email_requested") is True
     assert "email_requested" not in rows["carol@acme.com"]
+
+
+def test_emails_per_org_are_capped_but_invitations_and_links_still_come_back(db, acme_org, monkeypatch):
+    monkeypatch.setattr("src.routers.invitations._MAX_INVITE_EMAILS_PER_HOUR", 2)
+    admin = _client(db, acme_org["admin"])
+    with _smtp_on(), patch("src.services.email.send_email") as send:
+        bulk = admin.post(
+            "/orgs/acme/invitations/bulk",
+            json={"emails": ["a@acme.com", "b@acme.com", "c@acme.com", "d@acme.com"], "send_email": True},
+        )
+        single = admin.post("/orgs/acme/invitations", json={"email": "e@acme.com", "send_email": True})
+
+    results = bulk.json()["results"]
+    assert [r["status"] for r in results] == ["created"] * 4
+    assert [r["email_status"] for r in results] == ["sent", "sent", "limited", "limited"]
+    assert all(r["invite_link"] for r in results)
+    assert single.status_code == 200 and single.json()["email_status"] == "limited" and single.json()["invite_link"]
+    assert send.call_count == 2  # nothing past the cap reached the mail server
+    assert len(admin.get("/orgs/acme/invitations").json()) == 5
+
+
+def test_the_email_cap_is_per_org_and_does_not_apply_without_send_email(db, acme_org, monkeypatch):
+    monkeypatch.setattr("src.routers.invitations._MAX_INVITE_EMAILS_PER_HOUR", 1)
+    admin = _client(db, acme_org["admin"])
+    with _smtp_on(), patch("src.services.email.send_email") as send:
+        # Plain invitations never count against the email cap.
+        for address in ("p1@acme.com", "p2@acme.com", "p3@acme.com"):
+            assert admin.post("/orgs/acme/invitations", json={"email": address}).json()["email_status"] is None
+        assert admin.post("/orgs/acme/invitations", json={"email": "x@acme.com", "send_email": True}).json()["email_status"] == "sent"
+    assert send.call_count == 1

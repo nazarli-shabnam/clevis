@@ -549,7 +549,7 @@ export interface InvitationOut {
 }
 
 /** Present only when the invite asked to be emailed; "failed" still leaves a valid invitation and link. */
-export type InvitationEmailStatus = "sent" | "failed"
+export type InvitationEmailStatus = "sent" | "failed" | "limited"
 
 export interface InvitationCreateResponse {
   invitation: InvitationOut

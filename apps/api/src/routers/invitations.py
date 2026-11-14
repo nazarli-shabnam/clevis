@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from src.core.auth import UserOut, require_auth
 from src.core.config import settings
 from src.core.db import Org, User, get_db
-from src.core.rate_limit import rate_limit
+from src.core.rate_limit import check_account_rate_limit, rate_limit
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import audit_repo, invitation_repo, org_membership_repo
 from src.schemas.invitation import (
@@ -62,10 +62,21 @@ def _require_smtp_for(send_email: bool) -> None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_SMTP_UNCONFIGURED)
 
 
-def _email_invitation(address: str, org_login: str, inviter: str, link: str) -> tuple[str, bool]:
+# Invitation emails go to addresses the admin types, so an org's volume is capped (per process, like every
+# limiter here): requests-per-IP alone would let one bulk call mail 50 strangers over and over.
+_MAX_INVITE_EMAILS_PER_HOUR = 100
+
+
+def _email_invitation(address: str, org_login: str, inviter: str, link: str, tenant_id: int) -> tuple[str, bool]:
     """Email the link after the invitation is committed, so a slow or failing SMTP server never holds
     a transaction open or loses the invitation. Returns (status, server_down): the link is returned to
-    the caller either way, and ``server_down`` is False for a single refused recipient."""
+    the caller either way, and ``server_down`` is False for a single refused recipient. Over the org's
+    hourly cap nothing is sent and the status is "limited" (never an error: the invitation already exists)."""
+    try:
+        check_account_rate_limit(f"invite-email:{tenant_id}", max_requests=_MAX_INVITE_EMAILS_PER_HOUR, window_seconds=3600)
+    except HTTPException:
+        logger.warning("Invitation email cap reached for %s", org_login)
+        return "limited", False
     try:
         email.send_invitation_email(address, org_login, inviter, link)
     except smtplib.SMTPRecipientsRefused:
@@ -127,7 +138,11 @@ def create_invitation(
         # A concurrent request won the race between the pre-check above and its own
         # insert; the DB constraint rejected this one.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    email_status = _email_invitation(body.email, ctx.org.github_login, user.email, link)[0] if body.send_email else None
+    email_status = (
+        _email_invitation(body.email, ctx.org.github_login, user.email, link, ctx.org.tenant_id)[0]
+        if body.send_email
+        else None
+    )
     return {"invitation": invitation, "invite_link": link, "email_status": email_status}
 
 
@@ -199,7 +214,7 @@ def create_invitations_bulk(
                 item.email_status = "failed"
             else:
                 item.email_status, smtp_down = _email_invitation(
-                    address, ctx.org.github_login, user.email, item.invite_link
+                    address, ctx.org.github_login, user.email, item.invite_link, ctx.org.tenant_id
                 )
         results.append(item)
     return {"results": results}

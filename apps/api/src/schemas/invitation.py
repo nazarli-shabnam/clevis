@@ -6,7 +6,8 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, EmailStr, Field, St
 InvitationStatus = Literal["pending", "accepted", "revoked", "expired"]
 
 
-EmailStatus = Literal["sent", "failed"]
+# "limited": over the org's hourly cap on emailed invitations, so not attempted (the invitation and link exist).
+EmailStatus = Literal["sent", "failed", "limited"]
 
 
 class InvitationCreate(BaseModel):
