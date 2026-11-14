@@ -1,10 +1,11 @@
 """Org invitation router: admin create (single or bulk) / list / revoke / regenerate pending invites
-(shareable link; an email goes out only on an explicit resend), unauthenticated preview by token,
+(shareable link; an email goes out only on an explicit resend or when create asks for it with ``send_email``), unauthenticated preview by token,
 and accept -- which requires the caller's account email to case-insensitively match the invite
 AND be verified.
 """
 
 import logging
+import smtplib
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -50,6 +51,32 @@ def _masked_email(address: str) -> str:
     return f"{local[:1]}***@{domain}"
 
 
+_SMTP_UNCONFIGURED = (
+    "Email isn't set up on this instance (SMTP_HOST and SMTP_FROM). Invite without emailing and share the link yourself."
+)
+
+
+def _require_smtp_for(send_email: bool) -> None:
+    # Checked before anything is created, so a request that can't deliver doesn't leave invitations behind.
+    if send_email and not email.is_configured():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_SMTP_UNCONFIGURED)
+
+
+def _email_invitation(address: str, org_login: str, inviter: str, link: str) -> tuple[str, bool]:
+    """Email the link after the invitation is committed, so a slow or failing SMTP server never holds
+    a transaction open or loses the invitation. Returns (status, server_down): the link is returned to
+    the caller either way, and ``server_down`` is False for a single refused recipient."""
+    try:
+        email.send_invitation_email(address, org_login, inviter, link)
+    except smtplib.SMTPRecipientsRefused:
+        logger.warning("The mail server refused an invitation recipient for %s", org_login, exc_info=True)
+        return "failed", False
+    except OSError:  # smtplib.SMTPException and ssl.SSLError are OSErrors
+        logger.warning("Failed to email an invitation for %s", org_login, exc_info=True)
+        return "failed", True
+    return "sent", False
+
+
 def _is_expired(invitation) -> bool:
     return invitation.status == "pending" and invitation.expires_at <= datetime.now(timezone.utc)
 
@@ -75,6 +102,7 @@ def create_invitation(
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
+    _require_smtp_for(body.send_email)
     existing = invitation_repo.get_pending_for_org_and_email(db, org_id=ctx.org.id, email=body.email)
     if existing is not None:
         raise HTTPException(
@@ -88,7 +116,8 @@ def create_invitation(
             db, org_id=ctx.org.id, email=body.email, invited_by_user_id=user.id, commit=False
         )
         audit_repo.write(
-            db, user.email, "invitation.create", ctx.org.github_login, {"email": body.email},
+            db, user.email, "invitation.create", ctx.org.github_login,
+            {"email": body.email, **({"email_requested": True} if body.send_email else {})},
             tenant_id=ctx.org.tenant_id, commit=False,
         )
         # Built before the commit, which expires the row.
@@ -98,7 +127,8 @@ def create_invitation(
         # A concurrent request won the race between the pre-check above and its own
         # insert; the DB constraint rejected this one.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    return {"invitation": invitation, "invite_link": link}
+    email_status = _email_invitation(body.email, ctx.org.github_login, user.email, link)[0] if body.send_email else None
+    return {"invitation": invitation, "invite_link": link, "email_status": email_status}
 
 
 @router.post(
@@ -114,9 +144,14 @@ def create_invitations_bulk(
 ):
     """Invite several addresses at once. Each distinct address gets its own result, so one bad or
     duplicate address never blocks the rest; an address repeated in the request (compared
-    case-insensitively) is reported once, for its first occurrence."""
+    case-insensitively) is reported once, for its first occurrence. With ``send_email`` each created
+    invitation is also emailed and reports its own delivery result."""
+    _require_smtp_for(body.send_email)
     results: list[InvitationBulkItem] = []
     seen: set[str] = set()
+    # Once the mail server itself fails (not just one refused recipient), later sends would each wait out
+    # the SMTP timeout; stop trying and report them failed so the request cannot hang for minutes.
+    smtp_down = False
     for raw in body.emails:
         raw = raw.strip()
         try:
@@ -141,7 +176,8 @@ def create_invitations_bulk(
                 db, org_id=ctx.org.id, email=address, invited_by_user_id=user.id, commit=False
             )
             audit_repo.write(
-                db, user.email, "invitation.create", ctx.org.github_login, {"email": address},
+                db, user.email, "invitation.create", ctx.org.github_login,
+                {"email": address, **({"email_requested": True} if body.send_email else {})},
                 tenant_id=ctx.org.tenant_id, commit=False,
             )
             # Built before the commit: commit expires the row, and a read after it could fail
@@ -158,6 +194,13 @@ def create_invitations_bulk(
             db.rollback()
             results.append(InvitationBulkItem(email=address, status="failed"))
             continue
+        if body.send_email:
+            if smtp_down:
+                item.email_status = "failed"
+            else:
+                item.email_status, smtp_down = _email_invitation(
+                    address, ctx.org.github_login, user.email, item.invite_link
+                )
         results.append(item)
     return {"results": results}
 

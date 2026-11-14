@@ -6,8 +6,13 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, EmailStr, Field, St
 InvitationStatus = Literal["pending", "accepted", "revoked", "expired"]
 
 
+EmailStatus = Literal["sent", "failed"]
+
+
 class InvitationCreate(BaseModel):
     email: EmailStr
+    # Opt in to emailing the link too (needs SMTP). Off by default: the link is always returned to copy.
+    send_email: bool = False
 
 
 MAX_BULK_INVITES = 50
@@ -29,6 +34,7 @@ class InvitationBulkCreate(BaseModel):
     ] = Field(
         min_length=1, max_length=MAX_BULK_INVITES
     )
+    send_email: bool = False
 
 
 class InvitationOut(BaseModel):
@@ -46,6 +52,8 @@ class InvitationOut(BaseModel):
 class InvitationCreateResponse(BaseModel):
     invitation: InvitationOut
     invite_link: str
+    # None unless `send_email` was requested. "failed" still leaves a valid invitation and link.
+    email_status: EmailStatus | None = None
 
 
 class InvitationBulkItem(BaseModel):
@@ -53,6 +61,7 @@ class InvitationBulkItem(BaseModel):
     status: Literal["created", "already_pending", "invalid", "failed"]
     invitation: InvitationOut | None = None
     invite_link: str | None = None
+    email_status: EmailStatus | None = None
 
 
 class InvitationBulkResponse(BaseModel):

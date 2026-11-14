@@ -1,5 +1,6 @@
 """Tests for the org invitation create/list/revoke/accept flow."""
 
+import json
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -661,3 +662,104 @@ def test_reissue_and_bulk_are_audited(db, acme_org):
     assert {"invitation.regenerate", "invitation.resend"} <= {r.action for r in rows}
     assert sum(r.action == "invitation.create" for r in rows) == 2  # bob + x
     assert all("token" not in str(r.payload) for r in rows)
+
+
+# --- emailing the link on create (#953) ---
+
+def _smtp_on():
+    return patch("src.services.email.is_configured", return_value=True)
+
+
+def test_create_does_not_email_unless_asked(db, acme_org):
+    admin = _client(db, acme_org["admin"])
+    with _smtp_on(), patch("src.services.email.send_email") as send:
+        resp = admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com"})
+    assert resp.status_code == 200 and resp.json()["email_status"] is None
+    send.assert_not_called()
+
+
+def test_create_can_email_the_link_it_returns(db, acme_org):
+    admin = _client(db, acme_org["admin"])
+    with _smtp_on(), patch("src.services.email.send_email") as send:
+        resp = admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com", "send_email": True})
+
+    body = resp.json()
+    assert resp.status_code == 200 and body["email_status"] == "sent"
+    to, subject, text = send.call_args.args[:3]
+    assert to == "bob@acme.com" and "acme" in subject
+    # The emailed link is the one returned, and it works.
+    assert body["invite_link"] in text
+    assert _client(db, acme_org["invitee"]).get(f"/invitations/{_token(body)}").status_code == 200
+
+
+def test_create_with_email_but_no_smtp_is_a_409_and_creates_nothing(db, acme_org):
+    admin = _client(db, acme_org["admin"])
+    with patch("src.services.email.is_configured", return_value=False):
+        resp = admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com", "send_email": True})
+        bulk = admin.post("/orgs/acme/invitations/bulk", json={"emails": ["a@acme.com"], "send_email": True})
+    assert resp.status_code == 409 and "SMTP" in resp.json()["detail"]
+    assert bulk.status_code == 409
+    assert admin.get("/orgs/acme/invitations").json() == []
+
+
+def test_a_failed_send_keeps_the_invitation_and_its_link(db, acme_org):
+    admin = _client(db, acme_org["admin"])
+    with _smtp_on(), patch("src.services.email.send_email", side_effect=OSError("smtp down")):
+        resp = admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com", "send_email": True})
+    body = resp.json()
+    assert resp.status_code == 200 and body["email_status"] == "failed"
+    assert _client(db, acme_org["invitee"]).get(f"/invitations/{_token(body)}").status_code == 200
+    assert len(admin.get("/orgs/acme/invitations").json()) == 1
+
+
+def test_bulk_reports_delivery_per_address_and_a_refused_recipient_does_not_stop_the_rest(db, acme_org):
+    import smtplib
+
+    admin = _client(db, acme_org["admin"])
+    sent_to = []
+
+    def fake_send(to, *_a, **_k):
+        if to == "bad@acme.com":
+            raise smtplib.SMTPRecipientsRefused({to: (550, b"no such user")})
+        sent_to.append(to)
+
+    with _smtp_on(), patch("src.services.email.send_email", side_effect=fake_send):
+        resp = admin.post(
+            "/orgs/acme/invitations/bulk",
+            json={"emails": ["a@acme.com", "bad@acme.com", "c@acme.com", "not-an-email"], "send_email": True},
+        )
+
+    results = {r["email"]: r for r in resp.json()["results"]}
+    assert results["a@acme.com"]["email_status"] == "sent"
+    assert results["bad@acme.com"]["status"] == "created" and results["bad@acme.com"]["email_status"] == "failed"
+    assert results["c@acme.com"]["email_status"] == "sent"
+    assert results["not-an-email"]["email_status"] is None
+    assert sent_to == ["a@acme.com", "c@acme.com"]
+
+
+def test_bulk_stops_sending_once_the_mail_server_itself_is_failing(db, acme_org):
+    admin = _client(db, acme_org["admin"])
+    with _smtp_on(), patch("src.services.email.send_email", side_effect=ConnectionRefusedError("down")) as send:
+        resp = admin.post(
+            "/orgs/acme/invitations/bulk",
+            json={"emails": ["a@acme.com", "b@acme.com", "c@acme.com"], "send_email": True},
+        )
+    results = resp.json()["results"]
+    assert [r["status"] for r in results] == ["created"] * 3
+    assert [r["email_status"] for r in results] == ["failed"] * 3
+    # One attempt only: later addresses would each wait out the SMTP timeout.
+    assert send.call_count == 1
+    assert all(r["invite_link"] for r in results)
+
+
+def test_the_audit_row_records_that_an_email_was_requested(db, acme_org):
+    from src.core.db import AuditLog
+
+    admin = _client(db, acme_org["admin"])
+    with _smtp_on(), patch("src.services.email.send_email"):
+        admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com", "send_email": True})
+        admin.post("/orgs/acme/invitations", json={"email": "carol@acme.com"})
+    payloads = [json.loads(r.payload) for r in db.query(AuditLog).filter(AuditLog.action == "invitation.create")]
+    rows = {p["email"]: p for p in payloads}
+    assert rows["bob@acme.com"].get("email_requested") is True
+    assert "email_requested" not in rows["carol@acme.com"]
