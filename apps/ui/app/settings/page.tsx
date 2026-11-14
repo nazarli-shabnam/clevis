@@ -13,6 +13,7 @@ import { EmptyStatePage } from "@/components/empty-state"
 import { PermissionDriftNotice } from "@/components/permission-drift-notice"
 import { SessionsCard } from "@/components/sessions-card"
 import { ChangePasswordCard } from "@/components/change-password-card"
+import { ChangeEmailCard, DeleteAccountCard } from "@/components/account-cards"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { toast } from "@/components/ui/toast"
 import Link from "next/link"
@@ -873,12 +874,14 @@ export default function SettingsPage() {
       <div className="flex flex-col gap-4">
         <ProfileSection />
         <ChangePasswordCard />
+        <ChangeEmailCard />
         <SessionsCard />
         <AppearanceSection />
         <OrgMembershipsSection />
         <ConnectedOrgsSection />
         {user?.is_workspace_admin && <SavedTokensSection />}
         {user?.is_workspace_admin && <InstanceConfigSection />}
+        <DeleteAccountCard />
       </div>
     </>
   )

@@ -88,3 +88,16 @@ def send_password_reset_email(to_email: str, reset_url: str) -> None:
             "If you didn't ask for this, you can ignore this email; your password hasn't changed."
         ),
     )
+
+
+def send_email_change_email(to_email: str, confirm_url: str) -> None:
+    send_email(
+        to_email,
+        "Confirm your new Clevis email address",
+        (
+            "Someone asked to use this address for a Clevis account.\n\n"
+            "Confirm it (the link expires in 1 hour and works once):\n"
+            f"{confirm_url}\n\n"
+            "If you didn't ask for this, ignore this email; nothing changes."
+        ),
+    )

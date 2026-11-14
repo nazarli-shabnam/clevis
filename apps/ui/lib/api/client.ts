@@ -864,6 +864,11 @@ export const api = {
     /** Workspace admin only: mark an account's email verified without the emailed link (for no-SMTP deployments). */
     adminVerifyEmail: (email: string) =>
       post<{ ok: boolean; already_verified: boolean }>("/auth/admin/verify-email", { email }),
+    requestEmailChange: (newEmail: string, password: string) =>
+      post<{ ok: boolean }>("/auth/me/email", { new_email: newEmail, password }),
+    confirmEmailChange: (token: string) => post<{ ok: boolean }>("/auth/confirm-email-change", { token }),
+    deleteAccount: (confirmEmail: string, password?: string) =>
+      post<void>("/auth/me/delete", { confirm_email: confirmEmail, password }),
     forgotPassword: (email: string) => post<{ ok: boolean }>("/auth/forgot-password", { email }),
     resetPassword: (token: string, password: string) => post<{ ok: boolean }>("/auth/reset-password", { token, password }),
     changePassword: (currentPassword: string, newPassword: string) =>
