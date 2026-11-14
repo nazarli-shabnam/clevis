@@ -148,6 +148,38 @@ export function errorDetail(json: unknown, fallback: string): string {
   return fallback
 }
 
+/**
+ * GET a file the server builds (an export), with a long timeout. Resolves with the blob, the filename the
+ * server chose and whether it flagged the file as cut off at its row cap (`truncatedHeader` = "true").
+ */
+async function downloadFile(
+  path: string,
+  qs: URLSearchParams,
+  opts: { fallbackName: string; truncatedHeader: string; timeoutMessage: string },
+): Promise<{ blob: Blob; filename: string; truncated: boolean }> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 120_000)
+  try {
+    const res = await fetch(`${BASE}${path}${qs.size ? `?${qs}` : ""}`, {
+      credentials: "include",
+      headers: { ...getAuthHeaders() },
+      signal: controller.signal,
+    })
+    if (!res.ok) {
+      const json = await res.json().catch(() => null)
+      if (res.status === 401) notifyUnauthorized()
+      throw new ApiError(errorDetail(json, `Request failed: ${res.status}`), res.status)
+    }
+    const filename = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? opts.fallbackName
+    return { blob: await res.blob(), filename, truncated: res.headers.get(opts.truncatedHeader) === "true" }
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") throw new Error(opts.timeoutMessage)
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 // An Error that also carries the HTTP status, so a caller can treat one specific status as data.
 class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -619,6 +651,19 @@ export const api = {
     },
     // Distinct action names actually present in the log, for the filter dropdown.
     actions: () => get<string[]>("/audit/actions"),
+    // Every audit row matching the filters (not just the loaded pages) as a CSV, up to the server's cap;
+    // `truncated` is true when the cap cut it. Org-admin only.
+    exportForOrg: (org: string, filters: OrgAuditFilters = {}) => {
+      const qs = new URLSearchParams()
+      for (const [key, value] of Object.entries(filters)) {
+        if (value !== undefined && value !== "") qs.set(key, String(value))
+      }
+      return downloadFile(`/orgs/${encodeURIComponent(org)}/audit/export`, qs, {
+        fallbackName: `clevis-audit-${org}.csv`,
+        truncatedHeader: "X-Audit-Truncated",
+        timeoutMessage: "The audit export timed out — try a shorter date range.",
+      })
+    },
   },
   installations: {
     list: () => get<InstallationMeta[]>("/me/installations"),
@@ -660,36 +705,15 @@ export const api = {
   evidence: {
     // The compliance evidence zip (admin only). Built server-side, so it can take longer than the
     // default request timeout; `truncated` is true when any list hit its cap (the zip's manifest says which).
-    download: async (
-      org: string,
-      range: { since?: string; until?: string } = {},
-    ): Promise<{ blob: Blob; filename: string; truncated: boolean }> => {
+    download: (org: string, range: { since?: string; until?: string } = {}) => {
       const qs = new URLSearchParams()
       if (range.since) qs.set("since", range.since)
       if (range.until) qs.set("until", range.until)
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 120_000)
-      try {
-        const res = await fetch(
-          `${BASE}/orgs/${encodeURIComponent(org)}/evidence${qs.size ? `?${qs}` : ""}`,
-          { credentials: "include", headers: { ...getAuthHeaders() }, signal: controller.signal },
-        )
-        if (!res.ok) {
-          const json = await res.json().catch(() => null)
-          if (res.status === 401) notifyUnauthorized()
-          throw new ApiError(errorDetail(json, `Request failed: ${res.status}`), res.status)
-        }
-        const filename =
-          /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? `clevis-evidence-${org}.zip`
-        return { blob: await res.blob(), filename, truncated: res.headers.get("X-Evidence-Truncated") === "true" }
-      } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") {
-          throw new Error("The evidence export timed out — try a shorter date range.")
-        }
-        throw err
-      } finally {
-        clearTimeout(timer)
-      }
+      return downloadFile(`/orgs/${encodeURIComponent(org)}/evidence`, qs, {
+        fallbackName: `clevis-evidence-${org}.zip`,
+        truncatedHeader: "X-Evidence-Truncated",
+        timeoutMessage: "The evidence export timed out — try a shorter date range.",
+      })
     },
   },
   waivers: {
