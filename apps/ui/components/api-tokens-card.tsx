@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { CircleNotch } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
@@ -26,8 +27,41 @@ function statusOf(t: ApiToken): "revoked" | "expired" | "active" {
   return "active"
 }
 
+const DAY_MS = 86_400_000
+// Matches the notification feed's warning window.
+const EXPIRY_WARNING_DAYS = 14
+
+/** Whole days left (rounded up) when an active token expires within the warning window, else null. */
+function daysUntilExpiry(t: ApiToken): number | null {
+  if (!t.expires_at) return null
+  const left = new Date(t.expires_at).getTime() - Date.now()
+  return left > 0 && left <= EXPIRY_WARNING_DAYS * DAY_MS ? Math.ceil(left / DAY_MS) : null
+}
+
+/** The lifetime the replacement should get: the original's span, or never for a token that never expires. */
+function lifetimeDays(t: ApiToken): number | undefined {
+  if (!t.expires_at) return undefined
+  return Math.max(1, Math.round((new Date(t.expires_at).getTime() - new Date(t.created_at).getTime()) / DAY_MS))
+}
+
 /** One row owns its revoke mutation, so a slow or failing revoke never disables or flags another token. */
-function TokenRow({ orgLogin, token, onRevoked }: { orgLogin: string; token: ApiToken; onRevoked: () => void }) {
+function TokenRow({
+  orgLogin,
+  token,
+  linked,
+  rotating,
+  rotateDisabled,
+  onRotate,
+  onRevoked,
+}: {
+  orgLogin: string
+  token: ApiToken
+  linked: boolean
+  rotating: boolean
+  rotateDisabled: boolean
+  onRotate: () => void
+  onRevoked: () => void
+}) {
   const [confirming, setConfirming] = useState(false)
   const revoke = useMutation({
     mutationFn: () => api.apiTokens.revoke(orgLogin, token.id),
@@ -38,14 +72,24 @@ function TokenRow({ orgLogin, token, onRevoked }: { orgLogin: string; token: Api
     onError: () => setConfirming(false),
   })
   const status = statusOf(token)
+  const expiresInDays = status === "active" ? daysUntilExpiry(token) : null
 
   return (
-    <li className="px-4 py-2 flex items-start justify-between gap-3 text-xs">
+    <li
+      id={`api-token-${token.id}`}
+      aria-current={linked ? "true" : undefined}
+      className={`px-4 py-2 flex items-start justify-between gap-3 text-xs ${linked ? "bg-elevated outline outline-1 outline-primary" : ""}`}
+    >
       <div className="min-w-0">
         <p className="font-medium text-foreground">
           {token.name}
           <code className="ml-2 font-mono text-muted-foreground font-normal">{token.prefix}…</code>
           {status !== "active" && <span className="ml-2 text-destructive font-normal">{status}</span>}
+          {expiresInDays !== null && (
+            <span className="ml-2 text-warning font-normal">
+              expires in {expiresInDays} day{expiresInDays === 1 ? "" : "s"}
+            </span>
+          )}
         </p>
         <p className="text-muted-foreground">
           scope {token.scope} · created {relativeTime(token.created_at)} by {token.created_by} ·{" "}
@@ -59,7 +103,16 @@ function TokenRow({ orgLogin, token, onRevoked }: { orgLogin: string; token: Api
         )}
       </div>
       {status === "active" && (
-        <>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={rotateDisabled || rotating}
+            onClick={onRotate}
+            aria-label={`Rotate token ${token.name}`}
+          >
+            {rotating ? "Rotating…" : "Rotate"}
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -78,7 +131,7 @@ function TokenRow({ orgLogin, token, onRevoked }: { orgLogin: string; token: Api
             pending={revoke.isPending}
             onConfirm={() => revoke.mutate()}
           />
-        </>
+        </div>
       )}
     </li>
   )
@@ -112,12 +165,39 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
   const [expiry, setExpiry] = useState(0)
   // Held only in component state: the API never returns the secret again.
   const [created, setCreated] = useState<ApiTokenCreated | null>(null)
+  // Set when `created` is a rotation's replacement: the old token stays valid until the admin revokes it,
+  // so CI keeps working while its secret is swapped.
+  const [rotatedFrom, setRotatedFrom] = useState<ApiToken | null>(null)
+  const [confirmingOld, setConfirmingOld] = useState(false)
+
+  // A notification links here with ?token=<id>: that row is marked and scrolled into view.
+  const linkedToken = Number(useSearchParams()?.get("token")) || null
+  const linkedLoaded = linkedToken !== null && !!query.data?.some((t) => t.id === linkedToken)
+  useEffect(() => {
+    if (linkedLoaded) document.getElementById(`api-token-${linkedToken}`)?.scrollIntoView?.({ block: "center" })
+  }, [linkedToken, linkedLoaded])
 
   const create = useMutation({
     mutationFn: () => api.apiTokens.create(orgLogin, name.trim(), EXPIRY_OPTIONS[expiry].days),
     onSuccess: (data) => {
       setCreated(data)
       setName("")
+      return queryClient.invalidateQueries({ queryKey })
+    },
+  })
+  const rotate = useMutation({
+    mutationFn: (old: ApiToken) => api.apiTokens.create(orgLogin, old.name, lifetimeDays(old)),
+    onSuccess: (data, old) => {
+      setCreated(data)
+      setRotatedFrom(old)
+      return queryClient.invalidateQueries({ queryKey })
+    },
+  })
+  const revokeOld = useMutation({
+    mutationFn: (old: ApiToken) => api.apiTokens.revoke(orgLogin, old.id),
+    onSuccess: () => setRotatedFrom(null),
+    onSettled: () => {
+      setConfirmingOld(false)
       return queryClient.invalidateQueries({ queryKey })
     },
   })
@@ -160,10 +240,44 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
           </div>
           <div className="flex items-center gap-2">
             <CopyButton value={created.token} ariaLabel={`Copy token ${created.name}`} />
-            <Button variant="outline" size="sm" onClick={() => setCreated(null)}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setCreated(null)
+                setRotatedFrom(null)
+              }}
+            >
               I&apos;ve saved it
             </Button>
           </div>
+          {rotatedFrom && (
+            <div className="flex flex-col gap-1.5 border-t border-border/50 pt-2">
+              <p className="text-xs text-muted-foreground">
+                The old token &quot;{rotatedFrom.name}&quot; ({rotatedFrom.prefix}…) still works, so nothing breaks while you
+                update CI. Once CI uses the new secret, revoke the old one.
+              </p>
+              <div>
+                <Button variant="outline" size="sm" disabled={revokeOld.isPending} onClick={() => setConfirmingOld(true)}>
+                  Revoke old token
+                </Button>
+              </div>
+              {revokeOld.isError && (
+                <p role="alert" className="text-xs text-destructive">
+                  Couldn&apos;t revoke the old token: {revokeOld.error.message}
+                </p>
+              )}
+              <ConfirmDialog
+                open={confirmingOld}
+                onOpenChange={setConfirmingOld}
+                title={`Revoke "${rotatedFrom.name}" (${rotatedFrom.prefix}…)?`}
+                description="Anything still using the old token (for example a CI job) stops working immediately. This can't be undone."
+                confirmLabel="Revoke"
+                pending={revokeOld.isPending}
+                onConfirm={() => revokeOld.mutate(rotatedFrom)}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -184,16 +298,28 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
           focusId="api-token-name"
         />
       ) : (
+        <>
+        {rotate.isError && (
+          <p role="alert" className="px-4 pt-3 text-xs text-destructive">
+            Couldn&apos;t rotate the token: {rotate.error.message}
+          </p>
+        )}
         <ul className="divide-y divide-border">
           {query.data.map((t) => (
             <TokenRow
               key={t.id}
               orgLogin={orgLogin}
               token={t}
+              linked={t.id === linkedToken}
+              // Rotating while a secret is on screen would replace it before it was copied.
+              rotateDisabled={created !== null || rotate.isPending}
+              rotating={rotate.isPending && rotate.variables?.id === t.id}
+              onRotate={() => rotate.mutate(t)}
               onRevoked={() => queryClient.invalidateQueries({ queryKey })}
             />
           ))}
         </ul>
+        </>
       )}
 
       <form
