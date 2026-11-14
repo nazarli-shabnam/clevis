@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
-import { safeNextPath, withNext } from "@/lib/safe-next"
+import { inviteTokenFromNext, safeNextPath, withNext } from "@/lib/safe-next"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Field, FieldLabel } from "@/components/ui/field"
@@ -15,6 +15,8 @@ function RegisterForm() {
   const router = useRouter()
   // Carried from the login page so an invitee who signs up lands back on their invite.
   const next = safeNextPath(useSearchParams().get("next"))
+  // An invitation link opens the form even while sign-ups are closed, for the invited address.
+  const inviteToken = inviteTokenFromNext(next)
 
   const [name, setName] = useState("")
   const [email, setEmail] = useState("")
@@ -57,6 +59,7 @@ function RegisterForm() {
         email,
         password,
         name || undefined,
+        inviteToken ?? undefined,
       )
       setSession(access_token, newUser, pending_invitations)
       router.replace(next)
@@ -77,7 +80,7 @@ function RegisterForm() {
           <h1 className="text-2xl font-semibold text-foreground">Create an account</h1>
         </div>
 
-        {!registrationEnabled ? (
+        {!registrationEnabled && !inviteToken ? (
           <p role="status" className="text-sm text-muted-foreground">
             New sign-ups are turned off on this server. Ask an admin to create an account or send an invitation.
           </p>

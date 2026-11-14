@@ -53,6 +53,25 @@ describe("RegisterPage", () => {
     expect(screen.getByRole("link", { name: "Sign in" })).toBeInTheDocument();
   });
 
+  it("keeps the form and sends the invitation token when sign-ups are closed but the user came from an invite (#1011)", async () => {
+    setupRequiredMock.mockResolvedValue({ setup_required: false, registration_enabled: false, github_oauth_enabled: true });
+    searchParams = new URLSearchParams({ next: "/invite/tok_123-abc" });
+    registerMock.mockResolvedValue({
+      access_token: "a.b.c",
+      user: { id: 1, email: "new@example.com", name: null, is_workspace_admin: false },
+      pending_invitations: [],
+    });
+    renderPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("you@example.com"), { target: { value: "new@example.com" } });
+    fireEvent.change(screen.getByPlaceholderText("At least 12 characters"), { target: { value: "supersecret1234" } });
+    fireEvent.change(screen.getByPlaceholderText("Repeat password"), { target: { value: "supersecret1234" } });
+    fireEvent.click(screen.getByRole("button", { name: /create account/i }));
+
+    await waitFor(() => expect(registerMock).toHaveBeenCalledWith("new@example.com", "supersecret1234", undefined, "tok_123-abc"));
+    expect(screen.queryByText(/New sign-ups are turned off/)).not.toBeInTheDocument();
+  });
+
   beforeEach(() => {
     localStorage.clear();
     replace.mockClear();

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
-import { safeNextPath, withNext } from "@/lib/safe-next"
+import { inviteTokenFromNext, safeNextPath, withNext } from "@/lib/safe-next"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Field, FieldLabel } from "@/components/ui/field"
@@ -39,6 +39,7 @@ export default function LoginPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const next = safeNextPath(searchParams.get("next"))
+  const inviteToken = inviteTokenFromNext(next)
 
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -178,8 +179,16 @@ export default function LoginPage() {
                 Sign up
               </a>
             </>
+          ) : inviteToken ? (
+            <>
+              New sign-ups are turned off, but you were invited.{" "}
+              <a href={withNext("/register", next)} className="text-foreground underline underline-offset-2">
+                Create your account
+              </a>{" "}
+              with the invited email address.
+            </>
           ) : (
-            "New sign-ups are turned off. Ask an admin to create an account or send an invitation."
+            "New sign-ups are turned off. Only people with an invitation can create an account; ask an admin to invite you."
           )}
         </p>
       </div>

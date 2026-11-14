@@ -109,6 +109,9 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     name: str | None = Field(default=None, max_length=_MAX_NAME_LEN)
     password: str
+    # The token of a pending invitation addressed to `email`: lets that person sign up while self-registration
+    # is off. Anything else is ignored when registration is open.
+    invite_token: str | None = Field(default=None, max_length=200)
 
 
 class LoginRequest(BaseModel):
@@ -251,12 +254,22 @@ def setup(body: SetupRequest, request: Request, db: Session = Depends(get_db)):
     return {"access_token": token, "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin)}
 
 
+def _holds_invitation_for(db: Session, email: str, token: str | None) -> bool:
+    """True if `token` is a pending, unexpired invitation addressed to `email`: the invitation link proves the
+    caller was invited, so it opens a closed registration for that one address."""
+    if not token:
+        return False
+    return any(
+        secrets.compare_digest(invitation.token, token) for invitation in invitation_repo.list_pending_for_email(db, email)
+    )
+
+
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(rate_limit())])
 def register(body: RegisterRequest, request: Request, db: Session = Depends(get_db)):
     """Creates a non-admin account. 409 if setup hasn't run yet; 403 if registration is disabled."""
     if db.query(User).count() == 0:
         raise HTTPException(status_code=409, detail="Setup must be completed before registration")
-    if not registration_enabled(db):
+    if not registration_enabled(db) and not _holds_invitation_for(db, body.email, body.invite_token):
         raise HTTPException(status_code=403, detail="Registration is disabled")
     if len(body.password) < _MIN_PASSWORD_LEN:
         raise HTTPException(
