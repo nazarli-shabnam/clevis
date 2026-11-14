@@ -21,6 +21,9 @@ vi.mock("@/lib/api/client", () => ({
   },
 }))
 
+const downloadMock = vi.fn()
+vi.mock("@/lib/download", () => ({ downloadTextFile: (...a: unknown[]) => downloadMock(...a) }))
+
 import { WaiversCard } from "@/components/waivers-card"
 import { CheckCard } from "@/components/check-card"
 
@@ -48,6 +51,7 @@ function renderCard() {
 
 beforeEach(() => {
   searchParams = new URLSearchParams()
+  downloadMock.mockReset()
   listMock.mockReset()
   createMock.mockReset()
   revokeMock.mockReset()
@@ -66,6 +70,51 @@ describe("WaiversCard", () => {
     await screen.findAllByText(/legacy repo/)
     expect(document.getElementById("waiver-2")).toHaveAttribute("aria-current", "true")
     expect(document.getElementById("waiver-1")).not.toHaveAttribute("aria-current")
+  })
+
+  const DAY = 86_400_000
+  const register = () => [
+    waiver({ id: 1, reason: "far out", expires_at: new Date(Date.now() + 60 * DAY).toISOString() }),
+    waiver({ id: 2, reason: "soon", expires_at: new Date(Date.now() + 5 * DAY).toISOString() }),
+    waiver({ id: 3, reason: "lapsed", active: false, repos: ["api", "web"], expires_at: new Date(Date.now() - 3 * DAY).toISOString() }),
+  ]
+
+  it("filters the register to active, expiring soon, or expired waivers (#991)", async () => {
+    listMock.mockResolvedValue(register())
+    renderCard()
+    await screen.findByText(/far out/)
+    const filterBy = (value: string) => fireEvent.change(screen.getByLabelText("Filter waivers"), { target: { value } })
+
+    filterBy("expiring")
+    expect(screen.queryByText(/far out/)).not.toBeInTheDocument()
+    expect(screen.getByText(/soon/)).toBeInTheDocument()
+    expect(screen.getByText("1 of 3")).toBeInTheDocument()
+
+    filterBy("expired")
+    expect(screen.getByText(/lapsed/)).toBeInTheDocument()
+    expect(screen.queryByText(/soon/)).not.toBeInTheDocument()
+
+    filterBy("active")
+    expect(screen.getByText(/far out/)).toBeInTheDocument()
+    expect(screen.queryByText(/lapsed/)).not.toBeInTheDocument()
+  })
+
+  it("exports the waivers currently shown as CSV (#991)", async () => {
+    listMock.mockResolvedValue(register())
+    renderCard()
+    await screen.findByText(/far out/)
+    fireEvent.change(screen.getByLabelText("Filter waivers"), { target: { value: "expired" } })
+    fireEvent.click(screen.getByRole("button", { name: /export csv/i }))
+
+    const [filename, csv, type] = downloadMock.mock.calls[0]
+    expect(filename).toMatch(/^clevis-waivers-acme-\d{4}-\d{2}-\d{2}\.csv$/)
+    expect(type).toBe("text/csv")
+    const lines = String(csv).split("\r\n")
+    expect(lines[0]).toBe("Check,Repositories,Reason,Owner,Created by,Created,Expires,Status")
+    expect(lines).toHaveLength(2)
+    expect(lines[1]).toContain("api; web")
+    expect(lines[1]).toContain("lapsed")
+    expect(lines[1].endsWith(",expired")).toBe(true)
   })
 
   it("lists waivers with scope, owner and expiry, flagging an expired one", async () => {
