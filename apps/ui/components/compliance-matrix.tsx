@@ -31,7 +31,7 @@ const DIMENSIONS: Dimension[] = [
     id: "secret_scanning",
     label: "Secrets",
     status: (r) => (unknown(r, "secret_scanning") ? "unknown" : r.secret_scanning ? "pass" : "fail"),
-    cell: (r) => (r.secret_scanning ? "✓" : "—"),
+    cell: (r) => (unknown(r, "secret_scanning") ? "?" : r.secret_scanning ? "✓" : "—"),
   },
   {
     id: "dependabot",
@@ -84,7 +84,7 @@ export function ComplianceMatrix({
   selectedRepo: string
   onSelectRepo: (repo: string) => void
   /** Set when the caller can run bulk fixes: shows a button handing the filtered repos over. */
-  onUseInBulkFix?: (repos: string[]) => void
+  onUseInBulkFix?: (repos: string[], viaKeyboard: boolean) => void
 }) {
   const [dimension, setDimension] = useState("all")
   const [attentionOnly, setAttentionOnly] = useState(false)
@@ -160,7 +160,7 @@ export function ComplianceMatrix({
           {attentionOnly ? `${shown.length} of ${repos.length} repositories` : `${repos.length} repositories`}
         </span>
         {onUseInBulkFix && attentionOnly && shown.length > 0 && (
-          <Button size="sm" variant="outline" className="ml-auto" onClick={() => onUseInBulkFix(shown.map((r) => r.repo))}>
+          <Button size="sm" variant="outline" className="ml-auto" onClick={(e) => onUseInBulkFix(shown.map((r) => r.repo), e.detail === 0)}>
             Select these {shown.length} in the bulk fixer
           </Button>
         )}

@@ -177,9 +177,15 @@ export default function AutomationPage() {
     },
   })
 
+  // Bumped when a response must no longer be applied: a newer refresh started, or another repo was loaded.
+  const refreshSeq = useRef(0)
   const refreshRuns = useMutation({
-    mutationFn: () => api.automation.runs(owner.trim(), repo.trim(), token),
-    onSuccess: (data) => {
+    mutationFn: async () => {
+      const seq = ++refreshSeq.current
+      return { seq, data: await api.automation.runs(owner.trim(), repo.trim(), token) }
+    },
+    onSuccess: ({ seq, data }) => {
+      if (seq !== refreshSeq.current) return
       setLiveRuns(data.runs)
       // The dispatched run has appeared: stop following.
       if (data.runs.some((r) => !knownRunIds.current.has(r.id))) setFollowUntil(null)
@@ -220,6 +226,7 @@ export default function AutomationPage() {
       return { workflows, runs }
     },
     onSuccess: () => {
+      refreshSeq.current++
       setSelectedWorkflow(null)
       setDispatchArmed(false)
       setDispatchAllArmed(false)
@@ -246,6 +253,7 @@ export default function AutomationPage() {
   // dispatch results and armed confirmations. Left in place, a new repo would be paired with the
   // old repo's workflow id on dispatch.
   const resetLoadedRepoState = () => {
+    refreshSeq.current++
     setLiveRuns(null)
     setFollowUntil(null)
     loadMutation.reset()
@@ -605,7 +613,7 @@ export default function AutomationPage() {
                 </div>
               )}
 
-              {(runs.length > 0 || followUntil !== null) && (
+              {(loadMutation.isSuccess || runs.length > 0 || followUntil !== null) && (
                 <div className="border-t border-border overflow-x-auto">
                   <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
                     <span className="section-title">Run history</span>
@@ -618,6 +626,13 @@ export default function AutomationPage() {
                       </Button>
                     </span>
                   </div>
+                  {refreshRuns.isError && (
+                    <p className="px-4 py-2 text-xs text-destructive flex items-center gap-1.5" role="alert">
+                      <Warning className="size-3 shrink-0" />
+                      {refreshRuns.error.message}
+                    </p>
+                  )}
+                  {runs.length === 0 && <p className="px-4 py-3 text-xs text-muted-foreground">No runs yet.</p>}
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="border-b border-border">

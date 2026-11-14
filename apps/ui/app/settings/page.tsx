@@ -101,7 +101,7 @@ function ProfileSection() {
         <Field>
           <FieldLabel>Email</FieldLabel>
           <Input value={user?.email || ""} disabled className="opacity-60 cursor-not-allowed" />
-          <FieldDescription>Email cannot be changed.</FieldDescription>
+          <FieldDescription>To change it, use the Email address section below.</FieldDescription>
         </Field>
         <p className="text-xs text-muted-foreground -mt-1">
           Switch between your organizations and personal GitHub account from the profile menu in the sidebar.

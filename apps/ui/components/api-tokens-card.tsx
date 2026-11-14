@@ -86,6 +86,9 @@ function TokenRow({ orgLogin, token, onRevoked }: { orgLogin: string; token: Api
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
 
+// The Action rejects a non-local http:// api-url (actions/clevis-score/check.py), so a copied snippet would fail.
+const API_BASE_FAILS_ACTION = !/^https:\/\//i.test(API_BASE) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])([:/]|$)/i.test(API_BASE)
+
 /** A workflow step using the `clevis-score` Action with this org and API filled in. The token itself is never
  * put in the snippet: it belongs in a repository secret. */
 function ciSnippet(orgLogin: string): string {
@@ -146,6 +149,12 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
           <pre className="text-xs font-mono whitespace-pre-wrap break-all bg-background border border-border/50 rounded-md p-2">
             {ciSnippet(orgLogin)}
           </pre>
+          {API_BASE_FAILS_ACTION && (
+            <p role="alert" className="text-xs text-destructive">
+              This API address is not HTTPS. The Clevis score action requires an HTTPS <code className="font-mono">api-url</code>,
+              so replace it in the snippet before using it.
+            </p>
+          )}
           <div className="flex items-center gap-2">
             <CopyButton value={ciSnippet(orgLogin)} ariaLabel="Copy workflow snippet" />
           </div>

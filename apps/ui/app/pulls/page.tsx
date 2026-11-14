@@ -383,7 +383,12 @@ export default function PullRequestsPage() {
     onError: (e) => setNudgeMsg(e instanceof Error ? e.message : "Nudge preview failed."),
   })
   const nudge = useMutation({
-    mutationFn: async (approved: NudgedPr[]) => ({ org, outcome: await sweepAll(false, approved) }),
+    // The confirmed sweep only sees the approved PRs, so the preview's capped repos are carried over: the PRs
+    // the cap left out still need a nudge.
+    mutationFn: async ({ approved, capped }: { approved: NudgedPr[]; capped: string[] }) => {
+      const outcome = await sweepAll(false, approved)
+      return { org, outcome: { ...outcome, capped: [...new Set([...capped, ...outcome.capped])] } }
+    },
     onSuccess: ({ org: forOrg, outcome }) => {
       setPanel({ org: forOrg, kind: "done", outcome })
       // A nudge comment bumps the PR's updated_at, which the Stale badges depend on.
@@ -462,7 +467,7 @@ export default function PullRequestsPage() {
             kind={panel.kind}
             outcome={panel.outcome}
             sending={nudge.isPending}
-            onConfirm={() => nudge.mutate(panel.outcome.prs)}
+            onConfirm={() => nudge.mutate({ approved: panel.outcome.prs, capped: panel.outcome.capped })}
             onDismiss={() => setPanel(null)}
           />
         )}

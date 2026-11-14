@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { api } from "@/lib/api/client"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input"
  * token so the user stays signed in. A GitHub-only account has no password, and the API says so. */
 export function ChangePasswordCard() {
   const { setSession } = useAuth()
+  const queryClient = useQueryClient()
   const [current, setCurrent] = useState("")
   const [next, setNext] = useState("")
   const [confirm, setConfirm] = useState("")
@@ -19,6 +20,8 @@ export function ChangePasswordCard() {
     mutationFn: () => api.auth.changePassword(current, next),
     onSuccess: (data) => {
       setSession(data.access_token, data.user, data.pending_invitations)
+      // Other sessions were just signed out and this one replaced: the sessions list is stale.
+      queryClient.invalidateQueries({ queryKey: ["auth.sessions"] })
       setCurrent("")
       setNext("")
       setConfirm("")

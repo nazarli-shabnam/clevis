@@ -133,9 +133,10 @@ function JobsCard({ orgLogin }: { orgLogin: string }) {
   const jobs: JobOut[] = query.data?.pages.flat() ?? []
   // A notification links here with ?job=<id>: that row is marked and scrolled into view.
   const linkedJob = Number(useSearchParams()?.get("job")) || null
+  const linkedJobLoaded = linkedJob !== null && jobs.some((j) => j.id === linkedJob)
   useEffect(() => {
-    if (linkedJob !== null) document.getElementById(`job-${linkedJob}`)?.scrollIntoView?.({ block: "center" })
-  }, [linkedJob, jobs.length])
+    if (linkedJobLoaded) document.getElementById(`job-${linkedJob}`)?.scrollIntoView?.({ block: "center" })
+  }, [linkedJob, linkedJobLoaded])
 
   return (
     <div className="card mt-4">

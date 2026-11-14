@@ -391,14 +391,15 @@ describe("PullRequestsPage", () => {
     localStorage.setItem("default_org", "acme");
     reposListMock.mockResolvedValue(nudgeRepos);
     reposPullsMock.mockResolvedValue({ repository: "acme/api", total: 1, pulls: [pull({ number: 1, title: "Old PR" })] });
-    prNudgesSweepMock.mockImplementation((_o: string, _w: string, _r: string, _t: string, dryRun?: boolean) =>
+    prNudgesSweepMock.mockImplementation((_o: string, _w: string, _r: string, _t: string, dryRun?: boolean, only?: number[]) =>
       Promise.resolve({
         mode: "comment",
         stale_days: 3,
         dry_run: dryRun,
         results: [
           { number: 1, title: "Old PR", action: dryRun ? "would-comment" : "commented" },
-          { number: 2, title: "Later PR", action: "skipped-per-sweep-cap" },
+          // A confirmed sweep is limited to the approved PRs, so it no longer reports the capped one.
+          ...(only ? [] : [{ number: 2, title: "Later PR", action: "skipped-per-sweep-cap" }]),
         ],
       }),
     );

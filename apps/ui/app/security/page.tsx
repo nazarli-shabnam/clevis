@@ -294,6 +294,7 @@ export default function SecurityPage() {
     scan.reset()
     matrixMutation.reset()
     setSelectedRepo("")
+    setBulkPreselect([])
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner])
 
@@ -684,9 +685,10 @@ export default function SecurityPage() {
                 onSelectRepo={setSelectedRepo}
                 onUseInBulkFix={
                   matrixMutation.data && !isOrgMemberOnly(memberships, matrixMutation.data.owner)
-                    ? (names) => {
+                    ? (names, viaKeyboard) => {
                         setBulkPreselect(names)
-                        document.getElementById("bulk-fix")?.scrollIntoView?.({ behavior: "smooth", block: "start" })
+                        const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+                        document.getElementById("bulk-fix")?.scrollIntoView?.({ behavior: reduceMotion || viaKeyboard ? "auto" : "smooth", block: "start" })
                       }
                     : undefined
                 }

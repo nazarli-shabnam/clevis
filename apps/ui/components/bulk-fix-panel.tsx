@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { CircleNotch, Wrench } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
@@ -93,14 +93,23 @@ export function BulkFixPanel({
 
   const check = FIXABLE_CHECKS.find((c) => c.id === checkId) ?? FIXABLE_CHECKS[0]
   const candidates = useMemo(() => repos.filter((r) => check.failing(r)).map((r) => r.repo), [repos, check])
-  // A new hand-off replaces the selection with the handed repos that fail this check (up to the batch cap).
+  // A hand-off ticks the handed repos that fail the chosen check (up to the batch cap). The names are kept
+  // until the user ticks something themselves, so choosing the applicable check afterwards still selects them.
+  const handoff = useRef<Set<string> | null>(null)
+  const applyHandoff = () => {
+    const handed = handoff.current
+    if (handed) setSelected(new Set(candidates.filter((name) => handed.has(name)).slice(0, MAX_BATCH)))
+  }
   useEffect(() => {
     if (!preselected || preselected.length === 0) return
-    const wanted = new Set(preselected)
-    setSelected(new Set(candidates.filter((name) => wanted.has(name)).slice(0, MAX_BATCH)))
-    // Only a new hand-off re-applies it; switching the fixable check keeps the ticks the user has.
+    handoff.current = new Set(preselected)
+    applyHandoff()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preselected])
+  useEffect(() => {
+    applyHandoff()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkId])
   // A fresh scan can drop repos from the candidate list: never act on a repo that's no longer there.
   const chosen = useMemo(() => candidates.filter((name) => selected.has(name)), [candidates, selected])
 
@@ -125,6 +134,7 @@ export function BulkFixPanel({
   const busy = preview.isPending || apply.isPending
 
   function toggle(name: string) {
+    handoff.current = null
     setSelected((prev) => {
       const next = new Set(prev)
       if (next.has(name)) next.delete(name)
@@ -172,7 +182,10 @@ export function BulkFixPanel({
               <input
                 type="checkbox"
                 checked={allSelected}
-                onChange={() => setSelected(allSelected ? new Set() : new Set(selectAllTarget))}
+                onChange={() => {
+                  handoff.current = null
+                  setSelected(allSelected ? new Set() : new Set(selectAllTarget))
+                }}
               />
               Select all ({selectAllTarget.length})
             </label>

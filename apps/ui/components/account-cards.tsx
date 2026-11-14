@@ -13,7 +13,11 @@ export function ChangeEmailCard() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const change = useMutation({
-    mutationFn: () => api.auth.requestEmailChange(email.trim(), password),
+    mutationFn: async () => {
+      const sentTo = email.trim()
+      await api.auth.requestEmailChange(sentTo, password)
+      return sentTo
+    },
     onSuccess: () => setPassword(""),
   })
 
@@ -45,7 +49,7 @@ export function ChangeEmailCard() {
           Pending invitations stay tied to your old address.
         </p>
         {change.isSuccess && (
-          <p role="status" className="sm:col-span-3 text-xs text-primary">Check {email.trim()} for the confirmation link.</p>
+          <p role="status" className="sm:col-span-3 text-xs text-primary">Check {change.data} for the confirmation link.</p>
         )}
         {change.isError && (
           <p role="alert" className="sm:col-span-3 text-xs text-destructive">{change.error.message}</p>

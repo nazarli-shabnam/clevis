@@ -45,10 +45,12 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
   // A notification links here with ?waiver=<id>: that row is marked and scrolled into view.
   const linkedWaiver = Number(useSearchParams()?.get("waiver")) || null
   const loadedCount = query.data?.length
-  useEffect(() => {
-    if (linkedWaiver !== null) document.getElementById(`waiver-${linkedWaiver}`)?.scrollIntoView?.({ block: "center" })
-  }, [linkedWaiver, loadedCount])
   const [filter, setFilter] = useState<WaiverFilter>("all")
+  // A filter that hides the linked row would swallow the scroll and the highlight: show everything for it.
+  const linkedLoaded = linkedWaiver !== null && !!query.data?.some((w) => w.id === linkedWaiver)
+  useEffect(() => {
+    if (linkedLoaded) setFilter("all")
+  }, [linkedWaiver, linkedLoaded])
 
   const revoke = useMutation({
     mutationFn: (id: number) => api.waivers.revoke(orgLogin, id),
@@ -61,6 +63,10 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
   })
 
   const visible = (query.data ?? []).filter((w) => matchesFilter(w, filter))
+  const linkedVisible = linkedWaiver !== null && visible.some((w) => w.id === linkedWaiver)
+  useEffect(() => {
+    if (linkedVisible) document.getElementById(`waiver-${linkedWaiver}`)?.scrollIntoView?.({ block: "center" })
+  }, [linkedWaiver, linkedVisible])
 
   // The register as an auditor reads it, for the rows currently shown.
   function exportCsv(rows: CheckWaiver[]) {
