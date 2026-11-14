@@ -106,6 +106,24 @@ def remove_org_member(cur: psycopg.Cursor, *, tenant_id: int, login: str, event_
     )
 
 
+def _lock_admin_count(cur: psycopg.Cursor, tenant_id: int) -> int:
+    """Number of admins in the tenant (any source), their rows locked so two concurrent changes cannot both
+    see a spare admin. The API's REST routes and sign-in sync keep the same "at least one admin" rule."""
+    cur.execute(
+        "SELECT id FROM memberships WHERE tenant_id = %(tenant_id)s AND role = 'admin' FOR UPDATE",
+        {"tenant_id": tenant_id},
+    )
+    return len(cur.fetchall())
+
+
+def _audit_refused_last_admin(cur: psycopg.Cursor, *, tenant_id: int, action: str, target: str, actor: str, reason: str) -> None:
+    cur.execute(
+        "INSERT INTO audit_logs (actor, action, target, payload, tenant_id, created_at) "
+        "VALUES (%s, %s, %s, %s, %s, NOW())",
+        (actor, action, target, json.dumps({"reason": reason, "refused": "last_admin"}), tenant_id),
+    )
+
+
 def revoke_github_membership(
     cur: psycopg.Cursor,
     *,
@@ -118,14 +136,25 @@ def revoke_github_membership(
     """Delete the GitHub-sourced Clevis membership of a user GitHub just removed from the org,
     auditing it in the same transaction (same action the OAuth-login reconcile writes).
 
-    Invite-sourced memberships are Clevis's own grant (e.g. outside contractors) and survive.
+    Invite-sourced memberships are Clevis's own grant (e.g. outside contractors) and survive. The org's last
+    admin is never revoked (it would leave an org nobody can manage): that is refused and audited as
+    ``membership.github_revoke_refused``, and a GitHub org admin signing in again restores the state.
     Caller must have set app.tenant_id (memberships' RLS tenant clause)."""
+    admins = _lock_admin_count(cur, tenant_id)
     cur.execute(
-        "DELETE FROM memberships WHERE tenant_id = %(tenant_id)s AND source = 'github' "
-        "AND user_id IN (SELECT id FROM users WHERE github_user_id = %(gh_id)s) RETURNING role",
+        "SELECT m.id, m.role FROM memberships m JOIN users u ON u.id = m.user_id "
+        "WHERE m.tenant_id = %(tenant_id)s AND m.source = 'github' AND u.github_user_id = %(gh_id)s",
         {"tenant_id": tenant_id, "gh_id": github_user_id},
     )
-    for (role,) in cur.fetchall():
+    for membership_id, role in cur.fetchall():
+        if role == "admin":
+            if admins <= 1:
+                _audit_refused_last_admin(
+                    cur, tenant_id=tenant_id, action="membership.github_revoke_refused", target=login, actor=actor, reason=reason
+                )
+                continue
+            admins -= 1
+        cur.execute("DELETE FROM memberships WHERE id = %s", (membership_id,))
         cur.execute(
             "INSERT INTO audit_logs (actor, action, target, payload, tenant_id, created_at) "
             "VALUES (%s, 'membership.github_revoked', %s, %s, %s, NOW())",
@@ -296,13 +325,23 @@ def reconcile_github_memberships(cur: psycopg.Cursor, *, tenant_id: int, members
         )
 
     if ids_by_role["member"]:
+        # Counted after the revokes above; the last admin is never demoted (see revoke_github_membership).
+        admins = _lock_admin_count(cur, tenant_id)
         cur.execute(
-            "UPDATE memberships m SET role = 'member' FROM users u "
-            "WHERE u.id = m.user_id AND m.tenant_id = %(tenant_id)s AND m.source = 'github' "
-            "AND m.role = 'admin' AND u.github_user_id = ANY(%(member_ids)s) RETURNING u.github_user_id",
+            "SELECT m.id, u.github_user_id FROM memberships m JOIN users u ON u.id = m.user_id "
+            "WHERE m.tenant_id = %(tenant_id)s AND m.source = 'github' AND m.role = 'admin' "
+            "AND u.github_user_id = ANY(%(member_ids)s)",
             {"tenant_id": tenant_id, "member_ids": ids_by_role["member"]},
         )
-        for (github_user_id,) in cur.fetchall():
+        for membership_id, github_user_id in cur.fetchall():
+            if admins <= 1:
+                _audit_refused_last_admin(
+                    cur, tenant_id=tenant_id, action="membership.github_demote_refused",
+                    target=f"github_user:{github_user_id}", actor="github-reconcile", reason="reconcile",
+                )
+                continue
+            admins -= 1
+            cur.execute("UPDATE memberships SET role = 'member' WHERE id = %s", (membership_id,))
             cur.execute(
                 "INSERT INTO audit_logs (actor, action, target, payload, tenant_id, created_at) "
                 "VALUES ('github-reconcile', 'membership.github_demoted', %s, %s, %s, NOW())",

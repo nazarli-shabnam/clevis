@@ -74,10 +74,16 @@ def test_github_api_failure_is_swallowed(db):
         org_provisioning.sync_org_admin_memberships(db, erin, "fake-token")  # must not raise
 
 
+def _add_other_admin(db, org_id: int, email: str) -> None:
+    """An org's last admin is never revoked or demoted, so tests of those paths need a second admin."""
+    org_membership_repo.get_or_create(db, org_id=org_id, user_id=_make_user(db, email).id, role="admin", source="invite")
+
+
 def test_demoted_github_admin_loses_clevis_admin_role(db):
     org = org_repo.get_or_create(db, github_login="acme", github_org_id=1)
     frank = _make_user(db, "frank@example.com")
     org_membership_repo.get_or_create(db, org_id=org.id, user_id=frank.id, role="admin")
+    _add_other_admin(db, org.id, "frank-co-admin@example.com")
 
     with patch.object(
         github_oauth,
@@ -95,6 +101,7 @@ def test_removed_github_member_loses_clevis_membership_entirely(db):
     org = org_repo.get_or_create(db, github_login="acme", github_org_id=1)
     grace = _make_user(db, "grace@example.com")
     org_membership_repo.get_or_create(db, org_id=org.id, user_id=grace.id, role="admin")
+    _add_other_admin(db, org.id, "grace-co-admin@example.com")
 
     with patch.object(github_oauth, "list_user_org_memberships", return_value=[]):
         org_provisioning.sync_org_admin_memberships(db, grace, "fake-token")
@@ -121,11 +128,37 @@ def test_github_revocation_is_audited(db):
     org = org_repo.get_or_create(db, github_login="acme", github_org_id=1)
     grace = _make_user(db, "grace2@example.com")
     org_membership_repo.get_or_create(db, org_id=org.id, user_id=grace.id, role="admin")
+    _add_other_admin(db, org.id, "other-admin2@example.com")
 
     with patch.object(github_oauth, "list_user_org_memberships", return_value=[]):
         org_provisioning.sync_org_admin_memberships(db, grace, "fake-token")
 
     assert db.query(AuditLog).filter(AuditLog.action == "membership.github_revoked", AuditLog.actor == "grace2@example.com").count() == 1
+
+
+def test_github_revocation_and_demotion_never_remove_the_last_admin(db):
+    from src.core.db import AuditLog
+
+    org = org_repo.get_or_create(db, github_login="acme", github_org_id=1)
+    grace = _make_user(db, "grace-last@example.com")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=grace.id, role="admin")
+
+    # GitHub no longer lists her at all: revoked normally, but she is the only admin.
+    with patch.object(github_oauth, "list_user_org_memberships", return_value=[]):
+        org_provisioning.sync_org_admin_memberships(db, grace, "fake-token")
+    assert org_membership_repo.get(db, org_id=org.id, user_id=grace.id).role == "admin"
+
+    # GitHub lists her as a plain member: demoted normally, but she is the only admin.
+    member_listing = [github_oauth.GitHubOrgMembership(github_org_id=1, login="acme", role="member")]
+    with patch.object(github_oauth, "list_user_org_memberships", return_value=member_listing):
+        org_provisioning.sync_org_admin_memberships(db, grace, "fake-token")
+    assert org_membership_repo.get(db, org_id=org.id, user_id=grace.id).role == "admin"
+
+    refused = {
+        a.action for a in db.query(AuditLog).filter(AuditLog.actor == "grace-last@example.com").all()
+    }
+    assert {"membership.github_revoke_refused", "membership.github_demote_refused"} <= refused
+    assert not refused & {"membership.github_revoked", "membership.github_demoted"}
 
 
 def test_unrelated_org_membership_untouched_when_other_org_reconciled(db):
@@ -138,6 +171,7 @@ def test_unrelated_org_membership_untouched_when_other_org_reconciled(db):
     heidi = _make_user(db, "heidi@example.com")
     org_membership_repo.get_or_create(db, org_id=acme_id, user_id=heidi.id, role="admin")
     org_membership_repo.get_or_create(db, org_id=globex_id, user_id=heidi.id, role="admin")
+    _add_other_admin(db, globex_id, "heidi-co-admin@example.com")
 
     with patch.object(
         github_oauth,
@@ -180,6 +214,7 @@ def test_github_admin_promotion_of_an_invited_member_is_revocable_by_github(db):
         org_provisioning.sync_org_admin_memberships(db, user, "fake-token")
     membership = org_membership_repo.get(db, org_id=org.id, user_id=user.id)
     assert membership.role == "admin" and membership.source == "github"
+    _add_other_admin(db, org.id, "promoted-co-admin@example.com")
 
     with patch.object(github_oauth, "list_user_org_memberships", return_value=[]):
         org_provisioning.sync_org_admin_memberships(db, user, "fake-token")

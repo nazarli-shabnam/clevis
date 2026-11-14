@@ -64,13 +64,7 @@ def _refuse_if_last_admin(db: Session, ctx: OrgContext, membership: Membership) 
     removals/demotions cannot both pass the check."""
     if membership.role != "admin":
         return
-    admins = (
-        db.query(Membership)
-        .filter(Membership.tenant_id == ctx.org.tenant_id, Membership.role == "admin")
-        .with_for_update()
-        .all()
-    )
-    if len(admins) <= 1:
+    if tenant_repo.count_admins_locked(db, ctx.org.tenant_id) <= 1:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An organization needs at least one admin")
 
 

@@ -679,7 +679,7 @@ def test_organization_member_removed_revokes_github_sourced_membership_only(pg_c
             user_ids.append(cur.fetchone()[0])
         cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
         cur.execute(
-            "INSERT INTO memberships (tenant_id, user_id, role, source) VALUES (%s, %s, 'admin', 'github'), (%s, %s, 'member', 'invite')",
+            "INSERT INTO memberships (tenant_id, user_id, role, source) VALUES (%s, %s, 'admin', 'github'), (%s, %s, 'admin', 'invite')",  # a second admin: the last one is never revoked
             (tenant_id, user_ids[0], tenant_id, user_ids[1]),
         )
     conn.commit()
