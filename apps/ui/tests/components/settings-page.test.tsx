@@ -443,7 +443,7 @@ describe("SettingsPage", () => {
     });
   });
 
-  it("shows a permission-drift notice under a connected account that's missing scopes", async () => {
+  it("shows a permission-drift notice for a connected account that's missing scopes", async () => {
     orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "admin" }]);
     installationsListMock.mockResolvedValue([]);
     installationsListForOrgMock.mockResolvedValue([

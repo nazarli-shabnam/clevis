@@ -1,6 +1,6 @@
 "use client"
 
-import { Fragment, useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Trash, Plus, CircleNotch, Check, ArrowSquareOut, CheckCircle } from "@phosphor-icons/react"
@@ -364,6 +364,8 @@ function ConnectedOrgsSection() {
   })
 
   const rowKey = (row: ConnectedInstallation) => `${row.scope}:${row.id}`
+  const needsPermissionCheck = (row: ConnectedInstallation) =>
+    (row.blocked_features?.length ?? 0) > 0 || row.permissions_synced_at === null
 
   const { slug, appConfigured } = useGithubAppSlug()
   const installUrl = slug ? githubWebUrl(`apps/${slug}/installations/new`) : null
@@ -408,10 +410,8 @@ function ConnectedOrgsSection() {
               {rows.map((row) => {
                 const key = rowKey(row)
                 const isThisRowMutating = disconnect.isPending && disconnect.variables && rowKey(disconnect.variables) === key
-                const showDrift = (row.blocked_features?.length ?? 0) > 0 || row.permissions_synced_at === null
                 return (
-                  <Fragment key={key}>
-                  <tr className="hover:bg-elevated transition-colors">
+                  <tr key={key} className="hover:bg-elevated transition-colors">
                     <td className="px-4 py-2.5 font-mono text-foreground/80">
                       {row.account_login}
                       {row.scope === "org" && <span className="ml-1.5 text-muted-foreground">(org)</span>}
@@ -435,18 +435,19 @@ function ConnectedOrgsSection() {
                       </Button>
                     </td>
                   </tr>
-                  {showDrift && (
-                    <tr>
-                      <td colSpan={4} className="px-4 pb-3 pt-0">
-                        <PermissionDriftNotice install={row} />
-                      </td>
-                    </tr>
-                  )}
-                  </Fragment>
                 )
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Outside the scrolling table so the notice wraps to the card width on narrow screens. */}
+      {rows.some(needsPermissionCheck) && (
+        <div className="px-4 py-3 space-y-2 border-t border-border">
+          {rows.filter(needsPermissionCheck).map((row) => (
+            <PermissionDriftNotice key={rowKey(row)} install={row} />
+          ))}
         </div>
       )}
 
