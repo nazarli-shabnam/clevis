@@ -14,6 +14,7 @@ import { exactTime, relativeTime } from "@/lib/format"
 import { effectiveInvitationStatus, invitationExpiry, type ExpiryTone } from "@/lib/invitation-expiry"
 import { CopyButton } from "@/components/copy-button"
 import { orgRoleFor } from "@/lib/members-href"
+import { EmptyStateAction } from "@/components/empty-state-action"
 import { SectionError } from "@/components/section-error"
 import { HygieneScoringCard } from "@/components/hygiene-scoring-card"
 import { ScheduledScansCard } from "@/components/scheduled-scans-card"
@@ -748,9 +749,11 @@ export default function OrgMembersPage() {
                 retrying={invitationsQuery.isFetching}
               />
             ) : invitations.length === 0 ? (
-              <div className="px-4 py-8">
-                <p className="text-sm text-muted-foreground">No invitations yet</p>
-              </div>
+              <EmptyStateAction
+                message="No invitations yet. Invite a colleague by email: they sign in, accept, and get access to this org in Clevis."
+                actionLabel="Invite someone"
+                focusId="invite-email"
+              />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">

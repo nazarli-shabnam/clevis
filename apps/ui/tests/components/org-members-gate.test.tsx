@@ -76,7 +76,7 @@ describe("OrgMembersPage admin gate", () => {
     renderPage();
 
     expect(await screen.findByRole("button", { name: /send invite/i })).toBeInTheDocument();
-    expect(await screen.findByText("No invitations yet")).toBeInTheDocument();
+    expect(await screen.findByText(/No invitations yet/)).toBeInTheDocument();
     expect(listMock).toHaveBeenCalledWith("acme");
   });
 
@@ -94,7 +94,7 @@ describe("OrgMembersPage admin gate", () => {
     expect(await screen.findByText(/limited to organization admins/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /send invite/i })).not.toBeInTheDocument();
     expect(screen.queryByText("Clevis workspace invitations")).not.toBeInTheDocument();
-    expect(screen.queryByText("No invitations yet")).not.toBeInTheDocument();
+    expect(screen.queryByText(/No invitations yet/)).not.toBeInTheDocument();
     expect(listMock).not.toHaveBeenCalled();
   });
 
@@ -143,7 +143,7 @@ describe("OrgMembersPage admin gate", () => {
     renderPage();
 
     expect(await screen.findByText(/Couldn't load invitations: Org admin access required/)).toBeInTheDocument();
-    expect(screen.queryByText("No invitations yet")).not.toBeInTheDocument();
+    expect(screen.queryByText(/No invitations yet/)).not.toBeInTheDocument();
 
     listMock.mockResolvedValue([
       { id: 1, org_id: 1, email: "a@example.com", status: "pending", created_at: "", accepted_at: null },

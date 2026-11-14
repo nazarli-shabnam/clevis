@@ -8,6 +8,7 @@ import { api } from "@/lib/api/client"
 import { toCsv } from "@/lib/csv"
 import { downloadTextFile } from "@/lib/download"
 import { dueTime } from "@/lib/format"
+import { EmptyStateAction } from "@/components/empty-state-action"
 import { SectionError } from "@/components/section-error"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
@@ -96,7 +97,11 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
           retrying={query.isFetching}
         />
       ) : query.data.length === 0 ? (
-        <p className="px-4 py-3 text-xs text-muted-foreground">No waivers.</p>
+        <EmptyStateAction
+          message="No waivers. Record an accepted risk so a check you've chosen to live with stops lowering the score until it expires."
+          actionLabel="Add a waiver"
+          focusId="waiver-new-check"
+        />
       ) : (
         <>
         <div className="px-4 py-2 flex flex-wrap items-center gap-2 text-xs">
