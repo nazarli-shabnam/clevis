@@ -175,7 +175,7 @@ describe("OrgMembersPage admin gate", () => {
       fireEvent.click(screen.getByRole("button", { name: /send invite/i }));
 
       expect(await screen.findByText("https://app/invite/tok")).toBeInTheDocument();
-      expect(createMock).toHaveBeenCalledWith("acme", "a@example.com");
+      expect(createMock).toHaveBeenCalledWith("acme", "a@example.com", false);
       expect(screen.getByLabelText("Email")).toHaveValue("");
     });
 
@@ -187,7 +187,7 @@ describe("OrgMembersPage admin gate", () => {
       fireEvent.keyDown(input, { key: "Enter" });
 
       expect(await screen.findByText("https://app/invite/enter")).toBeInTheDocument();
-      expect(createMock).toHaveBeenCalledWith("acme", "b@example.com");
+      expect(createMock).toHaveBeenCalledWith("acme", "b@example.com", false);
     });
 
     it("shows the API's message when the invite fails", async () => {

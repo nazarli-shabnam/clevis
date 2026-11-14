@@ -14,6 +14,17 @@ const createManyMock = vi.fn();
 const regenerateMock = vi.fn();
 const resendMock = vi.fn();
 const revokeMock = vi.fn();
+const digestMock = vi.fn();
+const digest = (smtp_configured: boolean) => ({
+  enabled: null,
+  effective: false,
+  cadence: null,
+  instance_cadence: "off",
+  recipients: null,
+  resolved_recipients: [],
+  available_recipients: [],
+  smtp_configured,
+});
 
 vi.mock("@/lib/api/client", () => ({
   api: {
@@ -34,7 +45,10 @@ vi.mock("@/lib/api/client", () => ({
       membership: vi.fn(),
     },
     tokens: { resolve: vi.fn().mockRejectedValue(new Error("no saved token")) },
-    orgs: { mine: vi.fn().mockResolvedValue([{ org_login: "acme", role: "admin" }]) },
+    orgs: {
+      mine: vi.fn().mockResolvedValue([{ org_login: "acme", role: "admin" }]),
+      digest: (...args: unknown[]) => digestMock(...args),
+    },
   },
 }));
 
@@ -65,6 +79,8 @@ describe("OrgMembersPage invitations", () => {
     regenerateMock.mockReset();
     resendMock.mockReset();
     revokeMock.mockReset();
+    digestMock.mockReset();
+    digestMock.mockResolvedValue(digest(false));
   });
   afterEach(() => cleanup());
 
@@ -217,7 +233,7 @@ describe("OrgMembersPage invitations", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Send 3 invites" }));
 
-    await waitFor(() => expect(createManyMock).toHaveBeenCalledWith("acme", ["a@example.com", "b@example.com", "nope"]));
+    await waitFor(() => expect(createManyMock).toHaveBeenCalledWith("acme", ["a@example.com", "b@example.com", "nope"], false));
     expect(createMock).not.toHaveBeenCalled();
     expect(await screen.findByText("already has a pending invitation")).toBeInTheDocument();
     expect(screen.getByText("not a valid email address")).toBeInTheDocument();
@@ -248,7 +264,7 @@ describe("OrgMembersPage invitations", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Send 2 invites" }));
 
-    await waitFor(() => expect(createManyMock).toHaveBeenCalledWith("acme", ["A@example.com", "b@example.com"]));
+    await waitFor(() => expect(createManyMock).toHaveBeenCalledWith("acme", ["A@example.com", "b@example.com"], false));
   });
 
   it("sends one address on Enter, but with several only on Ctrl+Enter", async () => {
@@ -265,13 +281,13 @@ describe("OrgMembersPage invitations", () => {
     fireEvent.keyDown(field, { key: "a" });
     expect(createMock).not.toHaveBeenCalled();
     fireEvent.keyDown(field, { key: "Enter" });
-    await waitFor(() => expect(createMock).toHaveBeenCalledWith("acme", "one@example.com"));
+    await waitFor(() => expect(createMock).toHaveBeenCalledWith("acme", "one@example.com", false));
 
     fireEvent.change(field, { target: { value: "a@example.com\nb@example.com" } });
     fireEvent.keyDown(field, { key: "Enter" }); // plain Enter just adds a line
     expect(createManyMock).not.toHaveBeenCalled();
     fireEvent.keyDown(field, { key: "Enter", ctrlKey: true });
-    await waitFor(() => expect(createManyMock).toHaveBeenCalledWith("acme", ["a@example.com", "b@example.com"]));
+    await waitFor(() => expect(createManyMock).toHaveBeenCalledWith("acme", ["a@example.com", "b@example.com"], false));
   });
 
   it("does not send more than 50 addresses on Ctrl+Enter", async () => {
@@ -402,6 +418,112 @@ describe("OrgMembersPage invitations", () => {
 
       await waitFor(() => expect(screen.queryByRole("button", { name: "Copy invitation link for a@example.com" })).toBeNull());
       expect(screen.getByRole("button", { name: "Copy invitation link for c@example.com" })).toBeInTheDocument();
+    });
+  });
+
+  describe("emailing the invitation on create (#953)", () => {
+    const smtpOn = () => digestMock.mockResolvedValue(digest(true));
+    const typeAddresses = async (text: string) =>
+      fireEvent.change(await screen.findByPlaceholderText("teammate@example.com"), { target: { value: text } });
+
+    it("offers no email option when the server has no SMTP, and sends without it", async () => {
+      listMock.mockResolvedValue([]);
+      createMock.mockResolvedValue({
+        invitation: invitation(9, "new@example.com", "pending", inFuture(7 * DAY)),
+        invite_link: "https://clevis.example/invite/tok_abc",
+      });
+      renderPage();
+      await typeAddresses("new@example.com");
+      expect(screen.queryByLabelText(/Email the invitation link/)).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /send invite/i }));
+      await waitFor(() => expect(createMock).toHaveBeenCalledWith("acme", "new@example.com", false));
+      expect(await screen.findByText(/no email is sent automatically/i)).toBeInTheDocument();
+    });
+
+    it("emails the link by default when SMTP is configured, and says so", async () => {
+      smtpOn();
+      listMock.mockResolvedValue([]);
+      createMock.mockResolvedValue({
+        invitation: invitation(9, "new@example.com", "pending", inFuture(7 * DAY)),
+        invite_link: "https://clevis.example/invite/tok_abc",
+        email_status: "sent",
+      });
+      renderPage();
+      await typeAddresses("new@example.com");
+      expect(await screen.findByLabelText("Email the invitation link to the invitee")).toBeChecked();
+      fireEvent.click(screen.getByRole("button", { name: /send invite/i }));
+      await waitFor(() => expect(createMock).toHaveBeenCalledWith("acme", "new@example.com", true));
+      expect(await screen.findByText(/The invitation was emailed/)).toBeInTheDocument();
+      // The link is still there to copy.
+      expect(screen.getByText("https://clevis.example/invite/tok_abc")).toBeInTheDocument();
+    });
+
+    it("lets the admin untick emailing and sends only the link", async () => {
+      smtpOn();
+      listMock.mockResolvedValue([]);
+      createMock.mockResolvedValue({
+        invitation: invitation(9, "new@example.com", "pending", inFuture(7 * DAY)),
+        invite_link: "https://clevis.example/invite/tok_abc",
+      });
+      renderPage();
+      await typeAddresses("new@example.com");
+      fireEvent.click(await screen.findByLabelText("Email the invitation link to the invitee"));
+      fireEvent.click(screen.getByRole("button", { name: /send invite/i }));
+      await waitFor(() => expect(createMock).toHaveBeenCalledWith("acme", "new@example.com", false));
+    });
+
+    it("tells the admin to share the link themselves when the email could not be sent", async () => {
+      smtpOn();
+      listMock.mockResolvedValue([]);
+      createMock.mockResolvedValue({
+        invitation: invitation(9, "new@example.com", "pending", inFuture(7 * DAY)),
+        invite_link: "https://clevis.example/invite/tok_abc",
+        email_status: "failed",
+      });
+      renderPage();
+      await typeAddresses("new@example.com");
+      await screen.findByLabelText("Email the invitation link to the invitee");
+      fireEvent.click(screen.getByRole("button", { name: /send invite/i }));
+      expect(await screen.findByText(/couldn't be sent, so share this link yourself/)).toBeInTheDocument();
+    });
+
+    it("explains that the hourly email limit was reached and the link must be shared by hand", async () => {
+      smtpOn();
+      listMock.mockResolvedValue([]);
+      createMock.mockResolvedValue({
+        invitation: invitation(9, "new@example.com", "pending", inFuture(7 * DAY)),
+        invite_link: "https://clevis.example/invite/tok_abc",
+        email_status: "limited",
+      });
+      renderPage();
+      await typeAddresses("new@example.com");
+      await screen.findByLabelText("Email the invitation link to the invitee");
+      fireEvent.click(screen.getByRole("button", { name: /send invite/i }));
+      expect(await screen.findByText(/reached its hourly limit on invitation emails/)).toBeInTheDocument();
+      expect(screen.getByText("https://clevis.example/invite/tok_abc")).toBeInTheDocument();
+    });
+
+    it("reports delivery per address for a bulk invite", async () => {
+      smtpOn();
+      listMock.mockResolvedValue([]);
+      createManyMock.mockResolvedValue({
+        results: [
+          { email: "a@example.com", status: "created", invitation: invitation(1, "a@example.com", "pending", inFuture(DAY)), invite_link: "https://clevis.example/invite/a", email_status: "sent" },
+          { email: "b@example.com", status: "created", invitation: invitation(2, "b@example.com", "pending", inFuture(DAY)), invite_link: "https://clevis.example/invite/b", email_status: "failed" },
+          { email: "c@example.com", status: "created", invitation: invitation(3, "c@example.com", "pending", inFuture(DAY)), invite_link: "https://clevis.example/invite/c", email_status: "limited" },
+        ],
+      });
+      renderPage();
+      await typeAddresses("a@example.com, b@example.com, c@example.com");
+      expect(await screen.findByLabelText("Email the invitation link to the invitees")).toBeChecked();
+      fireEvent.click(screen.getByRole("button", { name: /send 3 invites/i }));
+      await waitFor(() =>
+        expect(createManyMock).toHaveBeenCalledWith("acme", ["a@example.com", "b@example.com", "c@example.com"], true),
+      );
+      expect(await screen.findByText(/invited · emailed/)).toBeInTheDocument();
+      expect(screen.getByText(/invited · email failed, share the link/)).toBeInTheDocument();
+      expect(screen.getByText(/invited · email limit reached, share the link/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Copy invitation link for b@example.com" })).toBeInTheDocument();
     });
   });
 });

@@ -29,7 +29,15 @@ import { MemberAccessSheet } from "@/components/member-access-sheet"
 import { NotificationDestinationsCard } from "@/components/notification-destinations-card"
 import { BadgeSettingsCard } from "@/components/badge-settings-card"
 import { ApiTokensCard } from "@/components/api-tokens-card"
-import type { GithubOrgMember, GithubOutsideCollaborator, InvitationBulkItem, InvitationOut, MyOrgMembership } from "@/lib/api/types"
+import type {
+  DigestSettings,
+  GithubOrgMember,
+  GithubOutsideCollaborator,
+  InvitationBulkItem,
+  InvitationEmailStatus,
+  InvitationOut,
+  MyOrgMembership,
+} from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
 
 const OUTSIDE_COLUMNS: DataTableColumn<GithubOutsideCollaborator>[] = [
@@ -504,6 +512,21 @@ const splitEmails = (text: string) => {
   })
 }
 
+const EMAIL_STATUS_LABEL: Record<InvitationEmailStatus, string> = {
+  sent: "emailed",
+  failed: "email failed, share the link",
+  limited: "email limit reached, share the link",
+}
+
+// What the single-invite result says about the link, by whether (and how) the invitation was emailed.
+const LINK_NOTE: Record<InvitationEmailStatus | "none", string> = {
+  sent: "The invitation was emailed. The link is shown only now, so copy it if you also want to share it yourself.",
+  failed: "The email couldn't be sent, so share this link yourself. It is shown only now, so copy it before you leave this page.",
+  limited:
+    "This organization has reached its hourly limit on invitation emails, so no email was sent. Share this link yourself. It is shown only now, so copy it before you leave this page.",
+  none: "Share this link — no email is sent automatically. It is shown only now, so copy it before you leave this page.",
+}
+
 const BULK_STATUS_LABEL: Record<InvitationBulkItem["status"], string> = {
   created: "invited",
   already_pending: "already has a pending invitation",
@@ -516,7 +539,9 @@ export default function OrgMembersPage() {
   const orgLogin = params.login
   const queryClient = useQueryClient()
   const [email, setEmail] = useState("")
-  const [lastLink, setLastLink] = useState<{ id: number; link: string } | null>(null)
+  const [lastLink, setLastLink] = useState<{ id: number; link: string; emailed?: InvitationEmailStatus | null } | null>(null)
+  // Emailing the link is the default whenever the server can send mail; the admin can untick it per invite.
+  const [emailInvitees, setEmailInvitees] = useState(true)
   const [bulkResults, setBulkResults] = useState<InvitationBulkItem[] | null>(null)
   // Regenerating, resending and revoking all kill an invitation's current link, so drop it from
   // the page. Only that invitation's: the other links of a bulk result may not be copied yet.
@@ -549,6 +574,14 @@ export default function OrgMembersPage() {
   })
   const invitations = invitationsQuery.data ?? []
   const isLoading = invitationsQuery.isLoading
+  // The same query as the digest card and the SMTP notice (it also reports whether SMTP is set up).
+  const digestQuery = useQuery<DigestSettings>({
+    queryKey: ["digest", orgLogin],
+    queryFn: () => api.orgs.digest(orgLogin),
+    retry: false,
+    enabled: !rolePending && !notAdmin,
+  })
+  const canEmailInvites = digestQuery.data?.smtp_configured === true
 
   const [revokingIds, setRevokingIds] = useState<Set<number>>(() => new Set())
 
@@ -557,11 +590,14 @@ export default function OrgMembersPage() {
     // One address goes through the single endpoint (so a duplicate is an error); several go through
     // the bulk one, which reports each address on its own.
     mutationFn: async () => {
-      if (addresses.length > 1) return { many: await api.invitations.createMany(orgLogin, addresses) }
-      return { one: await api.invitations.create(orgLogin, addresses[0]) }
+      const sendEmail = canEmailInvites && emailInvitees
+      if (addresses.length > 1) return { many: await api.invitations.createMany(orgLogin, addresses, sendEmail) }
+      return { one: await api.invitations.create(orgLogin, addresses[0], sendEmail) }
     },
     onSuccess: (data) => {
-      setLastLink(data.one ? { id: data.one.invitation.id, link: data.one.invite_link } : null)
+      setLastLink(
+        data.one ? { id: data.one.invitation.id, link: data.one.invite_link, emailed: data.one.email_status } : null,
+      )
       setBulkResults(data.many?.results ?? null)
       // Keep any address that failed in the box so it can be resubmitted as is.
       setEmail((data.many?.results ?? []).filter((r) => r.status === "failed").map((r) => r.email).join("\n"))
@@ -686,6 +722,12 @@ export default function OrgMembersPage() {
                   </p>
                 )}
               </div>
+              {canEmailInvites && (
+                <label className="flex items-center gap-1.5 text-xs">
+                  <input type="checkbox" checked={emailInvitees} onChange={(e) => setEmailInvitees(e.target.checked)} />
+                  Email the invitation link to the invitee{addresses.length > 1 ? "s" : ""}
+                </label>
+              )}
               <Button
                 onClick={() => invite.mutate()}
                 disabled={invite.isPending || addresses.length === 0 || addresses.length > MAX_BULK_INVITES}
@@ -697,7 +739,9 @@ export default function OrgMembersPage() {
               {bulkResults && (
                 <div className="text-xs bg-muted/30 border border-border/50 rounded-md p-2">
                   <p className="text-muted-foreground">
-                    No email is sent automatically. Links are shown only now, so copy the ones you need before you leave this page.
+                    {bulkResults.some((r) => r.email_status)
+                      ? "Links are shown only now, so copy the ones you need (for example where an email failed) before you leave this page."
+                      : "No email was sent. Links are shown only now, so copy the ones you need before you leave this page."}
                   </p>
                   <ul className="mt-2 flex flex-col gap-1.5">
                     {bulkResults.map((r) => (
@@ -706,6 +750,7 @@ export default function OrgMembersPage() {
                           <span className="text-foreground/80">{r.email}</span>{" "}
                           <span className={r.status === "created" ? "text-muted-foreground" : "text-yellow-400"}>
                             {BULK_STATUS_LABEL[r.status]}
+                            {r.email_status ? ` · ${EMAIL_STATUS_LABEL[r.email_status]}` : ""}
                           </span>
                         </span>
                         {r.invite_link && (
@@ -721,7 +766,9 @@ export default function OrgMembersPage() {
               {lastLink && (
                 <div className="text-xs text-muted-foreground break-all bg-muted/30 border border-border/50 rounded-md p-2">
                   <div className="flex items-center justify-between gap-2">
-                    <span>Share this link — no email is sent automatically. It is shown only now, so copy it before you leave this page.</span>
+                    <span>
+                      {LINK_NOTE[lastLink.emailed ?? "none"]}
+                    </span>
                     {/* keyed by the link so a new invitation never inherits "Copied" from the previous one */}
                     <span className="shrink-0">
                       <CopyButton key={lastLink.link} value={lastLink.link} ariaLabel="Copy invitation link" />
