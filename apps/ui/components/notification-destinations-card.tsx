@@ -9,7 +9,12 @@ import { SectionError } from "@/components/section-error"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { Input } from "@/components/ui/input"
-import type { AlertEvent, DestinationKind, NotificationDestination } from "@/lib/api/types"
+import type {
+  AlertEvent,
+  DestinationKind,
+  NotificationDestination,
+  NotificationDestinationPatch,
+} from "@/lib/api/types"
 
 export const EVENT_LABELS: Record<AlertEvent, string> = {
   score_drop: "Security score drops",
@@ -28,16 +33,134 @@ const KIND_LABELS: Record<DestinationKind, string> = {
   email: "Email",
 }
 
+const splitRecipients = (text: string) => text.split(/[,\s]+/).filter(Boolean)
+
+/**
+ * Edits a destination in place with the existing partial PATCH. The webhook URL and signing secret are
+ * write-only (the API never returns them), so leaving them blank keeps the stored value. Only changed
+ * fields are sent.
+ */
+function EditForm({
+  dest,
+  patch,
+  onDone,
+}: {
+  dest: NotificationDestination
+  patch: (body: NotificationDestinationPatch) => Promise<unknown>
+  onDone: () => void
+}) {
+  const isEmail = dest.kind === "email"
+  const [name, setName] = useState(dest.name)
+  const [minDrop, setMinDrop] = useState(String(dest.min_score_drop))
+  const [recipients, setRecipients] = useState((dest.recipients ?? []).join(", "))
+  const [url, setUrl] = useState("")
+  const [secret, setSecret] = useState("")
+  const [error, setError] = useState("")
+  const [saving, setSaving] = useState(false)
+
+  const dropValid = Number.isInteger(Number(minDrop)) && Number(minDrop) >= 1 && Number(minDrop) <= 100
+  const recipientList = splitRecipients(recipients)
+  const body: NotificationDestinationPatch = {}
+  if (name.trim() !== dest.name) body.name = name.trim()
+  if (Number(minDrop) !== dest.min_score_drop) body.min_score_drop = Number(minDrop)
+  if (isEmail) {
+    if (recipientList.join(",") !== (dest.recipients ?? []).join(",")) body.recipients = recipientList
+  } else {
+    if (url.trim()) body.url = url.trim()
+    if (dest.kind === "generic" && secret) body.secret = secret
+  }
+  const valid = name.trim() !== "" && dropValid && (!isEmail || recipientList.length > 0)
+  const canSave = valid && Object.keys(body).length > 0 && !saving
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault()
+    if (!canSave) return
+    setSaving(true)
+    setError("")
+    try {
+      await patch(body)
+      onDone()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Update failed")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const id = (field: string) => `dest-${dest.id}-${field}`
+  return (
+    <form onSubmit={save} className="border border-border p-3 grid gap-3 sm:grid-cols-2" aria-label={`Edit ${dest.name}`}>
+      <div>
+        <label htmlFor={id("name")} className="font-medium block mb-1.5">Name</label>
+        <Input id={id("name")} maxLength={100} value={name} onChange={(e) => setName(e.target.value)} />
+      </div>
+      <div>
+        <label htmlFor={id("drop")} className="font-medium block mb-1.5">Score-drop threshold (points)</label>
+        <Input id={id("drop")} type="number" min={1} max={100} value={minDrop} onChange={(e) => setMinDrop(e.target.value)} />
+      </div>
+      {isEmail ? (
+        <div className="sm:col-span-2">
+          <label htmlFor={id("recipients")} className="font-medium block mb-1.5">Recipients</label>
+          <Input
+            id={id("recipients")}
+            placeholder="comma-separated; must be verified members of this organization"
+            value={recipients}
+            onChange={(e) => setRecipients(e.target.value)}
+          />
+        </div>
+      ) : (
+        <>
+          <div className={dest.kind === "generic" ? "" : "sm:col-span-2"}>
+            <label htmlFor={id("url")} className="font-medium block mb-1.5">New webhook URL</label>
+            <Input
+              id={id("url")}
+              type="password"
+              autoComplete="off"
+              placeholder="Leave blank to keep the current URL"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+            />
+          </div>
+          {dest.kind === "generic" && (
+            <div>
+              <label htmlFor={id("secret")} className="font-medium block mb-1.5">New signing secret</label>
+              <Input
+                id={id("secret")}
+                type="password"
+                autoComplete="off"
+                placeholder={dest.signed ? "Leave blank to keep the current secret" : "Leave blank to stay unsigned"}
+                value={secret}
+                onChange={(e) => setSecret(e.target.value)}
+              />
+            </div>
+          )}
+        </>
+      )}
+      {error && <p role="alert" className="sm:col-span-2 text-destructive">Couldn&apos;t save: {error}</p>}
+      <div className="sm:col-span-2 flex gap-2">
+        <Button type="submit" size="sm" disabled={!canSave}>{saving ? "Saving…" : "Save changes"}</Button>
+        <Button type="button" variant="outline" size="sm" onClick={onDone}>Cancel</Button>
+      </div>
+    </form>
+  )
+}
+
 /** One row owns its mutations, so a slow or failing action on one destination never disables or flags another. */
 function DestinationRow({ orgLogin, dest }: { orgLogin: string; dest: NotificationDestination }) {
   const queryClient = useQueryClient()
   const queryKey = ["notification-destinations", orgLogin]
   const [confirming, setConfirming] = useState(false)
+  const [editing, setEditing] = useState(false)
 
   const update = useMutation({
-    mutationFn: (patch: { enabled?: boolean; add_events?: AlertEvent[]; remove_events?: AlertEvent[] }) =>
+    mutationFn: (patch: NotificationDestinationPatch) =>
       api.notificationDestinations.update(orgLogin, dest.id, patch),
     // Also on error: a PATCH can commit and lose its response, and the next toggle must not start from stale values.
+    onSettled: () => queryClient.invalidateQueries({ queryKey }),
+  })
+  // Separate from `update` so a failed save is reported in the edit form only, not twice.
+  const edit = useMutation({
+    mutationFn: (patch: NotificationDestinationPatch) => api.notificationDestinations.update(orgLogin, dest.id, patch),
     onSettled: () => queryClient.invalidateQueries({ queryKey }),
   })
   const test = useMutation({ mutationFn: () => api.notificationDestinations.test(orgLogin, dest.id) })
@@ -52,7 +175,7 @@ function DestinationRow({ orgLogin, dest }: { orgLogin: string; dest: Notificati
       return queryClient.invalidateQueries({ queryKey })
     },
   })
-  const busy = update.isPending || remove.isPending
+  const busy = update.isPending || edit.isPending || remove.isPending
 
   function toggleEvent(event: AlertEvent, on: boolean) {
     update.mutate(on ? { add_events: [event] } : { remove_events: [event] })
@@ -91,11 +214,16 @@ function DestinationRow({ orgLogin, dest }: { orgLogin: string; dest: Notificati
           <Button variant="outline" size="sm" disabled={test.isPending} onClick={() => test.mutate()} aria-label={`Send a test to ${dest.name}`}>
             {test.isPending ? "Sending…" : "Test"}
           </Button>
+          <Button variant="outline" size="sm" disabled={busy || editing} onClick={() => setEditing(true)} aria-label={`Edit ${dest.name}`}>
+            Edit
+          </Button>
           <Button variant="outline" size="sm" disabled={busy} onClick={() => setConfirming(true)} aria-label={`Delete ${dest.name}`}>
             Delete
           </Button>
         </div>
       </div>
+
+      {editing && <EditForm dest={dest} patch={edit.mutateAsync} onDone={() => setEditing(false)} />}
 
       <fieldset className="flex flex-wrap gap-x-4 gap-y-1" disabled={busy}>
         <legend className="sr-only">Events for {dest.name}</legend>
