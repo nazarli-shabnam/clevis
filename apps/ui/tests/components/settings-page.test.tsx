@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const orgsMineMock = vi.fn();
+const leaveOrgMock = vi.fn();
 const installationsListMock = vi.fn();
 const installationsListForOrgMock = vi.fn();
 const installationsRemoveMock = vi.fn();
@@ -29,6 +30,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/api/client", () => ({
   api: {
     orgs: { mine: (...args: unknown[]) => orgsMineMock(...args) },
+    orgMemberships: { leave: (...args: unknown[]) => leaveOrgMock(...args) },
     installations: {
       list: (...args: unknown[]) => installationsListMock(...args),
       listForOrg: (...args: unknown[]) => installationsListForOrgMock(...args),
@@ -189,6 +191,31 @@ describe("SettingsPage", () => {
 
     expect(await screen.findByRole("link", { name: "Manage members" })).toHaveAttribute("href", "/settings/org/acme/members");
     expect(screen.getByRole("link", { name: "View members" })).toHaveAttribute("href", "/settings/org/widgets/members");
+  });
+
+  it("offers Leave only on invite-sourced memberships, asks first, then leaves and refreshes (#1006)", async () => {
+    orgsMineMock
+      .mockResolvedValueOnce([
+        { org_login: "acme", role: "admin", source: "github" },
+        { org_login: "widgets", role: "member", source: "invite" },
+      ])
+      .mockResolvedValue([{ org_login: "acme", role: "admin", source: "github" }]);
+    leaveOrgMock.mockResolvedValue(undefined);
+    installationsListMock.mockResolvedValue([]);
+    installationsListForOrgMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([]);
+    configGetAllMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true" });
+
+    renderPage();
+
+    const leaveButtons = await screen.findAllByRole("button", { name: "Leave" });
+    expect(leaveButtons).toHaveLength(1); // not on the GitHub-sourced org
+    fireEvent.click(leaveButtons[0]);
+    expect(leaveOrgMock).not.toHaveBeenCalled();
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Leave" }));
+
+    await waitFor(() => expect(leaveOrgMock).toHaveBeenCalledWith("widgets"));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Leave" })).not.toBeInTheDocument());
   });
 
   it("shows a saving spinner then a saved confirmation when the profile is updated", async () => {

@@ -107,6 +107,28 @@ def update_org_membership(
     return _out(membership, target)
 
 
+# Declared before /members/{user_id} so "me" is never read as a (non-integer) user id.
+@router.delete("/orgs/{org_login}/members/me", status_code=status.HTTP_204_NO_CONTENT)
+def leave_org(
+    ctx: OrgContext = Depends(require_org_role(min_role="member")),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Leave an organization (any member, e.g. a contractor whose engagement ended). Only a membership granted by
+    an accepted invitation can be left: a GitHub-sourced one mirrors GitHub and would be re-granted at the next
+    sign-in, so it follows the GitHub org. The org's last admin cannot leave."""
+    membership = _lock_invite_membership(db, ctx, user.id)
+    _refuse_if_last_admin(db, ctx, membership)
+    role = membership.role
+    tenant_repo.delete_membership(db, ctx.org.tenant_id, user.id, commit=False)
+    audit_repo.write(
+        db, actor=user.email, action="membership.left", target=ctx.org.github_login,
+        payload={"user_id": user.id, "previous_role": role, "source": "invite"},
+        tenant_id=ctx.org.tenant_id, commit=False,
+    )
+    db.commit()
+
+
 @router.delete("/orgs/{org_login}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_org_membership(
     user_id: int,
