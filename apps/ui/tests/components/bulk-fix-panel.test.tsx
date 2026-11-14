@@ -54,6 +54,14 @@ function renderPanel(props: Partial<React.ComponentProps<typeof BulkFixPanel>> =
 const checkbox = (name: string) => screen.getByRole("checkbox", { name });
 
 describe("BulkFixPanel", () => {
+  it("ticks the preselected repos that fail the chosen check, and ignores the rest (#990)", () => {
+    // "docs" passes the check and "loose" fails a different one: neither is a candidate for secret scanning.
+    renderPanel({ preselected: ["api", "docs", "loose", "gone"] });
+    expect(checkbox("api")).toBeChecked();
+    expect(checkbox("web")).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Preview changes (1)" })).toBeInTheDocument();
+  });
+
   beforeEach(() => bulkMock.mockReset());
   afterEach(() => cleanup());
 

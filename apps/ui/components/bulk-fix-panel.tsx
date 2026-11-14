@@ -77,11 +77,15 @@ export function BulkFixPanel({
   repos,
   token,
   onApplied,
+  preselected,
 }: {
   owner: string
   repos: RepoSecurityRow[]
   token?: string
   onApplied?: () => void
+  /** Repo names to tick (e.g. the matrix's filtered view). Only those failing the chosen check are shown, so
+   * only those end up selected. Each new array replaces the selection, capped at MAX_BATCH. */
+  preselected?: readonly string[]
 }) {
   const [checkId, setCheckId] = useState(FIXABLE_CHECKS[0].id)
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
@@ -89,6 +93,14 @@ export function BulkFixPanel({
 
   const check = FIXABLE_CHECKS.find((c) => c.id === checkId) ?? FIXABLE_CHECKS[0]
   const candidates = useMemo(() => repos.filter((r) => check.failing(r)).map((r) => r.repo), [repos, check])
+  // A new hand-off replaces the selection with the handed repos that fail this check (up to the batch cap).
+  useEffect(() => {
+    if (!preselected || preselected.length === 0) return
+    const wanted = new Set(preselected)
+    setSelected(new Set(candidates.filter((name) => wanted.has(name)).slice(0, MAX_BATCH)))
+    // Only a new hand-off re-applies it; switching the fixable check keeps the ticks the user has.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preselected])
   // A fresh scan can drop repos from the candidate list: never act on a repo that's no longer there.
   const chosen = useMemo(() => candidates.filter((name) => selected.has(name)), [candidates, selected])
 
@@ -127,7 +139,7 @@ export function BulkFixPanel({
   const allSelected = selectAllTarget.length > 0 && selectAllTarget.every((name) => selected.has(name))
 
   return (
-    <div className="card mt-4">
+    <div id="bulk-fix" className="card mt-4">
       <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
         <span className="section-title">Fix many repos at once</span>
         <span className="stat-chip">org admins only</span>
