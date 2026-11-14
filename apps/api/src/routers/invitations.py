@@ -43,6 +43,13 @@ def _invite_link(invitation) -> str:
     return f"{_ui_base()}/invite/{invitation.token}"
 
 
+def _masked_email(address: str) -> str:
+    """"alice@acme.com" -> "a***@acme.com": enough for the invitee to recognise which of their addresses the
+    invitation is for, without handing the full address to whoever holds a (shareable) invite link."""
+    local, _, domain = address.partition("@")
+    return f"{local[:1]}***@{domain}"
+
+
 def _is_expired(invitation) -> bool:
     return invitation.status == "pending" and invitation.expires_at <= datetime.now(timezone.utc)
 
@@ -307,7 +314,13 @@ def accept_invitation(
     if invitation.status != "pending":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Invitation is no longer pending")
     if invitation.email.lower() != user.email.lower():
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invitation email does not match account")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"This invitation was sent to {_masked_email(invitation.email)}, but you are signed in as "
+                f"{user.email}. Sign in with the invited address to accept it."
+            ),
+        )
     # Email match alone isn't proof of ownership for a self-registered account.
     # Accounts created by GitHub sign-in and the setup admin are verified immediately;
     # self-registered accounts must click the emailed verification link first.
