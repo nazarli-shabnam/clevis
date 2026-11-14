@@ -463,6 +463,63 @@ def test_resend_verification_requires_auth(auth_client):
     assert resp.status_code == 401
 
 
+def test_workspace_admin_can_mark_an_email_verified_and_it_is_audited(auth_client, db):
+    from src.core.db import AuditLog
+
+    owner_token = _setup_owner(auth_client)["access_token"]
+    auth_client.post("/auth/register", json={"email": "Member@example.com", "password": "supersecret1234"})
+    user = db.query(User).filter(User.email == "member@example.com").first()
+    assert user.email_verified is False and user.email_verify_token is not None
+
+    resp = auth_client.post(
+        "/auth/admin/verify-email", json={"email": "MEMBER@example.com"}, headers={"Authorization": f"Bearer {owner_token}"}
+    )
+    assert resp.status_code == 200 and resp.json() == {"ok": True, "already_verified": False}
+
+    db.refresh(user)
+    assert user.email_verified is True and user.email_verify_token is None
+    row = db.query(AuditLog).filter(AuditLog.action == "user.email_verified_by_admin").one()
+    assert row.actor == "owner@example.com" and row.target == "member@example.com"
+
+    again = auth_client.post(
+        "/auth/admin/verify-email", json={"email": "member@example.com"}, headers={"Authorization": f"Bearer {owner_token}"}
+    )
+    assert again.json() == {"ok": True, "already_verified": True}
+
+
+def test_admin_verify_email_is_refused_when_smtp_is_configured(auth_client, db, monkeypatch):
+    from src.core.config import settings
+
+    owner_token = _setup_owner(auth_client)["access_token"]
+    auth_client.post("/auth/register", json={"email": "member@example.com", "password": "supersecret1234"})
+    monkeypatch.setattr(settings, "smtp_host", "smtp.example.com")
+    monkeypatch.setattr(settings, "smtp_from", "clevis@example.com")
+
+    resp = auth_client.post(
+        "/auth/admin/verify-email", json={"email": "member@example.com"}, headers={"Authorization": f"Bearer {owner_token}"}
+    )
+    assert resp.status_code == 409
+    assert db.query(User).filter(User.email == "member@example.com").one().email_verified is False
+
+
+def test_admin_verify_email_is_workspace_admin_only_and_404s_for_an_unknown_account(auth_client):
+    owner_token = _setup_owner(auth_client)["access_token"]
+    member_token = auth_client.post(
+        "/auth/register", json={"email": "member@example.com", "password": "supersecret1234"}
+    ).json()["access_token"]
+
+    as_member = auth_client.post(
+        "/auth/admin/verify-email", json={"email": "member@example.com"}, headers={"Authorization": f"Bearer {member_token}"}
+    )
+    assert as_member.status_code == 403
+    unauthenticated = auth_client.post("/auth/admin/verify-email", json={"email": "member@example.com"})
+    assert unauthenticated.status_code == 401
+    unknown = auth_client.post(
+        "/auth/admin/verify-email", json={"email": "nobody@example.com"}, headers={"Authorization": f"Bearer {owner_token}"}
+    )
+    assert unknown.status_code == 404
+
+
 # login
 
 def test_login_valid(auth_client):
