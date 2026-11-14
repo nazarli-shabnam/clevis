@@ -39,6 +39,8 @@ class FeatureSpec:
 
     label: str
     permissions: dict[str, str] = field(default_factory=dict)
+    # Plain-language reason shown to the person approving the permission on GitHub.
+    description: str = ""
 
 
 # Keyed by a stable feature id (used in API responses and tests). Requirements come from
@@ -47,35 +49,43 @@ FEATURE_PERMISSIONS: dict[str, FeatureSpec] = {
     "file_as_issue": FeatureSpec(
         "File a failed check as a GitHub issue",
         {"issues": "write"},
+        "Lets Clevis open a GitHub issue for a failed security check.",
     ),
     "fix_this": FeatureSpec(
         '"Fix this" security auto-remediation',
         {"administration": "write"},
+        "Lets Clevis change repository security settings for you when you click Fix this.",
     ),
     "stale_pr_nudges": FeatureSpec(
         "Stale pull-request nudges",
         {"pull_requests": "write"},
+        "Lets Clevis comment on pull requests that have sat idle.",
     ),
     "bulk_branch_protection": FeatureSpec(
         "Bulk branch-protection apply",
         {"administration": "write"},
+        "Lets Clevis turn on branch protection across many repositories at once.",
     ),
     "workflow_lint_autofix": FeatureSpec(
         "Workflow-policy lint auto-fix PR",
         {"contents": "write", "pull_requests": "write", "workflows": "write"},
+        "Lets Clevis open a pull request that fixes issues in your workflow files.",
     ),
     "dependabot_triage": FeatureSpec(
         "Dependabot auto-triage",
         # checks/statuses read: the CI-green gate reads check-runs and commit statuses.
         {"pull_requests": "write", "contents": "write", "checks": "read", "statuses": "read"},
+        "Lets Clevis approve or merge Dependabot pull requests once their checks pass.",
     ),
     "actions_cache_clear": FeatureSpec(
         "Clear GitHub Actions caches",
         {"actions": "write"},
+        "Lets Clevis delete GitHub Actions caches to free up storage.",
     ),
     "workflow_dispatch": FeatureSpec(
         "Workflow dispatch (Automation page)",
         {"actions": "write"},
+        "Lets Clevis start a workflow run from the Automation page.",
     ),
 }
 

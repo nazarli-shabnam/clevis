@@ -32,6 +32,7 @@ class AutomationPermissionOut(BaseModel):
     feature: str
     label: str
     required: dict[str, str]
+    description: str = ""
     # Empty both when everything is granted and when permissions were never synced
     # (`permissions_synced_at` is None) -- the UI tells those apart off the timestamp.
     missing: dict[str, str] = {}

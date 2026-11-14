@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render as rtlRender, screen } from "@testing-library/react"
+import { cleanup, fireEvent, render as rtlRender, screen, waitFor } from "@testing-library/react"
 import type { ReactElement } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { PermissionDriftNotice } from "@/components/permission-drift-notice"
 import type { InstallationMeta } from "@/lib/api/types"
 
-// The notice reads the App slug through a query; without a stubbed API it falls back to the env var.
+// The notice uses react-query for its "check now" refresh, so it needs a provider.
 function render(ui: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return rtlRender(<QueryClientProvider client={client}>{ui}</QueryClientProvider>)
@@ -51,13 +51,17 @@ describe("PermissionDriftNotice", () => {
     )
     expect(screen.getByText(/2 automations need extra GitHub access/i)).toBeInTheDocument()
     expect(screen.getByText("Stale pull-request nudges")).toBeInTheDocument()
-    const link = screen.getByRole("link", { name: /review on github/i })
-    expect(link).toHaveAttribute("href", expect.stringContaining("/installations/42"))
+    const link = screen.getByRole("link", { name: /approve on github/i })
+    expect(link).toHaveAttribute(
+      "href",
+      expect.stringContaining("/organizations/acme/settings/installations/42/permissions/update"),
+    )
   })
 
   it("shows a 'not yet checked' line when permissions have never been observed", () => {
     render(<PermissionDriftNotice install={install({ permissions_synced_at: null })} />)
     expect(screen.getByText(/not yet checked/i)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /check now/i })).toBeInTheDocument()
     expect(screen.queryByRole("link")).not.toBeInTheDocument()
   })
 
@@ -74,32 +78,48 @@ describe("PermissionDriftNotice", () => {
     expect(screen.getByText(/1 automation needs extra GitHub access/i)).toBeInTheDocument()
   })
 
-  it("explains the slug isn't configured instead of a link when the App slug is unset", () => {
+  it("links personal accounts to their own settings page, with no App slug needed", () => {
     vi.unstubAllEnvs()
     render(
       <PermissionDriftNotice
         install={install({
+          account_type: "User",
           blocked_features: [
             { feature: "stale_pr_nudges", label: "Stale pull-request nudges", missing: { pull_requests: "write" } },
           ],
         })}
       />,
     )
-    expect(screen.queryByRole("link")).not.toBeInTheDocument()
-    expect(screen.getByText(/slug isn.t configured/i)).toBeInTheDocument()
+    const link = screen.getByRole("link", { name: /approve on github/i })
+    expect(link.getAttribute("href")).toMatch(/\/settings\/installations\/42\/permissions\/update$/)
+    expect(link.getAttribute("href")).not.toContain("/organizations/")
   })
 
-  it("builds the link from the slug the API serves, with no build-time env var", async () => {
-    vi.unstubAllEnvs()
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        new Response(JSON.stringify({ setup_required: false, github_app_configured: true, github_app_slug: "from-api" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      ),
+  it("shows the plain-language reason for each blocked automation", () => {
+    render(
+      <PermissionDriftNotice
+        install={install({
+          blocked_features: [
+            { feature: "stale_pr_nudges", label: "Stale pull-request nudges", missing: { pull_requests: "write" } },
+          ],
+          automations: [
+            {
+              feature: "stale_pr_nudges",
+              label: "Stale pull-request nudges",
+              required: { pull_requests: "write" },
+              description: "Lets Clevis comment on pull requests that have sat idle.",
+              missing: { pull_requests: "write" },
+            },
+          ],
+        })}
+      />,
     )
+    expect(screen.getByText(/comment on pull requests that have sat idle/i)).toBeInTheDocument()
+  })
+
+  it("copies a request for the owner containing the approval link", async () => {
+    const writeText = vi.fn(async () => {})
+    vi.stubGlobal("navigator", { clipboard: { writeText } })
     render(
       <PermissionDriftNotice
         install={install({
@@ -109,7 +129,32 @@ describe("PermissionDriftNotice", () => {
         })}
       />,
     )
-    const link = await screen.findByRole("link", { name: /review on github/i })
-    expect(link).toHaveAttribute("href", expect.stringContaining("/apps/from-api/installations/42"))
+    fireEvent.click(screen.getByRole("button", { name: /copy request for owner/i }))
+    await waitFor(() => expect(writeText).toHaveBeenCalled())
+    expect((writeText.mock.calls as unknown as string[][])[0][0]).toContain(
+      "/organizations/acme/settings/installations/42/permissions/update",
+    )
+  })
+
+  it("re-checks permissions when the user returns from GitHub", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify(install()), { status: 200, headers: { "Content-Type": "application/json" } }),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+    render(
+      <PermissionDriftNotice
+        install={install({
+          blocked_features: [
+            { feature: "stale_pr_nudges", label: "Stale pull-request nudges", missing: { pull_requests: "write" } },
+          ],
+        })}
+      />,
+    )
+    fireEvent.click(screen.getByRole("link", { name: /approve on github/i }))
+    window.dispatchEvent(new Event("focus"))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    expect(String((fetchMock.mock.calls as unknown as string[][])[0][0])).toContain(
+      "/orgs/acme/installations/42/refresh-permissions",
+    )
   })
 })
