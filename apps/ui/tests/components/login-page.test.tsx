@@ -99,6 +99,21 @@ describe("LoginPage GitHub OAuth button", () => {
     expect(screen.queryByRole("button", { name: /sign in with github/i })).not.toBeInTheDocument();
   });
 
+  it("offers an invitee the way in when sign-ups are closed, instead of telling them to ask for an invitation (#1011)", async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/auth/me")) return Promise.resolve(new Response(null, { status: 401 }));
+      if (url.endsWith("/auth/setup-required"))
+        return Promise.resolve(jsonResponse({ setup_required: false, registration_enabled: false, github_oauth_enabled: true }));
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+    searchParams = new URLSearchParams({ next: "/invite/abc123" });
+    renderPage();
+
+    expect(await screen.findByText(/New sign-ups are turned off, but you were invited/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Create your account" })).toHaveAttribute("href", "/register?next=%2Finvite%2Fabc123");
+  });
+
   it("omits the next param when there is none (default '/')", async () => {
     renderPage();
 

@@ -1,14 +1,36 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { CircleNotch } from "@phosphor-icons/react"
+import { CircleNotch, DownloadSimple } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
+import { toCsv } from "@/lib/csv"
+import { downloadTextFile } from "@/lib/download"
 import { dueTime } from "@/lib/format"
+import { EmptyStateAction } from "@/components/empty-state-action"
 import { SectionError } from "@/components/section-error"
 import { Button } from "@/components/ui/button"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { MAX_WAIVER_DAYS, WAIVABLE_CHECKS, WaiverForm, daysRemaining } from "@/components/waiver-form"
 import type { CheckWaiver } from "@/lib/api/types"
+
+const EXPIRING_SOON_DAYS = 14
+
+type WaiverFilter = "all" | "active" | "expiring" | "expired"
+const FILTER_LABELS: Record<WaiverFilter, string> = {
+  all: "All",
+  active: "Active",
+  expiring: `Expiring in ${EXPIRING_SOON_DAYS} days`,
+  expired: "Expired",
+}
+
+function matchesFilter(w: CheckWaiver, filter: WaiverFilter): boolean {
+  if (filter === "all") return true
+  if (filter === "expired") return !w.active
+  if (filter === "active") return w.active
+  return w.active && daysRemaining(w.expires_at) <= EXPIRING_SOON_DAYS
+}
 
 /** Org admins record accepted risks: a failing check is kept out of the score until the waiver expires. */
 export function WaiversCard({ orgLogin }: { orgLogin: string }) {
@@ -17,11 +39,49 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
   const query = useQuery<CheckWaiver[]>({ queryKey, queryFn: () => api.waivers.list(orgLogin), retry: false })
   // The waiver being renewed or edited; the form below switches from "add" to "save" for it.
   const [editing, setEditing] = useState<CheckWaiver | null>(null)
+  // The waiver whose Revoke is awaiting confirmation.
+  const [confirming, setConfirming] = useState<CheckWaiver | null>(null)
+
+  // A notification links here with ?waiver=<id>: that row is marked and scrolled into view.
+  const linkedWaiver = Number(useSearchParams()?.get("waiver")) || null
+  const loadedCount = query.data?.length
+  const [filter, setFilter] = useState<WaiverFilter>("all")
+  // A filter that hides the linked row would swallow the scroll and the highlight: show everything for it.
+  const linkedLoaded = linkedWaiver !== null && !!query.data?.some((w) => w.id === linkedWaiver)
+  useEffect(() => {
+    if (linkedLoaded) setFilter("all")
+  }, [linkedWaiver, linkedLoaded])
 
   const revoke = useMutation({
     mutationFn: (id: number) => api.waivers.revoke(orgLogin, id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+    onSuccess: (_data, id) => {
+      // A revoked waiver can't be saved any more (PUT 404s), so drop the form's binding to it.
+      setEditing((current) => (current?.id === id ? null : current))
+      return queryClient.invalidateQueries({ queryKey })
+    },
+    onSettled: () => setConfirming(null),
   })
+
+  const visible = (query.data ?? []).filter((w) => matchesFilter(w, filter))
+  const linkedVisible = linkedWaiver !== null && visible.some((w) => w.id === linkedWaiver)
+  useEffect(() => {
+    if (linkedVisible) document.getElementById(`waiver-${linkedWaiver}`)?.scrollIntoView?.({ block: "center" })
+  }, [linkedWaiver, linkedVisible])
+
+  // The register as an auditor reads it, for the rows currently shown.
+  function exportCsv(rows: CheckWaiver[]) {
+    const csv = toCsv(rows, [
+      { header: "Check", value: (w) => w.check_id },
+      { header: "Repositories", value: (w) => (w.repos ? w.repos.join("; ") : "whole organization") },
+      { header: "Reason", value: (w) => w.reason },
+      { header: "Owner", value: (w) => w.owner },
+      { header: "Created by", value: (w) => w.created_by },
+      { header: "Created", value: (w) => w.created_at },
+      { header: "Expires", value: (w) => w.expires_at },
+      { header: "Status", value: (w) => (w.active ? "active" : "expired") },
+    ])
+    downloadTextFile(`clevis-waivers-${orgLogin}-${new Date().toISOString().slice(0, 10)}.csv`, csv, "text/csv")
+  }
 
   return (
     <div className="card mb-4">
@@ -43,14 +103,50 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
           retrying={query.isFetching}
         />
       ) : query.data.length === 0 ? (
-        <p className="px-4 py-3 text-xs text-muted-foreground">No waivers.</p>
+        <EmptyStateAction
+          message="No waivers. Record an accepted risk so a check you've chosen to live with stops lowering the score until it expires."
+          actionLabel="Add a waiver"
+          focusId="waiver-new-check"
+        />
       ) : (
+        <>
+        <div className="px-4 py-2 flex flex-wrap items-center gap-2 text-xs">
+          <label className="flex items-center gap-1.5 text-muted-foreground">
+            Show
+            <select
+              aria-label="Filter waivers"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value as WaiverFilter)}
+              className="card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
+            >
+              {(Object.keys(FILTER_LABELS) as WaiverFilter[]).map((f) => (
+                <option key={f} value={f}>{FILTER_LABELS[f]}</option>
+              ))}
+            </select>
+          </label>
+          <span className="text-muted-foreground">{visible.length} of {query.data.length}</span>
+          <Button
+            size="sm"
+            variant="outline"
+            className="ml-auto"
+            disabled={visible.length === 0}
+            onClick={() => exportCsv(visible)}
+          >
+            <DownloadSimple className="size-3.5" /> Export CSV
+          </Button>
+        </div>
+        {visible.length === 0 && <p className="px-4 pb-3 text-xs text-muted-foreground">No waivers match this filter.</p>}
         <ul className="divide-y divide-border">
-          {query.data.map((w) => {
+          {visible.map((w) => {
             const title = WAIVABLE_CHECKS[w.check_id] ?? w.check_id
             const days = daysRemaining(w.expires_at)
             return (
-              <li key={w.id} className="px-4 py-2 flex items-start justify-between gap-3 text-xs">
+              <li
+                key={w.id}
+                id={`waiver-${w.id}`}
+                aria-current={w.id === linkedWaiver ? "true" : undefined}
+                className={`px-4 py-2 flex items-start justify-between gap-3 text-xs ${w.id === linkedWaiver ? "bg-elevated outline outline-1 outline-primary" : ""}`}
+              >
                 <div className="min-w-0">
                   <p className="font-medium text-foreground">
                     {title}
@@ -80,7 +176,7 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
                     variant="outline"
                     size="sm"
                     disabled={revoke.isPending}
-                    onClick={() => revoke.mutate(w.id)}
+                    onClick={() => setConfirming(w)}
                     aria-label={`Revoke waiver for ${title}`}
                   >
                     Revoke
@@ -90,7 +186,17 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
             )
           })}
         </ul>
+        </>
       )}
+      <ConfirmDialog
+        open={confirming !== null}
+        onOpenChange={(open) => !open && setConfirming(null)}
+        title={`Revoke the waiver for ${confirming ? (WAIVABLE_CHECKS[confirming.check_id] ?? confirming.check_id) : ""}?`}
+        description="The check counts toward the score again from the next scan. This can't be undone."
+        confirmLabel="Revoke"
+        pending={revoke.isPending}
+        onConfirm={() => confirming && revoke.mutate(confirming.id)}
+      />
       {revoke.isError && (
         <p role="alert" className="px-4 pb-2 text-xs text-destructive">
           Couldn&apos;t revoke: {revoke.error.message}

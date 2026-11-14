@@ -12,6 +12,8 @@ import { SectionError } from "@/components/section-error"
 import { EmptyStatePage } from "@/components/empty-state"
 import { PermissionDriftNotice } from "@/components/permission-drift-notice"
 import { SessionsCard } from "@/components/sessions-card"
+import { ChangePasswordCard } from "@/components/change-password-card"
+import { ChangeEmailCard, DeleteAccountCard } from "@/components/account-cards"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { toast } from "@/components/ui/toast"
 import Link from "next/link"
@@ -99,7 +101,7 @@ function ProfileSection() {
         <Field>
           <FieldLabel>Email</FieldLabel>
           <Input value={user?.email || ""} disabled className="opacity-60 cursor-not-allowed" />
-          <FieldDescription>Email cannot be changed.</FieldDescription>
+          <FieldDescription>To change it, use the Email address section below.</FieldDescription>
         </Field>
         <p className="text-xs text-muted-foreground -mt-1">
           Switch between your organizations and personal GitHub account from the profile menu in the sidebar.
@@ -201,7 +203,17 @@ function useMyOrgMemberships() {
 }
 
 function OrgMembershipsSection() {
+  const queryClient = useQueryClient()
   const { data: memberships = [], isLoading, isError, error, isFetching, refetch } = useMyOrgMemberships()
+  const [leaving, setLeaving] = useState<MyOrgMembership | null>(null)
+  const leave = useMutation({
+    mutationFn: (orgLogin: string) => api.orgMemberships.leave(orgLogin),
+    onSuccess: () => {
+      toast.success("You left the organization")
+      return queryClient.invalidateQueries({ queryKey: ["my-orgs"] })
+    },
+    onSettled: () => setLeaving(null),
+  })
 
   return (
     <div className="card">
@@ -258,6 +270,17 @@ function OrgMembershipsSection() {
                           Activity log
                         </Link>
                       )}
+                      {/* Only a membership granted by an invitation can be left; a GitHub one follows the GitHub org. */}
+                      {m.source === "invite" && (
+                        <button
+                          type="button"
+                          onClick={() => setLeaving(m)}
+                          disabled={leave.isPending}
+                          className="text-xs text-destructive hover:underline"
+                        >
+                          Leave
+                        </button>
+                      )}
                     </span>
                   </td>
                 </tr>
@@ -266,6 +289,18 @@ function OrgMembershipsSection() {
           </table>
         </div>
       )}
+      {leave.isError && (
+        <p role="alert" className="px-4 pb-3 text-xs text-destructive">Couldn&apos;t leave: {leave.error.message}</p>
+      )}
+      <ConfirmDialog
+        open={leaving !== null}
+        onOpenChange={(open) => !open && setLeaving(null)}
+        title={`Leave ${leaving?.org_login ?? ""}?`}
+        description="You lose access to this organization in Clevis. An admin can invite you again."
+        confirmLabel="Leave"
+        pending={leave.isPending}
+        onConfirm={() => leaving && leave.mutate(leaving.org_login)}
+      />
     </div>
   )
 }
@@ -871,12 +906,15 @@ export default function SettingsPage() {
       )}
       <div className="flex flex-col gap-4">
         <ProfileSection />
+        <ChangePasswordCard />
+        <ChangeEmailCard />
         <SessionsCard />
         <AppearanceSection />
         <OrgMembershipsSection />
         <ConnectedOrgsSection />
         {user?.is_workspace_admin && <SavedTokensSection />}
         {user?.is_workspace_admin && <InstanceConfigSection />}
+        <DeleteAccountCard />
       </div>
     </>
   )

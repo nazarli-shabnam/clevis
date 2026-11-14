@@ -1,7 +1,7 @@
 "use client"
 
-import { useParams } from "next/navigation"
-import { useState } from "react"
+import { useParams, useSearchParams } from "next/navigation"
+import { useEffect, useState } from "react"
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { CircleNotch, DownloadSimple } from "@phosphor-icons/react"
 import { PageHeader } from "@/components/page-header"
@@ -131,6 +131,12 @@ function JobsCard({ orgLogin }: { orgLogin: string }) {
     getNextPageParam: (last) => (last.length === JOBS_PAGE_SIZE ? last[last.length - 1].id : undefined),
   })
   const jobs: JobOut[] = query.data?.pages.flat() ?? []
+  // A notification links here with ?job=<id>: that row is marked and scrolled into view.
+  const linkedJob = Number(useSearchParams()?.get("job")) || null
+  const linkedJobLoaded = linkedJob !== null && jobs.some((j) => j.id === linkedJob)
+  useEffect(() => {
+    if (linkedJobLoaded) document.getElementById(`job-${linkedJob}`)?.scrollIntoView?.({ block: "center" })
+  }, [linkedJob, linkedJobLoaded])
 
   return (
     <div className="card mt-4">
@@ -167,7 +173,12 @@ function JobsCard({ orgLogin }: { orgLogin: string }) {
               </thead>
               <tbody className="divide-y divide-border">
                 {jobs.map((j) => (
-                  <tr key={j.id} className="hover:bg-elevated transition-colors">
+                  <tr
+                    key={j.id}
+                    id={`job-${j.id}`}
+                    aria-current={j.id === linkedJob ? "true" : undefined}
+                    className={`hover:bg-elevated transition-colors ${j.id === linkedJob ? "bg-elevated outline outline-1 outline-primary" : ""}`}
+                  >
                     <td className="px-4 py-2 font-mono text-muted-foreground">#{j.id}</td>
                     <td className="px-4 py-2 font-mono text-foreground/80">{j.job_type}</td>
                     <td className={`px-4 py-2 font-medium ${JOB_STATUS_COLOR[j.status]}`}>{j.status}</td>
@@ -178,6 +189,11 @@ function JobsCard({ orgLogin }: { orgLogin: string }) {
               </tbody>
             </table>
           </div>
+          {linkedJob !== null && !jobs.some((j) => j.id === linkedJob) && (
+            <p className="px-4 py-2 text-xs text-muted-foreground border-t border-border">
+              Job #{linkedJob} isn&apos;t in the rows loaded so far{query.hasNextPage ? ": load more to find it." : "."}
+            </p>
+          )}
           {query.hasNextPage && (
             <div className="px-4 py-3 border-t border-border flex justify-center">
               <Button size="sm" variant="outline" disabled={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>

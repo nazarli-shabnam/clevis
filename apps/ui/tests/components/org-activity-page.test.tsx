@@ -7,8 +7,10 @@ const jobsMock = vi.fn();
 const mineMock = vi.fn();
 const downloadMock = vi.fn();
 
+let searchParams = new URLSearchParams();
 vi.mock("next/navigation", () => ({
   useParams: () => ({ login: "acme" }),
+  useSearchParams: () => searchParams,
 }));
 
 vi.mock("@/lib/download", () => ({
@@ -56,6 +58,7 @@ describe("toAuditFilters", () => {
 
 describe("OrgActivityPage", () => {
   beforeEach(() => {
+    searchParams = new URLSearchParams();
     auditMock.mockReset();
     jobsMock.mockReset();
     mineMock.mockReset();
@@ -70,6 +73,19 @@ describe("OrgActivityPage", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+  });
+
+  it("marks the job a notification linked to, and says when it isn't in the loaded rows (#955)", async () => {
+    searchParams = new URLSearchParams({ job: "9" });
+    renderPage();
+    const row9 = (await screen.findByText("#9")).closest("tr");
+    expect(row9).toHaveAttribute("aria-current", "true");
+    expect(row9).toHaveAttribute("id", "job-9");
+    cleanup();
+
+    searchParams = new URLSearchParams({ job: "404" });
+    renderPage();
+    expect(await screen.findByText(/Job #404 isn't in the rows loaded so far/)).toBeInTheDocument();
   });
 
   it("shows audit rows and jobs to an admin", async () => {

@@ -20,7 +20,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from src.core.db import Org, User, set_session_user
+from src.core.db import Org, User, set_session_tenant, set_session_user
 from src.repositories import audit_repo, org_membership_repo, org_repo, tenant_repo
 from src.services import github_oauth
 
@@ -105,13 +105,28 @@ def sync_org_admin_memberships(db: Session, user: User, user_token: str) -> None
     for org, membership in tenant_repo.list_org_memberships_for_user(db, user.id):
         if org.github_org_id is None or membership.source != "github":
             continue
+        # The last-admin count reads every admin row of this org, which RLS only shows under its tenant context.
+        set_session_tenant(db, org.tenant_id)
         gh_role = gh_role_by_org_id.get(org.github_org_id)
         if gh_role is None:
+            if _is_last_admin(db, org, membership):
+                _audit(db, user, "membership.github_revoke_refused", org, {"reason": "sign_in", "refused": "last_admin"})
+                continue
             org_membership_repo.delete(db, org_id=org.id, user_id=user.id)
             _audit(db, user, "membership.github_revoked", org, {"previous_role": membership.role})
         elif gh_role == "member" and membership.role != "member":
+            if _is_last_admin(db, org, membership):
+                _audit(db, user, "membership.github_demote_refused", org, {"reason": "sign_in", "refused": "last_admin"})
+                continue
             org_membership_repo.update_role(db, org_id=org.id, user_id=user.id, role="member")
             _audit(db, user, "membership.github_demoted", org, {"role": "member"})
+
+
+def _is_last_admin(db: Session, org: Org, membership) -> bool:
+    """True when removing or demoting this membership would leave the org with no admin (GitHub stays the
+    source of truth for who is an admin, but never at the price of an org nobody can manage). The admin
+    rows stay locked through the caller's delete/update that follows."""
+    return membership.role == "admin" and tenant_repo.count_admins_locked(db, org.tenant_id) <= 1
 
 
 def _audit(db: Session, user: User, action: str, org: Org, payload: dict) -> None:

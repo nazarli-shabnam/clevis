@@ -828,6 +828,48 @@ def test_reconcile_demotes_a_github_admin_that_github_lists_as_member(pg_conn, t
     assert left[gh_users["invited"][0]] == ("admin", "invite")  # invite-sourced rows are never touched
 
 
+def _make_gh_admin_the_only_admin(pg_conn, tenant_id, gh_users):
+    with pg_conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        cur.execute(
+            "UPDATE memberships SET role = 'member' WHERE tenant_id = %s AND user_id = ANY(%s)",
+            (tenant_id, [gh_users["gone"][0], gh_users["invited"][0]]),
+        )
+        cur.execute("SELECT count(*) FROM memberships WHERE tenant_id = %s AND role = 'admin'", (tenant_id,))
+        assert cur.fetchone()[0] == 1  # the fixture tenant is otherwise empty: gh-admin is the one admin
+
+
+def _refusals(pg_conn, tenant_id, action):
+    with pg_conn.cursor() as cur:
+        cur.execute("SELECT payload FROM audit_logs WHERE action = %s AND tenant_id = %s", (action, tenant_id))
+        return [json.loads(row[0]) for row in cur.fetchall()]
+
+
+def test_reconcile_never_revokes_the_last_admin(pg_conn, tenant_id, gh_users):
+    _make_gh_admin_the_only_admin(pg_conn, tenant_id, gh_users)
+    # GitHub lists a different admin and no longer lists gh-admin, who is the org's only Clevis admin.
+    members = [_roster_member("someone-else", 1, "admin"), _roster_member("gh-gone", gh_users["gone"][1], "member")]
+    with pg_conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        org_membership_store.reconcile_github_memberships(cur, tenant_id=tenant_id, members=members)
+    pg_conn.commit()
+
+    assert _memberships(pg_conn, tenant_id, [gh_users["admin"][0]])[gh_users["admin"][0]] == ("admin", "github")
+    assert _refusals(pg_conn, tenant_id, "membership.github_revoke_refused")[0]["refused"] == "last_admin"
+
+
+def test_reconcile_never_demotes_the_last_admin(pg_conn, tenant_id, gh_users):
+    _make_gh_admin_the_only_admin(pg_conn, tenant_id, gh_users)
+    members = [_roster_member("someone-else", 1, "admin"), _roster_member("gh-admin", gh_users["admin"][1], "member")]
+    with pg_conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        org_membership_store.reconcile_github_memberships(cur, tenant_id=tenant_id, members=members)
+    pg_conn.commit()
+
+    assert _memberships(pg_conn, tenant_id, [gh_users["admin"][0]])[gh_users["admin"][0]] == ("admin", "github")
+    assert _refusals(pg_conn, tenant_id, "membership.github_demote_refused")[0]["refused"] == "last_admin"
+
+
 @pytest.mark.parametrize(
     "members",
     [

@@ -10,7 +10,7 @@ import logging
 import secrets
 
 import bcrypt
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -26,15 +26,22 @@ from src.core.auth import (
     clear_session_cookie,
     current_session_id,
     require_auth,
+    require_workspace_admin,
     revoke_presented_tokens,
     start_session,
 )
 from src.core.config import settings
 from src.core.db import Org, User, get_db, set_session_user
 from src.core.rate_limit import check_account_rate_limit, rate_limit
-from src.repositories import invitation_repo, session_repo, tenant_repo
-from src.services import github_app, github_oauth
-from src.services.email import EmailNotConfigured, send_verification_email
+from src.repositories import audit_repo, invitation_repo, session_repo, tenant_repo
+from src.services import account_deletion, auth_audit, email_change, github_app, github_oauth, password_reset
+from src.services.email import (
+    EmailNotConfigured,
+    is_configured as smtp_configured,
+    send_email_change_email,
+    send_password_reset_email,
+    send_verification_email,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -108,6 +115,39 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     name: str | None = Field(default=None, max_length=_MAX_NAME_LEN)
     password: str
+    # The token of a pending invitation addressed to `email`: lets that person sign up while self-registration
+    # is off. Anything else is ignored when registration is open.
+    invite_token: str | None = Field(default=None, max_length=200)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(max_length=2000)
+    password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class ChangeEmailRequest(BaseModel):
+    new_email: EmailStr
+    password: str
+
+
+class ConfirmEmailChangeRequest(BaseModel):
+    token: str = Field(max_length=2000)
+
+
+class DeleteAccountRequest(BaseModel):
+    # Typing the account's own address guards against a mis-click or a copied request; the password (when the
+    # account has one) proves it is really the owner.
+    confirm_email: str
+    password: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -163,6 +203,10 @@ class VerifyEmailRequest(BaseModel):
 
 class VerifyEmailResponse(BaseModel):
     ok: bool
+
+
+class AdminVerifyEmailRequest(BaseModel):
+    email: EmailStr
 
 
 class ResendVerificationResponse(BaseModel):
@@ -246,12 +290,22 @@ def setup(body: SetupRequest, request: Request, db: Session = Depends(get_db)):
     return {"access_token": token, "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin)}
 
 
+def _holds_invitation_for(db: Session, email: str, token: str | None) -> bool:
+    """True if `token` is a pending, unexpired invitation addressed to `email`: the invitation link proves the
+    caller was invited, so it opens a closed registration for that one address."""
+    if not token:
+        return False
+    return any(
+        secrets.compare_digest(invitation.token, token) for invitation in invitation_repo.list_pending_for_email(db, email)
+    )
+
+
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(rate_limit())])
 def register(body: RegisterRequest, request: Request, db: Session = Depends(get_db)):
     """Creates a non-admin account. 409 if setup hasn't run yet; 403 if registration is disabled."""
     if db.query(User).count() == 0:
         raise HTTPException(status_code=409, detail="Setup must be completed before registration")
-    if not registration_enabled(db):
+    if not registration_enabled(db) and not _holds_invitation_for(db, body.email, body.invite_token):
         raise HTTPException(status_code=403, detail="Registration is disabled")
     if len(body.password) < _MIN_PASSWORD_LEN:
         raise HTTPException(
@@ -315,6 +369,240 @@ def verify_email(body: VerifyEmailRequest, db: Session = Depends(get_db)):
     user.email_verify_token_expires_at = None
     db.commit()
     return {"ok": True}
+
+
+@router.post("/admin/verify-email", response_model=ResendVerificationResponse, dependencies=[Depends(rate_limit())])
+def admin_verify_email(
+    body: AdminVerifyEmailRequest,
+    admin: UserOut = Depends(require_workspace_admin),
+    db: Session = Depends(get_db),
+):
+    """Mark an account's email verified without the emailed link: the way out on a deployment with no SMTP,
+    where an invited password user could otherwise never accept an invitation. Workspace admins only, audited.
+    Refused when SMTP is configured: the emailed link proves ownership of the address, and this must not become
+    a way around it."""
+    if smtp_configured():
+        raise HTTPException(
+            status_code=409, detail="Email is configured on this server: the user can verify with the emailed link"
+        )
+    user = db.query(User).filter(func.lower(User.email) == body.email.lower()).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="No account with that email")
+    if user.email_verified:
+        return {"ok": True, "already_verified": True}
+    user.email_verified = True
+    user.email_verify_token = None
+    user.email_verify_token_expires_at = None
+    # The change and its audit row commit together, attributed to the acting admin's personal tenant (as
+    # config.update is): this is an instance-level action.
+    try:
+        audit_repo.write(
+            db, admin.email, "user.email_verified_by_admin", user.email, {"user_id": user.id},
+            tenant_id=tenant_repo.ensure_personal_tenant(db, admin.id, commit=False).id, commit=False,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return {"ok": True}
+
+
+def _check_new_password(password: str) -> None:
+    """The same length rules as registration (bcrypt only reads the first 72 bytes)."""
+    if len(password) < _MIN_PASSWORD_LEN:
+        raise HTTPException(status_code=422, detail=f"Password must be at least {_MIN_PASSWORD_LEN} characters")
+    if len(password.encode()) > _MAX_PASSWORD_LEN:
+        raise HTTPException(status_code=422, detail=f"Password must be at most {_MAX_PASSWORD_LEN} bytes")
+
+
+def _send_password_reset_email(to_email: str, reset_url: str) -> None:
+    """Runs after the response, so the time to answer does not depend on whether the account exists or the
+    mail server is slow. Never raises."""
+    try:
+        send_password_reset_email(to_email, reset_url)
+    except EmailNotConfigured:
+        logger.warning("SMTP not configured -- cannot send a password reset email to %s", to_email)
+    except Exception:
+        logger.exception("failed to send a password reset email to %s", to_email)
+
+
+@router.post("/forgot-password", response_model=VerifyEmailResponse, dependencies=[Depends(rate_limit())])
+def forgot_password(body: ForgotPasswordRequest, background: BackgroundTasks, db: Session = Depends(get_db)):
+    """Email a password-reset link. Always answers the same 200, whether or not the account exists (or has a
+    password at all; GitHub-only accounts have none to reset), so it cannot be used to find registered emails."""
+    check_account_rate_limit(f"forgot-password:{body.email.lower()}")
+    user = db.query(User).filter(func.lower(User.email) == body.email.lower()).first()
+    if user is not None and user.password_hash:
+        token = password_reset.make_token(user.id, user.password_hash, user.email)
+        background.add_task(_send_password_reset_email, user.email, f"{settings.cors_origins[0]}/reset-password?token={token}")
+    return {"ok": True}
+
+
+@router.post("/reset-password", response_model=VerifyEmailResponse, dependencies=[Depends(rate_limit())])
+def reset_password(body: ResetPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    """Set a new password with the emailed token. The token stops working once it is used (the password hash it
+    was issued against has changed), every existing session is signed out, and, because the link reached the
+    mailbox, the email is marked verified."""
+    invalid = HTTPException(status_code=400, detail="This reset link is invalid or has expired")
+    parsed = password_reset.user_id_from_token(body.token)
+    if parsed is None:
+        raise invalid
+    user_id, fingerprint = parsed
+    # Locked so an overlapping password change cannot leave a session that survives this reset.
+    user = db.query(User).filter(User.id == user_id).with_for_update().first()
+    if user is None or not password_reset.matches_current_password(fingerprint, user.password_hash, user.email):
+        raise invalid
+    _check_new_password(body.password)
+    user.password_hash = _hash_password(body.password)
+    user.token_version += 1
+    user.email_verified = True
+    user.email_verify_token = None
+    user.email_verify_token_expires_at = None
+    session_repo.forget_all(db, user.id)
+    # Committed with the change: a reset is never applied without its audit row.
+    auth_audit.record(db, user, "auth.password_reset", request=request, commit=False)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/me/password", response_model=TokenResponse, dependencies=[Depends(rate_limit())])
+def change_password(
+    body: ChangePasswordRequest,
+    request: Request,
+    current_user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Change the caller's password (their current one is required). Every other session is signed out; the
+    caller gets a fresh token so this one stays signed in."""
+    # A stolen session must not be able to guess the current password at full speed.
+    check_account_rate_limit(f"change-password:{current_user.id}")
+    user = db.query(User).filter(User.id == current_user.id).with_for_update().first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not user.password_hash:
+        raise HTTPException(status_code=400, detail="This account signs in with GitHub and has no password")
+    if not _verify_password(body.current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    _check_new_password(body.new_password)
+    user.password_hash = _hash_password(body.new_password)
+    user.token_version += 1
+    session_repo.forget_all(db, user.id)
+    auth_audit.record(db, user, "auth.password_changed", request=request, commit=False)
+    db.commit()
+    db.refresh(user)
+    token = start_session(db, request, user)
+    return {
+        "access_token": token,
+        "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin),
+        "pending_invitations": [],
+    }
+
+
+def _send_email_change_email(to_email: str, confirm_url: str) -> None:
+    """Runs after the response. Never raises."""
+    try:
+        send_email_change_email(to_email, confirm_url)
+    except EmailNotConfigured:
+        logger.warning("SMTP not configured -- cannot send an email-change confirmation to %s", to_email)
+    except Exception:
+        logger.exception("failed to send an email-change confirmation to %s", to_email)
+
+
+@router.post("/me/email", response_model=VerifyEmailResponse, dependencies=[Depends(rate_limit())])
+def request_email_change(
+    body: ChangeEmailRequest,
+    background: BackgroundTasks,
+    current_user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Ask to change the account email. A confirmation link goes to the NEW address and nothing changes until it
+    is opened (so a typo can't lock the account out, and nobody can claim an address they don't control). Needs
+    the account password and a configured mail server; pending invitations stay bound to the old address."""
+    check_account_rate_limit(f"change-email:{current_user.id}")
+    user = db.query(User).filter(User.id == current_user.id).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not user.password_hash:
+        raise HTTPException(status_code=400, detail="This account signs in with GitHub, and its email follows GitHub")
+    if not _verify_password(body.password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Password is incorrect")
+    if not smtp_configured():
+        raise HTTPException(
+            status_code=409, detail="Email isn't configured on this server, so a confirmation link can't be sent"
+        )
+    new_email = body.new_email.lower()
+    if new_email == user.email.lower():
+        raise HTTPException(status_code=400, detail="That is already your email address")
+    if db.query(User).filter(func.lower(User.email) == new_email).first():
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+    token = email_change.make_token(user, new_email)
+    background.add_task(
+        _send_email_change_email, new_email, f"{settings.cors_origins[0]}/confirm-email-change?token={token}"
+    )
+    return {"ok": True}
+
+
+@router.post("/confirm-email-change", response_model=VerifyEmailResponse, dependencies=[Depends(rate_limit())])
+def confirm_email_change(body: ConfirmEmailChangeRequest, request: Request, db: Session = Depends(get_db)):
+    """Apply a confirmed email change. The link reached the new mailbox, so the address is verified; every
+    session is signed out (the session tokens carry the old address), and the link works once."""
+    invalid = HTTPException(status_code=400, detail="This confirmation link is invalid or has expired")
+    parsed = email_change.parse_token(body.token)
+    if parsed is None:
+        raise invalid
+    user_id, new_email, fingerprint = parsed
+    user = db.query(User).filter(User.id == user_id).with_for_update().first()
+    if user is None or not email_change.matches_current_state(fingerprint, user):
+        raise invalid
+    if db.query(User).filter(func.lower(User.email) == new_email, User.id != user.id).first():
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+    old_email = user.email
+    user.email = new_email
+    user.email_verified = True
+    user.email_verify_token = None
+    user.email_verify_token_expires_at = None
+    user.token_version += 1
+    session_repo.forget_all(db, user.id)
+    auth_audit.record(db, user, "auth.email_changed", request=request, extra={"from": old_email, "to": new_email}, commit=False)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="An account with this email already exists") from None
+    return {"ok": True}
+
+
+@router.post("/me/delete", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(rate_limit())])
+def delete_my_account(
+    body: DeleteAccountRequest,
+    response: Response,
+    current_user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Delete the caller's own account and personal data (see ``services/account_deletion``). Needs the
+    account's email typed back and, for a password account, the password. Refused (409) for the workspace admin
+    and for the only admin of an organization. A POST, not a DELETE with a body, so every client can send it."""
+    check_account_rate_limit(f"delete-account:{current_user.id}")
+    user = db.query(User).filter(User.id == current_user.id).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if body.confirm_email.strip().lower() != user.email.lower():
+        raise HTTPException(status_code=400, detail="Type your account's email address to confirm")
+    if user.password_hash and not _verify_password(body.password or "", user.password_hash):
+        raise HTTPException(status_code=400, detail="Password is incorrect")
+    try:
+        account_deletion.delete_account(db, user)
+        db.commit()
+    except account_deletion.AccountDeletionRefused as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="; ".join(exc.reasons)) from None
+    except IntegrityError:
+        db.rollback()
+        logger.exception("account deletion hit a reference it does not clear")
+        raise HTTPException(
+            status_code=409, detail="This account is still referenced by other data; ask an administrator to remove it"
+        ) from None
+    clear_session_cookie(response)
 
 
 @router.post("/resend-verification", response_model=ResendVerificationResponse, dependencies=[Depends(rate_limit())])
@@ -383,8 +671,13 @@ def login(body: LoginRequest, request: Request, db: Session = Depends(get_db)):
     # would skip bcrypt for a nonexistent user, reopening the timing side-channel.
     password_ok = _verify_password(body.password, user.password_hash if user else None)
     if not user or not password_ok:
+        # Only a real account has a trail to write to (an attacker-chosen email is not recorded), and the row
+        # is throttled per account so guessing in a loop cannot flood the table.
+        if user:
+            auth_audit.record(db, user, "auth.login_failed", request=request, throttle=auth_audit.FAILED_LOGIN_WINDOW)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = start_session(db, request, user)
+    auth_audit.record(db, user, "auth.login", request=request, extra={"method": "password"})
     return {
         "access_token": token,
         "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin),
@@ -422,6 +715,7 @@ def patch_me(
 
 @router.post("/me/revoke-sessions")
 def revoke_sessions(
+    request: Request,
     current_user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
@@ -432,6 +726,8 @@ def revoke_sessions(
     user.token_version += 1
     # Every token is dead now, so none of them belongs in the active-sessions list.
     session_repo.forget_all(db, user.id)
+    # Committed with the revoke, so a signed-out-everywhere account always has its row.
+    auth_audit.record(db, user, "auth.sessions_revoked_all", request=request, commit=False)
     db.commit()
     return {"ok": True}
 
@@ -472,6 +768,7 @@ def list_sessions(
 @router.delete("/me/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 def revoke_session(
     session_id: str,
+    request: Request,
     current_user: UserOut = Depends(require_auth),
     current_id: str | None = Depends(current_session_id),
     db: Session = Depends(get_db),
@@ -482,4 +779,7 @@ def revoke_session(
         raise HTTPException(status_code=400, detail="This is your current session; use sign out instead")
     if not session_repo.revoke(db, current_user.id, session_id):
         raise HTTPException(status_code=404, detail="Session not found")
+    user = db.query(User).filter(User.id == current_user.id).first()
+    if user is not None:
+        auth_audit.record(db, user, "auth.session_revoked", request=request, extra={"session_id": session_id}, commit=False)
     db.commit()

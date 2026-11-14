@@ -324,7 +324,10 @@ def sync_org_installation(
         if not db_user or not db_user.github_login:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Link your GitHub account (sign in with GitHub) before connecting an organization",
+                detail=(
+                    "Connecting an organization needs an account created through GitHub sign-in; password accounts "
+                    "can't be linked to GitHub. Ask an admin of the organization to invite you instead."
+                ),
             )
         if payload.installation_id is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Org not found")
@@ -466,7 +469,10 @@ def sync_personal_installation(
     if not db_user or not db_user.github_login:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Link your GitHub account before syncing a personal installation",
+            detail=(
+                "A personal installation needs an account created through GitHub sign-in; password accounts "
+                "can't be linked to GitHub."
+            ),
         )
     installation = _verify_installation(payload.installation_id, payload.account_login, payload.account_type)
     if installation is not None:

@@ -526,6 +526,8 @@ export interface SyncInstallationsResponse {
 export interface MyOrgMembership {
   org_login: string
   role: "admin" | "member"
+  /** "invite" memberships can be left; "github" ones follow the GitHub org. Absent from older API versions. */
+  source?: "invite" | "github"
 }
 
 export interface PendingInvitationSummary {
@@ -824,6 +826,8 @@ export interface RunSummary {
   head_branch: string
   created_at: string
   duration_ms: number | null
+  /** The run's page on GitHub. */
+  html_url?: string | null
 }
 
 export interface RunsResponse {

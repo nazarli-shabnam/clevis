@@ -61,11 +61,36 @@ describe("ApiTokensCard", () => {
     expect(screen.getAllByRole("button", { name: /^Revoke token/ })).toHaveLength(1)
   })
 
+  it("explains an empty list and the button takes you to the create form (#993)", async () => {
+    listMock.mockResolvedValue([])
+    renderCard()
+    await screen.findByText(/No API tokens yet/)
+    fireEvent.click(screen.getByRole("button", { name: "Create a token" }))
+    expect(screen.getByLabelText("Name")).toHaveFocus()
+  })
+
+  it("shows a copyable workflow snippet with the org filled in and never the secret (#993)", async () => {
+    listMock.mockResolvedValue([])
+    createMock.mockResolvedValue({ ...token({ name: "deploy" }), token: "clv_secret_value" })
+    renderCard()
+    await screen.findByText(/No API tokens yet/)
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "deploy" } })
+    fireEvent.click(screen.getByRole("button", { name: "Create token" }))
+    await screen.findByText("clv_secret_value")
+
+    const snippet = screen.getByText(/uses: nazarli-shabnam\/clevis\/actions\/clevis-score@/).textContent!
+    expect(snippet).toContain("uses: nazarli-shabnam/clevis/actions/clevis-score@")
+    expect(snippet).toContain("org: acme")
+    expect(snippet).toContain("token: ${{ secrets.CLEVIS_API_TOKEN }}")
+    expect(snippet).not.toContain("clv_secret_value")
+    expect(screen.getByRole("button", { name: "Copy workflow snippet" })).toBeInTheDocument()
+  })
+
   it("creates a token and shows the secret once with a copy button", async () => {
     listMock.mockResolvedValue([])
     createMock.mockResolvedValue({ ...token({ name: "deploy" }), token: "clv_secret_value" })
     renderCard()
-    await screen.findByText("No API tokens.")
+    await screen.findByText(/No API tokens yet/)
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: " deploy " } })
     fireEvent.change(screen.getByLabelText("Expires"), { target: { value: "1" } })
     fireEvent.click(screen.getByRole("button", { name: "Create token" }))
@@ -120,7 +145,7 @@ describe("ApiTokensCard", () => {
     listMock.mockResolvedValue([])
     createMock.mockRejectedValue(new Error("Name already used"))
     renderCard()
-    await screen.findByText("No API tokens.")
+    await screen.findByText(/No API tokens yet/)
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "ci" } })
     fireEvent.click(screen.getByRole("button", { name: "Create token" }))
     expect(await screen.findByText(/Couldn't create the token: Name already used/)).toBeInTheDocument()
@@ -130,7 +155,7 @@ describe("ApiTokensCard", () => {
     listMock.mockResolvedValue([])
     createMock.mockResolvedValue({ ...token({ name: "deploy" }), token: "clv_secret_value" })
     renderCard()
-    await screen.findByText("No API tokens.")
+    await screen.findByText(/No API tokens yet/)
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "deploy" } })
     fireEvent.click(screen.getByRole("button", { name: "Create token" }))
     await screen.findByText("clv_secret_value")

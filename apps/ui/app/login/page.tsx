@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
-import { safeNextPath, withNext } from "@/lib/safe-next"
+import { inviteTokenFromNext, safeNextPath, withNext } from "@/lib/safe-next"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Field, FieldLabel } from "@/components/ui/field"
@@ -25,7 +25,7 @@ const GITHUB_ERROR_MESSAGES: Record<string, string> = {
   github_not_configured: "GitHub sign-in isn't set up on this server yet. Use email and password, or ask an admin to configure it.",
   github_invalid_state: "Your GitHub sign-in attempt expired or was invalid. Please try again.",
   github_oauth_failed: "GitHub sign-in failed. Please try again.",
-  github_email_registered: "An account already exists with this email. Sign in with your password below.",
+  github_email_registered: "An account already exists with this email, and password accounts can't be linked to GitHub. Sign in with your password below, or use a GitHub account with a different email.",
   github_registration_disabled: "New sign-ups are disabled on this server. Ask an admin for an account.",
 }
 
@@ -39,6 +39,7 @@ export default function LoginPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const next = safeNextPath(searchParams.get("next"))
+  const inviteToken = inviteTokenFromNext(next)
 
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -139,6 +140,10 @@ export default function LoginPage() {
             <p role="alert" className="text-xs text-destructive">{error}</p>
           )}
 
+          <a href="/forgot-password" className="text-xs text-muted-foreground hover:text-foreground self-end">
+            Forgot password?
+          </a>
+
           <Button type="submit" disabled={isSubmitting} className="mt-2">
             {isSubmitting ? (
               <><CircleNotch className="size-3.5 animate-spin" />Signing in…</>
@@ -178,8 +183,16 @@ export default function LoginPage() {
                 Sign up
               </a>
             </>
+          ) : inviteToken ? (
+            <>
+              New sign-ups are turned off, but you were invited.{" "}
+              <a href={withNext("/register", next)} className="text-foreground underline underline-offset-2">
+                Create your account
+              </a>{" "}
+              with the invited email address.
+            </>
           ) : (
-            "New sign-ups are turned off. Ask an admin to create an account or send an invitation."
+            "New sign-ups are turned off. Only people with an invitation can create an account; ask an admin to invite you."
           )}
         </p>
       </div>

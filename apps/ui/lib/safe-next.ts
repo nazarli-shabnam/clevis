@@ -16,3 +16,10 @@ export function withNext(path: string, next: string): string {
 export function currentLocationNext(): string {
   return safeNextPath(`${window.location.pathname}${window.location.search}`)
 }
+
+// The invitation token when the post-login destination is an invite page ("/invite/<token>"), else null: an
+// invitee reaching the login or register page carries it, and it lets them sign up while sign-ups are closed.
+export function inviteTokenFromNext(next: string): string | null {
+  const match = /^\/invite\/([A-Za-z0-9_-]+)\/?(?:[?#].*)?$/.exec(next)
+  return match ? match[1] : null
+}

@@ -131,6 +131,23 @@ describe("InviteAcceptPage", () => {
     expect(screen.queryByRole("button", { name: /accept invitation/i })).not.toBeInTheDocument();
   });
 
+  it("shows who is signed in and lets them switch accounts, returning to this invite afterwards (#1012)", async () => {
+    previewMock.mockResolvedValue({ org_login: "acme", status: "pending" });
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/auth/me")) return Promise.resolve(jsonResponse({ id: 1, email: "user@example.com", name: null, is_workspace_admin: false }));
+      if (url.endsWith("/auth/logout")) return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+    renderPage();
+
+    expect(await screen.findByText("user@example.com")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Use another account" }));
+
+    expect(push).toHaveBeenCalledWith("/login?next=%2Finvite%2Fabc123");
+    await waitFor(() => expect(localStorage.getItem(TOKEN_KEY)).toBeNull());
+  });
+
   it("sends a signed-out visitor with an already-accepted invitation to sign in, and a signed-in one to the app (#906)", async () => {
     previewMock.mockResolvedValue({ org_login: "acme", status: "accepted" });
     renderPage();

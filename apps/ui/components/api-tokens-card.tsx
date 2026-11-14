@@ -6,6 +6,7 @@ import { CircleNotch } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { dueTime, relativeTime } from "@/lib/format"
 import { CopyButton } from "@/components/copy-button"
+import { EmptyStateAction } from "@/components/empty-state-action"
 import { SectionError } from "@/components/section-error"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
@@ -83,6 +84,24 @@ function TokenRow({ orgLogin, token, onRevoked }: { orgLogin: string; token: Api
   )
 }
 
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
+
+// The Action rejects a non-local http:// api-url (actions/clevis-score/check.py), so a copied snippet would fail.
+const API_BASE_FAILS_ACTION = !/^https:\/\//i.test(API_BASE) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])([:/]|$)/i.test(API_BASE)
+
+/** A workflow step using the `clevis-score` Action with this org and API filled in. The token itself is never
+ * put in the snippet: it belongs in a repository secret. */
+function ciSnippet(orgLogin: string): string {
+  return [
+    "- uses: nazarli-shabnam/clevis/actions/clevis-score@main   # pin a tag or SHA in real use",
+    "  with:",
+    `    api-url: ${API_BASE}`,
+    `    org: ${orgLogin}`,
+    "    token: ${{ secrets.CLEVIS_API_TOKEN }}",
+    "    threshold: 80",
+  ].join("\n")
+}
+
 /** Org admins create, view and revoke the machine tokens CI uses (for example the `clevis-score` Action). */
 export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
   const queryClient = useQueryClient()
@@ -123,6 +142,22 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
           <code className="block text-xs font-mono break-all bg-background border border-border/50 rounded-md p-2">
             {created.token}
           </code>
+          <p className="text-xs text-muted-foreground mt-1">
+            Save it as a repository secret named <code className="font-mono">CLEVIS_API_TOKEN</code>, then gate a
+            workflow on the score:
+          </p>
+          <pre className="text-xs font-mono whitespace-pre-wrap break-all bg-background border border-border/50 rounded-md p-2">
+            {ciSnippet(orgLogin)}
+          </pre>
+          {API_BASE_FAILS_ACTION && (
+            <p role="alert" className="text-xs text-destructive">
+              This API address is not HTTPS. The Clevis score action requires an HTTPS <code className="font-mono">api-url</code>,
+              so replace it in the snippet before using it.
+            </p>
+          )}
+          <div className="flex items-center gap-2">
+            <CopyButton value={ciSnippet(orgLogin)} ariaLabel="Copy workflow snippet" />
+          </div>
           <div className="flex items-center gap-2">
             <CopyButton value={created.token} ariaLabel={`Copy token ${created.name}`} />
             <Button variant="outline" size="sm" onClick={() => setCreated(null)}>
@@ -143,7 +178,11 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
           retrying={query.isFetching}
         />
       ) : query.data.length === 0 ? (
-        <p className="px-4 py-3 text-xs text-muted-foreground">No API tokens.</p>
+        <EmptyStateAction
+          message="No API tokens yet. A token lets a CI job fail a build when this org's security score drops."
+          actionLabel="Create a token"
+          focusId="api-token-name"
+        />
       ) : (
         <ul className="divide-y divide-border">
           {query.data.map((t) => (

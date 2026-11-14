@@ -14,6 +14,7 @@ router = APIRouter()
 @router.get("/me/orgs", response_model=list[MyOrgMembershipOut])
 def list_my_orgs(user: UserOut = Depends(require_auth), db: Session = Depends(get_db)):
     return [
-        {"org_login": org.github_login, "role": membership.role}
+        # `source` tells the UI whether the membership can be left ("invite") or follows GitHub ("github").
+        {"org_login": org.github_login, "role": membership.role, "source": membership.source}
         for org, membership in tenant_repo.list_org_memberships_for_user(db, user_id=user.id)
     ]

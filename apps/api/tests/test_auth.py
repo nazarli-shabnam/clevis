@@ -1,4 +1,5 @@
 """Tests for auth router and config router."""
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock, patch
@@ -330,6 +331,45 @@ def test_register_disabled_returns_403(auth_client, db):
     assert resp.status_code == 403
 
 
+def test_an_invitation_token_opens_a_closed_registration_for_its_own_address_only(auth_client, db):
+    owner = _setup_owner(auth_client)
+    org = org_repo.get_or_create(db, github_login="acme")
+    invitation = invitation_repo.create(
+        db, org_id=org.id, email="newcomer@example.com", invited_by_user_id=owner["user"]["id"]
+    )
+    token = invitation.token
+    db.execute(text("INSERT INTO app_config (key, value, updated_at) VALUES ('registration_enabled', 'false', NOW())"))
+
+    def attempt(email, invite_token):
+        return auth_client.post(
+            "/auth/register",
+            json={"email": email, "password": "supersecret1234", "invite_token": invite_token},
+        )
+
+    assert attempt("newcomer@example.com", None).status_code == 403  # no token: still closed
+    assert attempt("newcomer@example.com", "not-the-token").status_code == 403
+    assert attempt("someone-else@example.com", token).status_code == 403  # a token opens only its own address
+    resp = attempt("Newcomer@Example.com", token)
+    assert resp.status_code == 201 and resp.json()["user"]["email"] == "newcomer@example.com"
+
+
+def test_a_revoked_invitation_token_no_longer_opens_registration(auth_client, db):
+    owner = _setup_owner(auth_client)
+    org = org_repo.get_or_create(db, github_login="acme")
+    invitation = invitation_repo.create(
+        db, org_id=org.id, email="newcomer@example.com", invited_by_user_id=owner["user"]["id"]
+    )
+    invitation.status = "revoked"
+    db.commit()
+    db.execute(text("INSERT INTO app_config (key, value, updated_at) VALUES ('registration_enabled', 'false', NOW())"))
+
+    resp = auth_client.post(
+        "/auth/register",
+        json={"email": "newcomer@example.com", "password": "supersecret1234", "invite_token": invitation.token},
+    )
+    assert resp.status_code == 403
+
+
 def test_register_ignores_a_stale_cached_enabled_value(auth_client, db):
     # Another replica switched registration off; this process still holds "true" in its 60s cache.
     import time
@@ -461,6 +501,167 @@ def test_resend_verification_is_a_noop_for_an_already_verified_account(auth_clie
 def test_resend_verification_requires_auth(auth_client):
     resp = auth_client.post("/auth/resend-verification")
     assert resp.status_code == 401
+
+
+def test_workspace_admin_can_mark_an_email_verified_and_it_is_audited(auth_client, db):
+    from src.core.db import AuditLog
+
+    owner_token = _setup_owner(auth_client)["access_token"]
+    auth_client.post("/auth/register", json={"email": "Member@example.com", "password": "supersecret1234"})
+    user = db.query(User).filter(User.email == "member@example.com").first()
+    assert user.email_verified is False and user.email_verify_token is not None
+
+    resp = auth_client.post(
+        "/auth/admin/verify-email", json={"email": "MEMBER@example.com"}, headers={"Authorization": f"Bearer {owner_token}"}
+    )
+    assert resp.status_code == 200 and resp.json() == {"ok": True, "already_verified": False}
+
+    db.refresh(user)
+    assert user.email_verified is True and user.email_verify_token is None
+    row = db.query(AuditLog).filter(AuditLog.action == "user.email_verified_by_admin").one()
+    assert row.actor == "owner@example.com" and row.target == "member@example.com"
+
+    again = auth_client.post(
+        "/auth/admin/verify-email", json={"email": "member@example.com"}, headers={"Authorization": f"Bearer {owner_token}"}
+    )
+    assert again.json() == {"ok": True, "already_verified": True}
+
+
+def test_admin_verify_email_is_refused_when_smtp_is_configured(auth_client, db, monkeypatch):
+    from src.core.config import settings
+
+    owner_token = _setup_owner(auth_client)["access_token"]
+    auth_client.post("/auth/register", json={"email": "member@example.com", "password": "supersecret1234"})
+    monkeypatch.setattr(settings, "smtp_host", "smtp.example.com")
+    monkeypatch.setattr(settings, "smtp_from", "clevis@example.com")
+
+    resp = auth_client.post(
+        "/auth/admin/verify-email", json={"email": "member@example.com"}, headers={"Authorization": f"Bearer {owner_token}"}
+    )
+    assert resp.status_code == 409
+    assert db.query(User).filter(User.email == "member@example.com").one().email_verified is False
+
+
+def test_admin_verify_email_is_workspace_admin_only_and_404s_for_an_unknown_account(auth_client):
+    owner_token = _setup_owner(auth_client)["access_token"]
+    member_token = auth_client.post(
+        "/auth/register", json={"email": "member@example.com", "password": "supersecret1234"}
+    ).json()["access_token"]
+
+    as_member = auth_client.post(
+        "/auth/admin/verify-email", json={"email": "member@example.com"}, headers={"Authorization": f"Bearer {member_token}"}
+    )
+    assert as_member.status_code == 403
+    unauthenticated = auth_client.post("/auth/admin/verify-email", json={"email": "member@example.com"})
+    assert unauthenticated.status_code == 401
+    unknown = auth_client.post(
+        "/auth/admin/verify-email", json={"email": "nobody@example.com"}, headers={"Authorization": f"Bearer {owner_token}"}
+    )
+    assert unknown.status_code == 404
+
+
+# password reset and change
+
+def _reset_token_from(mock_send) -> str:
+    return mock_send.call_args.args[1].split("token=", 1)[1]
+
+
+def test_forgot_password_answers_the_same_for_known_unknown_and_passwordless_accounts(auth_client, db):
+    _setup_owner(auth_client)
+    db.add(User(email="gh-only@example.com", name=None, password_hash=None, is_workspace_admin=False))
+    db.commit()
+    with patch("src.routers.auth.send_password_reset_email") as send:
+        known = auth_client.post("/auth/forgot-password", json={"email": "Owner@example.com"})
+        unknown = auth_client.post("/auth/forgot-password", json={"email": "nobody@example.com"})
+        passwordless = auth_client.post("/auth/forgot-password", json={"email": "gh-only@example.com"})
+    assert known.status_code == unknown.status_code == passwordless.status_code == 200
+    assert known.json() == unknown.json() == passwordless.json()
+    send.assert_called_once()  # only the account that has a password gets a link
+    assert send.call_args.args[0] == "owner@example.com" and "/reset-password?token=" in send.call_args.args[1]
+
+
+def test_reset_password_sets_the_password_once_signs_everyone_out_and_verifies_the_email(auth_client, db):
+    from src.core.db import AuditLog
+
+    _setup_owner(auth_client)
+    auth_client.post("/auth/register", json={"email": "member@example.com", "password": "supersecret1234"})
+    with patch("src.routers.auth.send_password_reset_email") as send:
+        auth_client.post("/auth/forgot-password", json={"email": "member@example.com"})
+    token = _reset_token_from(send)
+    assert db.query(User).filter(User.email == "member@example.com").one().email_verified is False
+
+    resp = auth_client.post("/auth/reset-password", json={"token": token, "password": "a-brand-new-password"})
+    assert resp.status_code == 200
+    db.expire_all()
+    member = db.query(User).filter(User.email == "member@example.com").one()
+    assert member.email_verified is True and member.token_version == 1
+    assert db.query(AuditLog).filter(AuditLog.action == "auth.password_reset").one().actor == "member@example.com"
+
+    assert auth_client.post("/auth/login", json={"email": "member@example.com", "password": "a-brand-new-password"}).status_code == 200
+    assert auth_client.post("/auth/login", json={"email": "member@example.com", "password": "supersecret1234"}).status_code == 401
+    # Single use: the password hash it was issued against has changed.
+    again = auth_client.post("/auth/reset-password", json={"token": token, "password": "another-new-password"})
+    assert again.status_code == 400
+
+
+def test_reset_password_rejects_bad_expired_and_session_tokens_and_keeps_a_valid_token_after_a_weak_password(auth_client, db):
+    owner = _setup_owner(auth_client)
+    with patch("src.routers.auth.send_password_reset_email") as send:
+        auth_client.post("/auth/forgot-password", json={"email": "owner@example.com"})
+    token = _reset_token_from(send)
+
+    assert auth_client.post("/auth/reset-password", json={"token": "garbage", "password": "a-brand-new-password"}).status_code == 400
+    # A session token is signed with a different key and can't reset a password...
+    assert auth_client.post("/auth/reset-password", json={"token": owner["access_token"], "password": "a-brand-new-password"}).status_code == 400
+    # ...and a reset token can't authenticate a request.
+    assert auth_client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).status_code == 401
+
+    short = auth_client.post("/auth/reset-password", json={"token": token, "password": "short"})
+    assert short.status_code == 422
+    assert auth_client.post("/auth/reset-password", json={"token": token, "password": "a-brand-new-password"}).status_code == 200
+
+    from datetime import timedelta as _td
+    from src.services import password_reset
+
+    user = db.query(User).filter(User.email == "owner@example.com").one()
+    with patch.object(password_reset, "TOKEN_TTL", _td(seconds=-5)):
+        expired = password_reset.make_token(user.id, user.password_hash, user.email)
+    assert auth_client.post("/auth/reset-password", json={"token": expired, "password": "yet-another-password"}).status_code == 400
+
+
+def test_change_password_needs_the_current_password_and_keeps_only_the_callers_session(auth_client, db):
+    first = _setup_owner(auth_client)["access_token"]
+    other = auth_client.post("/auth/login", json={"email": "owner@example.com", "password": "supersecret1234"}).json()["access_token"]
+    headers = {"Authorization": f"Bearer {first}"}
+
+    wrong = auth_client.post("/auth/me/password", headers=headers, json={"current_password": "not-it-at-all-1", "new_password": "a-brand-new-password"})
+    assert wrong.status_code == 400
+    weak = auth_client.post("/auth/me/password", headers=headers, json={"current_password": "supersecret1234", "new_password": "short"})
+    assert weak.status_code == 422
+
+    ok = auth_client.post("/auth/me/password", headers=headers, json={"current_password": "supersecret1234", "new_password": "a-brand-new-password"})
+    assert ok.status_code == 200
+    fresh = {"Authorization": f"Bearer {ok.json()['access_token']}"}
+    assert auth_client.get("/auth/me", headers=fresh).status_code == 200
+    assert auth_client.get("/auth/me", headers={"Authorization": f"Bearer {other}"}).status_code == 401
+    assert auth_client.get("/auth/me", headers=headers).status_code == 401  # the old token of this very session
+    assert auth_client.post("/auth/login", json={"email": "owner@example.com", "password": "a-brand-new-password"}).status_code == 200
+    assert len(_auth_rows(db, "auth.password_changed")) == 1
+
+
+def test_change_password_is_refused_for_an_account_without_a_password(auth_client, db):
+    from src.core.auth import create_access_token
+
+    user = User(email="gh-only@example.com", name=None, password_hash=None, is_workspace_admin=False)
+    db.add(user)
+    db.commit()
+    token = create_access_token(user.id, user.email, False)
+    resp = auth_client.post(
+        "/auth/me/password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"current_password": "whatever-it-is-1", "new_password": "a-brand-new-password"},
+    )
+    assert resp.status_code == 400 and "GitHub" in resp.json()["detail"]
 
 
 # login
@@ -751,6 +952,66 @@ def test_revoke_sessions_invalidates_existing_token(auth_client):
 
     resp = auth_client.get("/auth/me", headers=headers)
     assert resp.status_code == 401
+
+
+def _auth_rows(db, action):
+    from src.core.db import AuditLog
+
+    return db.query(AuditLog).filter(AuditLog.action == action).order_by(AuditLog.id).all()
+
+
+def test_successful_login_is_audited_with_the_client_but_no_credentials(auth_client, db):
+    _setup_owner(auth_client)
+    auth_client.post(
+        "/auth/login",
+        json={"email": "owner@example.com", "password": "supersecret1234"},
+        headers={"User-Agent": "pytest-agent"},
+    )
+    row = _auth_rows(db, "auth.login")[-1]
+    payload = json.loads(row.payload)
+    assert row.actor == "owner@example.com" and row.target == "owner@example.com" and row.tenant_id is not None
+    assert payload["method"] == "password" and payload["user_agent"] == "pytest-agent"
+    assert "supersecret1234" not in row.payload
+
+
+def test_failed_logins_are_audited_per_account_without_flooding_or_recording_unknown_emails(auth_client, db):
+    _setup_owner(auth_client)
+    for _ in range(5):
+        assert auth_client.post("/auth/login", json={"email": "owner@example.com", "password": "wrong-password-1"}).status_code == 401
+    for i in range(3):
+        auth_client.post("/auth/login", json={"email": f"nobody{i}@example.com", "password": "wrong-password-1"})
+
+    rows = _auth_rows(db, "auth.login_failed")
+    assert [r.actor for r in rows] == ["owner@example.com"]  # one row for five failures; unknown emails not recorded
+    assert "wrong-password-1" not in rows[0].payload
+
+    # Once the window passes, the next failure is recorded again.
+    rows[0].created_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    db.commit()
+    auth_client.post("/auth/login", json={"email": "owner@example.com", "password": "wrong-password-1"})
+    assert len(_auth_rows(db, "auth.login_failed")) == 2
+
+
+def test_sign_out_everywhere_and_single_session_revoke_are_audited(auth_client, db):
+    token = _setup_owner(auth_client)["access_token"]
+    auth_client.post("/auth/login", json={"email": "owner@example.com", "password": "supersecret1234"})  # a second session
+    headers = {"Authorization": f"Bearer {token}"}
+    sessions = auth_client.get("/auth/me/sessions", headers=headers).json()
+    other_id = next(s["id"] for s in sessions if not s["current"])
+
+    assert auth_client.delete(f"/auth/me/sessions/{other_id}", headers=headers).status_code == 204
+    revoked = _auth_rows(db, "auth.session_revoked")
+    assert [json.loads(r.payload)["session_id"] for r in revoked] == [other_id]
+
+    assert auth_client.post("/auth/me/revoke-sessions", headers=headers).status_code == 200
+    assert len(_auth_rows(db, "auth.sessions_revoked_all")) == 1
+
+
+def test_a_failed_audit_write_does_not_block_signing_in(auth_client, db):
+    _setup_owner(auth_client)
+    with patch("src.services.auth_audit.audit_repo.write", side_effect=RuntimeError("audit down")):
+        resp = auth_client.post("/auth/login", json={"email": "owner@example.com", "password": "supersecret1234"})
+    assert resp.status_code == 200 and resp.json()["access_token"]
 
 
 def test_revoke_sessions_new_login_still_works(auth_client):

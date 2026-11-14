@@ -763,6 +763,8 @@ export const api = {
     setRole: (orgLogin: string, userId: number, role: "member" | "admin") =>
       put<OrgMembership>(`/orgs/${encodeURIComponent(orgLogin)}/members/${userId}`, { role }),
     remove: (orgLogin: string, userId: number) => del(`/orgs/${encodeURIComponent(orgLogin)}/members/${userId}`),
+    /** Leave an organization yourself (invite-sourced memberships only). */
+    leave: (orgLogin: string) => del(`/orgs/${encodeURIComponent(orgLogin)}/members/me`),
   },
   ingestionHealth: (orgLogin: string) => get<IngestionHealth>(`/orgs/${encodeURIComponent(orgLogin)}/ingestion-health`),
   invitations: {
@@ -845,12 +847,12 @@ export const api = {
         "/auth/setup",
         { email, password, name },
       ),
-    register: (email: string, password: string, name?: string) =>
+    register: (email: string, password: string, name?: string, inviteToken?: string) =>
       post<{
         access_token: string
         user: { id: number; email: string; name: string | null; is_workspace_admin: boolean }
         pending_invitations: PendingInvitationSummary[]
-      }>("/auth/register", { email, password, name }),
+      }>("/auth/register", { email, password, name, invite_token: inviteToken }),
     me: () =>
       get<{ id: number; email: string; name: string | null; is_workspace_admin: boolean; email_verified: boolean }>("/auth/me"),
     patchMe: (name: string) =>
@@ -861,6 +863,22 @@ export const api = {
     // Ends one other session; 204. The current session is refused (use logout).
     revokeSession: (id: string) => del(`/auth/me/sessions/${encodeURIComponent(id)}`),
     verifyEmail: (token: string) => post<{ ok: boolean }>("/auth/verify-email", { token }),
+    /** Workspace admin only: mark an account's email verified without the emailed link (for no-SMTP deployments). */
+    adminVerifyEmail: (email: string) =>
+      post<{ ok: boolean; already_verified: boolean }>("/auth/admin/verify-email", { email }),
+    requestEmailChange: (newEmail: string, password: string) =>
+      post<{ ok: boolean }>("/auth/me/email", { new_email: newEmail, password }),
+    confirmEmailChange: (token: string) => post<{ ok: boolean }>("/auth/confirm-email-change", { token }),
+    deleteAccount: (confirmEmail: string, password?: string) =>
+      post<void>("/auth/me/delete", { confirm_email: confirmEmail, password }),
+    forgotPassword: (email: string) => post<{ ok: boolean }>("/auth/forgot-password", { email }),
+    resetPassword: (token: string, password: string) => post<{ ok: boolean }>("/auth/reset-password", { token, password }),
+    changePassword: (currentPassword: string, newPassword: string) =>
+      post<{
+        access_token: string
+        user: { id: number; email: string; name: string | null; is_workspace_admin: boolean }
+        pending_invitations: PendingInvitationSummary[]
+      }>("/auth/me/password", { current_password: currentPassword, new_password: newPassword }),
     resendVerification: () =>
       post<{ ok: boolean; already_verified: boolean }>("/auth/resend-verification", {}),
   },

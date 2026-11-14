@@ -10,6 +10,7 @@ import { ScanExplorer } from "@/components/scan-explorer"
 import { EmptyStateNoAccount } from "@/components/empty-state"
 import { CheckCard } from "@/components/check-card"
 import { BulkFixPanel } from "@/components/bulk-fix-panel"
+import { ComplianceMatrix } from "@/components/compliance-matrix"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -269,6 +270,8 @@ export default function SecurityPage() {
   })
 
   const [selectedRepo, setSelectedRepo] = useState("")
+  // Repos the matrix filter handed to the bulk fixer; the panel ticks those that fail its chosen check.
+  const [bulkPreselect, setBulkPreselect] = useState<string[]>([])
   const matrixMutation = useMutation({
     mutationFn: (forOwner: string) => api.security.matrix(forOwner, token),
     onSuccess: (data) => setSelectedRepo(data.repos[0]?.repo ?? ""),
@@ -291,6 +294,7 @@ export default function SecurityPage() {
     scan.reset()
     matrixMutation.reset()
     setSelectedRepo("")
+    setBulkPreselect([])
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner])
 
@@ -674,59 +678,21 @@ export default function SecurityPage() {
             ) : matrixMutation.error ? (
               <p className="p-4 text-sm text-destructive">Compliance matrix unavailable: {matrixMutation.error.message}</p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-border">
-                      <th className="text-left text-muted-foreground font-medium px-4 py-2">Repo</th>
-                      <th className="text-center text-muted-foreground font-medium px-2 py-2">Branch</th>
-                      <th className="text-center text-muted-foreground font-medium px-2 py-2">Secrets</th>
-                      <th className="text-center text-muted-foreground font-medium px-2 py-2">Dependabot</th>
-                      <th className="text-center text-muted-foreground font-medium px-2 py-2">Code scan</th>
-                      <th className="text-center text-muted-foreground font-medium px-2 py-2">Force-push</th>
-                      <th className="text-right text-muted-foreground font-medium px-4 py-2">Score</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {(matrixMutation.data?.repos ?? []).map((r) => (
-                      <tr
-                        key={r.repo}
-                        className={`hover:bg-elevated transition-colors cursor-pointer ${selectedRepo === r.repo ? "bg-elevated" : ""}`}
-                        onClick={() => setSelectedRepo(r.repo)}
-                      >
-                        <td className="px-4 py-2 font-mono text-foreground/90 truncate max-w-[10rem]">
-                          {/* A real button so keyboard and screen-reader users can select a row; the row's own onClick keeps the whole row clickable for the mouse. */}
-                          <button
-                            type="button"
-                            aria-current={selectedRepo === r.repo ? "true" : undefined}
-                            className="block max-w-[10rem] truncate text-left font-mono rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                          >
-                            {r.repo}
-                          </button>
-                        </td>
-                        <td className="text-center px-2 py-2" title={r.unknown_dimensions.includes("branch_protection") ? "unknown — token can't see this" : undefined}>
-                          {r.unknown_dimensions.includes("branch_protection") ? "?" : r.branch_protection ? "✓" : "—"}
-                        </td>
-                        <td className="text-center px-2 py-2">{r.secret_scanning ? "✓" : "—"}</td>
-                        <td className="text-center px-2 py-2" title={r.unknown_dimensions.includes("dependabot") ? "unknown — token can't see this" : undefined}>
-                          {r.unknown_dimensions.includes("dependabot") ? (
-                            "?"
-                          ) : r.dependabot_critical_count + r.dependabot_high_count > 0 ? (
-                            <span className="text-red-400">{r.dependabot_critical_count + r.dependabot_high_count}</span>
-                          ) : "✓"}
-                        </td>
-                        <td className="text-center px-2 py-2" title={r.unknown_dimensions.includes("code_scanning") ? "unknown — token can't see this" : undefined}>
-                          {r.unknown_dimensions.includes("code_scanning") ? "?" : r.code_scanning ? "✓" : "—"}
-                        </td>
-                        <td className="text-center px-2 py-2" title={r.unknown_dimensions.includes("force_push") ? "unknown — token can't see this" : undefined}>
-                          {r.unknown_dimensions.includes("force_push") ? "?" : r.force_push_allowed ? "✗" : "✓"}
-                        </td>
-                        <td className="text-right px-4 py-2 tabular-nums">{r.score}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <ComplianceMatrix
+                owner={matrixMutation.data?.owner ?? ""}
+                repos={matrixMutation.data?.repos ?? []}
+                selectedRepo={selectedRepo}
+                onSelectRepo={setSelectedRepo}
+                onUseInBulkFix={
+                  matrixMutation.data && !isOrgMemberOnly(memberships, matrixMutation.data.owner)
+                    ? (names, viaKeyboard) => {
+                        setBulkPreselect(names)
+                        const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+                        document.getElementById("bulk-fix")?.scrollIntoView?.({ behavior: reduceMotion || viaKeyboard ? "auto" : "smooth", block: "start" })
+                      }
+                    : undefined
+                }
+              />
             )}
           </div>
 
@@ -834,7 +800,7 @@ export default function SecurityPage() {
 
       {/* Same gating as "Fix this": plain members would only get a 403 from the API. */}
       {matrixMutation.data && !isOrgMemberOnly(memberships, matrixMutation.data.owner) && (
-        <BulkFixPanel owner={matrixMutation.data.owner} repos={matrixMutation.data.repos} token={token || undefined} onApplied={() => runScan()} />
+        <BulkFixPanel owner={matrixMutation.data.owner} repos={matrixMutation.data.repos} token={token || undefined} preselected={bulkPreselect} onApplied={() => runScan()} />
       )}
     </>
   )

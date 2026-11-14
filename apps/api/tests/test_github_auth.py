@@ -51,6 +51,20 @@ def oauth_configured(monkeypatch):
     monkeypatch.setattr(settings, "github_app_client_secret", SecretStr("secret"))
 
 
+def test_github_signup_is_allowed_when_registration_is_disabled_but_the_email_has_a_pending_invitation(db):
+    from src.repositories import invitation_repo, org_repo
+
+    owner = find_or_create_user(db, _identity())
+    org = org_repo.get_or_create(db, github_login="acme")
+    invitation_repo.create(db, org_id=org.id, email="hubot@example.com", invited_by_user_id=owner.id)
+
+    with patch("src.routers.github_auth.registration_enabled", return_value=False):
+        invited = find_or_create_user(db, _identity(github_user_id=2002, login="hubot", email="hubot@example.com"))
+        with pytest.raises(RegistrationDisabled):
+            find_or_create_user(db, _identity(github_user_id=2003, login="other", email="other@example.com"))
+    assert invited.email == "hubot@example.com" and invited.email_verified is True
+
+
 def _identity(**kw) -> GitHubIdentity:
     base = dict(github_user_id=1001, login="octocat", name="Octo", email="octo@example.com", avatar_url=None)
     base.update(kw)

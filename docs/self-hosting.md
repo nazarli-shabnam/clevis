@@ -45,7 +45,7 @@ This is the infrastructure/ops guide — getting the Clevis stack itself running
 
    **After the App's permissions are widened:** when a new Clevis release adds an optional write automation (issues #286–#291), existing installations keep working but the new feature stays blocked until a GitHub org owner re-approves the App's updated permission request. Clevis shows affected org admins a "N automations need extra GitHub access" notice in Settings and on the Automation page with a "Review on GitHub" link; the notice clears automatically once the owner approves (via the `installation` `new_permissions_accepted` webhook).
 
-4. (Optional) Configure SMTP so self-registered accounts can verify their email: set `SMTP_HOST`, `SMTP_PORT` (default `587`), `SMTP_SECURITY` (`starttls` by default, for port 587; use `ssl` for implicit TLS on port 465, or `none` for a plaintext internal relay such as MailHog; any other value makes the API refuse to start), `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` in `.env`. Without these, registration still works — accounts are created immediately — but they stay unverified and can't accept an org invitation until SMTP is configured and the user clicks the emailed link (signing in with GitHub does not verify an existing self-registered account: Clevis never links a GitHub identity to an existing account by email). Accounts created via first-run `/auth/setup` or "Sign in with GitHub" are verified from the start, regardless of SMTP.
+4. (Optional) Configure SMTP so self-registered accounts can verify their email: set `SMTP_HOST`, `SMTP_PORT` (default `587`), `SMTP_SECURITY` (`starttls` by default, for port 587; use `ssl` for implicit TLS on port 465, or `none` for a plaintext internal relay such as MailHog; any other value makes the API refuse to start), `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` in `.env`. Without these (a workspace admin can still mark a user's email verified from the org Members page, which is audited), registration still works — accounts are created immediately — but they stay unverified and can't accept an org invitation until SMTP is configured and the user clicks the emailed link (signing in with GitHub does not verify an existing self-registered account: Clevis never links a GitHub identity to an existing account by email). Accounts created via first-run `/auth/setup` or "Sign in with GitHub" are verified from the start, regardless of SMTP.
 
 5. (Optional) Give the worker its own Postgres credential, separate from the API's `DB_USER`/`DB_PASSWORD`: set `WORKER_DB_PASSWORD` in `.env`. Row-Level Security (issue #190, migrations 0030/0031/0033/0046) has already landed — setting this switches the worker's live database connection to the dedicated `clevis_worker` role instead of sharing `DB_USER`, so it's actually subject to RLS rather than bypassing it as a superuser. The worker keeps working exactly as before if left unset. It only takes effect via the `db` container's first-ever startup (`docker-entrypoint-initdb.d` scripts only run once, against a fresh, empty data volume). If you're setting this on an **existing** deployment (a `db` volume that's already initialized), run this once by hand instead:
 
@@ -199,6 +199,18 @@ score-drop alert. It is **off by default**.
   looks for orgs whose latest scan is older than the cadence. At most a few orgs are scanned per
   check, so a large instance spreads its GitHub API usage across checks. Each run is recorded in
   the audit log as `scan.scheduled`.
+
+## Recovering a forgotten password
+
+Users reset their own password from the login page (**Forgot password?**): Clevis emails a single-use link that expires in an hour and signs the account out everywhere, so it needs SMTP (see step 4 above). Signed-in users can change their password under Settings > Profile.
+
+Without SMTP, or if the workspace admin is locked out, an operator with shell access sets it directly:
+
+```bash
+docker compose exec api python -m src.cli.set_password owner@example.com
+```
+
+It prompts for the new password twice (never taken from the command line), signs the account out everywhere and writes an `auth.password_reset` audit row marked `via: operator-cli`. Accounts created through "Sign in with GitHub" have no password to reset.
 
 ## Security notes
 

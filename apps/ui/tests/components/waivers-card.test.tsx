@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -6,6 +6,9 @@ const listMock = vi.fn()
 const createMock = vi.fn()
 const revokeMock = vi.fn()
 const updateMock = vi.fn()
+
+let searchParams = new URLSearchParams();
+vi.mock("next/navigation", () => ({ useSearchParams: () => searchParams }));
 
 vi.mock("@/lib/api/client", () => ({
   api: {
@@ -17,6 +20,9 @@ vi.mock("@/lib/api/client", () => ({
     },
   },
 }))
+
+const downloadMock = vi.fn()
+vi.mock("@/lib/download", () => ({ downloadTextFile: (...a: unknown[]) => downloadMock(...a) }))
 
 import { WaiversCard } from "@/components/waivers-card"
 import { CheckCard } from "@/components/check-card"
@@ -44,6 +50,8 @@ function renderCard() {
 }
 
 beforeEach(() => {
+  searchParams = new URLSearchParams()
+  downloadMock.mockReset()
   listMock.mockReset()
   createMock.mockReset()
   revokeMock.mockReset()
@@ -55,6 +63,68 @@ afterEach(() => {
 })
 
 describe("WaiversCard", () => {
+  it("marks the waiver a notification linked to (#955)", async () => {
+    searchParams = new URLSearchParams({ waiver: "2" })
+    listMock.mockResolvedValue([waiver({ id: 1 }), waiver({ id: 2, check_id: "repository_license_present" })])
+    renderCard()
+    await screen.findAllByText(/legacy repo/)
+    expect(document.getElementById("waiver-2")).toHaveAttribute("aria-current", "true")
+    expect(document.getElementById("waiver-1")).not.toHaveAttribute("aria-current")
+  })
+
+  const DAY = 86_400_000
+  const register = () => [
+    waiver({ id: 1, reason: "far out", expires_at: new Date(Date.now() + 60 * DAY).toISOString() }),
+    waiver({ id: 2, reason: "soon", expires_at: new Date(Date.now() + 5 * DAY).toISOString() }),
+    waiver({ id: 3, reason: "lapsed", active: false, repos: ["api", "web"], expires_at: new Date(Date.now() - 3 * DAY).toISOString() }),
+  ]
+
+  it("filters the register to active, expiring soon, or expired waivers (#991)", async () => {
+    listMock.mockResolvedValue(register())
+    renderCard()
+    await screen.findByText(/far out/)
+    const filterBy = (value: string) => fireEvent.change(screen.getByLabelText("Filter waivers"), { target: { value } })
+
+    filterBy("expiring")
+    expect(screen.queryByText(/far out/)).not.toBeInTheDocument()
+    expect(screen.getByText(/soon/)).toBeInTheDocument()
+    expect(screen.getByText("1 of 3")).toBeInTheDocument()
+
+    filterBy("expired")
+    expect(screen.getByText(/lapsed/)).toBeInTheDocument()
+    expect(screen.queryByText(/soon/)).not.toBeInTheDocument()
+
+    filterBy("active")
+    expect(screen.getByText(/far out/)).toBeInTheDocument()
+    expect(screen.queryByText(/lapsed/)).not.toBeInTheDocument()
+  })
+
+  it("exports the waivers currently shown as CSV (#991)", async () => {
+    listMock.mockResolvedValue(register())
+    renderCard()
+    await screen.findByText(/far out/)
+    fireEvent.change(screen.getByLabelText("Filter waivers"), { target: { value: "expired" } })
+    fireEvent.click(screen.getByRole("button", { name: /export csv/i }))
+
+    const [filename, csv, type] = downloadMock.mock.calls[0]
+    expect(filename).toMatch(/^clevis-waivers-acme-\d{4}-\d{2}-\d{2}\.csv$/)
+    expect(type).toBe("text/csv")
+    const lines = String(csv).split("\r\n")
+    expect(lines[0]).toBe("Check,Repositories,Reason,Owner,Created by,Created,Expires,Status")
+    expect(lines).toHaveLength(2)
+    expect(lines[1]).toContain("api; web")
+    expect(lines[1]).toContain("lapsed")
+    expect(lines[1].endsWith(",expired")).toBe(true)
+  })
+
+  it("explains an empty register and the button takes you to the add form (#993)", async () => {
+    listMock.mockResolvedValue([])
+    renderCard()
+    await screen.findByText(/No waivers/)
+    fireEvent.click(screen.getByRole("button", { name: "Add a waiver" }))
+    expect(document.getElementById("waiver-new-check")).toHaveFocus()
+  })
+
   it("lists waivers with scope, owner and expiry, flagging an expired one", async () => {
     listMock.mockResolvedValue([
       waiver(),
@@ -71,7 +141,7 @@ describe("WaiversCard", () => {
     listMock.mockResolvedValue([])
     createMock.mockResolvedValue(waiver())
     renderCard()
-    await screen.findByText("No waivers.")
+    await screen.findByText(/No waivers/)
     expect(screen.getByLabelText(/Repositories/)).toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText("Check"), { target: { value: "repository_license_present" } })
@@ -89,7 +159,7 @@ describe("WaiversCard", () => {
     listMock.mockResolvedValue([])
     createMock.mockResolvedValue(waiver())
     renderCard()
-    await screen.findByText("No waivers.")
+    await screen.findByText(/No waivers/)
     const add = screen.getByRole("button", { name: "Add waiver" })
     expect(add).toBeDisabled() // reason and owner are required
 
@@ -116,7 +186,7 @@ describe("WaiversCard", () => {
     renderCard()
     expect(await screen.findByText(/Couldn't load waivers: boom/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Retry" }))
-    expect(await screen.findByText("No waivers.")).toBeInTheDocument()
+    expect(await screen.findByText(/No waivers/)).toBeInTheDocument()
     expect(listMock).toHaveBeenCalledTimes(2)
   })
 
@@ -132,7 +202,8 @@ describe("WaiversCard", () => {
     revokeMock.mockRejectedValue(new Error("already gone"))
     renderCard()
     fireEvent.click(await screen.findByRole("button", { name: /Revoke waiver for/ }))
-    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't revoke: already gone")
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Revoke" }))
+    expect(await screen.findByText(/Couldn't revoke: already gone/)).toBeInTheDocument()
   })
 
   it("sends the chosen check, shows the pending label, and bounds the expiry date", async () => {
@@ -143,7 +214,7 @@ describe("WaiversCard", () => {
     let finish: (v: unknown) => void = () => {}
     createMock.mockReturnValue(new Promise((resolve) => { finish = resolve }))
     renderCard()
-    await screen.findByText("No waivers.")
+    await screen.findByText(/No waivers/)
     fireEvent.change(screen.getByLabelText("Check"), { target: { value: "repository_license_present" } })
     fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "r" } })
     fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "o" } })
@@ -162,14 +233,38 @@ describe("WaiversCard", () => {
     revokeMock.mockResolvedValue(undefined)
     renderCard()
     fireEvent.click(await screen.findByRole("button", { name: /Revoke waiver for Default branch has protection rules/ }))
+    expect(revokeMock).not.toHaveBeenCalled() // nothing happens until confirmed
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Revoke" }))
     await waitFor(() => expect(revokeMock).toHaveBeenCalledWith("acme", 1))
+  })
+
+  it("keeps the waiver when the revoke confirmation is cancelled", async () => {
+    listMock.mockResolvedValue([waiver()])
+    renderCard()
+    fireEvent.click(await screen.findByRole("button", { name: /Revoke waiver for/ }))
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Cancel" }))
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument())
+    expect(revokeMock).not.toHaveBeenCalled()
+  })
+
+  it("leaves edit mode when the waiver being edited is revoked", async () => {
+    listMock.mockResolvedValue([waiver()])
+    revokeMock.mockResolvedValue(undefined)
+    renderCard()
+    fireEvent.click(await screen.findByRole("button", { name: /Renew or edit waiver for/ }))
+    expect(await screen.findByRole("button", { name: "Save waiver" })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: /Revoke waiver for/ }))
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Revoke" }))
+    await waitFor(() => expect(revokeMock).toHaveBeenCalledWith("acme", 1))
+    expect(await screen.findByRole("button", { name: "Add waiver" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Save waiver" })).not.toBeInTheDocument()
   })
 
   it("shows the server's error when adding fails", async () => {
     listMock.mockResolvedValue([])
     createMock.mockRejectedValue(new Error("A waiver can last at most 90 days"))
     renderCard()
-    await screen.findByText("No waivers.")
+    await screen.findByText(/No waivers/)
     fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "r" } })
     fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "o" } })
     fireEvent.click(screen.getByRole("button", { name: "Add waiver" }))

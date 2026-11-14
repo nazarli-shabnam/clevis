@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { CircleNotch, Wrench } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
@@ -77,11 +77,15 @@ export function BulkFixPanel({
   repos,
   token,
   onApplied,
+  preselected,
 }: {
   owner: string
   repos: RepoSecurityRow[]
   token?: string
   onApplied?: () => void
+  /** Repo names to tick (e.g. the matrix's filtered view). Only those failing the chosen check are shown, so
+   * only those end up selected. Each new array replaces the selection, capped at MAX_BATCH. */
+  preselected?: readonly string[]
 }) {
   const [checkId, setCheckId] = useState(FIXABLE_CHECKS[0].id)
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
@@ -89,6 +93,23 @@ export function BulkFixPanel({
 
   const check = FIXABLE_CHECKS.find((c) => c.id === checkId) ?? FIXABLE_CHECKS[0]
   const candidates = useMemo(() => repos.filter((r) => check.failing(r)).map((r) => r.repo), [repos, check])
+  // A hand-off ticks the handed repos that fail the chosen check (up to the batch cap). The names are kept
+  // until the user ticks something themselves, so choosing the applicable check afterwards still selects them.
+  const handoff = useRef<Set<string> | null>(null)
+  const applyHandoff = () => {
+    const handed = handoff.current
+    if (handed) setSelected(new Set(candidates.filter((name) => handed.has(name)).slice(0, MAX_BATCH)))
+  }
+  useEffect(() => {
+    if (!preselected || preselected.length === 0) return
+    handoff.current = new Set(preselected)
+    applyHandoff()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preselected])
+  useEffect(() => {
+    applyHandoff()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkId])
   // A fresh scan can drop repos from the candidate list: never act on a repo that's no longer there.
   const chosen = useMemo(() => candidates.filter((name) => selected.has(name)), [candidates, selected])
 
@@ -113,6 +134,7 @@ export function BulkFixPanel({
   const busy = preview.isPending || apply.isPending
 
   function toggle(name: string) {
+    handoff.current = null
     setSelected((prev) => {
       const next = new Set(prev)
       if (next.has(name)) next.delete(name)
@@ -127,7 +149,7 @@ export function BulkFixPanel({
   const allSelected = selectAllTarget.length > 0 && selectAllTarget.every((name) => selected.has(name))
 
   return (
-    <div className="card mt-4">
+    <div id="bulk-fix" className="card mt-4">
       <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
         <span className="section-title">Fix many repos at once</span>
         <span className="stat-chip">org admins only</span>
@@ -160,7 +182,10 @@ export function BulkFixPanel({
               <input
                 type="checkbox"
                 checked={allSelected}
-                onChange={() => setSelected(allSelected ? new Set() : new Set(selectAllTarget))}
+                onChange={() => {
+                  handoff.current = null
+                  setSelected(allSelected ? new Set() : new Set(selectAllTarget))
+                }}
               />
               Select all ({selectAllTarget.length})
             </label>

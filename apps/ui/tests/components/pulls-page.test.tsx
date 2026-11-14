@@ -367,6 +367,54 @@ describe("PullRequestsPage", () => {
     expect(screen.queryByRole("button", { name: /^Nudge \d/ })).not.toBeInTheDocument();
   });
 
+  const nudgeRepos = {
+    org: "acme",
+    total: 1,
+    repos: [{ name: "api", full_name: "acme/api", private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: "https://github.com/acme/api" }],
+  };
+
+  it("says nudging is turned off instead of reporting that nothing needs a nudge (issue #984)", async () => {
+    localStorage.setItem("default_org", "acme");
+    reposListMock.mockResolvedValue(nudgeRepos);
+    reposPullsMock.mockResolvedValue({ repository: "acme/api", total: 1, pulls: [pull({ number: 7, title: "Waiting PR" })] });
+    prNudgesSweepMock.mockResolvedValue({ mode: "off", stale_days: 3, dry_run: true, results: [] });
+
+    renderPage();
+    await screen.findAllByText(/Waiting PR/);
+    fireEvent.click(screen.getByRole("button", { name: "Nudge stale PRs" }));
+
+    expect(await screen.findByText(/Nudging is turned off for this instance/)).toBeInTheDocument();
+    expect(screen.queryByText("No pull requests need a nudge right now.")).not.toBeInTheDocument();
+  });
+
+  it("notes when the per-sweep cap left stale PRs behind, and refreshes the pull request list after a nudge (issue #984)", async () => {
+    localStorage.setItem("default_org", "acme");
+    reposListMock.mockResolvedValue(nudgeRepos);
+    reposPullsMock.mockResolvedValue({ repository: "acme/api", total: 1, pulls: [pull({ number: 1, title: "Old PR" })] });
+    prNudgesSweepMock.mockImplementation((_o: string, _w: string, _r: string, _t: string, dryRun?: boolean, only?: number[]) =>
+      Promise.resolve({
+        mode: "comment",
+        stale_days: 3,
+        dry_run: dryRun,
+        results: [
+          { number: 1, title: "Old PR", action: dryRun ? "would-comment" : "commented" },
+          // A confirmed sweep is limited to the approved PRs, so it no longer reports the capped one.
+          ...(only ? [] : [{ number: 2, title: "Later PR", action: "skipped-per-sweep-cap" }]),
+        ],
+      }),
+    );
+
+    renderPage();
+    await screen.findAllByText(/Old PR/);
+    fireEvent.click(screen.getByRole("button", { name: "Nudge stale PRs" }));
+    expect(await screen.findByText(/Only the oldest stale pull requests in api are included/)).toBeInTheDocument();
+    const loadsBefore = reposPullsMock.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Nudge 1 pull request" }));
+
+    expect(await screen.findByText(/Only the oldest stale pull requests in api were included/)).toBeInTheDocument();
+    await waitFor(() => expect(reposPullsMock.mock.calls.length).toBeGreaterThan(loadsBefore));
+  });
+
   it("reports partial failures instead of hiding them behind the count (issue #289)", async () => {
     localStorage.setItem("default_org", "acme");
     reposListMock.mockResolvedValue({
