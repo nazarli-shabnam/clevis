@@ -72,9 +72,14 @@ def delete_account(db: Session, user: User) -> None:
             {"user_id": user_id, "previous_role": membership.role, "source": membership.source},
             tenant_id=org.tenant_id, commit=False,
         )
-        db.execute(text("DELETE FROM invitations WHERE tenant_id = :t AND invited_by_user_id = :u"), {"t": org.tenant_id, "u": user_id})
-        db.execute(update(ScanResult).where(ScanResult.tenant_id == org.tenant_id, ScanResult.scanned_by_user_id == user_id).values(scanned_by_user_id=None))
         db.execute(text("DELETE FROM memberships WHERE tenant_id = :t AND user_id = :u"), {"t": org.tenant_id, "u": user_id})
+
+    # Invitations they sent and scans they ran stay behind in orgs they already left (leaving deletes only the
+    # membership row), and would block the final user delete on the foreign keys, so clear every org tenant.
+    for (tenant_id,) in db.execute(text("SELECT id FROM tenants WHERE kind = 'org'")).all():
+        _in_tenant(db, tenant_id)
+        db.execute(text("DELETE FROM invitations WHERE tenant_id = :t AND invited_by_user_id = :u"), {"t": tenant_id, "u": user_id})
+        db.execute(update(ScanResult).where(ScanResult.tenant_id == tenant_id, ScanResult.scanned_by_user_id == user_id).values(scanned_by_user_id=None))
 
     # The personal tenant and every row stored under it: children before parents.
     _in_tenant(db, personal_id)

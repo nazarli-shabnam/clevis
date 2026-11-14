@@ -433,7 +433,7 @@ def forgot_password(body: ForgotPasswordRequest, background: BackgroundTasks, db
     check_account_rate_limit(f"forgot-password:{body.email.lower()}")
     user = db.query(User).filter(func.lower(User.email) == body.email.lower()).first()
     if user is not None and user.password_hash:
-        token = password_reset.make_token(user.id, user.password_hash)
+        token = password_reset.make_token(user.id, user.password_hash, user.email)
         background.add_task(_send_password_reset_email, user.email, f"{settings.cors_origins[0]}/reset-password?token={token}")
     return {"ok": True}
 
@@ -448,8 +448,9 @@ def reset_password(body: ResetPasswordRequest, request: Request, db: Session = D
     if parsed is None:
         raise invalid
     user_id, fingerprint = parsed
-    user = db.query(User).filter(User.id == user_id).first()
-    if user is None or not password_reset.matches_current_password(fingerprint, user.password_hash):
+    # Locked so an overlapping password change cannot leave a session that survives this reset.
+    user = db.query(User).filter(User.id == user_id).with_for_update().first()
+    if user is None or not password_reset.matches_current_password(fingerprint, user.password_hash, user.email):
         raise invalid
     _check_new_password(body.password)
     user.password_hash = _hash_password(body.password)
@@ -475,7 +476,7 @@ def change_password(
     caller gets a fresh token so this one stays signed in."""
     # A stolen session must not be able to guess the current password at full speed.
     check_account_rate_limit(f"change-password:{current_user.id}")
-    user = db.query(User).filter(User.id == current_user.id).first()
+    user = db.query(User).filter(User.id == current_user.id).with_for_update().first()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     if not user.password_hash:
@@ -550,7 +551,7 @@ def confirm_email_change(body: ConfirmEmailChangeRequest, request: Request, db: 
     if parsed is None:
         raise invalid
     user_id, new_email, fingerprint = parsed
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.id == user_id).with_for_update().first()
     if user is None or not email_change.matches_current_state(fingerprint, user):
         raise invalid
     if db.query(User).filter(func.lower(User.email) == new_email, User.id != user.id).first():

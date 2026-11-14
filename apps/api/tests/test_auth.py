@@ -625,7 +625,7 @@ def test_reset_password_rejects_bad_expired_and_session_tokens_and_keeps_a_valid
 
     user = db.query(User).filter(User.email == "owner@example.com").one()
     with patch.object(password_reset, "TOKEN_TTL", _td(seconds=-5)):
-        expired = password_reset.make_token(user.id, user.password_hash)
+        expired = password_reset.make_token(user.id, user.password_hash, user.email)
     assert auth_client.post("/auth/reset-password", json={"token": expired, "password": "yet-another-password"}).status_code == 400
 
 

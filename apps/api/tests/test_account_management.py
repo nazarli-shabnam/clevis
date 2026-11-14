@@ -112,13 +112,24 @@ def test_email_change_links_are_rejected_when_forged_or_taken(client, db):
 
     assert client.post("/auth/confirm-email-change", json={"token": "garbage"}).status_code == 400
     # A password-reset token is not an email-change token.
-    reset = password_reset.make_token(member.id, member.password_hash)
+    reset = password_reset.make_token(member.id, member.password_hash, member.email)
     assert client.post("/auth/confirm-email-change", json={"token": reset}).status_code == 400
     # The address was taken between the request and the click.
     taken = email_change.make_token(member, "owner@example.com")
     assert client.post("/auth/confirm-email-change", json={"token": taken}).status_code == 409
     assert db.query(User).filter(User.id == member.id).one().email == "member@example.com"
     assert client.get("/auth/me", headers=headers).status_code == 200
+
+
+def test_a_reset_link_issued_before_an_email_change_stops_working(client, db):
+    _setup_owner(client)
+    _register(client)
+    member = db.query(User).filter(User.email == "member@example.com").one()
+    reset = password_reset.make_token(member.id, member.password_hash, member.email)
+    member.email = "moved@example.com"
+    db.flush()
+    r = client.post("/auth/reset-password", json={"token": reset, "password": "brand-new-pass-1"})
+    assert r.status_code == 400
 
 
 def test_a_pending_email_change_is_cancelled_by_a_password_reset_or_sign_out_everywhere(client, db):
@@ -178,6 +189,23 @@ def test_a_member_deletes_their_account_and_what_hangs_off_it(client, db):
     left = db.query(AuditLog).filter(AuditLog.action == "account.deleted").one()
     assert left.actor == "member@example.com" and left.tenant_id == org_tenant  # the org keeps a trace
     assert client.get("/auth/me", headers=headers).status_code == 401
+
+
+def test_deleting_an_account_also_clears_references_left_in_an_org_they_already_left(client, db):
+    owner = _setup_owner(client)
+    headers = _register(client)
+    member_id = db.query(User).filter(User.email == "member@example.com").one().id
+    org = _org_with(db, (owner["user"]["id"], "admin"))  # the member is no longer in it
+    invitation_repo.create(db, org_id=org.id, email="friend@example.com", invited_by_user_id=member_id)
+    db.add(ScanResult(owner="acme-del", score=90, total_checks=1, failed_checks=0, checks_json="[]", tenant_id=org.tenant_id, scanned_by_user_id=member_id))
+    db.commit()
+
+    resp = client.post("/auth/me/delete", headers=headers, json={"confirm_email": "member@example.com", "password": "supersecret1234"})
+    assert resp.status_code == 204
+    db.expire_all()
+    assert db.query(User).filter(User.id == member_id).first() is None
+    set_session_tenant(db, org.tenant_id)
+    assert db.query(ScanResult).filter(ScanResult.tenant_id == org.tenant_id).one().scanned_by_user_id is None
 
 
 def test_account_deletion_is_confirmed_and_refused_when_it_would_strand_something(client, db):

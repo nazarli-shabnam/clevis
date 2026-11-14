@@ -177,7 +177,8 @@ def build_bundle(
         "membership reconciliation poll), not a live GitHub read; see roster_last_synced_at.",
         "two_factor_enabled is empty when the reconciliation poll has not read it yet (unknown, not off).",
         "waivers.csv is the register as of generated_at, regardless of the date range; a revoked waiver is "
-        "deleted from it, and its waiver.revoke audit row is in audit_log.csv.",
+        "deleted from it. Its waiver.revoke audit row is recorded in the audit log and appears in audit_log.csv only "
+        "when the date range and row limit include it.",
         "audit_log.csv lists the rows that existed when this export was generated; the export itself is "
         "recorded as an evidence.export row afterwards.",
     ]

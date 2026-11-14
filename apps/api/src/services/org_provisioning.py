@@ -20,7 +20,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from src.core.db import Org, User, set_session_user
+from src.core.db import Org, User, set_session_tenant, set_session_user
 from src.repositories import audit_repo, org_membership_repo, org_repo, tenant_repo
 from src.services import github_oauth
 
@@ -105,6 +105,8 @@ def sync_org_admin_memberships(db: Session, user: User, user_token: str) -> None
     for org, membership in tenant_repo.list_org_memberships_for_user(db, user.id):
         if org.github_org_id is None or membership.source != "github":
             continue
+        # The last-admin count reads every admin row of this org, which RLS only shows under its tenant context.
+        set_session_tenant(db, org.tenant_id)
         gh_role = gh_role_by_org_id.get(org.github_org_id)
         if gh_role is None:
             if _is_last_admin(db, org, membership):
