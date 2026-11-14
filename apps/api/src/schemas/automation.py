@@ -32,6 +32,8 @@ class RunSummary(BaseModel):
     head_branch: str
     created_at: datetime
     duration_ms: int | None = None
+    # The run's page on GitHub, so a row can link to it.
+    html_url: str | None = None
 
 
 class RunsResponse(BaseModel):

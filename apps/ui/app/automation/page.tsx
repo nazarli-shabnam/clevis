@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
@@ -23,6 +23,10 @@ import { PermissionDriftNotice } from "@/components/permission-drift-notice"
 import { relativeTime } from "@/lib/format"
 import { useLookupOwner } from "@/lib/use-lookup-owner"
 import { orgRoleFor } from "@/lib/members-href"
+
+// How long, and how often, runs are refetched after a dispatch.
+const FOLLOW_RUNS_MS = 60_000
+const FOLLOW_RUNS_INTERVAL_MS = 4_000
 import type { InstallationMeta, MyOrgMembership, RunSummary, WorkflowSummary } from "@/lib/api/types"
 
 function runDurationSeconds(run: RunSummary): number | null {
@@ -67,6 +71,12 @@ export default function AutomationPage() {
   const [refEdited, setRefEdited] = useState(false)
   const [dispatchArmed, setDispatchArmed] = useState(false)
   const [dispatchAllArmed, setDispatchAllArmed] = useState(false)
+  // Run history fetched after the repo was loaded (Refresh, or following a dispatch); it replaces the list
+  // loaded with the repo until another repo is loaded.
+  const [liveRuns, setLiveRuns] = useState<RunSummary[] | null>(null)
+  // After a dispatch, runs are refetched until a run that wasn't there before appears, or this time passes.
+  const [followUntil, setFollowUntil] = useState<number | null>(null)
+  const knownRunIds = useRef<Set<number>>(new Set())
 
   const { scope } = useActiveScope()
   // Repos picked on the Repositories page arrive as ?owner=x&repos=a,b; they only apply to that owner.
@@ -167,17 +177,38 @@ export default function AutomationPage() {
     },
   })
 
+  const refreshRuns = useMutation({
+    mutationFn: () => api.automation.runs(owner.trim(), repo.trim(), token),
+    onSuccess: (data) => {
+      setLiveRuns(data.runs)
+      // The dispatched run has appeared: stop following.
+      if (data.runs.some((r) => !knownRunIds.current.has(r.id))) setFollowUntil(null)
+    },
+  })
+
+  // Start following runs after a dispatch: GitHub creates the run a moment later.
+  const followRuns = () => {
+    knownRunIds.current = new Set((liveRuns ?? loadMutation.data?.runs.runs ?? []).map((r) => r.id))
+    setFollowUntil(Date.now() + FOLLOW_RUNS_MS)
+  }
+
   const dispatchMutation = useMutation({
     mutationFn: () => {
       if (!selectedWorkflow) throw new Error("No workflow selected")
       return api.automation.dispatch(owner.trim(), repo.trim(), selectedWorkflow.id, { token, ref: ref.trim() })
     },
-    onSuccess: () => setDispatchArmed(false),
+    onSuccess: () => {
+      setDispatchArmed(false)
+      followRuns()
+    },
   })
 
   const dispatchAllMutation = useMutation({
     mutationFn: () => api.automation.dispatchAll(owner.trim(), repo.trim(), { token, ref: ref.trim() }),
-    onSuccess: () => setDispatchAllArmed(false),
+    onSuccess: () => {
+      setDispatchAllArmed(false)
+      followRuns()
+    },
   })
 
   const loadMutation = useMutation({
@@ -192,6 +223,8 @@ export default function AutomationPage() {
       setSelectedWorkflow(null)
       setDispatchArmed(false)
       setDispatchAllArmed(false)
+      setLiveRuns(null)
+      setFollowUntil(null)
       // Drop any prior repo's bulk-dispatch summary so it doesn't render under the
       // newly loaded workflow list.
       dispatchMutation.reset()
@@ -199,10 +232,22 @@ export default function AutomationPage() {
     },
   })
 
+  useEffect(() => {
+    if (followUntil === null) return
+    const timer = setInterval(() => {
+      if (Date.now() >= followUntil) setFollowUntil(null)
+      else refreshRuns.mutate()
+    }, FOLLOW_RUNS_INTERVAL_MS)
+    return () => clearInterval(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followUntil])
+
   // Everything derived from the previously loaded repo: its workflows, the selected workflow id,
   // dispatch results and armed confirmations. Left in place, a new repo would be paired with the
   // old repo's workflow id on dispatch.
   const resetLoadedRepoState = () => {
+    setLiveRuns(null)
+    setFollowUntil(null)
     loadMutation.reset()
     dispatchMutation.reset()
     dispatchAllMutation.reset()
@@ -266,7 +311,7 @@ export default function AutomationPage() {
 
   const isLoading = loadMutation.isPending
   const workflows = loadMutation.data?.workflows.workflows ?? []
-  const runs = loadMutation.data?.runs.runs ?? []
+  const runs = liveRuns ?? loadMutation.data?.runs.runs ?? []
 
   const durationChartData = runs
     .filter((r) => r.duration_ms != null)
@@ -560,10 +605,18 @@ export default function AutomationPage() {
                 </div>
               )}
 
-              {runs.length > 0 && (
+              {(runs.length > 0 || followUntil !== null) && (
                 <div className="border-t border-border overflow-x-auto">
-                  <div className="px-4 py-3 border-b border-border">
+                  <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
                     <span className="section-title">Run history</span>
+                    <span className="flex items-center gap-3">
+                      {followUntil !== null && (
+                        <span className="text-xs text-muted-foreground" role="status">Watching for the new run…</span>
+                      )}
+                      <Button size="sm" variant="outline" onClick={() => refreshRuns.mutate()} disabled={refreshRuns.isPending}>
+                        {refreshRuns.isPending ? "Refreshing…" : "Refresh"}
+                      </Button>
+                    </span>
                   </div>
                   <table className="w-full text-xs">
                     <thead>
@@ -577,7 +630,15 @@ export default function AutomationPage() {
                     <tbody className="divide-y divide-border">
                       {runs.map((r) => (
                         <tr key={r.id} className="hover:bg-muted/40 transition-colors">
-                          <td className="px-4 py-2.5 font-mono text-foreground/80">{r.name ?? `#${r.id}`}</td>
+                          <td className="px-4 py-2.5 font-mono text-foreground/80">
+                            {r.html_url && /^https?:\/\//.test(r.html_url) ? (
+                              <a href={r.html_url} target="_blank" rel="noreferrer" className="hover:text-primary hover:underline">
+                                {r.name ?? `#${r.id}`}
+                              </a>
+                            ) : (
+                              (r.name ?? `#${r.id}`)
+                            )}
+                          </td>
                           <td className="px-4 py-2.5 text-muted-foreground">{r.head_branch}</td>
                           <td className="px-4 py-2.5">
                             <span className="inline-flex items-center gap-1.5">

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -356,6 +356,77 @@ describe("AutomationPage", () => {
     await waitFor(() => {
       expect(dispatchMock).toHaveBeenCalledWith("acme", "demo", 1, { token: "", ref: "main" });
     });
+  });
+
+  it("links runs to GitHub and refreshes the list on demand (#992)", async () => {
+    workflowsMock.mockResolvedValue({ repository: "acme/demo", workflows: [] });
+    const run = (id: number, name: string, html_url: string | null) => ({
+      id, name, status: "completed", conclusion: "success", head_branch: "main",
+      created_at: new Date().toISOString(), duration_ms: 1000, html_url,
+    });
+    runsMock
+      .mockResolvedValueOnce({ repository: "acme/demo", runs: [run(1, "CI", "https://github.com/acme/demo/actions/runs/1")] })
+      .mockResolvedValue({
+        repository: "acme/demo",
+        runs: [run(2, "Release", "javascript:alert(1)"), run(1, "CI", "https://github.com/acme/demo/actions/runs/1")],
+      });
+    renderPage();
+
+    await enterOwnerAndSelectRepo("acme", "demo");
+    fireEvent.click(screen.getByText("Load workflows"));
+    expect(await screen.findByRole("link", { name: "CI" })).toHaveAttribute("href", "https://github.com/acme/demo/actions/runs/1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByText("Release")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Release" })).not.toBeInTheDocument(); // only http(s) urls become links
+    expect(runsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("follows runs after a dispatch until the new run appears (#992)", async () => {
+    workflowsMock.mockResolvedValue({
+      repository: "acme/demo",
+      workflows: [{ id: 1, name: "CI", path: "p", state: "active", last_run_status: null, last_run_conclusion: null, last_run_at: null }],
+    });
+    const run = (id: number) => ({
+      id, name: `run-${id}`, status: "queued", conclusion: null, head_branch: "main",
+      created_at: new Date().toISOString(), duration_ms: null, html_url: null,
+    });
+    runsMock.mockResolvedValueOnce({ repository: "acme/demo", runs: [run(1)] }).mockResolvedValue({ repository: "acme/demo", runs: [run(1)] });
+    dispatchMock.mockResolvedValue({ dispatched: true, message: "Workflow dispatched." });
+    renderPage();
+
+    await enterOwnerAndSelectRepo("acme", "demo");
+    fireEvent.click(screen.getByText("Load workflows"));
+    await screen.findByText("run-1");
+    fireEvent.click(screen.getByRole("button", { name: /Dispatch/i }));
+    fireEvent.click(await screen.findByText("Dispatch workflow"));
+
+    // Only the interval and the clock are faked; react-query still settles through real timeouts, so each step
+    // lets those run before looking at the page.
+    const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    try {
+      fireEvent.click(screen.getByText("Confirm dispatch"));
+      await settle();
+      expect(screen.getByRole("status")).toHaveTextContent("Watching for the new run");
+
+      vi.advanceTimersByTime(4_000); // nothing new yet: keeps watching
+      await settle();
+      expect(runsMock).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("status")).toBeInTheDocument();
+
+      runsMock.mockResolvedValue({ repository: "acme/demo", runs: [run(2), run(1)] });
+      vi.advanceTimersByTime(4_000); // the dispatched run shows up: stops
+      await settle();
+      expect(screen.getByText("run-2")).toBeInTheDocument();
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+      vi.advanceTimersByTime(20_000);
+      await settle();
+      expect(runsMock).toHaveBeenCalledTimes(3); // no more polling
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("hides the 'Dispatch all' toolbar action when a repo has one workflow", async () => {

@@ -85,6 +85,23 @@ def test_personal_list_runs_computes_duration(automation_client):
     assert resp.json()["runs"][0]["duration_ms"] == 120_000
 
 
+def test_personal_list_runs_includes_the_runs_github_url(automation_client):
+    url = "https://github.com/acme/demo/actions/runs/10"
+    with patch("src.routers.automation.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = {
+            "workflow_runs": [
+                {"id": 10, "name": "CI", "status": "queued", "head_branch": "main",
+                 "created_at": "2026-01-01T00:00:00Z", "html_url": url},
+                {"id": 11, "name": "Old", "status": "queued", "head_branch": "main", "created_at": "2026-01-01T00:00:00Z"},
+            ]
+        }
+        resp = automation_client.get(
+            "/me/repos/acme/demo/actions/runs", headers={"X-GitHub-Token": "ghp_testtoken123456789012345678901234"}
+        )
+    assert resp.status_code == 200
+    assert [r["html_url"] for r in resp.json()["runs"]] == [url, None]
+
+
 def test_personal_list_workflows_github_error_propagates(automation_client):
     error = httpx.HTTPStatusError(
         "boom", request=httpx.Request("GET", "https://api.github.com/x"),
