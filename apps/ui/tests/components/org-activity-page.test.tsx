@@ -6,6 +6,8 @@ const auditMock = vi.fn();
 const jobsMock = vi.fn();
 const mineMock = vi.fn();
 const downloadMock = vi.fn();
+const downloadBlobMock = vi.fn();
+const exportMock = vi.fn();
 
 let searchParams = new URLSearchParams();
 vi.mock("next/navigation", () => ({
@@ -15,12 +17,16 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/lib/download", () => ({
   downloadTextFile: (...args: unknown[]) => downloadMock(...args),
+  downloadBlob: (...args: unknown[]) => downloadBlobMock(...args),
 }));
 
 vi.mock("@/lib/api/client", () => ({
   api: {
     orgs: { mine: () => mineMock() },
-    audit: { listForOrg: (...args: unknown[]) => auditMock(...args) },
+    audit: {
+      listForOrg: (...args: unknown[]) => auditMock(...args),
+      exportForOrg: (...args: unknown[]) => exportMock(...args),
+    },
     jobs: { listForOrg: (...args: unknown[]) => jobsMock(...args) },
   },
 }));
@@ -63,6 +69,8 @@ describe("OrgActivityPage", () => {
     jobsMock.mockReset();
     mineMock.mockReset();
     downloadMock.mockReset();
+    downloadBlobMock.mockReset();
+    exportMock.mockReset();
     mineMock.mockResolvedValue([{ org_login: "acme", role: "admin" }]);
     auditMock.mockResolvedValue([row(2), row(1, "job.enqueued")]);
     jobsMock.mockResolvedValue([
@@ -139,6 +147,33 @@ describe("OrgActivityPage", () => {
     const [name, csv] = downloadMock.mock.calls[0];
     expect(name).toMatch(/^clevis-activity-acme-/);
     expect(csv).toContain("job.enqueued");
+  });
+
+  it("exports every matching event from the server with the applied filters (#952)", async () => {
+    const blob = new Blob(["csv"]);
+    exportMock.mockResolvedValue({ blob, filename: "clevis-audit-acme-1.csv", truncated: false });
+    renderPage();
+    await screen.findByText("job.enqueued");
+    fireEvent.change(screen.getByLabelText("Actor"), { target: { value: "a@e.com" } });
+    // Filters in the form but not yet applied are not what the export covers.
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+    await waitFor(() => expect(auditMock).toHaveBeenLastCalledWith("acme", expect.objectContaining({ actor: "a@e.com" })));
+    fireEvent.click(screen.getByRole("button", { name: "Export all matching" }));
+    await waitFor(() => expect(downloadBlobMock).toHaveBeenCalledWith("clevis-audit-acme-1.csv", blob));
+    expect(exportMock).toHaveBeenCalledWith("acme", { actor: "a@e.com" });
+    expect(await screen.findByRole("status")).toHaveTextContent(/every matching event, with its payload/);
+  });
+
+  it("warns that a capped export is incomplete, and shows a failed one", async () => {
+    exportMock.mockResolvedValueOnce({ blob: new Blob(["x"]), filename: "a.csv", truncated: true });
+    renderPage();
+    await screen.findByText("job.enqueued");
+    fireEvent.click(screen.getByRole("button", { name: "Export all matching" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(/hit its row cap and is incomplete/);
+
+    exportMock.mockRejectedValueOnce(new Error("Too many requests"));
+    fireEvent.click(screen.getByRole("button", { name: "Export all matching" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't export: Too many requests");
   });
 
   it("says the CSV holds only the loaded rows while older events remain", async () => {
