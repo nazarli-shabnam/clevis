@@ -19,6 +19,14 @@ from src.core.db import Base, Membership, ScanResult, User
 from src.repositories import audit_repo, tenant_repo
 
 
+# Cleared by the purge function above, or handled separately (memberships; tenants/orgs form a foreign-key cycle).
+_SKIPPED = frozenset({
+    "tenants", "orgs", "memberships", "github_installations",
+    "security_alerts", "org_members", "repo_collaborators", "activity_sync_cursors", "org_membership_sync_cursors",
+    "automation_repo_settings", "repo_event_daily_counts", "repo_events", "security_alert_syncs",
+})
+
+
 class AccountDeletionRefused(Exception):
     def __init__(self, reasons: list[str]):
         self.reasons = reasons
@@ -71,12 +79,16 @@ def delete_account(db: Session, user: User) -> None:
     # The personal tenant and every row stored under it: children before parents.
     _in_tenant(db, personal_id)
     db.execute(text("DELETE FROM memberships WHERE tenant_id = :t"), {"t": personal_id})
+    # clevis_api holds no DELETE on the GitHub-derived tables: they go through the narrow SECURITY DEFINER purge
+    # (migrations 0069/0080), which only acts once the tenant has no installation left.
+    db.execute(text("DELETE FROM github_installations WHERE tenant_id = :t"), {"t": personal_id})
+    db.execute(text("SELECT purge_tenant_github_data(:t)"), {"t": personal_id})
     with warnings.catch_warnings():
         # The orgs/tenants foreign-key cycle (both skipped below) makes SQLAlchemy warn about the sort order.
         warnings.simplefilter("ignore")
         ordered = list(reversed(Base.metadata.sorted_tables))
     for table in ordered:
-        if table.name in ("tenants", "orgs", "memberships") or "tenant_id" not in table.c:
+        if table.name in _SKIPPED or "tenant_id" not in table.c:
             continue
         db.execute(table.delete().where(table.c.tenant_id == personal_id))
     db.execute(text("DELETE FROM tenants WHERE id = :t"), {"t": personal_id})

@@ -1626,3 +1626,30 @@ describe("api.auth sessions", () => {
     expect(init.method).toBe("DELETE");
   });
 });
+
+describe("api.auth account and password endpoints", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const cases: [string, () => Promise<unknown>, string, string, unknown][] = [
+    ["adminVerifyEmail", () => api.auth.adminVerifyEmail("a@b.c"), "POST", "/auth/admin/verify-email", { email: "a@b.c" }],
+    ["requestEmailChange", () => api.auth.requestEmailChange("n@b.c", "pw"), "POST", "/auth/me/email", { new_email: "n@b.c", password: "pw" }],
+    ["confirmEmailChange", () => api.auth.confirmEmailChange("tok"), "POST", "/auth/confirm-email-change", { token: "tok" }],
+    ["deleteAccount", () => api.auth.deleteAccount("a@b.c", "pw"), "POST", "/auth/me/delete", { confirm_email: "a@b.c", password: "pw" }],
+    ["forgotPassword", () => api.auth.forgotPassword("a@b.c"), "POST", "/auth/forgot-password", { email: "a@b.c" }],
+    ["resetPassword", () => api.auth.resetPassword("tok", "pw"), "POST", "/auth/reset-password", { token: "tok", password: "pw" }],
+    ["changePassword", () => api.auth.changePassword("old", "new"), "POST", "/auth/me/password", { current_password: "old", new_password: "new" }],
+    ["leave an org", () => api.orgMemberships.leave("ac/me"), "DELETE", "/orgs/ac%2Fme/members/me", undefined],
+  ];
+
+  it.each(cases)("%s sends the right request", async (_name, call, method, path, body) => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("{}", { status: 200 }))));
+    await call();
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(new URL(String(url)).pathname).toBe(path);
+    expect(init.method).toBe(method);
+    if (body !== undefined) expect(JSON.parse(init.body)).toEqual(body);
+  });
+});
