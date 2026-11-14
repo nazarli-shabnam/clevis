@@ -172,7 +172,58 @@ describe("PermissionDriftNotice", () => {
     expect(await screen.findByText(/github is unreachable/i)).toBeInTheDocument()
   })
 
-  it("keeps the copy button usable when the clipboard is blocked", async () => {
+  it("shows the failure and a manual-copy box when 'Check now' fails on a never-checked install", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ detail: "GitHub is unreachable" }), {
+          status: 502,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    )
+    render(<PermissionDriftNotice install={install({ permissions_synced_at: null })} />)
+    fireEvent.click(screen.getByRole("button", { name: /check now/i }))
+    expect(await screen.findByText(/github is unreachable/i)).toBeInTheDocument()
+  })
+
+  it("tells a personal account it can approve itself and offers no owner request", () => {
+    render(
+      <PermissionDriftNotice
+        install={install({
+          account_type: "User",
+          blocked_features: [
+            { feature: "stale_pr_nudges", label: "Stale pull-request nudges", missing: { pull_requests: "write" } },
+          ],
+        })}
+      />,
+    )
+    expect(screen.getByText(/your own account, so you can approve it yourself/i)).toBeInTheDocument()
+    expect(screen.queryByText(/organization owner/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /copy request for owner/i })).not.toBeInTheDocument()
+  })
+
+  it("ignores focus events while a refresh is already in flight", async () => {
+    const fetchMock = vi.fn(() => new Promise<Response>(() => {}))
+    vi.stubGlobal("fetch", fetchMock)
+    render(
+      <PermissionDriftNotice
+        install={install({
+          blocked_features: [
+            { feature: "stale_pr_nudges", label: "Stale pull-request nudges", missing: { pull_requests: "write" } },
+          ],
+        })}
+      />,
+    )
+    fireEvent.click(screen.getByRole("link", { name: /approve on github/i }))
+    window.dispatchEvent(new Event("focus"))
+    await screen.findByRole("button", { name: /checking/i })
+    window.dispatchEvent(new Event("focus"))
+    window.dispatchEvent(new Event("focus"))
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("shows a manual-copy box when the clipboard is blocked", async () => {
     const writeText = vi.fn(async () => {
       throw new Error("denied")
     })
@@ -187,8 +238,9 @@ describe("PermissionDriftNotice", () => {
       />,
     )
     fireEvent.click(screen.getByRole("button", { name: /copy request for owner/i }))
-    await waitFor(() => expect(writeText).toHaveBeenCalled())
-    expect(screen.getByRole("button", { name: /copy request for owner/i })).toBeInTheDocument()
+    expect(await screen.findByText(/couldn.t copy automatically/i)).toBeInTheDocument()
+    const box = screen.getByRole("textbox", { name: /request for owner/i }) as HTMLTextAreaElement
+    expect(box.value).toContain("/organizations/acme/settings/installations/42/permissions/update")
   })
 
   it("offers no link or check button for an install without a GitHub installation id", () => {

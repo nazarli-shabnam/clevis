@@ -50,29 +50,37 @@ export function PermissionDriftNotice({
   const refresh = useRefreshPermissions(install)
   const [waiting, setWaiting] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [copyFailed, setCopyFailed] = useState(false)
   const wrap = ["text-xs", className].filter(Boolean).join(" ")
   const canRefresh = install.installation_id != null
+  const isOrg = install.account_type === "Organization"
 
   // After sending the user to GitHub, re-read permissions when they come back to this tab.
-  const { mutate } = refresh
+  // Skipped while a refresh is in flight so an older read can't land after a newer one.
+  const { mutate, isPending } = refresh
   useEffect(() => {
     if (!waiting) return
-    const onFocus = () => mutate()
+    const onFocus = () => {
+      if (!isPending) mutate()
+    }
     window.addEventListener("focus", onFocus)
     return () => window.removeEventListener("focus", onFocus)
-  }, [waiting, mutate])
+  }, [waiting, mutate, isPending])
 
   if (install.permissions_synced_at === null) {
     return (
-      <p className={`${wrap} text-muted-foreground flex items-center gap-1.5`}>
-        <Warning className="size-3 shrink-0" />
-        Permissions not yet checked for {install.account_login}.
-        {canRefresh && (
-          <Button size="sm" variant="outline" disabled={refresh.isPending} onClick={() => refresh.mutate()}>
-            {refresh.isPending ? "Checking…" : "Check now"}
-          </Button>
-        )}
-      </p>
+      <div className={`${wrap} text-muted-foreground flex flex-col gap-1.5`}>
+        <p className="flex items-center gap-1.5">
+          <Warning className="size-3 shrink-0" />
+          Permissions not yet checked for {install.account_login}.
+          {canRefresh && (
+            <Button size="sm" variant="outline" disabled={refresh.isPending} onClick={() => refresh.mutate()}>
+              {refresh.isPending ? "Checking…" : "Check now"}
+            </Button>
+          )}
+        </p>
+        {refresh.isError && <p className="text-destructive">{refresh.error.message}</p>}
+      </div>
     )
   }
 
@@ -86,7 +94,7 @@ export function PermissionDriftNotice({
   }))
 
   const request = [
-    `Hi! Clevis needs extra GitHub access for ${install.account_login}. It can only be approved by a GitHub organization owner.`,
+    `Hi! Clevis needs extra GitHub access for ${install.account_login}. Only a GitHub organization owner can approve it.`,
     "",
     "What it enables:",
     ...items.map((i) => `- ${i.label}${i.why ? `: ${i.why}` : ""}`),
@@ -98,8 +106,10 @@ export function PermissionDriftNotice({
     try {
       await navigator.clipboard.writeText(request)
       setCopied(true)
+      setCopyFailed(false)
     } catch {
       setCopied(false)
+      setCopyFailed(true)
     }
   }
 
@@ -119,8 +129,10 @@ export function PermissionDriftNotice({
       </ul>
       <p className="text-muted-foreground">
         1. Open GitHub. 2. Click <strong>Accept new permissions</strong>. 3. Come back here — this updates
-        itself. Only a GitHub organization owner can do step 2; if that isn&rsquo;t you, send them the
-        request below.
+        itself.{" "}
+        {isOrg
+          ? "Only a GitHub organization owner can do step 2; if that isn’t you, send them the request below."
+          : "This is your own account, so you can approve it yourself."}
       </p>
       <div className="flex flex-wrap items-center gap-2">
         {url && (
@@ -135,16 +147,31 @@ export function PermissionDriftNotice({
             Approve on GitHub
           </a>
         )}
-        <Button size="sm" variant="outline" onClick={copy}>
-          <Copy className="size-3.5" />
-          {copied ? "Copied" : "Copy request for owner"}
-        </Button>
+        {isOrg && (
+          <Button size="sm" variant="outline" onClick={copy}>
+            <Copy className="size-3.5" />
+            {copied ? "Copied" : "Copy request for owner"}
+          </Button>
+        )}
         {canRefresh && (
           <Button size="sm" variant="outline" disabled={refresh.isPending} onClick={() => refresh.mutate()}>
             {refresh.isPending ? "Checking…" : "I approved it — check now"}
           </Button>
         )}
       </div>
+      {copyFailed && (
+        <>
+          <p className="text-destructive">Couldn&rsquo;t copy automatically. Select and copy this instead:</p>
+          <textarea
+            readOnly
+            value={request}
+            rows={5}
+            aria-label="Request for owner"
+            onFocus={(e) => e.currentTarget.select()}
+            className="w-full border border-border bg-background p-2 font-mono"
+          />
+        </>
+      )}
       {refresh.isError && <p className="text-destructive">{refresh.error.message}</p>}
     </div>
   )
