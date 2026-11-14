@@ -34,7 +34,7 @@ from src.core.config import settings
 from src.core.db import Org, User, get_db, set_session_user
 from src.core.rate_limit import check_account_rate_limit, rate_limit
 from src.repositories import audit_repo, invitation_repo, session_repo, tenant_repo
-from src.services import github_app, github_oauth
+from src.services import auth_audit, github_app, github_oauth
 from src.services.email import EmailNotConfigured, is_configured as smtp_configured, send_verification_email
 
 logger = logging.getLogger(__name__)
@@ -437,8 +437,13 @@ def login(body: LoginRequest, request: Request, db: Session = Depends(get_db)):
     # would skip bcrypt for a nonexistent user, reopening the timing side-channel.
     password_ok = _verify_password(body.password, user.password_hash if user else None)
     if not user or not password_ok:
+        # Only a real account has a trail to write to (an attacker-chosen email is not recorded), and the row
+        # is throttled per account so guessing in a loop cannot flood the table.
+        if user:
+            auth_audit.record(db, user, "auth.login_failed", request=request, throttle=auth_audit.FAILED_LOGIN_WINDOW)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = start_session(db, request, user)
+    auth_audit.record(db, user, "auth.login", request=request, extra={"method": "password"})
     return {
         "access_token": token,
         "user": UserOut(id=user.id, email=user.email, name=user.name, is_workspace_admin=user.is_workspace_admin),
@@ -476,6 +481,7 @@ def patch_me(
 
 @router.post("/me/revoke-sessions")
 def revoke_sessions(
+    request: Request,
     current_user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
@@ -486,6 +492,8 @@ def revoke_sessions(
     user.token_version += 1
     # Every token is dead now, so none of them belongs in the active-sessions list.
     session_repo.forget_all(db, user.id)
+    # Committed with the revoke, so a signed-out-everywhere account always has its row.
+    auth_audit.record(db, user, "auth.sessions_revoked_all", request=request, commit=False)
     db.commit()
     return {"ok": True}
 
@@ -526,6 +534,7 @@ def list_sessions(
 @router.delete("/me/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 def revoke_session(
     session_id: str,
+    request: Request,
     current_user: UserOut = Depends(require_auth),
     current_id: str | None = Depends(current_session_id),
     db: Session = Depends(get_db),
@@ -536,4 +545,7 @@ def revoke_session(
         raise HTTPException(status_code=400, detail="This is your current session; use sign out instead")
     if not session_repo.revoke(db, current_user.id, session_id):
         raise HTTPException(status_code=404, detail="Session not found")
+    user = db.query(User).filter(User.id == current_user.id).first()
+    if user is not None:
+        auth_audit.record(db, user, "auth.session_revoked", request=request, extra={"session_id": session_id}, commit=False)
     db.commit()
