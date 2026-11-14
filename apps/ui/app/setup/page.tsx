@@ -54,6 +54,13 @@ export default function SetupPage() {
       setSession(access_token, newUser)
       router.replace("/")
     } catch (err) {
+      // Someone else may have finished setup first (409). Re-check rather than match the status,
+      // so the lost-race IntegrityError path and GitHub-first sign-in are covered too.
+      const stillRequired = await api.auth.setupRequired().then((r) => r.setup_required, () => true)
+      if (!stillRequired) {
+        router.replace("/login?error=setup_complete")
+        return
+      }
       setError(err instanceof Error ? err.message : "Setup failed")
     } finally {
       setIsSubmitting(false)
