@@ -30,7 +30,7 @@ export function SmtpVerifyNotice({ orgLogin }: { orgLogin: string }) {
         People you invite who register with a password can&apos;t verify their email, so they can&apos;t accept an
         invitation until it&apos;s verified for them.{" "}
         {canVerify
-          ? "Enter their address to verify it yourself."
+          ? "Enter their address to verify it yourself, but only after confirming with the person that the account is theirs: an invitation link can be forwarded, so registering with it doesn't prove they own the address."
           : "Ask a workspace admin to verify their address, or configure SMTP."}
       </p>
       {canVerify && (

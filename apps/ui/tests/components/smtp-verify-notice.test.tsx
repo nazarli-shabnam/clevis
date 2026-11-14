@@ -48,6 +48,7 @@ describe("SmtpVerifyNotice", () => {
     renderNotice()
     expect(await screen.findByText("Email isn't set up on this server")).toBeInTheDocument()
 
+    expect(screen.getByText(/doesn.t prove they own the address/)).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText("Email address to verify"), { target: { value: " bob@acme.com " } })
     fireEvent.click(screen.getByRole("button", { name: "Mark verified" }))
 
