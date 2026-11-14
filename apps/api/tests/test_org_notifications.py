@@ -579,3 +579,55 @@ def test_sla_breaches_page_past_the_per_source_limit_and_all_count_as_unread(db,
     second = member.get("/orgs/acme/notifications", params={"before": last["at"], "before_id": last["id"]}).json()
     seen = {i["id"] for i in first["items"]} | {i["id"] for i in second["items"]}
     assert len(second["items"]) == 10 and len(seen) == 60
+
+
+def _token(db, tenant_id, name, *, expires_in=None, revoked=False):
+    from src.core.db import ApiToken
+
+    row = ApiToken(
+        tenant_id=tenant_id, name=name, token_hash=f"hash-{name}", prefix="clv_abcd", created_by="a@e.com",
+        expires_at=NOW + expires_in if expires_in is not None else None,
+        revoked_at=NOW if revoked else None,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def test_api_token_nearing_expiry_is_an_admin_only_item_that_links_to_the_token(db, world):
+    t = world["acme"].tenant_id
+    soon = _token(db, t, "ci-soon", expires_in=timedelta(days=3, hours=1))
+    _token(db, t, "ci-far", expires_in=timedelta(days=40))
+    _token(db, t, "ci-never")
+    _token(db, t, "ci-lapsed", expires_in=timedelta(days=-1))
+    _token(db, t, "ci-revoked", expires_in=timedelta(days=2), revoked=True)
+
+    admin = _client(db, world["users"]["admin"]).get("/orgs/acme/notifications").json()
+    member = _client(db, world["users"]["member"]).get("/orgs/acme/notifications").json()
+
+    assert [i["kind"] for i in member["items"]] == []
+    [item] = [i for i in admin["items"] if i["kind"] == "api_token_expiring"]
+    assert item["id"] == f"api_token_expiring:{soon.id}"
+    assert item["title"] == 'API token "ci-soon" expires in 4 days'
+    assert item["href"] == f"/settings/org/acme/members?token={soon.id}"
+    assert item["read"] is False and admin["unread_count"] == 1
+
+
+def test_api_token_expiry_is_tenant_scoped_and_can_be_dismissed_and_muted(db, world):
+    t = world["acme"].tenant_id
+    soon = _token(db, t, "ci-soon", expires_in=timedelta(days=2))
+    _token(db, world["globex"].tenant_id, "other-org", expires_in=timedelta(days=2))
+    admin = _client(db, world["users"]["admin"])
+    member = _client(db, world["users"]["member"])
+    item_id = f"api_token_expiring:{soon.id}"
+
+    assert [i["id"] for i in admin.get("/orgs/acme/notifications").json()["items"]] == [item_id]
+    assert member.post(f"/orgs/acme/notifications/{item_id}/dismiss").status_code == 404  # admin-only kind
+    assert admin.post(f"/orgs/acme/notifications/api_token_expiring:999999/dismiss").status_code == 404
+    assert admin.post(f"/orgs/acme/notifications/{item_id}/dismiss").status_code == 204
+    feed = admin.get("/orgs/acme/notifications").json()
+    assert feed["items"][0]["read"] is True and feed["unread_count"] == 0
+
+    assert admin.put("/orgs/acme/notifications/preferences", json={"muted_kinds": ["api_token_expiring"]}).status_code == 200
+    assert admin.get("/orgs/acme/notifications").json()["items"] == []
