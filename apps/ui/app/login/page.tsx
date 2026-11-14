@@ -140,6 +140,10 @@ export default function LoginPage() {
             <p role="alert" className="text-xs text-destructive">{error}</p>
           )}
 
+          <a href="/forgot-password" className="text-xs text-muted-foreground hover:text-foreground self-end">
+            Forgot password?
+          </a>
+
           <Button type="submit" disabled={isSubmitting} className="mt-2">
             {isSubmitting ? (
               <><CircleNotch className="size-3.5 animate-spin" />Signing in…</>

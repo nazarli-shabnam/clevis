@@ -560,6 +560,110 @@ def test_admin_verify_email_is_workspace_admin_only_and_404s_for_an_unknown_acco
     assert unknown.status_code == 404
 
 
+# password reset and change
+
+def _reset_token_from(mock_send) -> str:
+    return mock_send.call_args.args[1].split("token=", 1)[1]
+
+
+def test_forgot_password_answers_the_same_for_known_unknown_and_passwordless_accounts(auth_client, db):
+    _setup_owner(auth_client)
+    db.add(User(email="gh-only@example.com", name=None, password_hash=None, is_workspace_admin=False))
+    db.commit()
+    with patch("src.routers.auth.send_password_reset_email") as send:
+        known = auth_client.post("/auth/forgot-password", json={"email": "Owner@example.com"})
+        unknown = auth_client.post("/auth/forgot-password", json={"email": "nobody@example.com"})
+        passwordless = auth_client.post("/auth/forgot-password", json={"email": "gh-only@example.com"})
+    assert known.status_code == unknown.status_code == passwordless.status_code == 200
+    assert known.json() == unknown.json() == passwordless.json()
+    send.assert_called_once()  # only the account that has a password gets a link
+    assert send.call_args.args[0] == "owner@example.com" and "/reset-password?token=" in send.call_args.args[1]
+
+
+def test_reset_password_sets_the_password_once_signs_everyone_out_and_verifies_the_email(auth_client, db):
+    from src.core.db import AuditLog
+
+    _setup_owner(auth_client)
+    auth_client.post("/auth/register", json={"email": "member@example.com", "password": "supersecret1234"})
+    with patch("src.routers.auth.send_password_reset_email") as send:
+        auth_client.post("/auth/forgot-password", json={"email": "member@example.com"})
+    token = _reset_token_from(send)
+    assert db.query(User).filter(User.email == "member@example.com").one().email_verified is False
+
+    resp = auth_client.post("/auth/reset-password", json={"token": token, "password": "a-brand-new-password"})
+    assert resp.status_code == 200
+    db.expire_all()
+    member = db.query(User).filter(User.email == "member@example.com").one()
+    assert member.email_verified is True and member.token_version == 1
+    assert db.query(AuditLog).filter(AuditLog.action == "auth.password_reset").one().actor == "member@example.com"
+
+    assert auth_client.post("/auth/login", json={"email": "member@example.com", "password": "a-brand-new-password"}).status_code == 200
+    assert auth_client.post("/auth/login", json={"email": "member@example.com", "password": "supersecret1234"}).status_code == 401
+    # Single use: the password hash it was issued against has changed.
+    again = auth_client.post("/auth/reset-password", json={"token": token, "password": "another-new-password"})
+    assert again.status_code == 400
+
+
+def test_reset_password_rejects_bad_expired_and_session_tokens_and_keeps_a_valid_token_after_a_weak_password(auth_client, db):
+    owner = _setup_owner(auth_client)
+    with patch("src.routers.auth.send_password_reset_email") as send:
+        auth_client.post("/auth/forgot-password", json={"email": "owner@example.com"})
+    token = _reset_token_from(send)
+
+    assert auth_client.post("/auth/reset-password", json={"token": "garbage", "password": "a-brand-new-password"}).status_code == 400
+    # A session token is signed with a different key and can't reset a password...
+    assert auth_client.post("/auth/reset-password", json={"token": owner["access_token"], "password": "a-brand-new-password"}).status_code == 400
+    # ...and a reset token can't authenticate a request.
+    assert auth_client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).status_code == 401
+
+    short = auth_client.post("/auth/reset-password", json={"token": token, "password": "short"})
+    assert short.status_code == 422
+    assert auth_client.post("/auth/reset-password", json={"token": token, "password": "a-brand-new-password"}).status_code == 200
+
+    from datetime import timedelta as _td
+    from src.services import password_reset
+
+    user = db.query(User).filter(User.email == "owner@example.com").one()
+    with patch.object(password_reset, "TOKEN_TTL", _td(seconds=-5)):
+        expired = password_reset.make_token(user.id, user.password_hash)
+    assert auth_client.post("/auth/reset-password", json={"token": expired, "password": "yet-another-password"}).status_code == 400
+
+
+def test_change_password_needs_the_current_password_and_keeps_only_the_callers_session(auth_client, db):
+    first = _setup_owner(auth_client)["access_token"]
+    other = auth_client.post("/auth/login", json={"email": "owner@example.com", "password": "supersecret1234"}).json()["access_token"]
+    headers = {"Authorization": f"Bearer {first}"}
+
+    wrong = auth_client.post("/auth/me/password", headers=headers, json={"current_password": "not-it-at-all-1", "new_password": "a-brand-new-password"})
+    assert wrong.status_code == 400
+    weak = auth_client.post("/auth/me/password", headers=headers, json={"current_password": "supersecret1234", "new_password": "short"})
+    assert weak.status_code == 422
+
+    ok = auth_client.post("/auth/me/password", headers=headers, json={"current_password": "supersecret1234", "new_password": "a-brand-new-password"})
+    assert ok.status_code == 200
+    fresh = {"Authorization": f"Bearer {ok.json()['access_token']}"}
+    assert auth_client.get("/auth/me", headers=fresh).status_code == 200
+    assert auth_client.get("/auth/me", headers={"Authorization": f"Bearer {other}"}).status_code == 401
+    assert auth_client.get("/auth/me", headers=headers).status_code == 401  # the old token of this very session
+    assert auth_client.post("/auth/login", json={"email": "owner@example.com", "password": "a-brand-new-password"}).status_code == 200
+    assert len(_auth_rows(db, "auth.password_changed")) == 1
+
+
+def test_change_password_is_refused_for_an_account_without_a_password(auth_client, db):
+    from src.core.auth import create_access_token
+
+    user = User(email="gh-only@example.com", name=None, password_hash=None, is_workspace_admin=False)
+    db.add(user)
+    db.commit()
+    token = create_access_token(user.id, user.email, False)
+    resp = auth_client.post(
+        "/auth/me/password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"current_password": "whatever-it-is-1", "new_password": "a-brand-new-password"},
+    )
+    assert resp.status_code == 400 and "GitHub" in resp.json()["detail"]
+
+
 # login
 
 def test_login_valid(auth_client):

@@ -864,6 +864,14 @@ export const api = {
     /** Workspace admin only: mark an account's email verified without the emailed link (for no-SMTP deployments). */
     adminVerifyEmail: (email: string) =>
       post<{ ok: boolean; already_verified: boolean }>("/auth/admin/verify-email", { email }),
+    forgotPassword: (email: string) => post<{ ok: boolean }>("/auth/forgot-password", { email }),
+    resetPassword: (token: string, password: string) => post<{ ok: boolean }>("/auth/reset-password", { token, password }),
+    changePassword: (currentPassword: string, newPassword: string) =>
+      post<{
+        access_token: string
+        user: { id: number; email: string; name: string | null; is_workspace_admin: boolean }
+        pending_invitations: PendingInvitationSummary[]
+      }>("/auth/me/password", { current_password: currentPassword, new_password: newPassword }),
     resendVerification: () =>
       post<{ ok: boolean; already_verified: boolean }>("/auth/resend-verification", {}),
   },

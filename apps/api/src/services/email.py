@@ -75,3 +75,16 @@ def send_invitation_email(to_email: str, org_login: str, inviter: str, invite_li
             "The link expires in 7 days. If you weren't expecting this, you can ignore this email."
         ),
     )
+
+
+def send_password_reset_email(to_email: str, reset_url: str) -> None:
+    send_email(
+        to_email,
+        "Reset your Clevis password",
+        (
+            "Someone asked to reset the password for your Clevis account.\n\n"
+            "Choose a new password (the link expires in 1 hour and works once):\n"
+            f"{reset_url}\n\n"
+            "If you didn't ask for this, you can ignore this email; your password hasn't changed."
+        ),
+    )
