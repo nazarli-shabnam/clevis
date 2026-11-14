@@ -7,6 +7,7 @@ import { api } from "@/lib/api/client"
 import { dueTime } from "@/lib/format"
 import { SectionError } from "@/components/section-error"
 import { Button } from "@/components/ui/button"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { MAX_WAIVER_DAYS, WAIVABLE_CHECKS, WaiverForm, daysRemaining } from "@/components/waiver-form"
 import type { CheckWaiver } from "@/lib/api/types"
 
@@ -17,10 +18,17 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
   const query = useQuery<CheckWaiver[]>({ queryKey, queryFn: () => api.waivers.list(orgLogin), retry: false })
   // The waiver being renewed or edited; the form below switches from "add" to "save" for it.
   const [editing, setEditing] = useState<CheckWaiver | null>(null)
+  // The waiver whose Revoke is awaiting confirmation.
+  const [confirming, setConfirming] = useState<CheckWaiver | null>(null)
 
   const revoke = useMutation({
     mutationFn: (id: number) => api.waivers.revoke(orgLogin, id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+    onSuccess: (_data, id) => {
+      // A revoked waiver can't be saved any more (PUT 404s), so drop the form's binding to it.
+      setEditing((current) => (current?.id === id ? null : current))
+      return queryClient.invalidateQueries({ queryKey })
+    },
+    onSettled: () => setConfirming(null),
   })
 
   return (
@@ -80,7 +88,7 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
                     variant="outline"
                     size="sm"
                     disabled={revoke.isPending}
-                    onClick={() => revoke.mutate(w.id)}
+                    onClick={() => setConfirming(w)}
                     aria-label={`Revoke waiver for ${title}`}
                   >
                     Revoke
@@ -91,6 +99,15 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
           })}
         </ul>
       )}
+      <ConfirmDialog
+        open={confirming !== null}
+        onOpenChange={(open) => !open && setConfirming(null)}
+        title={`Revoke the waiver for ${confirming ? (WAIVABLE_CHECKS[confirming.check_id] ?? confirming.check_id) : ""}?`}
+        description="The check counts toward the score again from the next scan. This can't be undone."
+        confirmLabel="Revoke"
+        pending={revoke.isPending}
+        onConfirm={() => confirming && revoke.mutate(confirming.id)}
+      />
       {revoke.isError && (
         <p role="alert" className="px-4 pb-2 text-xs text-destructive">
           Couldn&apos;t revoke: {revoke.error.message}

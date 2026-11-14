@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -132,7 +132,8 @@ describe("WaiversCard", () => {
     revokeMock.mockRejectedValue(new Error("already gone"))
     renderCard()
     fireEvent.click(await screen.findByRole("button", { name: /Revoke waiver for/ }))
-    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't revoke: already gone")
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Revoke" }))
+    expect(await screen.findByText(/Couldn't revoke: already gone/)).toBeInTheDocument()
   })
 
   it("sends the chosen check, shows the pending label, and bounds the expiry date", async () => {
@@ -162,7 +163,31 @@ describe("WaiversCard", () => {
     revokeMock.mockResolvedValue(undefined)
     renderCard()
     fireEvent.click(await screen.findByRole("button", { name: /Revoke waiver for Default branch has protection rules/ }))
+    expect(revokeMock).not.toHaveBeenCalled() // nothing happens until confirmed
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Revoke" }))
     await waitFor(() => expect(revokeMock).toHaveBeenCalledWith("acme", 1))
+  })
+
+  it("keeps the waiver when the revoke confirmation is cancelled", async () => {
+    listMock.mockResolvedValue([waiver()])
+    renderCard()
+    fireEvent.click(await screen.findByRole("button", { name: /Revoke waiver for/ }))
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Cancel" }))
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument())
+    expect(revokeMock).not.toHaveBeenCalled()
+  })
+
+  it("leaves edit mode when the waiver being edited is revoked", async () => {
+    listMock.mockResolvedValue([waiver()])
+    revokeMock.mockResolvedValue(undefined)
+    renderCard()
+    fireEvent.click(await screen.findByRole("button", { name: /Renew or edit waiver for/ }))
+    expect(await screen.findByRole("button", { name: "Save waiver" })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: /Revoke waiver for/ }))
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Revoke" }))
+    await waitFor(() => expect(revokeMock).toHaveBeenCalledWith("acme", 1))
+    expect(await screen.findByRole("button", { name: "Add waiver" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Save waiver" })).not.toBeInTheDocument()
   })
 
   it("shows the server's error when adding fails", async () => {
