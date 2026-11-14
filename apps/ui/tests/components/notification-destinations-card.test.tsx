@@ -64,7 +64,7 @@ describe("NotificationDestinationsCard", () => {
     renderCard()
     await screen.findByText(/No destinations yet/)
     fireEvent.click(screen.getByRole("button", { name: "Add a destination" }))
-    expect(document.getElementById("dest-name")).toHaveFocus()
+    expect(screen.getByLabelText("Name")).toHaveFocus()
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: " #sec " } })
     fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: " https://hooks.slack.com/x " } })
     fireEvent.click(screen.getByLabelText("New critical/high alert"))

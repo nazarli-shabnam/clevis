@@ -78,7 +78,7 @@ describe("ApiTokensCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create token" }))
     await screen.findByText("clv_secret_value")
 
-    const snippet = document.querySelector("pre")!.textContent!
+    const snippet = screen.getByText(/uses: nazarli-shabnam\/clevis\/actions\/clevis-score@/).textContent!
     expect(snippet).toContain("uses: nazarli-shabnam/clevis/actions/clevis-score@")
     expect(snippet).toContain("org: acme")
     expect(snippet).toContain("token: ${{ secrets.CLEVIS_API_TOKEN }}")
