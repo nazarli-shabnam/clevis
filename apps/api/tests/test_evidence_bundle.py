@@ -109,13 +109,15 @@ def test_admin_downloads_a_zip_with_every_section_and_a_manifest(db, world):
 
 
 def test_waiver_register_lists_every_waiver_even_ones_masking_nothing_or_expired_and_ignores_the_range(db, world):
-    from src.core.db import CheckWaiver
+    from src.core.db import CheckWaiver, set_session_tenant
 
     acme, other = world["acme"], world["other"]
 
     def waiver(tenant, check, *, repos, expires, owner="platform", reason="legacy"):
+        set_session_tenant(db, tenant.tenant_id)  # RLS: a row is only insertable under its own tenant
         db.add(CheckWaiver(tenant_id=tenant.tenant_id, check_id=check, repos=repos, reason=reason, owner=owner,
                            expires_at=expires, created_by="ev-admin@e.com"))
+        db.flush()
 
     waiver(acme, "repository_license_present", repos=None, expires=NOW + timedelta(days=10))  # masks no failing check
     waiver(acme, "repository_secret_scanning_enabled", repos=["api", "web"], expires=NOW - timedelta(days=2), reason="=cmd|' /C calc'!A0")
