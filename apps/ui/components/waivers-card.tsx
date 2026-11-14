@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { CircleNotch } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
@@ -20,6 +21,13 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
   const [editing, setEditing] = useState<CheckWaiver | null>(null)
   // The waiver whose Revoke is awaiting confirmation.
   const [confirming, setConfirming] = useState<CheckWaiver | null>(null)
+
+  // A notification links here with ?waiver=<id>: that row is marked and scrolled into view.
+  const linkedWaiver = Number(useSearchParams()?.get("waiver")) || null
+  const loadedCount = query.data?.length
+  useEffect(() => {
+    if (linkedWaiver !== null) document.getElementById(`waiver-${linkedWaiver}`)?.scrollIntoView?.({ block: "center" })
+  }, [linkedWaiver, loadedCount])
 
   const revoke = useMutation({
     mutationFn: (id: number) => api.waivers.revoke(orgLogin, id),
@@ -58,7 +66,12 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
             const title = WAIVABLE_CHECKS[w.check_id] ?? w.check_id
             const days = daysRemaining(w.expires_at)
             return (
-              <li key={w.id} className="px-4 py-2 flex items-start justify-between gap-3 text-xs">
+              <li
+                key={w.id}
+                id={`waiver-${w.id}`}
+                aria-current={w.id === linkedWaiver ? "true" : undefined}
+                className={`px-4 py-2 flex items-start justify-between gap-3 text-xs ${w.id === linkedWaiver ? "bg-elevated outline outline-1 outline-primary" : ""}`}
+              >
                 <div className="min-w-0">
                   <p className="font-medium text-foreground">
                     {title}

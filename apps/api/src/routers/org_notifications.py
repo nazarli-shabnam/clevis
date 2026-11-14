@@ -161,7 +161,8 @@ def _score_drop_items(
                 "at": newer.created_at,
                 "title": f"Security score dropped from {older.score} to {newer.score}",
                 "detail": f"{newer.failed_checks} of {newer.total_checks} checks failing",
-                "href": "/security",
+                # The Security page opens a stored scan from ?scan, compared with ?compare; ?owner names the org.
+                "href": f"/security?scan={newer.id}&owner={quote(org_login, safe='')}&compare={older.id}",
             }
         )
         if len(items) == per_source:
@@ -186,7 +187,7 @@ def _failed_job_items(
             "title": f"Background job failed: {r.job_type}",
             # The stored result is an error string; keep the line short, the activity log has the rest.
             "detail": sanitize_error(r.result or "")[:140],
-            "href": f"/settings/org/{org_login}/activity",
+            "href": f"/settings/org/{quote(org_login, safe='')}/activity?job={r.id}",
         }
         for r in rows
     ]
@@ -223,7 +224,8 @@ def _waiver_expired_items(db: Session, org_login: str, tenant_id: int, since: da
             "at": w.expires_at,
             "title": f"Waiver expired: {w.check_id}",
             "detail": f"Owner {w.owner}: {w.reason}"[:140],
-            "href": "/security",
+            # The Waivers card lives on the Members page; ?waiver highlights this one.
+            "href": f"/settings/org/{quote(org_login, safe='')}/members?waiver={w.id}",
         }
         for w in waiver_repo.list_for_tenant(db, tenant_id)
         if since <= _aware(w.expires_at) <= now
