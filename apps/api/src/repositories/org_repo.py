@@ -84,11 +84,15 @@ def _apply_rename(db: Session, org: Org, new_login: str) -> None:
         db.query(OrgMembershipSyncCursor).filter(OrgMembershipSyncCursor.tenant_id == org.tenant_id).update(
             {OrgMembershipSyncCursor.org_login: new_login}, synchronize_session=False
         )
-        # saved_tokens.org is unique: if someone already saved a token under the new login, keep theirs.
-        if not db.query(SavedToken.id).filter(func.lower(SavedToken.org) == new_login.lower()).first():
-            db.query(SavedToken).filter(
-                SavedToken.tenant_id == org.tenant_id, func.lower(SavedToken.org) == old_login.lower()
-            ).update({SavedToken.org: new_login}, synchronize_session=False)
+        # saved_tokens.org is unique. RLS hides other tenants' rows, so a pre-check could miss a token saved
+        # under the new login; try the move in a savepoint and leave the old row if the name is taken.
+        try:
+            with db.begin_nested():
+                db.query(SavedToken).filter(
+                    SavedToken.tenant_id == org.tenant_id, func.lower(SavedToken.org) == old_login.lower()
+                ).update({SavedToken.org: new_login}, synchronize_session=False)
+        except IntegrityError:
+            logger.warning("saved token for %r not moved: a token already exists under %r", old_login, new_login)
     db.commit()
     db.refresh(org)
 
