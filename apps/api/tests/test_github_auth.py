@@ -470,7 +470,8 @@ def test_link_start_requires_a_session_and_an_unlinked_configured_account(gh_cli
     state = _link_state(started)
     nonce = gh_client.cookies.get("clevis_oauth_state")
     assert github_oauth.verify_state(state, cookie_nonce=nonce, purpose=github_oauth.LINK_PURPOSE)
-    assert github_oauth.decode_state_link(state) == (user.id, user.token_version)
+    uid, version, jti = github_oauth.decode_state_link(state)
+    assert (uid, version) == (user.id, user.token_version) and jti  # the starting session's id is bound in
     # A link state is not a sign-in state, so it can never be replayed against the sign-in path.
     assert not github_oauth.verify_state(state, cookie_nonce=nonce)
 
@@ -529,6 +530,29 @@ def test_a_browser_signed_in_as_another_account_or_signed_out_everywhere_cannot_
     for u in (user, other):
         db.refresh(u)
         assert u.github_user_id is None
+    sync.assert_not_called()
+
+
+def test_logging_out_the_session_that_started_the_link_cancels_it(gh_client, db, oauth_configured):
+    from datetime import datetime, timedelta, timezone
+
+    import jwt as pyjwt
+
+    from src.core.db import RevokedToken
+
+    user = _password_user(db)
+    token = _session(user)
+    state = _link_state(_start_link(gh_client, user, token))
+    jti = pyjwt.decode(token, options={"verify_signature": False})["jti"]
+    # What POST /auth/logout writes for that session.
+    db.add(RevokedToken(jti=jti, user_id=user.id, expires_at=datetime.now(timezone.utc) + timedelta(days=1)))
+    db.commit()
+
+    resp, sync = _finish_link(gh_client, state)
+
+    assert resp.headers["location"].endswith("/settings?github_link_error=session")
+    db.refresh(user)
+    assert user.github_user_id is None
     sync.assert_not_called()
 
 

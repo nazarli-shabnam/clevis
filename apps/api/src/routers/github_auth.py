@@ -25,9 +25,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.app_config import registration_enabled
-from src.core.auth import SESSION_COOKIE_NAME, SETUP_LOCK_KEY, UserOut, require_auth, set_session_cookie, start_session
+from src.core.auth import (
+    SESSION_COOKIE_NAME,
+    SETUP_LOCK_KEY,
+    UserOut,
+    decode_access_token,
+    require_auth,
+    set_session_cookie,
+    start_session,
+)
 from src.core.config import settings
-from src.core.db import User, get_db, set_session_user
+from src.core.db import RevokedToken, User, get_db, set_session_user
 from src.core.rate_limit import rate_limit
 from src.repositories import invitation_repo, tenant_repo
 from src.services import auth_audit, github_oauth, org_provisioning
@@ -190,8 +198,15 @@ def github_link_start(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"This account is already linked to GitHub (@{row.github_login}).",
         )
+    # The session that started the flow, by the id it carries (require_auth has already verified the token): the
+    # callback refuses the link if that session was logged out meanwhile.
+    presented = request.headers.get("authorization", "")
+    token = presented[7:] if presented[:7].lower() == "bearer " else request.cookies.get(SESSION_COOKIE_NAME)
+    jti = decode_access_token(token).get("jti") if token else None
     try:
-        state, nonce = github_oauth.sign_state(link_user_id=user.id, link_token_version=row.token_version)
+        state, nonce = github_oauth.sign_state(
+            link_user_id=user.id, link_token_version=row.token_version, link_session_jti=jti
+        )
         url = github_oauth.build_authorize_url(state=state, redirect_uri=_callback_url(request))
     except github_oauth.GitHubOAuthNotConfigured:
         raise HTTPException(
@@ -217,7 +232,7 @@ def _complete_link(
     link = github_oauth.decode_state_link(state)
     if link is None:
         return _ui_settings_redirect("github_link_error=session")
-    uid, token_version = link
+    uid, token_version, session_jti = link
     # The state (signed for this user, bound to this browser) is the proof that they started the flow. Password
     # login sets no session cookie, so it is not required; but if this browser is signed in as a *different*
     # account (a cookie that authenticates as someone else), the flow was not started by them.
@@ -240,8 +255,10 @@ def _complete_link(
     # Locked from here to the commit, so two callbacks for one account (two tabs) are serialized: the second
     # re-reads the first's link and takes the other_account branch instead of overwriting it.
     user = db.query(User).filter(User.id == uid).with_for_update().first()
-    # Signing out everywhere (token_version) since the flow started cancels it.
+    # Signing out everywhere (token_version) or ending the session that started the flow cancels it.
     if user is None or user.token_version != token_version:
+        return _ui_settings_redirect("github_link_error=session")
+    if session_jti and db.get(RevokedToken, session_jti) is not None:
         return _ui_settings_redirect("github_link_error=session")
     if user.github_user_id is not None and user.github_user_id != identity.github_user_id:
         # Unlinking is not offered, so a different GitHub identity cannot replace the linked one.
