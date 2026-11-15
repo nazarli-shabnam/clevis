@@ -3,8 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const replace = vi.fn();
 
+// One router object for every render: a new one each time would re-run the page's mount effect and send extra
+// /auth/setup-required requests that the fetch stub would mistake for the post-submit re-check.
+const router = { replace };
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace }),
+  useRouter: () => router,
 }));
 
 import SetupPage from "@/app/setup/page";
