@@ -70,6 +70,13 @@ describe("NotificationDestinationsCard", () => {
     expect(badges[0]).toHaveTextContent("Failing (3 in a row): HTTP 404")
   })
 
+  it("flags a failing destination even without a failure count or reason", async () => {
+    listMock.mockResolvedValue([dest({ last_status: "failed", last_error: null, consecutive_failures: 0 })])
+    renderCard()
+    await screen.findByText("#alerts")
+    expect(screen.getByRole("status")).toHaveTextContent("Failing. Alerts to this destination are not being delivered.")
+  })
+
   it("adds a destination, then clears the credential fields", async () => {
     listMock.mockResolvedValue([])
     createMock.mockResolvedValue(dest())
