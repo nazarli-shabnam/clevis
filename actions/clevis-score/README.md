@@ -27,6 +27,13 @@ lasts until revoked. Scans a token triggers are audit-logged under `api_token:<i
 score-drop alerts. Scans run one at a time per org, and if one finished within the last minute that result is returned
 instead of scanning again, so `refresh: "true"` in a tight loop doesn't burn the org's GitHub rate limit.
 
+## First run and errors
+
+A new org has no stored score yet: the first run needs `refresh: "true"` (or an existing scan), otherwise the API answers
+`404 No scan yet`. When the API rejects a request the action prints its reason after the status, for example
+`HTTP 401: Invalid or revoked API token` (an expired token reads the same), `HTTP 404: Organization not found`,
+or `HTTP 400` with the no-installation message for `refresh: "true"`.
+
 ## Waived checks
 
 Each entry in the score response's `checks` array carries `waived` (the check has an active waiver) and `scored` (it counted

@@ -64,6 +64,18 @@ def _workflow_command_text(text: str) -> str:
     return " ".join(str(text).splitlines())
 
 
+def _error_detail(exc: urllib.error.HTTPError) -> str:
+    """The API's ``detail`` (e.g. "No scan yet; run one with POST ...") as ": <text>", or "" if there is none.
+    Size-capped and collapsed to one line; it is server text, never the token."""
+    try:
+        detail = json.loads(exc.read(2048).decode("utf-8", "replace")).get("detail")
+    except (OSError, ValueError, AttributeError, http.client.HTTPException):
+        return ""
+    if not isinstance(detail, str) or not detail.strip():
+        return ""
+    return f": {_workflow_command_text(detail)[:300]}"
+
+
 def _request(method: str, url: str, token: str) -> dict:
     req = urllib.request.Request(
         url,
@@ -104,7 +116,7 @@ def main(env: dict[str, str] | None = None) -> int:
     try:
         data = fetch_score(api_url, org, token, refresh)
     except urllib.error.HTTPError as exc:
-        print(f"Clevis API returned HTTP {exc.code}", file=sys.stderr)
+        print(f"Clevis API returned HTTP {exc.code}{_error_detail(exc)}", file=sys.stderr)
         return 2
     # OSError covers URLError, TimeoutError and the connection/SSL errors raised while reading the body
     # (ConnectionResetError, ssl.SSLError); HTTPException covers IncompleteRead and friends. All of them

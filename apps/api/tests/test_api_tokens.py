@@ -396,6 +396,29 @@ def test_action_null_score_is_exit_2_not_a_failed_gate(capsys):
     assert "None" not in captured.out + captured.err
 
 
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        (b'{"detail": "No scan yet; run one with POST /scan"}', "HTTP 404: No scan yet; run one with POST /scan"),
+        (rb'{"detail": "a\nb"}', "HTTP 404: a b"),
+        (b"<html>nope</html>", "HTTP 404"),
+        (b'{"detail": [{"msg": "x"}]}', "HTTP 404"),
+        (b'{"detail": "' + b"x" * 5000 + b'"}', "HTTP 404"),
+    ],
+    ids=["detail", "multiline", "not-json", "non-string", "oversize"],
+)
+def test_action_http_errors_print_the_api_detail(body, expected, capsys):
+    import io
+    import urllib.error
+
+    check = _load_check()
+    env = {"CLEVIS_API_URL": "https://c.example", "CLEVIS_ORG": "acme", "CLEVIS_TOKEN": "clv_x"}
+    err = urllib.error.HTTPError("https://c.example", 404, "no", {}, io.BytesIO(body))
+    with patch.object(check, "fetch_score", side_effect=err):
+        assert check.main(env) == 2
+    assert capsys.readouterr().err.strip() == f"Clevis API returned {expected}"
+
+
 def test_action_main_maps_http_and_network_errors_to_exit_2(capsys):
     import urllib.error
 
