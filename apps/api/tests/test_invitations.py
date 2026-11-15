@@ -826,6 +826,29 @@ def test_a_slow_mail_server_cannot_hold_a_bulk_request_past_its_delivery_budget(
     time.sleep(0.8)  # let the abandoned sends finish before the patch is removed
 
 
+def test_a_transport_failure_mid_bulk_stops_the_queued_sends(db, acme_org, monkeypatch):
+    import smtplib
+
+    monkeypatch.setattr("src.routers.invitations._EMAIL_PARALLEL_SENDS", 1)  # strict order
+    calls = []
+
+    def send(to, *_a, **_k):
+        calls.append(to)
+        if len(calls) == 2:
+            raise smtplib.SMTPException("connection lost")
+
+    admin = _client(db, acme_org["admin"])
+    with _smtp_on(), patch("src.services.email.send_email", side_effect=send):
+        resp = admin.post(
+            "/orgs/acme/invitations/bulk",
+            json={"emails": ["a@acme.com", "b@acme.com", "c@acme.com", "d@acme.com"], "send_email": True},
+        )
+    results = resp.json()["results"]
+    assert [r["email_status"] for r in results] == ["sent", "failed", "failed", "failed"]
+    assert all(r["invite_link"] for r in results)
+    assert calls == ["a@acme.com", "b@acme.com"]  # c and d never reached SMTP
+
+
 def test_an_unexpected_error_while_emailing_still_returns_the_invitation_and_link(db, acme_org):
     admin = _client(db, acme_org["admin"])
     with _smtp_on(), patch("src.services.email.send_email", side_effect=RuntimeError("boom")):

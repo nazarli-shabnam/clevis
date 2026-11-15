@@ -6,6 +6,7 @@ AND be verified.
 
 import logging
 import smtplib
+import threading
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 
@@ -115,10 +116,19 @@ def _deliver_bulk(items: list, *, org_login: str, tenant_id: int, inviter: str) 
         return
     if not rest:
         return
+    down = threading.Event()
+
+    def send(item):
+        # Once any send finds the server down, queued ones neither take an hourly-cap slot nor try SMTP.
+        if down.is_set():
+            return "failed", True
+        result = _email_invitation(item.email, org_login, inviter, item.invite_link, tenant_id)
+        if result[1]:
+            down.set()
+        return result
+
     pool = ThreadPoolExecutor(max_workers=_EMAIL_PARALLEL_SENDS)
-    futures = {
-        pool.submit(_email_invitation, item.email, org_login, inviter, item.invite_link, tenant_id): item for item in rest
-    }
+    futures = {pool.submit(send, item): item for item in rest}
     done, _ = wait(futures, timeout=_EMAIL_BUDGET_SECONDS)
     # Not waited for: a send already running finishes (or times out at the SMTP socket) in its own thread.
     pool.shutdown(wait=False, cancel_futures=True)
