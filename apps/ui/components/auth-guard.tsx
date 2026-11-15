@@ -1,10 +1,12 @@
 "use client"
 
-import { Fragment, useEffect, useRef } from "react"
+import { Fragment, useEffect, useRef, useState } from "react"
+import Link from "next/link"
 import { useRouter, usePathname } from "next/navigation"
 import { X } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
+import { useMyInvitations } from "@/lib/use-my-invitations"
 import { isPublicRoute } from "@/lib/public-routes"
 import { currentLocationNext, withNext } from "@/lib/safe-next"
 
@@ -14,6 +16,8 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
 
   const isPublic = isPublicRoute(pathname)
+  const [mineDismissed, setMineDismissed] = useState(false)
+  const myInvitations = useMyInvitations(!!user, pathname)
 
   useEffect(() => {
     if (isLoading) return
@@ -76,13 +80,30 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
           Couldn&rsquo;t confirm your session with the server — your account info may be out of date until it&rsquo;s reachable again.
         </div>
       )}
-      {pendingInvitations.length > 0 && (
+      {myInvitations.length > 0 && !mineDismissed && (
+        <div className="bg-primary/10 border-b border-primary/30 px-4 py-2 flex items-center justify-center gap-3 text-xs text-primary flex-wrap">
+          <span>You have a pending invite:</span>
+          {myInvitations.map((inv) => (
+            <Link key={inv.token} href={`/invite/${inv.token}`} className="underline font-medium">
+              Accept invitation to {inv.org_login}
+            </Link>
+          ))}
+          <button
+            onClick={() => setMineDismissed(true)}
+            className="text-primary/60 hover:text-primary"
+            aria-label="Dismiss"
+          >
+            <X className="size-3" />
+          </button>
+        </div>
+      )}
+      {myInvitations.length === 0 && pendingInvitations.length > 0 && (
         <div className="bg-primary/10 border-b border-primary/30 px-4 py-2 flex items-center justify-center gap-3 text-xs text-primary flex-wrap">
           <span>
             {/* Deliberately not a link: the accept token isn't exposed here. */}
             You have a pending invite to join{" "}
-            {pendingInvitations.map((inv) => inv.org_login).join(", ")} — use your invite link, or ask an org
-            admin to resend it.
+            {pendingInvitations.map((inv) => inv.org_login).join(", ")} — verify your email, then use your invite link, or
+            ask an org admin to resend it.
           </span>
           <button
             onClick={dismissPendingInvitations}

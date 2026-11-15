@@ -335,3 +335,46 @@ describe("AuthGuard pending invitations banner", () => {
     expect(notice).not.toBeInTheDocument();
   });
 });
+
+describe("AuthGuard pending-invitation banner (#1023)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    mockPathname = "/repos";
+    localStorage.setItem(TOKEN_KEY, makeJwt(1, "user@example.com"));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/me")) {
+          return Promise.resolve(
+            jsonResponse({ id: 1, email: "user@example.com", name: null, is_workspace_admin: false }),
+          );
+        }
+        if (url.endsWith("/invitations/mine")) {
+          return Promise.resolve(
+            jsonResponse([{ org_login: "acme", token: "inv-tok", expires_at: "2030-01-01T00:00:00Z" }]),
+          );
+        }
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("links to each invitation the server still has pending, with no in-memory login state", async () => {
+    render(
+      <AuthProvider>
+        <AuthGuard>
+          <div>dashboard</div>
+        </AuthGuard>
+      </AuthProvider>,
+    );
+
+    const link = await screen.findByRole("link", { name: "Accept invitation to acme" });
+    expect(link).toHaveAttribute("href", "/invite/inv-tok");
+  });
+});
