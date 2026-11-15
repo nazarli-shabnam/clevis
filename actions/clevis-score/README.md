@@ -39,7 +39,7 @@ toward `score`, `total_checks` and `failed_checks`; `false` for waived and infor
 |------|---------|
 | 0 | Gate passed |
 | 1 | Score below the threshold, or a named check is failing/errored/missing |
-| 2 | Could not obtain a score (bad config, HTTP error, unreachable API, connection/TLS error or unreadable response) |
+| 2 | Could not obtain a score (bad config, HTTP error, unreachable API, connection/TLS error, unreadable response, or no scored checks yet: the API returns a `null` score when nothing was assessed, for example an org with no repositories) |
 
 The script uses only the Python standard library, so it also works as a plain CLI:
 `CLEVIS_API_URL=... CLEVIS_ORG=acme CLEVIS_TOKEN=... CLEVIS_THRESHOLD=80 python3 check.py`.

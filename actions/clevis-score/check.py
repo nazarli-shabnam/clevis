@@ -116,6 +116,11 @@ def main(env: dict[str, str] | None = None) -> int:
         print(f"The Clevis API returned an unreadable response: {type(exc).__name__}", file=sys.stderr)
         return 2
 
+    if "score" in data and data["score"] is None:
+        # Not a gate failure: nothing was assessed (e.g. an org with no repositories), so there is no score to gate on.
+        print(f"Clevis has no score for {_workflow_command_text(org)}: no scored checks yet", file=sys.stderr)
+        return 2
+
     problems = evaluate(data, threshold, required)
     print(f"Clevis score for {_workflow_command_text(org)}: {_workflow_command_text(data.get('score'))} (threshold {threshold})")
     out = env.get("GITHUB_OUTPUT")
