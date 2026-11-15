@@ -9,7 +9,7 @@ merged the existing ones). ``get`` and ``upsert`` normalise it, so callers may p
 
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -77,3 +77,22 @@ def upsert(
     assert row is not None
     db.refresh(row)  # core upsert bypasses the identity map — pull fresh column values
     return row
+
+
+def rename_repo(db: Session, tenant_id: int, old_repo: str, new_repo: str) -> int:
+    """Move a renamed/transferred repository's opt-ins to its new ``owner/name`` key. A feature that already
+    has a row under the new key keeps it (the old row stays, stale). Returns rows moved. Does not commit."""
+    result = db.execute(
+        text(
+            """
+            UPDATE automation_repo_settings AS a SET repo = :new
+            WHERE a.tenant_id = :tenant_id AND a.repo = :old
+              AND NOT EXISTS (
+                SELECT 1 FROM automation_repo_settings b
+                WHERE b.tenant_id = a.tenant_id AND b.repo = :new AND b.feature = a.feature
+              )
+            """
+        ),
+        {"tenant_id": tenant_id, "old": old_repo.lower(), "new": new_repo.lower()},
+    )
+    return result.rowcount
