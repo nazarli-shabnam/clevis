@@ -594,7 +594,12 @@ def _token(db, tenant_id, name, *, expires_in=None, revoked=False):
     db.add(row)
     db.commit()
     db.refresh(row)
-    return row
+    token_id = row.id
+    # Leave no tenant context behind: the request under test resolves its own, and a leftover one (another
+    # tenant's, under the restricted CI role) would hide the org it is asking about.
+    db.info.pop("tenant_id", None)
+    db.commit()
+    return token_id
 
 
 def test_api_token_nearing_expiry_is_an_admin_only_item_that_links_to_the_token(db, world):
@@ -610,17 +615,15 @@ def test_api_token_nearing_expiry_is_an_admin_only_item_that_links_to_the_token(
 
     assert [i["kind"] for i in member["items"]] == []
     [item] = [i for i in admin["items"] if i["kind"] == "api_token_expiring"]
-    assert item["id"] == f"api_token_expiring:{soon.id}"
+    assert item["id"] == f"api_token_expiring:{soon}"
     assert item["title"] == 'API token "ci-soon" expires in 4 days'
-    assert item["href"] == f"/settings/org/acme/members?token={soon.id}"
+    assert item["href"] == f"/settings/org/acme/members?token={soon}"
     assert item["read"] is False and admin["unread_count"] == 1
 
 
 def test_api_token_expiry_is_tenant_scoped_and_can_be_dismissed_and_muted(db, world):
     t = world["acme"].tenant_id
-    # The id is read before the other tenant's row is written: that switches the session's tenant, and RLS would
-    # hide this (now expired) instance from a refresh.
-    item_id = f"api_token_expiring:{_token(db, t, 'ci-soon', expires_in=timedelta(days=2)).id}"
+    item_id = f"api_token_expiring:{_token(db, t, 'ci-soon', expires_in=timedelta(days=2))}"
     _token(db, world["globex"].tenant_id, "other-org", expires_in=timedelta(days=2))
     admin = _client(db, world["users"]["admin"])
     member = _client(db, world["users"]["member"])
