@@ -1132,6 +1132,14 @@ describe("installations.lookup / installations.sync", () => {
     );
   }
 
+  it("GETs /me/pending-installations (#1014)", async () => {
+    stubOkJson([{ installation_id: 501, account_login: "acme", created_at: "2026-11-15T00:00:00Z", role: "approver" }]);
+    const result = await api.installations.pending();
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toMatch(/\/me\/pending-installations$/);
+    expect(result[0]).toMatchObject({ installation_id: 501, role: "approver" });
+  });
+
   it("GETs /me/installations/lookup/{id}", async () => {
     stubOkJson({ account_login: "shabnam", account_type: "User" });
     const result = await api.installations.lookup(42);

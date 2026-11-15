@@ -516,6 +516,15 @@ export interface InstallationMeta {
   automations?: AutomationPermission[]
 }
 
+/** An organization installation GitHub announced that nobody has connected to Clevis yet, as it concerns you. */
+export interface PendingInstallation {
+  installation_id: number
+  account_login: string
+  created_at: string
+  /** "approver" completed it on GitHub and can connect it; "requester" asked for it. */
+  role: "approver" | "requester"
+}
+
 export interface InstallationLookup {
   account_login: string
   account_type: string

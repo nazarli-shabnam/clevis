@@ -11,6 +11,7 @@ import { Field, FieldLabel, FieldDescription } from "@/components/ui/field"
 import { SectionError } from "@/components/section-error"
 import { EmptyStatePage } from "@/components/empty-state"
 import { PermissionDriftNotice } from "@/components/permission-drift-notice"
+import { PendingInstallationsCard } from "@/components/pending-installations-card"
 import { SessionsCard } from "@/components/sessions-card"
 import { ChangePasswordCard } from "@/components/change-password-card"
 import { ChangeEmailCard, DeleteAccountCard } from "@/components/account-cards"
@@ -911,6 +912,7 @@ export default function SettingsPage() {
         <SessionsCard />
         <AppearanceSection />
         <OrgMembershipsSection />
+        <PendingInstallationsCard />
         <ConnectedOrgsSection />
         {user?.is_workspace_admin && <SavedTokensSection />}
         {user?.is_workspace_admin && <InstanceConfigSection />}

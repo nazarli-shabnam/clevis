@@ -35,6 +35,7 @@ vi.mock("@/lib/api/client", () => ({
       list: (...args: unknown[]) => installationsListMock(...args),
       listForOrg: (...args: unknown[]) => installationsListForOrgMock(...args),
       remove: (...args: unknown[]) => installationsRemoveMock(...args),
+      pending: vi.fn().mockResolvedValue([]),
     },
     tokens: {
       list: (...args: unknown[]) => tokensListMock(...args),

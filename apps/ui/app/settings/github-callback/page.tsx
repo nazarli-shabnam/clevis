@@ -89,8 +89,11 @@ export default function GithubInstallCallbackPage() {
           )}
           {status === "pending-approval" && (
             <p className="text-sm text-muted-foreground">
-              This installation needs approval from an organization owner before it can be connected.
-              Once approved, revisit Settings and it will show up automatically.
+              This installation needs approval from an organization owner before it can be connected. Once an owner
+              approves it, Clevis is told, and the owner can connect it from Settings (an owner who isn&apos;t in
+              Clevis yet needs to sign in with GitHub first). It won&apos;t appear in your list by itself: after
+              it is connected, ask an owner to invite you to the organization. You can also open the App&apos;s
+              Configure page on GitHub and save it to bring the owner back here.
             </p>
           )}
           {status === "success" && (
