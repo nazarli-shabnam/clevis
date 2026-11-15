@@ -340,11 +340,14 @@ def notify_waiver_expiring(
     names = ", ".join(sorted({e["check_id"] for e in expiring}))
     soonest = min(e["days_left"] for e in expiring)
     renew_url = f"{settings.cors_origins[0]}/settings/org/{quote(org_login, safe='')}/members" if settings.cors_origins else ""
+    # The waivers entered different windows, so only the earliest deadline is stated for a group.
+    many = len(expiring) != 1
+    deadline = f"within {soonest} day{'s' if soonest != 1 else ''}"
     text = (
-        f"Clevis: {len(expiring)} check waiver{'s' if len(expiring) != 1 else ''} for {org_login} "
-        f"{'expire' if len(expiring) != 1 else 'expires'} within {soonest} day{'s' if soonest != 1 else ''} ({names}). "
-        f"After that the check{'s' if len(expiring) != 1 else ''} count toward the score again."
-        + (f" Renew {'them' if len(expiring) != 1 else 'it'}: {renew_url}" if renew_url else "")
+        f"Clevis: {len(expiring)} check waiver{'s' if many else ''} for {org_login} "
+        f"{'expire soon, the earliest ' + deadline if many else 'expires ' + deadline} ({names}). "
+        f"After a waiver lapses its check counts toward the score again."
+        + (f" Renew {'them' if many else 'it'}: {renew_url}" if renew_url else "")
     )
     _notify_event(
         db, tenant_id, org_login, EVENT_WAIVER_EXPIRING, text,

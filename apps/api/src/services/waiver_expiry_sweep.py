@@ -30,7 +30,11 @@ def _due_warnings(db: Session, tenant_id: int, now: datetime) -> list[tuple]:
     """(waiver, stage) for each unexpired waiver that crossed a warning window nobody was told about yet.
     A waiver that crossed two windows between ticks (a long outage) is announced once, at the later stage."""
     due = []
-    for waiver in waiver_repo.candidates_for_expiry_warning(db, tenant_id, now, max(waiver_service.WARNING_DAYS)):
+    # Locked until this tick's commit: a renewal that lands meanwhile waits, instead of being overwritten by a
+    # stage computed from the expiry it replaced.
+    for waiver in waiver_repo.candidates_for_expiry_warning(
+        db, tenant_id, now, max(waiver_service.WARNING_DAYS), lock=True
+    ):
         stage = waiver_service.warning_stage(waiver.expires_at, now)
         if stage > waiver.expiry_warning_stage:
             due.append((waiver, stage))

@@ -431,3 +431,52 @@ def test_waivers_in_their_last_week_show_in_the_admins_bell_only_with_a_renew_li
     assert admin.post(f"/orgs/acme-w/notifications/{item['id']}/dismiss").status_code == 204
     assert admin.put("/orgs/acme-w/notifications/preferences", json={"muted_kinds": ["waiver_expiring"]}).status_code == 200
     assert [i["kind"] for i in admin.get("/orgs/acme-w/notifications").json()["items"]] == []
+
+
+def test_editing_only_the_reason_keeps_a_warning_the_sweep_has_not_sent_yet(db, world):
+    w = _waiver(db, world["org"], BP, days=3)  # inside the last week, stage 0: the sweep has not warned yet
+    admin = _client(db, world["users"]["admin"])
+    resp = admin.put(f"/orgs/acme-w/waivers/{w.id}", json={**_body(days=3), "expires_at": w.expires_at.isoformat(), "reason": "new reason"})
+    assert resp.status_code == 200, resp.text
+    db.refresh(w)
+    assert w.reason == "new reason" and w.expiry_warning_stage == 0
+    with patch("src.services.waiver_expiry_sweep.notifications.notify_waiver_expiring") as notify:
+        run_waiver_expiry_sweep(db)
+    assert notify.call_count == 1  # the pending warning was not skipped by the edit
+
+    # Moving the date does re-arm: it recomputes the stage for the new expiry.
+    admin.put(f"/orgs/acme-w/waivers/{w.id}", json=_body(days=60))
+    db.refresh(w)
+    assert w.expiry_warning_stage == 0
+
+
+def test_a_group_alert_states_only_the_earliest_deadline(db, world):
+    from src.repositories import notification_repo
+    from src.services import notifications
+
+    tenant = world["org"].tenant_id
+    notification_repo.create(
+        db, tenant_id=tenant, kind="slack", name="n", encrypted_url="v2:x", events=["waiver_expiring"],
+        min_score_drop=10, enabled=True,
+    )
+    with patch("src.services.notifications.send", return_value=(True, "ok")) as send, patch(
+        "src.services.notifications.allowed_emails_for", return_value=set()
+    ):
+        notifications.notify_waiver_expiring(
+            db, tenant, "acme-w",
+            [
+                {"waiver_id": 1, "check_id": BP, "expires_at": "x", "days_left": 7},
+                {"waiver_id": 2, "check_id": "repository_license_present", "expires_at": "y", "days_left": 1},
+            ],
+        )
+    text = send.call_args.args[2]
+    assert "2 check waivers" in text and "the earliest within 1 day" in text
+    assert "both" not in text and "expire within" not in text
+
+
+def test_the_sweep_locks_the_waivers_it_is_about_to_stamp(db, world):
+    _waiver(db, world["org"], BP, days=3)
+    now = datetime.now(timezone.utc)
+    from src.repositories import waiver_repo
+
+    assert [w.check_id for w in waiver_repo.candidates_for_expiry_warning(db, world["org"].tenant_id, now, 7, lock=True)] == [BP]
