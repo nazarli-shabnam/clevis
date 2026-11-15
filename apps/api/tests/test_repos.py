@@ -146,6 +146,77 @@ def test_list_repos_maps_github_status_error_to_400(repos_client):
     assert "404" in resp.json()["detail"]
 
 
+# --- personal-account listing: POST /me/repos/{owner} (#1024) ---
+
+_PAT = "ghp_testtoken123456789012345678901234"
+
+
+def _repo(name, owner):
+    return {
+        "name": name,
+        "full_name": f"{owner}/{name}",
+        "owner": {"login": owner},
+        "private": False,
+        "stargazers_count": 0,
+        "forks_count": 0,
+        "watchers_count": 0,
+        "open_issues_count": 0,
+        "default_branch": "main",
+        "html_url": f"https://github.com/{owner}/{name}",
+    }
+
+
+def test_personal_list_repos_lists_a_user_account_without_an_org_row(repos_client):
+    with patch("src.routers.repos.get_account_type", return_value="User"), patch(
+        "src.routers.repos.GitHubClient"
+    ) as mock_client:
+        mock_client.return_value.request_paginated.return_value = [_repo("dotfiles", "octocat")]
+        resp = repos_client.post("/me/repos/octocat", json={"token": _PAT})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["org"] == "octocat" and body["total"] == 1 and body["repos"][0]["full_name"] == "octocat/dotfiles"
+    # A user account is listed through /installation/repositories, not /orgs/{owner}/repos (which 404s for it).
+    assert mock_client.return_value.request_paginated.call_args.args[0] == "/installation/repositories"
+
+
+def test_personal_list_repos_drops_repos_the_owner_does_not_own(repos_client):
+    # A pasted PAT falls back to /user/repos, which lists the token holder's repos whatever owner was typed.
+    with patch("src.routers.repos.get_account_type", return_value="User"), patch(
+        "src.routers.repos.GitHubClient"
+    ) as mock_client:
+        mock_client.return_value.request_paginated.return_value = [_repo("mine", "someone-else"), _repo("a", "Octocat")]
+        resp = repos_client.post("/me/repos/octocat", json={"token": _PAT})
+
+    assert [r["name"] for r in resp.json()["repos"]] == ["a"] and resp.json()["total"] == 1
+
+
+def test_personal_list_repos_still_lists_an_org_the_caller_belongs_to(repos_client):
+    with patch("src.routers.repos.get_account_type", return_value="Organization"), patch(
+        "src.routers.repos.GitHubClient"
+    ) as mock_client:
+        mock_client.return_value.request_paginated.return_value = [_repo("api", "acme")]
+        resp = repos_client.post("/me/repos/acme", json={"token": _PAT})
+
+    assert resp.status_code == 200 and resp.json()["repos"][0]["name"] == "api"
+    assert mock_client.return_value.request_paginated.call_args.args[0] == "/orgs/acme/repos"
+
+
+def test_personal_list_repos_without_any_token_is_400(repos_client):
+    assert repos_client.post("/me/repos/octocat", json={}).status_code == 400
+
+
+def test_the_org_route_404_for_a_personal_account_says_so_instead_of_asking_for_an_install(db, repos_client):
+    installation_repo.create(
+        db, account_login="octocat", account_type="User", auth_mode="app", installation_id=55, owner_user_id=_ADMIN.id
+    )
+
+    resp = repos_client.post("/orgs/octocat/repos", json={})
+
+    assert resp.status_code == 404
+    assert "personal account" in resp.json()["detail"] and "install the GitHub App" not in resp.json()["detail"]
+
+
 _REPO_META = {
     "stargazers_count": 24,
     "forks_count": 3,

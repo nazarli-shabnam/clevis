@@ -493,8 +493,10 @@ export const api = {
       ),
   },
   repos: {
-    list: (org: string, token: string) =>
-      post<RepoListResponse>(`/orgs/${encodeURIComponent(org)}/repos`, { token: token || undefined }),
+    // /me/repos/{owner} works for an org the caller belongs to and for a personal account, which has no
+    // Clevis org row for /orgs/{org}/repos to resolve.
+    list: (owner: string, token: string) =>
+      post<RepoListResponse>(`/me/repos/${encodeURIComponent(owner)}`, { token: token || undefined }),
     stats: (org: string, owner: string, repo: string, token: string) =>
       post<RepoStatsResponse>(
         `/orgs/${encodeURIComponent(org)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/stats`,

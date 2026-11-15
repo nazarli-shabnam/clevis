@@ -8,6 +8,7 @@ from checks.github_checks import BranchProtectionEnabled, SecretScanningEnabled
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from src.core.auth import UserOut, require_auth
 from src.core.path_params import Owner, Repo
 from src.core.db import RepoEventDailyCount, get_db
 from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role
@@ -24,8 +25,14 @@ from src.schemas.repos import (
     RepoStatsResponse,
 )
 from src.services import flow_metrics, pr_nudge
-from src.services.github_client import GitHubClient, github_error as _github_error
-from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token
+from src.services.analytics_service import get_account_type
+from src.services.github_client import GitHubClient, github_error as _github_error, list_owner_repos
+from src.services.token_resolution import (
+    InsufficientOrgRole,
+    NoGitHubTokenAvailable,
+    resolve_org_token,
+    resolve_owner_token,
+)
 
 router = APIRouter()
 
@@ -41,10 +48,9 @@ def _client_token(payload: RepoListInput | RepoStatsInput | RepoPullsInput | Rep
     return payload.token.get_secret_value() if payload.token else None
 
 
-def _list_repos(owner: str, token: str) -> RepoListResponse:
+def _list_repos(owner: str, token: str, account_type: str = "Organization") -> RepoListResponse:
     try:
-        client = GitHubClient(token)
-        repos = client.request_paginated(f"/orgs/{owner}/repos", params={"type": "all", "sort": "pushed"})
+        repos = list_owner_repos(GitHubClient(token), owner, account_type)
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise _github_error(exc) from exc
     return {"org": owner, "total": len(repos), "repos": repos}
@@ -221,6 +227,35 @@ def org_list_repos(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _list_repos(org_login, token)
+
+
+@router.post("/me/repos/{owner}", response_model=RepoListResponse)
+def personal_list_repos(
+    owner: Owner,
+    payload: RepoListInput,
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Repository list for any owner the caller may use, including a personal account that has no Clevis
+    org row (``/orgs/{org}/repos`` needs one). Org members get the org installation as before; the same role
+    gate as the other ``/me/*`` routes applies."""
+    try:
+        token = resolve_owner_token(db, user_id=user.id, owner=owner, client_token=_client_token(payload))
+    except InsufficientOrgRole as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except NoGitHubTokenAvailable as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    try:
+        account_type = get_account_type(owner=owner, token=token)
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        raise _github_error(exc) from exc
+    result = _list_repos(owner, token, account_type)
+    if account_type == "User":
+        # A pasted user token's /user/repos lists the token holder's repositories whatever `owner` was typed;
+        # keep only the ones this owner really owns so another login is never reported with someone else's repos.
+        repos = [r for r in result["repos"] if ((r.get("owner") or {}).get("login") or "").lower() == owner.lower()]
+        result = {**result, "total": len(repos), "repos": repos}
+    return result
 
 
 @router.post("/orgs/{org_login}/repos/{owner}/{repo}/stats", response_model=RepoStatsResponse)

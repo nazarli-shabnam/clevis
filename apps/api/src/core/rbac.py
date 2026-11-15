@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import Membership, Org, Tenant, get_db, set_session_tenant
-from src.repositories import org_repo, tenant_repo
+from src.repositories import installation_repo, org_repo, tenant_repo
 
 _ROLE_RANK = {"member": 0, "admin": 1}
 
@@ -84,6 +84,15 @@ def require_org_role(min_role: Literal["member", "admin"]):
         if ctx is not None:
             return ctx
         if org_repo.get_by_login_ci(db, org_login) is None:
+            if installation_repo.get_for_user(db, user.id, org_login) is not None:
+                # The caller connected the App on this personal account: it is connected, just not an org.
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"'{org_login}' is your personal account, which Clevis shows in personal scope. This "
+                        "page works for organization accounts only."
+                    ),
+                )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=(

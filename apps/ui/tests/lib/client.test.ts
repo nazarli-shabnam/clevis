@@ -797,11 +797,12 @@ describe("api.repos", () => {
     );
   }
 
-  it("POSTs to /orgs/{org}/repos with token: undefined when the token field is empty", async () => {
+  it("POSTs to /me/repos/{owner} (works for personal accounts too) with token: undefined when the token field is empty", async () => {
     stubOkJson({ org: "acme", total: 0, repos: [] });
     const result = await api.repos.list("acme", "");
     const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(String(url)).toContain("/orgs/acme/repos");
+    expect(String(url)).toContain("/me/repos/acme");
+    expect(String(url)).not.toContain("/orgs/");
     expect(JSON.parse(init.body as string)).toEqual({ token: undefined });
     expect(result).toEqual({ org: "acme", total: 0, repos: [] });
   });
