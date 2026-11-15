@@ -1283,6 +1283,23 @@ describe("api.invitations (bulk / regenerate / resend)", () => {
     expect(result).toEqual({ results: [] });
   });
 
+  it("asks the server to email the link only when told to (#953)", async () => {
+    stubOkJson({ results: [] });
+    await api.invitations.createMany("acme", ["a@x.com"], true);
+    const bulk = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(JSON.parse(bulk[1].body as string)).toEqual({ emails: ["a@x.com"], send_email: true });
+    stubOkJson({ invitation: {}, invite_link: "x" });
+    await api.invitations.create("acme", "a@x.com", true);
+    const sent = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(JSON.parse(sent[1].body as string)).toEqual({ email: "a@x.com", send_email: true });
+
+    stubOkJson({ invitation: {}, invite_link: "x" });
+    await api.invitations.create("acme", "a@x.com");
+    const plain = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(plain[0])).toContain("/orgs/acme/invitations");
+    expect(JSON.parse(plain[1].body as string)).toEqual({ email: "a@x.com" });
+  });
+
   it("POSTs to the regenerate and resend routes of one invitation", async () => {
     stubOkJson({});
     await api.invitations.regenerate("acme", 7);

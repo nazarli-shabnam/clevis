@@ -1,23 +1,19 @@
 "use client"
 
 import { useState } from "react"
-import { useMutation, useQuery } from "@tanstack/react-query"
+import { useMutation } from "@tanstack/react-query"
 import { api } from "@/lib/api/client"
 import { useOptionalAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import type { DigestSettings } from "@/lib/api/types"
+import { useDigestSettings } from "@/lib/use-digest-settings"
 
 /** Shown to org admins when the server has no SMTP: an invitee who registers with a password can never click
  * a verification link, so can't accept. A workspace admin can verify such an account by hand. */
 export function SmtpVerifyNotice({ orgLogin }: { orgLogin: string }) {
   const canVerify = !!useOptionalAuth()?.user?.is_workspace_admin
   // The same query as the digest card (it also reports whether SMTP is set up).
-  const settings = useQuery<DigestSettings>({
-    queryKey: ["digest", orgLogin],
-    queryFn: () => api.orgs.digest(orgLogin),
-    retry: false,
-  })
+  const settings = useDigestSettings(orgLogin)
   const [email, setEmail] = useState("")
   const verify = useMutation({ mutationFn: (address: string) => api.auth.adminVerifyEmail(address) })
 

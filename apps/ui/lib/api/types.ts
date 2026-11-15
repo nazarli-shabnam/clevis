@@ -558,9 +558,13 @@ export interface InvitationOut {
   expires_at: string
 }
 
+/** Present only when the invite asked to be emailed; "failed" still leaves a valid invitation and link. */
+export type InvitationEmailStatus = "sent" | "failed" | "limited" | "unconfirmed"
+
 export interface InvitationCreateResponse {
   invitation: InvitationOut
   invite_link: string
+  email_status?: InvitationEmailStatus | null
 }
 
 export interface InvitationBulkItem {
@@ -568,6 +572,7 @@ export interface InvitationBulkItem {
   status: "created" | "already_pending" | "invalid" | "failed"
   invitation: InvitationOut | null
   invite_link: string | null
+  email_status?: InvitationEmailStatus | null
 }
 
 export interface InvitationBulkResponse {
