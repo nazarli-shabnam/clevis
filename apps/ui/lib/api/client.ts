@@ -1,4 +1,5 @@
 import type {
+  MyInvitation,
   PendingInstallation,
   NotificationDestination,
   NotificationDestinationInput,
@@ -795,6 +796,8 @@ export const api = {
   },
   ingestionHealth: (orgLogin: string) => get<IngestionHealth>(`/orgs/${encodeURIComponent(orgLogin)}/ingestion-health`),
   invitations: {
+    // The caller's own pending invitations (empty until their email is verified).
+    mine: () => get<MyInvitation[]>(`/invitations/mine`),
     // sendEmail also emails the link (the server needs SMTP, else it answers 409 and creates nothing).
     create: (orgLogin: string, email: string, sendEmail = false) =>
       post<InvitationCreateResponse>(`/orgs/${encodeURIComponent(orgLogin)}/invitations`, {

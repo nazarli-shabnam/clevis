@@ -5,6 +5,8 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { PageHeader } from "@/components/page-header"
 import { api } from "@/lib/api/client"
+import { useAuth } from "@/lib/auth-context"
+import { useMyInvitations } from "@/lib/use-my-invitations"
 import { CheckCircle, Warning, CircleNotch } from "@phosphor-icons/react"
 
 export default function VerifyEmailPage() {
@@ -12,6 +14,9 @@ export default function VerifyEmailPage() {
   const token = searchParams.get("token")
   const [state, setState] = useState<"pending" | "success" | "error">("pending")
   const [errorMessage, setErrorMessage] = useState("")
+  const { user } = useAuth()
+  // Only once verified, and only for a signed-in user: the server answers for the session's own address.
+  const invitations = useMyInvitations(state === "success" && !!user)
   // Tracks the token already POSTed (not a boolean) so a genuinely new token still runs.
   const attemptedToken = useRef<string | null>(null)
 
@@ -52,6 +57,11 @@ export default function VerifyEmailPage() {
                 <CheckCircle className="size-3.5" /> Your email is verified. You can now accept organization
                 invitations.
               </p>
+              {invitations.map((inv) => (
+                <Link key={inv.token} href={`/invite/${inv.token}`} className="text-sm text-primary hover:underline">
+                  Accept invitation to {inv.org_login}
+                </Link>
+              ))}
               <Link href="/" className="text-sm text-primary hover:underline">
                 Continue
               </Link>

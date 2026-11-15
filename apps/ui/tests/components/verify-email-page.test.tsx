@@ -8,20 +8,28 @@ vi.mock("next/navigation", () => ({
 }));
 
 const verifyEmailMock = vi.fn();
+const mineMock = vi.fn();
+let mockUser: { id: number } | null = null;
 
 vi.mock("@/lib/api/client", () => ({
   api: {
     auth: {
       verifyEmail: (...args: unknown[]) => verifyEmailMock(...args),
     },
+    invitations: { mine: (...args: unknown[]) => mineMock(...args) },
   },
 }));
+
+vi.mock("@/lib/auth-context", () => ({ useAuth: () => ({ user: mockUser }) }));
 
 import VerifyEmailPage from "@/app/verify-email/page";
 
 describe("VerifyEmailPage", () => {
   beforeEach(() => {
     verifyEmailMock.mockReset();
+    mineMock.mockReset();
+    mineMock.mockResolvedValue([]);
+    mockUser = null;
     mockSearchParams = new URLSearchParams();
   });
 
@@ -41,6 +49,28 @@ describe("VerifyEmailPage", () => {
     // A logged-in user landing here from the email has no shell/sidebar, so the page must lead back.
     expect(screen.getByRole("link", { name: "Continue" })).toHaveAttribute("href", "/");
     expect(screen.getByRole("main")).toBeInTheDocument();
+  });
+
+  it("offers an accept link for each pending invitation once a signed-in user is verified", async () => {
+    mockSearchParams = new URLSearchParams({ token: "good-token" });
+    verifyEmailMock.mockResolvedValue({ ok: true });
+    mockUser = { id: 7 };
+    mineMock.mockResolvedValue([{ org_login: "acme", token: "inv-tok", expires_at: "2030-01-01T00:00:00Z" }]);
+
+    render(<VerifyEmailPage />);
+
+    const link = await screen.findByRole("link", { name: "Accept invitation to acme" });
+    expect(link).toHaveAttribute("href", "/invite/inv-tok");
+  });
+
+  it("does not look up invitations when nobody is signed in", async () => {
+    mockSearchParams = new URLSearchParams({ token: "good-token" });
+    verifyEmailMock.mockResolvedValue({ ok: true });
+
+    render(<VerifyEmailPage />);
+
+    await screen.findByText(/your email is verified/i);
+    expect(mineMock).not.toHaveBeenCalled();
   });
 
   it("shows the server's error message when verification fails", async () => {
