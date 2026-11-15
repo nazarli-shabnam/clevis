@@ -617,15 +617,19 @@ class PendingInstallation(Base):
     connected), so no RLS; reads are filtered by the signed-in user's GitHub id (migration 0086)."""
 
     __tablename__ = "pending_installations"
+    __table_args__ = (
+        Index("ix_pending_installations_sender", "sender_github_id"),
+        Index("ix_pending_installations_requester", "requester_github_id"),
+    )
 
     installation_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
     account_login: Mapped[str] = mapped_column(Text, nullable=False)
     account_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # `sender` is whoever completed the installation on GitHub (the approving owner for a request);
     # `requester` is the member who asked for it, when GitHub reports one.
-    sender_github_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    sender_github_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     sender_login: Mapped[str | None] = mapped_column(Text, nullable=True)
-    requester_github_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    requester_github_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     requester_login: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
