@@ -855,3 +855,24 @@ def test_an_unexpected_error_while_emailing_still_returns_the_invitation_and_lin
         resp = admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com", "send_email": True})
     assert resp.status_code == 200
     assert resp.json()["email_status"] == "failed" and resp.json()["invite_link"]
+
+
+def test_a_slow_first_send_counts_against_the_same_bulk_budget(db, acme_org, monkeypatch):
+    import time
+
+    monkeypatch.setattr("src.routers.invitations._EMAIL_BUDGET_SECONDS", 0.1)
+
+    def slow_send(*_a, **_k):
+        time.sleep(0.6)
+
+    admin = _client(db, acme_org["admin"])
+    started = time.monotonic()
+    with _smtp_on(), patch("src.services.email.send_email", side_effect=slow_send):
+        resp = admin.post(
+            "/orgs/acme/invitations/bulk", json={"emails": ["a@acme.com", "b@acme.com", "c@acme.com"], "send_email": True}
+        )
+    assert time.monotonic() - started < 0.5
+    results = resp.json()["results"]
+    assert all(r["invite_link"] for r in results)
+    assert [r["email_status"] for r in results] == ["unconfirmed", "limited", "limited"]
+    time.sleep(0.8)  # let the abandoned send finish before the patch is removed

@@ -433,6 +433,13 @@ def test_waivers_in_their_last_week_show_in_the_admins_bell_only_with_a_renew_li
     assert [i["kind"] for i in admin.get("/orgs/acme-w/notifications").json()["items"]] == []
 
 
+def test_a_new_waiver_warning_is_not_born_before_the_waiver_existed(db, world):
+    soon = _waiver(db, world["org"], BP, days=3)
+    admin = _client(db, world["users"]["admin"], notifications_router)
+    [item] = [i for i in admin.get("/orgs/acme-w/notifications").json()["items"] if i["kind"] == "waiver_expiring"]
+    assert datetime.fromisoformat(item["at"]) >= soon.created_at.astimezone(timezone.utc) - timedelta(seconds=1)
+
+
 def test_editing_only_the_reason_keeps_a_warning_the_sweep_has_not_sent_yet(db, world):
     w = _waiver(db, world["org"], BP, days=3)  # inside the last week, stage 0: the sweep has not warned yet
     admin = _client(db, world["users"]["admin"])

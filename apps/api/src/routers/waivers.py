@@ -120,6 +120,9 @@ def update_waiver(
     now = datetime.now(timezone.utc)
     _validate(body, now)
     waiver = _get_or_404(db, ctx, waiver_id)
+    # Re-read under lock: the expiry sweep may have advanced the stage since the load, and an assignment equal to
+    # the stale loaded value would be left out of the UPDATE, so the renewal would keep the sweep's stage.
+    db.refresh(waiver, with_for_update=True)
     before = _payload(waiver)
     old_expiry = _aware(waiver.expires_at)
     waiver.check_id, waiver.repos, waiver.reason = body.check_id, body.repos, body.reason

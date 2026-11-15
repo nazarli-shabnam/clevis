@@ -7,6 +7,7 @@ AND be verified.
 import logging
 import smtplib
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 
@@ -104,18 +105,12 @@ _EMAIL_BUDGET_SECONDS = 8.0
 def _deliver_bulk(items: list, *, org_login: str, tenant_id: int, inviter: str) -> None:
     """Email each created invitation and record the outcome on the item (``email_status``). The first goes alone,
     so a dead mail server is discovered once instead of by every worker at the same time, and then the remaining
-    ones are skipped. After ``_EMAIL_BUDGET_SECONDS`` a send still in flight is reported ``unconfirmed`` (it may
-    still complete) and one that never started ``limited`` (not sent)."""
+    ones are skipped. Everything, the first send included, shares one ``_EMAIL_BUDGET_SECONDS`` deadline: a send
+    still in flight at it is reported ``unconfirmed`` (it may still complete) and one that never started
+    ``limited`` (not sent)."""
     if not items:
         return
-    first, rest = items[0], items[1:]
-    first.email_status, server_down = _email_invitation(first.email, org_login, inviter, first.invite_link, tenant_id)
-    if server_down:
-        for item in rest:
-            item.email_status = "failed"
-        return
-    if not rest:
-        return
+    deadline = time.monotonic() + _EMAIL_BUDGET_SECONDS
     down = threading.Event()
 
     def send(item):
@@ -127,16 +122,31 @@ def _deliver_bulk(items: list, *, org_login: str, tenant_id: int, inviter: str) 
             down.set()
         return result
 
+    first, rest = items[0], items[1:]
+    # Not waited for on exit: a send already running finishes (or times out at the SMTP socket) in its own thread.
     pool = ThreadPoolExecutor(max_workers=_EMAIL_PARALLEL_SENDS)
-    futures = {pool.submit(send, item): item for item in rest}
-    done, _ = wait(futures, timeout=_EMAIL_BUDGET_SECONDS)
-    # Not waited for: a send already running finishes (or times out at the SMTP socket) in its own thread.
-    pool.shutdown(wait=False, cancel_futures=True)
-    for future, item in futures.items():
-        if future in done:
-            item.email_status = future.result()[0]
-        else:
-            item.email_status = "limited" if future.cancel() else "unconfirmed"
+    try:
+        first_future = pool.submit(send, first)
+        done, _ = wait([first_future], timeout=max(0.0, deadline - time.monotonic()))
+        if not done:
+            first.email_status = "unconfirmed"
+            for item in rest:
+                item.email_status = "limited"
+            return
+        first.email_status, server_down = first_future.result()
+        if server_down:
+            for item in rest:
+                item.email_status = "failed"
+            return
+        futures = {pool.submit(send, item): item for item in rest}
+        done, _ = wait(futures, timeout=max(0.0, deadline - time.monotonic()))
+        for future, item in futures.items():
+            if future in done:
+                item.email_status = future.result()[0]
+            else:
+                item.email_status = "limited" if future.cancel() else "unconfirmed"
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def _is_expired(invitation) -> bool:
@@ -266,6 +276,7 @@ def create_invitations_bulk(
         created.append(item)
         results.append(item)
     if body.send_email:
+        db.rollback()  # end any read transaction the last lookup left open: SMTP must not hold a pooled connection
         _deliver_bulk(created, org_login=org_login, tenant_id=tenant_id, inviter=user.email)
     return {"results": results}
 

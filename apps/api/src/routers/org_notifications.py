@@ -236,7 +236,8 @@ def _waiver_expired_items(db: Session, org_login: str, tenant_id: int, since: da
 
 def _waiver_expiring_items(db: Session, org_login: str, tenant_id: int) -> list[dict]:
     """Waivers inside their last warning window (the widest of ``WARNING_DAYS``). Dated by the moment each entered
-    it, so marking the feed read clears it and it does not reappear; a standing warning until the waiver is renewed
+    it (never before the waiver itself existed, so a new one is not born already read), so marking the feed read
+    clears it and it does not reappear; a standing warning until the waiver is renewed
     or lapses (then ``waiver_expired`` takes over), so it is not cut by the feed's ``days``."""
     now = datetime.now(timezone.utc)
     window = timedelta(days=max(waiver_service.WARNING_DAYS))
@@ -248,7 +249,7 @@ def _waiver_expiring_items(db: Session, org_login: str, tenant_id: int) -> list[
             {
                 "id": f"waiver_expiring:{w.id}",
                 "kind": "waiver_expiring",
-                "at": expires_at - window,
+                "at": max(expires_at - window, _aware(w.created_at)),
                 "title": f"Waiver for {w.check_id} expires in {days_left} day{'s' if days_left != 1 else ''}",
                 "detail": f"Owner {w.owner}: {w.reason}"[:140],
                 "href": f"/settings/org/{quote(org_login, safe='')}/members?waiver={w.id}",

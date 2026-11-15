@@ -151,6 +151,14 @@ def test_the_approver_and_the_requester_each_see_their_own_notice_and_nobody_els
     assert _client(db, password_only).get("/me/pending-installations").json() == []
 
 
+def test_a_notice_past_its_age_limit_is_not_listed_even_before_any_purge(db, hook):
+    _created(hook, sender={"id": 11, "login": "owner"})
+    owner = _user(db, "owner@e.com", github_user_id=11, github_login="owner")
+    db.execute(text("UPDATE pending_installations SET created_at = now() - interval '31 days'"))
+    db.commit()
+    assert _client(db, owner).get("/me/pending-installations").json() == []
+
+
 def test_a_notice_for_an_installation_connected_since_is_not_listed(db, hook):
     _created(hook, sender={"id": 11, "login": "owner"})
     owner = _user(db, "owner@e.com", github_user_id=11, github_login="owner")

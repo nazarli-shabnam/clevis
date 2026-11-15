@@ -22,6 +22,8 @@ function PendingRow({ pending }: { pending: PendingInstallation }) {
       ),
     onSuccess: () => {
       invalidateInstallations(queryClient)
+      // Connecting creates the org membership, so the org lists need a refresh too.
+      queryClient.invalidateQueries({ queryKey: ["my-orgs"] })
       return queryClient.invalidateQueries({ queryKey: PENDING_KEY })
     },
   })

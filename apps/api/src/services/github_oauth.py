@@ -87,6 +87,7 @@ def sign_state(
     link_user_id: int | None = None,
     link_token_version: int = 0,
     link_session_jti: str | None = None,
+    link_session_exp: int | None = None,
 ) -> tuple[str, str]:
     """Returns (state, nonce). Callers must also set `nonce` as the STATE_COOKIE_NAME
     cookie value on the browser and pass it back into verify_state() as cookie_nonce.
@@ -94,7 +95,8 @@ def sign_state(
     can redirect back to it -- see decode_state_next(). `link_user_id` makes it a link state (purpose
     LINK_PURPOSE) bound to that user, to their `token_version` at the time (so signing out everywhere before the
     callback invalidates it) and to the session that started it (`link_session_jti`, so logging that session
-    out does too): see decode_state_link()."""
+    out does too, and `link_session_exp`, so the revocation row purging at that expiry cannot reopen it): see
+    decode_state_link()."""
     issued = int(now if now is not None else time.time())
     nonce = secrets.token_urlsafe(24)
     payload = {
@@ -108,6 +110,8 @@ def sign_state(
         payload["tv"] = link_token_version
         if link_session_jti:
             payload["jti"] = link_session_jti
+        if link_session_exp:
+            payload["sexp"] = link_session_exp
     validated_next = safe_next_path(next)
     if validated_next:
         payload["next"] = validated_next
@@ -128,9 +132,9 @@ def verify_state(state: str, *, cookie_nonce: str | None = None, purpose: str = 
     return True
 
 
-def decode_state_link(state: str) -> tuple[int, int, str | None] | None:
-    """(user id, token_version, starting session's jti or None for a token that has none) a link state was
-    started for. Callers must call verify_state(purpose=LINK_PURPOSE) first."""
+def decode_state_link(state: str) -> tuple[int, int, str | None, int | None] | None:
+    """(user id, token_version, starting session's revocation key, its expiry as epoch seconds) a link state
+    was started for. Callers must call verify_state(purpose=LINK_PURPOSE) first."""
     try:
         payload = jwt.decode(state, settings.auth_secret.get_secret_value(), algorithms=[_STATE_ALG])
     except jwt.InvalidTokenError:
@@ -139,7 +143,13 @@ def decode_state_link(state: str) -> tuple[int, int, str | None] | None:
     if any(not isinstance(v, int) or isinstance(v, bool) for v in (uid, version)):
         return None
     jti = payload.get("jti")
-    return uid, version, jti if isinstance(jti, str) else None
+    sexp = payload.get("sexp")
+    return (
+        uid,
+        version,
+        jti if isinstance(jti, str) else None,
+        sexp if isinstance(sexp, int) and not isinstance(sexp, bool) else None,
+    )
 
 
 def decode_state_next(state: str) -> str | None:

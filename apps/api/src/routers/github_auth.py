@@ -16,6 +16,7 @@ carries the proof instead. See ``_complete_link``.
 """
 
 import logging
+import time
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
@@ -29,6 +30,7 @@ from src.core.auth import (
     SESSION_COOKIE_NAME,
     SETUP_LOCK_KEY,
     UserOut,
+    _revocation_key,
     decode_access_token,
     require_auth,
     set_session_cookie,
@@ -202,10 +204,15 @@ def github_link_start(
     # callback refuses the link if that session was logged out meanwhile.
     presented = request.headers.get("authorization", "")
     token = presented[7:] if presented[:7].lower() == "bearer " else request.cookies.get(SESSION_COOKIE_NAME)
-    jti = decode_access_token(token).get("jti") if token else None
+    claims = decode_access_token(token) if token else {}
+    # The token's own version and revocation key (not the row's now), so a revoke-all that lands after
+    # require_auth cannot be signed into the state as current; legacy tokens use their fingerprint key.
     try:
         state, nonce = github_oauth.sign_state(
-            link_user_id=user.id, link_token_version=row.token_version, link_session_jti=jti
+            link_user_id=user.id,
+            link_token_version=claims.get("token_version", 0),
+            link_session_jti=_revocation_key(token, claims) if token else None,
+            link_session_exp=claims.get("exp"),
         )
         url = github_oauth.build_authorize_url(state=state, redirect_uri=_callback_url(request))
     except github_oauth.GitHubOAuthNotConfigured:
@@ -232,7 +239,7 @@ def _complete_link(
     link = github_oauth.decode_state_link(state)
     if link is None:
         return _ui_settings_redirect("github_link_error=session")
-    uid, token_version, session_jti = link
+    uid, token_version, session_jti, session_exp = link
     # The state (signed for this user, bound to this browser) is the proof that they started the flow. Password
     # login sets no session cookie, so it is not required; but if this browser is signed in as a *different*
     # account (a cookie that authenticates as someone else), the flow was not started by them.
@@ -257,6 +264,9 @@ def _complete_link(
     user = db.query(User).filter(User.id == uid).with_for_update().first()
     # Signing out everywhere (token_version) or ending the session that started the flow cancels it.
     if user is None or user.token_version != token_version:
+        return _ui_settings_redirect("github_link_error=session")
+    # The revocation row is purged at the session's own expiry, so past it the denylist can no longer vouch.
+    if session_exp is not None and time.time() >= session_exp:
         return _ui_settings_redirect("github_link_error=session")
     if session_jti and db.get(RevokedToken, session_jti) is not None:
         return _ui_settings_redirect("github_link_error=session")
@@ -292,11 +302,12 @@ def github_callback(
     # A sign-in state is the common case. Only a state that is not one, and is a valid link state for this browser,
     # takes the link path (the two purposes never verify as each other).
     if (
-        code
-        and state
+        state
         and not github_oauth.verify_state(state, cookie_nonce=cookie_nonce)
         and github_oauth.verify_state(state, cookie_nonce=cookie_nonce, purpose=github_oauth.LINK_PURPOSE)
     ):
+        if not code:  # e.g. the user denied access on GitHub (error=access_denied)
+            return _ui_settings_redirect("github_link_error=oauth")
         return _complete_link(request, db, code, state, session)
     if not code or not state or not github_oauth.verify_state(state, cookie_nonce=cookie_nonce):
         error_response = _ui_login_error_redirect("github_invalid_state")

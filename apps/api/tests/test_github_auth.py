@@ -470,8 +470,8 @@ def test_link_start_requires_a_session_and_an_unlinked_configured_account(gh_cli
     state = _link_state(started)
     nonce = gh_client.cookies.get("clevis_oauth_state")
     assert github_oauth.verify_state(state, cookie_nonce=nonce, purpose=github_oauth.LINK_PURPOSE)
-    uid, version, jti = github_oauth.decode_state_link(state)
-    assert (uid, version) == (user.id, user.token_version) and jti  # the starting session's id is bound in
+    uid, version, jti, sexp = github_oauth.decode_state_link(state)
+    assert (uid, version) == (user.id, user.token_version) and jti and sexp  # the starting session's id and expiry are bound in
     # A link state is not a sign-in state, so it can never be replayed against the sign-in path.
     assert not github_oauth.verify_state(state, cookie_nonce=nonce)
 
@@ -622,3 +622,47 @@ def test_relinking_the_same_github_account_is_harmless_and_oauth_failures_are_re
     assert resp.headers["location"].endswith("/settings?github=linked")
     db.refresh(user)
     assert (user.github_user_id, user.github_login) == (555, "octo-renamed")
+
+
+def test_a_legacy_session_that_started_the_link_is_cancelled_by_logout_and_an_expired_one_cannot_finish(
+    gh_client, db, oauth_configured
+):
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import patch as _patch
+
+    import jwt as pyjwt
+
+    from src.core.auth import _revocation_key
+    from src.core.config import settings
+    from src.core.db import RevokedToken
+
+    user = _password_user(db)
+    claims = pyjwt.decode(_session(user), options={"verify_signature": False})
+    del claims["jti"]  # issued before migration 0050
+    legacy = pyjwt.encode(claims, settings.auth_secret.get_secret_value(), algorithm="HS256")
+    state = _link_state(_start_link(gh_client, user, legacy))
+    db.add(
+        RevokedToken(
+            jti=_revocation_key(legacy, claims), user_id=user.id, expires_at=datetime.now(timezone.utc) + timedelta(days=1)
+        )
+    )
+    db.commit()
+    resp, sync = _finish_link(gh_client, state)
+    assert resp.headers["location"].endswith("/settings?github_link_error=session")
+    sync.assert_not_called()
+
+    # Past the starting session's own expiry the (purged) denylist can no longer vouch for it.
+    user2 = _password_user(db, "pw2@example.com")
+    state2 = _link_state(_start_link(gh_client, user2))
+    with _patch("src.routers.github_auth.time") as fake_time:  # the state JWT keeps real time
+        fake_time.time.return_value = 9_999_999_999
+        resp, sync = _finish_link(gh_client, state2)
+    assert resp.headers["location"].endswith("/settings?github_link_error=session")
+    sync.assert_not_called()
+
+
+def test_denying_authorization_on_github_returns_to_settings_not_login(gh_client, db, oauth_configured):
+    user = _password_user(db)
+    state = _link_state(_start_link(gh_client, user))
+    resp = gh_client.get(f"/auth/github/callback?error=access_denied&state={state}", follow_redirects=False)
+    assert resp.headers["location"].endswith("/settings?github_link_error=oauth")

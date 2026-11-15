@@ -56,7 +56,9 @@ def list_for_github_user(db: Session, github_user_id: int) -> list[PendingInstal
                 or_(
                     PendingInstallation.sender_github_id == github_user_id,
                     PendingInstallation.requester_github_id == github_user_id,
-                )
+                ),
+                # The purge in record() only runs when a new event arrives, so age is also enforced on read.
+                PendingInstallation.created_at >= datetime.now(timezone.utc) - MAX_AGE,
             )
             .order_by(PendingInstallation.created_at.desc(), PendingInstallation.installation_id.desc())
         ).scalars()

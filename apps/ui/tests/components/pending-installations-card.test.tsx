@@ -70,6 +70,7 @@ describe("PendingInstallationsCard (#1014)", () => {
       ),
     )
     await waitFor(() => expect(spy).toHaveBeenCalledWith({ queryKey: ["pending-installations"] }))
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["my-orgs"] })
   })
 
   it("shows progress while connecting and disables the button", async () => {
