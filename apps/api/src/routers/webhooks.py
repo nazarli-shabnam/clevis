@@ -19,7 +19,7 @@ from src.core.config import settings
 from src.core.db import WebhookDelivery, get_db
 from src.core.rate_limit import rate_limit
 from src.core.redis_client import get_redis_client
-from src.repositories import audit_repo, installation_repo, pending_installation_repo
+from src.repositories import audit_repo, installation_repo, org_repo, pending_installation_repo
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +157,8 @@ def _dispatch_event(db: Session, event: str, delivery_id: str, raw_body: bytes, 
     # installation_repositories has nothing to sync yet -- github_installations tracks
     # the installation itself, not per-repo access. Accepted (200) so GitHub doesn't retry.
     elif event in _INGESTED_EVENT_TYPES:
+        if event == "organization" and payload.get("action") == "renamed":
+            _handle_organization_renamed(db, payload)
         _handle_ingested_event(db, event, delivery_id, raw_body, payload)
 
 
@@ -280,6 +282,24 @@ def _handle_installation_created(db: Session, payload: dict) -> None:
         requester_github_id=_as_int(requester.get("id")),
         requester_login=_as_login(requester.get("login")),
     )
+
+
+def _handle_organization_renamed(db: Session, payload: dict) -> None:
+    """Apply a GitHub org rename now instead of at the next admin sign-in. Only an org Clevis already knows by
+    its stable GitHub id is touched; an unknown id is ignored (never creates an org)."""
+    organization = payload.get("organization") or {}
+    org_id = _as_int(organization.get("id"))
+    new_login = _as_login(organization.get("login"))
+    if org_id is None or new_login is None:
+        logger.warning("organization.renamed webhook has no usable organization id/login")
+        return
+    if org_repo.get_by_org_id(db, org_id) is None:
+        return
+    try:
+        org_repo.get_or_create(db, new_login, org_id)
+    except org_repo.OrgIdentityMismatch:
+        # The new login is already another connected org's row; nothing safe to rename onto.
+        logger.warning("organization.renamed to %r conflicts with another connected org; not applied", new_login)
 
 
 def _handle_installation_deleted(db: Session, payload: dict) -> None:

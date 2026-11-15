@@ -623,3 +623,33 @@ def test_route_is_registered_on_the_real_app(db, monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
+
+
+def test_organization_renamed_applies_the_rename_and_moves_the_saved_token(db, webhook_client, redis_client):
+    from src.core.db import SavedToken
+
+    org = org_repo.get_or_create(db, github_login="old-name", github_org_id=321)
+    db.add(SavedToken(org="old-name", encrypted_token="x", tenant_id=org.tenant_id))
+    db.commit()
+
+    resp = _post(
+        webhook_client,
+        "organization",
+        {"action": "renamed", "organization": {"id": 321, "login": "new-name"}, "changes": {"login": {"from": "old-name"}}},
+    )
+
+    assert resp.status_code == 200
+    db.refresh(org)
+    assert org.github_login == "new-name"
+    assert db.query(SavedToken).one().org == "new-name"
+
+
+def test_organization_renamed_for_an_unknown_org_creates_nothing(db, webhook_client, redis_client):
+    resp = _post(
+        webhook_client,
+        "organization",
+        {"action": "renamed", "organization": {"id": 999, "login": "ghost"}, "changes": {"login": {"from": "x"}}},
+    )
+
+    assert resp.status_code == 200
+    assert db.query(Org).filter(Org.github_login == "ghost").count() == 0

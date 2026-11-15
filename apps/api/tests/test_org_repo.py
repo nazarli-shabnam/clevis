@@ -188,3 +188,28 @@ def test_insert_race_recovery_refuses_a_login_row_owned_by_a_different_github_or
 
     with patch.object(Query, "first", racy_first), pytest.raises(org_repo.OrgIdentityMismatch):
         org_repo.get_or_create(db, github_login="acme", github_org_id=2)
+
+
+def test_org_rename_moves_the_saved_token_to_the_new_login(db):
+    from src.core.db import SavedToken
+
+    org = org_repo.get_or_create(db, github_login="old-name", github_org_id=97)
+    db.add(SavedToken(org="old-name", encrypted_token="x", tenant_id=org.tenant_id))
+    db.commit()
+
+    org_repo.get_or_create(db, github_login="new-name", github_org_id=97)
+
+    assert db.query(SavedToken).one().org == "new-name"
+
+
+def test_org_rename_keeps_a_token_already_saved_under_the_new_login(db):
+    from src.core.db import SavedToken
+
+    org = org_repo.get_or_create(db, github_login="old-name", github_org_id=96)
+    db.add(SavedToken(org="old-name", encrypted_token="old", tenant_id=org.tenant_id))
+    db.add(SavedToken(org="new-name", encrypted_token="new"))
+    db.commit()
+
+    org_repo.get_or_create(db, github_login="new-name", github_org_id=96)
+
+    assert {t.org: t.encrypted_token for t in db.query(SavedToken)} == {"old-name": "old", "new-name": "new"}
