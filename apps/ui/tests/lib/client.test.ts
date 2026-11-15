@@ -1438,6 +1438,20 @@ describe("waivers, notification preferences and evidence endpoints", () => {
     expect(JSON.parse(String(init.body))).toEqual({ muted_kinds: ["score_drop"] });
   });
 
+  it("reads the profile with its linked GitHub login and starts linking with a POST (#1007)", async () => {
+    const me = stub({ id: 1, email: "a@e.com", github_login: "octo" });
+    const profile = await api.auth.me();
+    expect(me()[0]).toMatch(/\/auth\/me$/);
+    expect(profile.github_login).toBe("octo");
+
+    const link = stub({ url: "https://github.com/login/oauth/authorize?state=s" });
+    const started = await api.auth.linkGithub();
+    const [url, init] = link();
+    expect(url).toMatch(/\/auth\/github\/link$/);
+    expect(init.method).toBe("POST");
+    expect(started.url).toContain("github.com");
+  });
+
   it("evidence.download sends the range and reads the filename and truncation header", async () => {
     localStorage.setItem(TOKEN_KEY, "tok");
     const call = stub("zip-bytes", 200, {

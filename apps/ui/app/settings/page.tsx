@@ -11,7 +11,7 @@ import { Field, FieldLabel, FieldDescription } from "@/components/ui/field"
 import { SectionError } from "@/components/section-error"
 import { EmptyStatePage } from "@/components/empty-state"
 import { PermissionDriftNotice } from "@/components/permission-drift-notice"
-import { GITHUB_LINK_ERRORS, GithubLinkField } from "@/components/github-link-field"
+import { GithubLinkField, githubLinkErrorMessage } from "@/components/github-link-field"
 import { SessionsCard } from "@/components/sessions-card"
 import { ChangePasswordCard } from "@/components/change-password-card"
 import { ChangeEmailCard, DeleteAccountCard } from "@/components/account-cards"
@@ -899,12 +899,12 @@ export default function SettingsPage() {
     if (searchParams.get("installed") === "1") {
       setJustInstalled(true)
       router.replace("/settings")
-    } else if (linked || linkError) {
-      setLinkResult(
-        linked
-          ? { ok: true, text: "GitHub account linked." }
-          : { ok: false, text: GITHUB_LINK_ERRORS[linkError ?? ""] ?? "Linking your GitHub account failed. Try again." },
-      )
+    } else if (linkError) {
+      setLinkResult({ ok: false, text: githubLinkErrorMessage(linkError) })
+      queryClient.invalidateQueries({ queryKey: ["me"] })
+      router.replace("/settings")
+    } else if (linked) {
+      setLinkResult({ ok: true, text: "GitHub account linked." })
       // The profile and the org list both depend on the link.
       queryClient.invalidateQueries({ queryKey: ["me"] })
       router.replace("/settings")

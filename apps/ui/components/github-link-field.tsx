@@ -15,6 +15,10 @@ export const GITHUB_LINK_ERRORS: Record<string, string> = {
   not_configured: "GitHub sign-in isn't set up on this server yet.",
 }
 
+export function githubLinkErrorMessage(code: string): string {
+  return GITHUB_LINK_ERRORS[code] ?? "Linking your GitHub account failed. Try again."
+}
+
 /**
  * Profile row that shows the GitHub account linked to this Clevis account, or starts linking one. A password
  * account needs a linked GitHub account to connect an organization or a personal installation. The API starts
@@ -61,7 +65,7 @@ export function GithubLinkField() {
           </FieldDescription>
           {link.isError && (
             <p role="alert" className="text-xs text-destructive">
-              {link.error instanceof Error ? link.error.message : "Couldn't start linking."}
+              {link.error.message}
             </p>
           )}
         </>
