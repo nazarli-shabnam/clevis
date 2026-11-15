@@ -201,7 +201,9 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
       return queryClient.invalidateQueries({ queryKey })
     },
   })
-  const canSubmit = name.trim() !== "" && !create.isPending && !created
+  // Create and Rotate both end by showing a one-time secret in `created`; running both at once would let the later
+  // response replace the earlier secret before it was copied.
+  const canSubmit = name.trim() !== "" && !create.isPending && !rotate.isPending && !created
 
   return (
     <div className="card mt-4">
@@ -312,7 +314,7 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
               token={t}
               linked={t.id === linkedToken}
               // Rotating while a secret is on screen would replace it before it was copied.
-              rotateDisabled={created !== null || rotate.isPending}
+              rotateDisabled={created !== null || rotate.isPending || create.isPending}
               rotating={rotate.isPending && rotate.variables?.id === t.id}
               onRotate={() => rotate.mutate(t)}
               onRevoked={() => queryClient.invalidateQueries({ queryKey })}

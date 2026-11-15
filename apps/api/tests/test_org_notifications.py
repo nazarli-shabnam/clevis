@@ -604,7 +604,8 @@ def _token(db, tenant_id, name, *, expires_in=None, revoked=False):
 
 def test_api_token_nearing_expiry_is_an_admin_only_item_that_links_to_the_token(db, world):
     t = world["acme"].tenant_id
-    soon = _token(db, t, "ci-soon", expires_in=timedelta(days=3, hours=1))
+    # 12 hours past the day boundary, so "4 days" holds however long the suite has been running since NOW.
+    soon = _token(db, t, "ci-soon", expires_in=timedelta(days=3, hours=12))
     _token(db, t, "ci-far", expires_in=timedelta(days=40))
     _token(db, t, "ci-never")
     _token(db, t, "ci-lapsed", expires_in=timedelta(days=-1))
@@ -619,6 +620,9 @@ def test_api_token_nearing_expiry_is_an_admin_only_item_that_links_to_the_token(
     assert item["title"] == 'API token "ci-soon" expires in 4 days'
     assert item["href"] == f"/settings/org/acme/members?token={soon}"
     assert item["read"] is False and admin["unread_count"] == 1
+    # The warning is never dated before the token existed (its lifetime here is shorter than the 14-day window),
+    # or a read marker set earlier would swallow it.
+    assert datetime.fromisoformat(item["at"]) >= NOW
 
 
 def test_api_token_expiry_is_tenant_scoped_and_can_be_dismissed_and_muted(db, world):

@@ -250,7 +250,9 @@ def _api_token_expiring_items(db: Session, org_login: str, tenant_id: int) -> li
             {
                 "id": f"api_token_expiring:{t.id}",
                 "kind": "api_token_expiring",
-                "at": expires_at - timedelta(days=WINDOW_DAYS),
+                # Not before the token existed: a token whose whole lifetime is shorter than the window would
+                # otherwise be dated before the admin's read marker and arrive already "read".
+                "at": max(expires_at - timedelta(days=WINDOW_DAYS), _aware(t.created_at)),
                 "title": f"API token \"{t.name}\" expires in {days_left} day{'s' if days_left != 1 else ''}",
                 "detail": "Rotate it before CI jobs using it start failing.",
                 # The API tokens card lives on the Members page; ?token highlights this one.

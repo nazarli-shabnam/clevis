@@ -228,6 +228,27 @@ describe("ApiTokensCard", () => {
       expect(screen.getByText("clv_newsecret")).toBeInTheDocument()
     })
 
+    it("does not let Create and Rotate run at the same time, so one secret cannot replace another (#954)", async () => {
+      listMock.mockResolvedValue([expiring()])
+      createMock.mockReturnValue(new Promise(() => {}))
+      renderCard()
+      fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "other" } })
+
+      // A pending rotation blocks Create...
+      fireEvent.click(screen.getByRole("button", { name: "Rotate token ci-gate" }))
+      await waitFor(() => expect(screen.getByRole("button", { name: "Rotate token ci-gate" })).toBeDisabled())
+      expect(screen.getByRole("button", { name: /Create token|Creating/ })).toBeDisabled()
+      cleanup()
+
+      // ...and a pending create blocks Rotate.
+      createMock.mockClear()
+      renderCard()
+      fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "other" } })
+      fireEvent.click(screen.getByRole("button", { name: "Create token" }))
+      await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+      expect(screen.getByRole("button", { name: "Rotate token ci-gate" })).toBeDisabled()
+    })
+
     it("reports a failed rotation and creates nothing to revoke", async () => {
       listMock.mockResolvedValue([expiring()])
       createMock.mockRejectedValue(new Error("At most 20 active tokens per organization"))
