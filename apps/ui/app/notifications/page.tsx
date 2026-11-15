@@ -84,7 +84,7 @@ export default function NotificationsPage() {
           </p>
         )}
         {!org ? (
-          <EmptyStateNoAccount bare message={scope?.kind === "personal" ? "Notifications belong to an organization. Pick an organization from the profile menu." : undefined} />
+          <EmptyStateNoAccount bare orgOnly={scope?.kind === "personal"} message={scope?.kind === "personal" ? "Notifications belong to an organization. Install the Clevis GitHub App on an organization, or pick one from the profile menu if you already have." : undefined} />
         ) : query.isError ? (
           <SectionError message={query.error.message} onRetry={() => query.refetch()} retrying={query.isFetching} />
         ) : query.isLoading ? (

@@ -102,7 +102,7 @@ export default function ReleasesPage() {
     <>
       <PageHeader title="Releases" description="Release history across your organization." />
 
-      {orgChecked && !org && <EmptyStateNoAccount message={scope?.kind === "personal" ? "This view lists organization repositories. Pick an organization from the profile menu." : undefined} />}
+      {orgChecked && !org && <EmptyStateNoAccount orgOnly={scope?.kind === "personal"} message={scope?.kind === "personal" ? "This view lists organization repositories. Install the Clevis GitHub App on an organization, or pick one from the profile menu if you already have." : undefined} />}
 
       {org && (
         <div className="card">

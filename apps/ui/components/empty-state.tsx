@@ -1,5 +1,7 @@
 import Link from "next/link"
 import { buttonVariants } from "@/components/ui/button"
+import { githubWebUrl } from "@/lib/github-web"
+import { useGithubAppSlug } from "@/lib/use-github-app-slug"
 import { cn } from "@/lib/utils"
 
 /**
@@ -53,17 +55,33 @@ interface EmptyStateNoAccountProps {
   bare?: boolean
   /** Override the default copy, e.g. for Repos where manual search works without a scope. */
   message?: string
+  /** The page only works for an organization and the user is on their personal account: point to installing the App on one. */
+  orgOnly?: boolean
 }
 
-export function EmptyStateNoAccount({ bare = false, message: messageOverride }: EmptyStateNoAccountProps) {
+function InstallOnOrgLink() {
+  const { slug } = useGithubAppSlug()
+  const href = slug ? githubWebUrl(`apps/${slug}/installations/new`) : "/settings"
+  return (
+    <a href={href} className={cn(buttonVariants({ size: "sm" }))}>
+      Install the GitHub App on an organization
+    </a>
+  )
+}
+
+export function EmptyStateNoAccount({ bare = false, message: messageOverride, orgOnly = false }: EmptyStateNoAccountProps) {
   const content = (
     <div className="px-4 py-6 flex flex-col gap-3 items-start">
       <p className="text-sm text-muted-foreground">
         {messageOverride ?? "No account selected yet — this page has nothing to query. Pick an organization or your personal account from the profile menu, or connect one below if you haven’t already."}
       </p>
-      <Link href="/settings" className={cn(buttonVariants({ size: "sm" }))}>
-        Connect a GitHub account
-      </Link>
+      {orgOnly ? (
+        <InstallOnOrgLink />
+      ) : (
+        <Link href="/settings" className={cn(buttonVariants({ size: "sm" }))}>
+          Connect a GitHub account
+        </Link>
+      )}
     </div>
   )
   return bare ? content : <div className="card mb-6">{content}</div>

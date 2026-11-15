@@ -1,7 +1,9 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 
 import { EmptyStateInline, EmptyStateNoAccount, EmptyStatePage } from "@/components/empty-state";
+
+vi.mock("@/lib/use-github-app-slug", () => ({ useGithubAppSlug: () => ({ slug: null, appConfigured: false }) }));
 
 afterEach(cleanup);
 
@@ -56,5 +58,13 @@ describe("EmptyStateNoAccount", () => {
     render(<EmptyStateNoAccount />);
     const link = screen.getByRole("link", { name: "Connect a GitHub account" });
     expect(link).toHaveAttribute("href", "/settings");
+  });
+});
+
+describe("EmptyStateNoAccount orgOnly", () => {
+  it("links to installing the App on an organization instead of reconnecting", () => {
+    render(<EmptyStateNoAccount orgOnly message="needs an org" />);
+    expect(screen.queryByText("Connect a GitHub account")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Install the GitHub App on an organization" })).toHaveAttribute("href", "/settings");
   });
 });
