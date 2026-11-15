@@ -487,6 +487,42 @@ describe("OrgMembersPage invitations", () => {
       expect(await screen.findByText(/couldn't be sent, so share this link yourself/)).toBeInTheDocument();
     });
 
+    it("waits for the SMTP lookup before submitting, then falls back to copy-only if it fails (#953)", async () => {
+      let resolveDigest!: (value: unknown) => void
+      digestMock.mockReturnValue(new Promise((resolve) => (resolveDigest = resolve)))
+      listMock.mockResolvedValue([])
+      createMock.mockResolvedValue({
+        invitation: invitation(9, "new@example.com", "pending", inFuture(7 * DAY)),
+        invite_link: "https://clevis.example/invite/tok_abc",
+      })
+      renderPage()
+      await typeAddresses("new@example.com")
+      const send = screen.getByRole("button", { name: /send invite/i })
+      expect(send).toBeDisabled()
+      // Enter must not slip past the disabled button either.
+      fireEvent.keyDown(screen.getByPlaceholderText("teammate@example.com"), { key: "Enter" })
+      expect(createMock).not.toHaveBeenCalled()
+
+      resolveDigest(digest(true))
+      await waitFor(() => expect(screen.getByRole("button", { name: /send invite/i })).toBeEnabled())
+      expect(await screen.findByLabelText("Email the invitation link to the invitee")).toBeChecked()
+      expect(createMock).not.toHaveBeenCalled()
+    })
+
+    it("sends copy-only when the SMTP lookup itself fails", async () => {
+      digestMock.mockRejectedValue(new Error("down"))
+      listMock.mockResolvedValue([])
+      createMock.mockResolvedValue({
+        invitation: invitation(9, "new@example.com", "pending", inFuture(7 * DAY)),
+        invite_link: "https://clevis.example/invite/tok_abc",
+      })
+      renderPage()
+      await typeAddresses("new@example.com")
+      await waitFor(() => expect(screen.getByRole("button", { name: /send invite/i })).toBeEnabled())
+      fireEvent.click(screen.getByRole("button", { name: /send invite/i }))
+      await waitFor(() => expect(createMock).toHaveBeenCalledWith("acme", "new@example.com", false))
+    })
+
     it("explains that the hourly email limit was reached and the link must be shared by hand", async () => {
       smtpOn();
       listMock.mockResolvedValue([]);
@@ -511,18 +547,24 @@ describe("OrgMembersPage invitations", () => {
           { email: "a@example.com", status: "created", invitation: invitation(1, "a@example.com", "pending", inFuture(DAY)), invite_link: "https://clevis.example/invite/a", email_status: "sent" },
           { email: "b@example.com", status: "created", invitation: invitation(2, "b@example.com", "pending", inFuture(DAY)), invite_link: "https://clevis.example/invite/b", email_status: "failed" },
           { email: "c@example.com", status: "created", invitation: invitation(3, "c@example.com", "pending", inFuture(DAY)), invite_link: "https://clevis.example/invite/c", email_status: "limited" },
+          { email: "d@example.com", status: "created", invitation: invitation(4, "d@example.com", "pending", inFuture(DAY)), invite_link: "https://clevis.example/invite/d", email_status: "unconfirmed" },
         ],
       });
       renderPage();
-      await typeAddresses("a@example.com, b@example.com, c@example.com");
+      await typeAddresses("a@example.com, b@example.com, c@example.com, d@example.com");
       expect(await screen.findByLabelText("Email the invitation link to the invitees")).toBeChecked();
-      fireEvent.click(screen.getByRole("button", { name: /send 3 invites/i }));
+      fireEvent.click(screen.getByRole("button", { name: /send 4 invites/i }));
       await waitFor(() =>
-        expect(createManyMock).toHaveBeenCalledWith("acme", ["a@example.com", "b@example.com", "c@example.com"], true),
+        expect(createManyMock).toHaveBeenCalledWith(
+          "acme",
+          ["a@example.com", "b@example.com", "c@example.com", "d@example.com"],
+          true,
+        ),
       );
       expect(await screen.findByText(/invited · emailed/)).toBeInTheDocument();
       expect(screen.getByText(/invited · email failed, share the link/)).toBeInTheDocument();
-      expect(screen.getByText(/invited · email limit reached, share the link/)).toBeInTheDocument();
+      expect(screen.getByText(/invited · not emailed \(limit or time reached\), share the link/)).toBeInTheDocument();
+      expect(screen.getByText(/invited · email may not have gone out, share the link/)).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Copy invitation link for b@example.com" })).toBeInTheDocument();
     });
   });

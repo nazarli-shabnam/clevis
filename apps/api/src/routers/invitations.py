@@ -6,6 +6,7 @@ AND be verified.
 
 import logging
 import smtplib
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -85,7 +86,47 @@ def _email_invitation(address: str, org_login: str, inviter: str, link: str, ten
     except OSError:  # smtplib.SMTPException and ssl.SSLError are OSErrors
         logger.warning("Failed to email an invitation for %s", org_login, exc_info=True)
         return "failed", True
+    except Exception:
+        # The invitation is already committed and its link must still reach the caller, whatever went wrong here.
+        logger.exception("Unexpected error emailing an invitation for %s", org_login)
+        return "failed", False
     return "sent", False
+
+
+# A bulk request has to answer before the browser gives up on it (15 s), and 50 sequential sends at ~0.5 s each
+# would not. Sends run a few at a time and stop being waited for after this budget; whatever has not finished
+# is reported, with its link, instead of being lost in a timeout.
+_EMAIL_PARALLEL_SENDS = 5
+_EMAIL_BUDGET_SECONDS = 8.0
+
+
+def _deliver_bulk(items: list, *, org_login: str, tenant_id: int, inviter: str) -> None:
+    """Email each created invitation and record the outcome on the item (``email_status``). The first goes alone,
+    so a dead mail server is discovered once instead of by every worker at the same time, and then the remaining
+    ones are skipped. After ``_EMAIL_BUDGET_SECONDS`` a send still in flight is reported ``unconfirmed`` (it may
+    still complete) and one that never started ``limited`` (not sent)."""
+    if not items:
+        return
+    first, rest = items[0], items[1:]
+    first.email_status, server_down = _email_invitation(first.email, org_login, inviter, first.invite_link, tenant_id)
+    if server_down:
+        for item in rest:
+            item.email_status = "failed"
+        return
+    if not rest:
+        return
+    pool = ThreadPoolExecutor(max_workers=_EMAIL_PARALLEL_SENDS)
+    futures = {
+        pool.submit(_email_invitation, item.email, org_login, inviter, item.invite_link, tenant_id): item for item in rest
+    }
+    done, _ = wait(futures, timeout=_EMAIL_BUDGET_SECONDS)
+    # Not waited for: a send already running finishes (or times out at the SMTP socket) in its own thread.
+    pool.shutdown(wait=False, cancel_futures=True)
+    for future, item in futures.items():
+        if future in done:
+            item.email_status = future.result()[0]
+        else:
+            item.email_status = "limited" if future.cancel() else "unconfirmed"
 
 
 def _is_expired(invitation) -> bool:
@@ -114,7 +155,10 @@ def create_invitation(
     db: Session = Depends(get_db),
 ):
     _require_smtp_for(body.send_email)
-    existing = invitation_repo.get_pending_for_org_and_email(db, org_id=ctx.org.id, email=body.email)
+    # Plain values, read before the commit below expires the ORM org: reading it afterwards would reload it and
+    # check a connection out for the whole SMTP exchange.
+    org_id, org_login, tenant_id = ctx.org.id, ctx.org.github_login, ctx.org.tenant_id
+    existing = invitation_repo.get_pending_for_org_and_email(db, org_id=org_id, email=body.email)
     if existing is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -124,12 +168,12 @@ def create_invitation(
     # commits would leave a live invite link with no audit trail.
     try:
         invitation = invitation_repo.create(
-            db, org_id=ctx.org.id, email=body.email, invited_by_user_id=user.id, commit=False
+            db, org_id=org_id, email=body.email, invited_by_user_id=user.id, commit=False
         )
         audit_repo.write(
-            db, user.email, "invitation.create", ctx.org.github_login,
+            db, user.email, "invitation.create", org_login,
             {"email": body.email, **({"email_requested": True} if body.send_email else {})},
-            tenant_id=ctx.org.tenant_id, commit=False,
+            tenant_id=tenant_id, commit=False,
         )
         # Built before the commit, which expires the row.
         link = _invite_link(invitation)
@@ -139,7 +183,7 @@ def create_invitation(
         # insert; the DB constraint rejected this one.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     email_status = (
-        _email_invitation(body.email, ctx.org.github_login, user.email, link, ctx.org.tenant_id)[0]
+        _email_invitation(body.email, org_login, user.email, link, tenant_id)[0]
         if body.send_email
         else None
     )
@@ -162,11 +206,11 @@ def create_invitations_bulk(
     case-insensitively) is reported once, for its first occurrence. With ``send_email`` each created
     invitation is also emailed and reports its own delivery result."""
     _require_smtp_for(body.send_email)
+    # Plain values: every commit below expires the ORM org, and each read after it would reload it.
+    org_id, org_login, tenant_id = ctx.org.id, ctx.org.github_login, ctx.org.tenant_id
     results: list[InvitationBulkItem] = []
     seen: set[str] = set()
-    # Once the mail server itself fails (not just one refused recipient), later sends would each wait out
-    # the SMTP timeout; stop trying and report them failed so the request cannot hang for minutes.
-    smtp_down = False
+    created: list[InvitationBulkItem] = []
     for raw in body.emails:
         raw = raw.strip()
         try:
@@ -184,16 +228,16 @@ def create_invitations_bulk(
         # One transaction per address: the invitation and its audit row land together or not at all,
         # so a failure never leaves an invitation whose link and audit trail are both missing.
         try:
-            if invitation_repo.get_pending_for_org_and_email(db, org_id=ctx.org.id, email=address) is not None:
+            if invitation_repo.get_pending_for_org_and_email(db, org_id=org_id, email=address) is not None:
                 results.append(InvitationBulkItem(email=address, status="already_pending"))
                 continue
             invitation = invitation_repo.create(
-                db, org_id=ctx.org.id, email=address, invited_by_user_id=user.id, commit=False
+                db, org_id=org_id, email=address, invited_by_user_id=user.id, commit=False
             )
             audit_repo.write(
-                db, user.email, "invitation.create", ctx.org.github_login,
+                db, user.email, "invitation.create", org_login,
                 {"email": address, **({"email_requested": True} if body.send_email else {})},
-                tenant_id=ctx.org.tenant_id, commit=False,
+                tenant_id=tenant_id, commit=False,
             )
             # Built before the commit: commit expires the row, and a read after it could fail
             # outside this try and lose the links of every address already committed.
@@ -205,18 +249,14 @@ def create_invitations_bulk(
             results.append(InvitationBulkItem(email=address, status="already_pending"))
             continue
         except SQLAlchemyError:
-            logger.warning("Bulk invitation for org %s failed", ctx.org.github_login, exc_info=True)
+            logger.warning("Bulk invitation for org %s failed", org_login, exc_info=True)
             db.rollback()
             results.append(InvitationBulkItem(email=address, status="failed"))
             continue
-        if body.send_email:
-            if smtp_down:
-                item.email_status = "failed"
-            else:
-                item.email_status, smtp_down = _email_invitation(
-                    address, ctx.org.github_login, user.email, item.invite_link, ctx.org.tenant_id
-                )
+        created.append(item)
         results.append(item)
+    if body.send_email:
+        _deliver_bulk(created, org_login=org_login, tenant_id=tenant_id, inviter=user.email)
     return {"results": results}
 
 

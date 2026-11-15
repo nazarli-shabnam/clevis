@@ -797,3 +797,38 @@ def test_the_email_cap_is_per_org_and_does_not_apply_without_send_email(db, acme
             assert admin.post("/orgs/acme/invitations", json={"email": address}).json()["email_status"] is None
         assert admin.post("/orgs/acme/invitations", json={"email": "x@acme.com", "send_email": True}).json()["email_status"] == "sent"
     assert send.call_count == 1
+
+
+def test_a_slow_mail_server_cannot_hold_a_bulk_request_past_its_delivery_budget(db, acme_org, monkeypatch):
+    import time
+
+    monkeypatch.setattr("src.routers.invitations._EMAIL_BUDGET_SECONDS", 0.1)
+    monkeypatch.setattr("src.routers.invitations._EMAIL_PARALLEL_SENDS", 2)
+    calls = []
+
+    def slow_send(to, *_a, **_k):
+        calls.append(to)
+        if len(calls) > 1:  # the first (the probe) answers at once; the rest are slow
+            time.sleep(0.6)
+
+    admin = _client(db, acme_org["admin"])
+    started = time.monotonic()
+    with _smtp_on(), patch("src.services.email.send_email", side_effect=slow_send):
+        resp = admin.post(
+            "/orgs/acme/invitations/bulk",
+            json={"emails": ["a@acme.com", "b@acme.com", "c@acme.com", "d@acme.com", "e@acme.com"], "send_email": True},
+        )
+    assert time.monotonic() - started < 0.5  # answered at the budget, not after every send
+    results = resp.json()["results"]
+    assert [r["status"] for r in results] == ["created"] * 5 and all(r["invite_link"] for r in results)
+    # a: sent alone; b, c: running when time ran out; d, e: never started.
+    assert [r["email_status"] for r in results] == ["sent", "unconfirmed", "unconfirmed", "limited", "limited"]
+    time.sleep(0.8)  # let the abandoned sends finish before the patch is removed
+
+
+def test_an_unexpected_error_while_emailing_still_returns_the_invitation_and_link(db, acme_org):
+    admin = _client(db, acme_org["admin"])
+    with _smtp_on(), patch("src.services.email.send_email", side_effect=RuntimeError("boom")):
+        resp = admin.post("/orgs/acme/invitations", json={"email": "bob@acme.com", "send_email": True})
+    assert resp.status_code == 200
+    assert resp.json()["email_status"] == "failed" and resp.json()["invite_link"]

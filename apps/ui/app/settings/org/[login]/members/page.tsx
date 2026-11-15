@@ -515,7 +515,8 @@ const splitEmails = (text: string) => {
 const EMAIL_STATUS_LABEL: Record<InvitationEmailStatus, string> = {
   sent: "emailed",
   failed: "email failed, share the link",
-  limited: "email limit reached, share the link",
+  limited: "not emailed (limit or time reached), share the link",
+  unconfirmed: "email may not have gone out, share the link",
 }
 
 // What the single-invite result says about the link, by whether (and how) the invitation was emailed.
@@ -524,6 +525,8 @@ const LINK_NOTE: Record<InvitationEmailStatus | "none", string> = {
   failed: "The email couldn't be sent, so share this link yourself. It is shown only now, so copy it before you leave this page.",
   limited:
     "This organization has reached its hourly limit on invitation emails, so no email was sent. Share this link yourself. It is shown only now, so copy it before you leave this page.",
+  unconfirmed:
+    "The email may not have gone out, so share this link yourself. It is shown only now, so copy it before you leave this page.",
   none: "Share this link — no email is sent automatically. It is shown only now, so copy it before you leave this page.",
 }
 
@@ -577,6 +580,8 @@ export default function OrgMembersPage() {
   // The same cached query as the digest card and the SMTP notice (it also reports whether SMTP is set up).
   const digestQuery = useDigestSettings(orgLogin, !rolePending && !notAdmin)
   const canEmailInvites = digestQuery.data?.smtp_configured === true
+  // Until the lookup settles the form cannot know whether to email; a failed lookup settles it as copy-only.
+  const smtpLookupPending = digestQuery.isLoading
 
   const [revokingIds, setRevokingIds] = useState<Set<number>>(() => new Set())
 
@@ -704,7 +709,7 @@ export default function OrgMembersPage() {
                   onKeyDown={(e) => {
                     if (e.key !== "Enter" || (addresses.length > 1 && !e.ctrlKey && !e.metaKey)) return
                     e.preventDefault()
-                    if (addresses.length > 0 && addresses.length <= MAX_BULK_INVITES && !invite.isPending) invite.mutate()
+                    if (addresses.length > 0 && addresses.length <= MAX_BULK_INVITES && !invite.isPending && !smtpLookupPending) invite.mutate()
                   }}
                   className="w-full min-w-0 resize-none rounded-md border border-input bg-transparent px-2.5 py-1.5 text-base outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm dark:bg-input/30"
                 />
@@ -725,7 +730,7 @@ export default function OrgMembersPage() {
               )}
               <Button
                 onClick={() => invite.mutate()}
-                disabled={invite.isPending || addresses.length === 0 || addresses.length > MAX_BULK_INVITES}
+                disabled={invite.isPending || smtpLookupPending || addresses.length === 0 || addresses.length > MAX_BULK_INVITES}
               >
                 <EnvelopeSimple className="size-3.5" />
                 {invite.isPending ? "Inviting…" : addresses.length > 1 ? `Send ${addresses.length} invites` : "Send invite"}
