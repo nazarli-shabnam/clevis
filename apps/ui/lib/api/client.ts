@@ -752,6 +752,12 @@ export const api = {
         ...(expiresInDays ? { expires_in_days: expiresInDays } : {}),
       }),
     revoke: (orgLogin: string, id: number) => del(`/orgs/${encodeURIComponent(orgLogin)}/api-tokens/${id}`),
+    policy: (orgLogin: string) =>
+      get<{ revoke_on_creator_leave: boolean }>(`/orgs/${encodeURIComponent(orgLogin)}/api-token-policy`),
+    setPolicy: (orgLogin: string, revokeOnCreatorLeave: boolean) =>
+      put<{ revoke_on_creator_leave: boolean }>(`/orgs/${encodeURIComponent(orgLogin)}/api-token-policy`, {
+        revoke_on_creator_leave: revokeOnCreatorLeave,
+      }),
   },
   orgs: {
     mine: () => get<MyOrgMembership[]>("/me/orgs"),

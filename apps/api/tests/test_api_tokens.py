@@ -695,3 +695,91 @@ def test_api_token_scan_holds_no_connection_while_queued_or_scanning_and_restore
     assert seen["released_before_github"] is True
     assert seen["tenant_during_github"] in {"", None}  # nothing leaks onto the pooled connection
     assert scan_results_repo.latest_with_checks(db, "acme", acme["org"].tenant_id)["score"] == 70
+
+
+# --- creator leaves the org (#1020) ---
+
+def _second_admin(db, acme):
+    boss = _make_user(db, "tok-boss@e.com")
+    org_membership_repo.get_or_create(db, org_id=acme["org"].id, user_id=boss.id, role="admin")
+    return boss
+
+
+def test_token_records_its_creator_and_is_flagged_once_the_creator_is_removed(db, acme):
+    from src.repositories import tenant_repo
+
+    boss = _second_admin(db, acme)
+    _new_token(db, acme)
+    row = db.query(ApiToken).one()
+    assert row.created_by_user_id == acme["admin"].id
+    listing = _client(db, boss).get("/orgs/acme/api-tokens").json()
+    assert listing[0]["creator_left"] is False
+
+    tenant_repo.delete_membership(db, acme["org"].tenant_id, acme["admin"].id)
+
+    listing = _client(db, boss).get("/orgs/acme/api-tokens").json()
+    assert listing[0]["creator_left"] is True and listing[0]["revoked_at"] is None  # flagged, still valid by default
+
+
+def test_a_token_with_an_unknown_creator_is_never_flagged(db, acme):
+    _new_token(db, acme)
+    db.query(ApiToken).update({ApiToken.created_by_user_id: None})
+    db.commit()
+    boss = _second_admin(db, acme)
+    assert _client(db, boss).get("/orgs/acme/api-tokens").json()[0]["creator_left"] is False
+
+
+def test_policy_on_revokes_the_leavers_tokens_only_and_audits(db, acme):
+    from src.repositories import tenant_repo
+
+    boss = _second_admin(db, acme)
+    leaver_token = _new_token(db, acme)
+    boss_token = _client(db, boss).post("/orgs/acme/api-tokens", json={"name": "boss"}).json()["token"]
+    resp = _client(db, boss).put("/orgs/acme/api-token-policy", json={"revoke_on_creator_leave": True})
+    assert resp.json() == {"revoke_on_creator_leave": True}
+    assert _client(db, boss).get("/orgs/acme/api-token-policy").json() == {"revoke_on_creator_leave": True}
+
+    tenant_repo.delete_membership(db, acme["org"].tenant_id, acme["admin"].id)
+
+    assert api_token_repo.resolve(db, leaver_token) is None
+    assert api_token_repo.resolve(db, boss_token) is not None
+    log = db.query(AuditLog).filter(AuditLog.action == "api_token.auto_revoked").one()
+    assert json.loads(log.payload)["reason"] == "creator_left_org"
+
+
+def test_policy_off_by_default_keeps_the_leavers_token_working(db, acme):
+    from src.repositories import tenant_repo
+
+    _second_admin(db, acme)
+    token = _new_token(db, acme)
+    assert _client(db, acme["admin"]).get("/orgs/acme/api-token-policy").json() == {"revoke_on_creator_leave": False}
+
+    tenant_repo.delete_membership(db, acme["org"].tenant_id, acme["admin"].id)
+
+    assert api_token_repo.resolve(db, token) is not None
+
+
+def test_removing_a_member_through_the_members_route_revokes_when_opted_in(db, acme):
+    from src.routers.org_memberships import router as members_router
+
+    boss = _second_admin(db, acme)
+    token = _new_token(db, acme)
+    _client(db, boss).put("/orgs/acme/api-token-policy", json={"revoke_on_creator_leave": True})
+    app = FastAPI()
+    app.include_router(members_router)
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[require_auth] = lambda: boss
+    db.execute(text(f"SET app.user_id = {boss.id}"))
+    # Members route only manages invite-sourced rows; make the leaver's one.
+    db.execute(text("UPDATE memberships SET source = 'invite' WHERE user_id = :u"), {"u": acme["admin"].id})
+    db.commit()
+
+    assert TestClient(app).delete(f"/orgs/acme/members/{acme['admin'].id}").status_code in (200, 204)
+
+    assert api_token_repo.resolve(db, token) is None
+
+
+def test_only_org_admins_can_read_or_change_the_policy(db, acme):
+    member = _client(db, acme["member"])
+    assert member.get("/orgs/acme/api-token-policy").status_code == 403
+    assert member.put("/orgs/acme/api-token-policy", json={"revoke_on_creator_leave": True}).status_code == 403
