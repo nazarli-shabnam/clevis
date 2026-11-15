@@ -127,7 +127,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
     # So the UI can read these on the evidence download (cross-origin responses hide other headers).
-    expose_headers=["Content-Disposition", "X-Evidence-Truncated"],
+    expose_headers=["Content-Disposition", "X-Evidence-Truncated", "X-Audit-Truncated"],
 )
 
 app.include_router(health.router)

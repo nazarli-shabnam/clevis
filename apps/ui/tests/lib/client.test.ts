@@ -1461,6 +1461,30 @@ describe("waivers, notification preferences and evidence endpoints", () => {
     expect(out.truncated).toBe(false);
   });
 
+  it("audit.exportForOrg sends the filters and reads the filename and truncation header (#952)", async () => {
+    localStorage.setItem(TOKEN_KEY, "tok");
+    const call = stub("id,actor\r\n1,a", 200, {
+      "Content-Disposition": 'attachment; filename="clevis-audit-acme-1.csv"',
+      "X-Audit-Truncated": "true",
+    });
+    const out = await api.audit.exportForOrg("acme", { action_prefix: "token.", actor: "a@e.com", since: "2026-01-01T00:00:00Z" });
+    const [url, init] = call();
+    expect(url).toMatch(/\/orgs\/acme\/audit\/export\?action_prefix=token\.&actor=a%40e\.com&since=2026-01-01T00%3A00%3A00Z$/);
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer tok");
+    expect(out).toMatchObject({ filename: "clevis-audit-acme-1.csv", truncated: true });
+    expect(await out.blob.text()).toBe("id,actor\r\n1,a");
+  });
+
+  it("audit.exportForOrg defaults the filename, sends no query without filters and reports a timeout", async () => {
+    const call = stub("x");
+    const out = await api.audit.exportForOrg("acme");
+    expect(call()[0]).toMatch(/\/orgs\/acme\/audit\/export$/);
+    expect(out).toMatchObject({ filename: "clevis-audit-acme.csv", truncated: false });
+
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new DOMException("aborted", "AbortError"))));
+    await expect(api.audit.exportForOrg("acme")).rejects.toThrow("The audit export timed out");
+  });
+
   it("evidence.download surfaces the server's error and signs out on a 401", async () => {
     localStorage.setItem(TOKEN_KEY, "stale");
     stub({ detail: "Too many requests" }, 429);

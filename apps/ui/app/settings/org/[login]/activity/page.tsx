@@ -2,7 +2,7 @@
 
 import { useParams, useSearchParams } from "next/navigation"
 import { useEffect, useState } from "react"
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
+import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query"
 import { CircleNotch, DownloadSimple } from "@phosphor-icons/react"
 import { PageHeader } from "@/components/page-header"
 import { SectionError } from "@/components/section-error"
@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button"
 import { AuditFilterForm } from "@/components/audit-filter-form"
 import { api } from "@/lib/api/client"
 import { toCsv } from "@/lib/csv"
-import { downloadTextFile } from "@/lib/download"
+import { downloadBlob, downloadTextFile } from "@/lib/download"
 import { orgRoleFor } from "@/lib/members-href"
 import { EMPTY_FORM, toAuditFilters, type FilterForm } from "@/lib/audit-filters"
 import type { AuditLogOut, JobOut, MyOrgMembership } from "@/lib/api/types"
@@ -43,6 +43,12 @@ function AuditCard({ orgLogin }: { orgLogin: string }) {
   const rows: AuditLogOut[] = query.data?.pages.flat() ?? []
   const filtered = JSON.stringify(applied) !== JSON.stringify(EMPTY_FORM)
 
+  // The whole filtered range from the server (with each row's payload), not just the pages loaded here.
+  const exportAll = useMutation({
+    mutationFn: () => api.audit.exportForOrg(orgLogin, toAuditFilters(applied)),
+    onSuccess: ({ blob, filename }) => downloadBlob(filename, blob),
+  })
+
   function exportCsv() {
     const csv = toCsv(rows, [
       { header: "Time", value: (r) => r.created_at },
@@ -57,10 +63,25 @@ function AuditCard({ orgLogin }: { orgLogin: string }) {
     <div className="card">
       <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
         <span className="section-title">Audit log</span>
-        <Button size="sm" variant="outline" onClick={exportCsv} disabled={rows.length === 0}>
-          <DownloadSimple className="size-3.5" /> {query.hasNextPage ? `Export CSV (${rows.length} loaded)` : "Export CSV"}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={exportCsv} disabled={rows.length === 0}>
+            <DownloadSimple className="size-3.5" /> {query.hasNextPage ? `Export CSV (${rows.length} loaded)` : "Export CSV"}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => exportAll.mutate()} disabled={exportAll.isPending}>
+            <DownloadSimple className="size-3.5" /> {exportAll.isPending ? "Preparing…" : "Export all matching"}
+          </Button>
+        </div>
       </div>
+      {exportAll.isError && (
+        <p role="alert" className="px-4 pt-3 text-xs text-destructive">Couldn&apos;t export: {exportAll.error.message}</p>
+      )}
+      {exportAll.isSuccess && (
+        <p role="status" className={`px-4 pt-3 text-xs ${exportAll.data.truncated ? "text-amber-500" : "text-muted-foreground"}`}>
+          {exportAll.data.truncated
+            ? `Downloaded ${exportAll.data.filename}, but the export hit its row cap and is incomplete. Narrow the date range or filters to get the rest.`
+            : `Downloaded ${exportAll.data.filename}: every matching event, with its payload. The export is recorded in the audit log.`}
+        </p>
+      )}
 
       <AuditFilterForm
         form={form}

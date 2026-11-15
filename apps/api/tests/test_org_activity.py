@@ -229,3 +229,93 @@ def test_the_enqueueing_services_attribute_their_jobs(db, world):
     alerts = db.query(Job).filter(Job.job_type == "github.backfill_security_alerts").one()
     assert alerts.tenant_id == t
     assert listed == {backfill, reconcile, clear, alerts.id}
+
+
+# --- audit export (#952) ----------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_export_rate_limit():
+    from src.core.rate_limit import _account_buckets
+
+    _account_buckets.clear()
+    yield
+    _account_buckets.clear()
+
+
+def _csv_rows(resp):
+    import csv
+    import io
+
+    return list(csv.DictReader(io.StringIO(resp.text)))
+
+
+def test_export_returns_every_matching_row_not_one_page(db, world):
+    t = world["acme"].tenant_id
+    ids = [_audit(db, t, "token.save", actor=f"u{i}@e.com") for i in range(7)]
+    _audit(db, world["globex"].tenant_id, "token.save", target="globex")  # another org
+
+    resp = _client(db, world["users"]["acme_admin"]).get("/orgs/acme/audit/export")
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/csv")
+    assert resp.headers["x-audit-truncated"] == "false" and resp.headers["cache-control"] == "no-store"
+    assert 'filename="clevis-audit-acme-' in resp.headers["content-disposition"]
+    rows = _csv_rows(resp)
+    assert [r["id"] for r in rows] == [str(i) for i in sorted(ids, reverse=True)]
+    assert list(rows[0]) == ["id", "created_at", "actor", "action", "target", "payload"]
+    assert rows[0]["payload"] == '{"k": "v"}'
+
+
+def test_export_honours_the_same_filters_as_the_list(db, world):
+    t = world["acme"].tenant_id
+    _audit(db, t, "token.save", actor="a@e.com", when=datetime.now(timezone.utc) - timedelta(days=10))
+    keep = _audit(db, t, "token.delete", actor="a@e.com", when=datetime.now(timezone.utc) - timedelta(days=1))
+    _audit(db, t, "token.delete", actor="b@e.com")
+    since = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+
+    resp = _client(db, world["users"]["acme_admin"]).get(
+        "/orgs/acme/audit/export", params={"action_prefix": "token.", "actor": "A@E.COM", "since": since}
+    )
+
+    assert [r["id"] for r in _csv_rows(resp)] == [str(keep)]
+
+
+def test_export_is_capped_and_says_so(db, world, monkeypatch):
+    monkeypatch.setattr("src.routers.org_activity.AUDIT_EXPORT_LIMIT", 3)
+    t = world["acme"].tenant_id
+    ids = [_audit(db, t, "token.save") for _ in range(5)]
+
+    resp = _client(db, world["users"]["acme_admin"]).get("/orgs/acme/audit/export")
+
+    assert resp.headers["x-audit-truncated"] == "true"
+    # The newest rows are kept; the export itself is not in its own output.
+    assert [r["id"] for r in _csv_rows(resp)] == [str(i) for i in sorted(ids, reverse=True)[:3]]
+
+
+def test_export_defuses_spreadsheet_formulas_in_cells(db, world):
+    _audit(db, world["acme"].tenant_id, "token.save", actor="=HYPERLINK(\"http://x\")")
+    [row] = _csv_rows(_client(db, world["users"]["acme_admin"]).get("/orgs/acme/audit/export"))
+    assert row["actor"].startswith("'=")
+
+
+def test_export_is_itself_audited_after_the_read(db, world):
+    _audit(db, world["acme"].tenant_id, "token.save")
+    resp = _client(db, world["users"]["acme_admin"]).get("/orgs/acme/audit/export", params={"actor": "x@e.com"})
+
+    assert [r["action"] for r in _csv_rows(resp)] == ["token.save"]
+    row = db.query(AuditLog).filter(AuditLog.action == "audit.export").one()
+    assert row.tenant_id == world["acme"].tenant_id and row.actor == "acme_admin@e.com"
+    import json
+
+    assert json.loads(row.payload) == {"filters": {"actor": "x@e.com"}, "rows": 1, "truncated": False}
+
+
+def test_export_is_admin_only_tenant_scoped_validated_and_rate_limited(db, world):
+    member = _client(db, world["users"]["acme_member"])
+    assert member.get("/orgs/acme/audit/export").status_code == 403
+    assert _client(db, world["users"]["globex_admin"]).get("/orgs/acme/audit/export").status_code == 403
+    admin = _client(db, world["users"]["acme_admin"])
+    inverted = admin.get("/orgs/acme/audit/export", params={"since": "2026-02-01T00:00:00Z", "until": "2026-01-01T00:00:00Z"})
+    assert inverted.status_code == 422
+    assert [admin.get("/orgs/acme/audit/export").status_code for _ in range(6)] == [200] * 5 + [429]
