@@ -199,6 +199,24 @@ def current_session_id(
         return None
 
 
+def current_revocation_key(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+    session: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+) -> str | None:
+    """The ``revoked_tokens`` key of the token this request authenticated with: its ``jti``, or the ``legacy:``
+    fingerprint for a token issued before ``jti`` existed. Same token choice as require_auth, so use it only on a
+    route that also depends on require_auth (which has verified the token); a long-lived response such as an SSE
+    stream re-checks this key to notice a logout or revoke."""
+    token = credentials.credentials if credentials else session
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, settings.auth_secret.get_secret_value(), algorithms=[_ALGORITHM])
+    except jwt.InvalidTokenError:
+        return None
+    return _revocation_key(token, payload)
+
+
 def _revocation_key(token: str, payload: dict) -> str:
     """Return a verified JWT's jti, or a namespaced fingerprint for a legacy token.
 

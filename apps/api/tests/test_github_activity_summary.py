@@ -409,7 +409,7 @@ async def test_stream_ends_with_unauthorized_once_the_member_is_removed(db, acme
     from src.routers.github import _stream_authorization_check
 
     ctx = rbac_ctx_factory(acme_org_with_installation)
-    check = _stream_authorization_check("acme", _MEMBER.id, db.get(User, _MEMBER.id).token_version, None)
+    check = _stream_authorization_check(acme_org_with_installation.tenant_id, _MEMBER.id, db.get(User, _MEMBER.id).token_version, None)
 
     gen = _activity_summary_stream(
         "acme", ctx, days=7, poll_interval=0, session_scope=_reuse_session(db), still_authorized=check
@@ -431,8 +431,8 @@ def test_authorization_check_rejects_a_bumped_token_version_and_a_revoked_sessio
 
     rbac_ctx_factory(acme_org_with_installation)
     version = db.get(User, _MEMBER.id).token_version
-    assert _stream_authorization_check("acme", _MEMBER.id, version, "j1")(db) is True
-    assert _stream_authorization_check("acme", _MEMBER.id, version + 1, "j1")(db) is False
+    assert _stream_authorization_check(acme_org_with_installation.tenant_id, _MEMBER.id, version, "j1")(db) is True
+    assert _stream_authorization_check(acme_org_with_installation.tenant_id, _MEMBER.id, version + 1, "j1")(db) is False
     db.add(RevokedToken(jti="j1", user_id=_MEMBER.id, expires_at=datetime.now(timezone.utc) + timedelta(hours=1)))
     db.flush()
-    assert _stream_authorization_check("acme", _MEMBER.id, version, "j1")(db) is False
+    assert _stream_authorization_check(acme_org_with_installation.tenant_id, _MEMBER.id, version, "j1")(db) is False

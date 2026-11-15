@@ -20,10 +20,10 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from src.core.auth import UserOut, current_session_id, require_auth
+from src.core.auth import UserOut, current_revocation_key, require_auth
 from src.core.db import RepoEvent, RepoEventDailyCount, RevokedToken, SessionLocal, User, get_db
-from src.core.rbac import OrgContext, require_org_role, resolve_org_role, set_tenant_session_context
-from src.repositories import installation_repo
+from src.core.rbac import _ROLE_RANK, OrgContext, require_org_role, set_tenant_session_context
+from src.repositories import installation_repo, tenant_repo
 from src.schemas.github import (
     ActivitySummaryEntry,
     ActivitySummaryResponse,
@@ -283,7 +283,7 @@ def _stream_poll_session():
         _teardown_stream_session(db)
 
 
-def _stream_authorization_check(org_login: str, user_id: int, token_version: int, jti: str | None):
+def _stream_authorization_check(tenant_id: int, user_id: int, token_version: int, revocation_key: str | None):
     """A per-poll recheck of what the stream was opened with: the session is not revoked ("sign out everywhere"
     bumps token_version, a logout or revoke denylists the jti) and the user is still a member of the org.
     Without it a removed member would keep receiving events until the 15-minute cap."""
@@ -292,9 +292,11 @@ def _stream_authorization_check(org_login: str, user_id: int, token_version: int
         user = db.get(User, user_id)
         if user is None or user.token_version != token_version:
             return False
-        if jti and db.get(RevokedToken, jti) is not None:
+        if revocation_key and db.get(RevokedToken, revocation_key) is not None:
             return False
-        return resolve_org_role(db, org_login, user_id, "member") is not None
+        # Against the tenant the stream was opened for, not a fresh lookup by login (an org can be renamed).
+        membership = tenant_repo.get_membership(db, tenant_id, user_id)
+        return membership is not None and _ROLE_RANK.get(membership.role, -1) >= _ROLE_RANK["member"]
 
     return check
 
@@ -371,7 +373,7 @@ async def org_activity_summary_stream(
     days: int = _ACTIVITY_SUMMARY_DEFAULT_DAYS,
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     user: UserOut = Depends(require_auth),
-    jti: str | None = Depends(current_session_id),
+    revocation_key: str | None = Depends(current_revocation_key),
     db: Session = Depends(get_db),
 ):
     """SSE channel pushing the same shape org_activity_summary returns, whenever it
@@ -387,7 +389,7 @@ async def org_activity_summary_stream(
         org=SimpleNamespace(id=ctx.org.id, tenant_id=ctx.org.tenant_id),
         membership=SimpleNamespace(user_id=ctx.membership.user_id),
     )
-    check = _stream_authorization_check(org_login, user.id, db.get(User, user.id).token_version, jti)
+    check = _stream_authorization_check(ctx.org.tenant_id, user.id, db.get(User, user.id).token_version, revocation_key)
     return StreamingResponse(
         _activity_summary_stream(org_login, detached, days, still_authorized=check), media_type="text/event-stream"
     )
