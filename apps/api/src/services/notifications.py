@@ -18,7 +18,7 @@ import socket
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
 from sqlalchemy import text as sql_text
@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 KINDS = ("slack", "teams", "generic", "email")
 EVENT_SCORE_DROP = "score_drop"
 EVENT_WAIVER_EXPIRED = "waiver_expired"
+EVENT_WAIVER_EXPIRING = "waiver_expiring"
 EVENT_NEW_CRITICAL_ALERT = "new_critical_alert"
 EVENT_STALE_PR_SUMMARY = "stale_pr_summary"
 EVENT_AUTOMATION_FAILED = "automation_failed"
@@ -42,6 +43,7 @@ EVENT_SLA_BREACH = "sla_breach"
 EVENTS = (
     EVENT_SCORE_DROP,
     EVENT_WAIVER_EXPIRED,
+    EVENT_WAIVER_EXPIRING,
     EVENT_NEW_CRITICAL_ALERT,
     EVENT_STALE_PR_SUMMARY,
     EVENT_AUTOMATION_FAILED,
@@ -140,6 +142,7 @@ def sign(secret: str, body: bytes, timestamp: str) -> str:
 _EMAIL_SUBJECTS = {
     "score_drop": "Clevis: security score dropped for {org}",
     "waiver_expired": "Clevis: check waivers expired for {org}",
+    "waiver_expiring": "Clevis: check waivers about to expire for {org}",
     "new_critical_alert": "Clevis: new critical alert for {org}",
     "stale_pr_summary": "Clevis: stale PR summary for {org}",
     "automation_failed": "Clevis: automation failed for {org}",
@@ -325,6 +328,28 @@ def notify_waiver_expired(
         f"({names}). The check{'s' if len(expired) != 1 else ''} count toward the score again on the next scan."
     )
     _notify_event(db, tenant_id, org_login, EVENT_WAIVER_EXPIRED, text, {"org": org_login, "waivers": expired}, actor=actor)
+
+
+def notify_waiver_expiring(
+    db: Session, tenant_id: int, org_login: str, expiring: list[dict], *, actor: str = "system"
+) -> None:
+    """``expiring`` is a list of ``{"waiver_id", "check_id", "expires_at", "days_left"}`` dicts for waivers that
+    just entered a warning window. Each window is announced once per waiver, so these are rare."""
+    if not expiring:
+        return
+    names = ", ".join(sorted({e["check_id"] for e in expiring}))
+    soonest = min(e["days_left"] for e in expiring)
+    renew_url = f"{settings.cors_origins[0]}/settings/org/{quote(org_login, safe='')}/members" if settings.cors_origins else ""
+    text = (
+        f"Clevis: {len(expiring)} check waiver{'s' if len(expiring) != 1 else ''} for {org_login} "
+        f"{'expire' if len(expiring) != 1 else 'expires'} within {soonest} day{'s' if soonest != 1 else ''} ({names}). "
+        f"After that the check{'s' if len(expiring) != 1 else ''} count toward the score again."
+        + (f" Renew {'them' if len(expiring) != 1 else 'it'}: {renew_url}" if renew_url else "")
+    )
+    _notify_event(
+        db, tenant_id, org_login, EVENT_WAIVER_EXPIRING, text,
+        {"org": org_login, "waivers": expiring, "renew_url": renew_url or None}, actor=actor,
+    )
 
 
 def notify_new_critical_alerts(

@@ -17,6 +17,7 @@ export const EVENT_LABELS: Record<AlertEvent, string> = {
   stale_pr_summary: "Stale PRs nudged",
   automation_failed: "Automation failed",
   waiver_expired: "Waiver expired",
+  waiver_expiring: "Waiver about to expire",
   sla_breach: "Dependabot SLA breached",
 }
 const ALL_EVENTS = Object.keys(EVENT_LABELS) as AlertEvent[]

@@ -91,6 +91,7 @@ def create_waiver(
         owner=body.owner,
         expires_at=_aware(body.expires_at),
         created_by=user.email,
+        expiry_warning_stage=waiver_service.warning_stage(_aware(body.expires_at), now),
     )
     audit_repo.write(
         db, actor=user.email, action="waiver.create", target=ctx.org.github_login,
@@ -122,8 +123,9 @@ def update_waiver(
     before = _payload(waiver)
     waiver.check_id, waiver.repos, waiver.reason = body.check_id, body.repos, body.reason
     waiver.owner, waiver.expires_at = body.owner, _aware(body.expires_at)
-    # A renewed waiver can lapse (and be announced) again.
+    # A renewed waiver can lapse (and be announced) again, and be warned about again before it does.
     waiver.expiry_noted_at = None
+    waiver.expiry_warning_stage = waiver_service.warning_stage(waiver.expires_at, now)
     audit_repo.write(
         db, actor=user.email, action="waiver.update", target=ctx.org.github_login,
         payload={"before": before, "after": _payload(waiver)}, tenant_id=ctx.org.tenant_id, commit=False,

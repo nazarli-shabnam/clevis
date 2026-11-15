@@ -1,7 +1,7 @@
 """Read/write helpers for ``check_waivers``. Callers must set the tenant session context first
 (``require_org_role`` does); RLS scopes every row by ``tenant_id``."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -30,6 +30,24 @@ def due_for_expiry_notice(db: Session, tenant_id: int, now: datetime) -> list[Ch
         db.execute(
             select(CheckWaiver)
             .where(CheckWaiver.tenant_id == tenant_id, CheckWaiver.expires_at <= now, CheckWaiver.expiry_noted_at.is_(None))
+            .order_by(CheckWaiver.expires_at)
+        ).scalars()
+    )
+
+
+def candidates_for_expiry_warning(
+    db: Session, tenant_id: int, now: datetime, widest_window_days: int
+) -> list[CheckWaiver]:
+    """Unexpired waivers that lapse within the widest warning window and have not yet had every warning stage
+    announced. The caller works out the stage each has reached (``services.waivers.warning_stage``)."""
+    return list(
+        db.execute(
+            select(CheckWaiver)
+            .where(
+                CheckWaiver.tenant_id == tenant_id,
+                CheckWaiver.expires_at > now,
+                CheckWaiver.expires_at <= now + timedelta(days=widest_window_days),
+            )
             .order_by(CheckWaiver.expires_at)
         ).scalars()
     )

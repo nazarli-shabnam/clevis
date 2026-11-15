@@ -16,6 +16,8 @@ import { MAX_WAIVER_DAYS, WAIVABLE_CHECKS, WaiverForm, daysRemaining } from "@/c
 import type { CheckWaiver } from "@/lib/api/types"
 
 const EXPIRING_SOON_DAYS = 14
+// Mirrors the first of WARNING_DAYS in apps/api/src/services/waivers.py: the bell and alert destinations warn from here.
+const LAST_WEEK_DAYS = 7
 
 type WaiverFilter = "all" | "active" | "expiring" | "expired"
 const FILTER_LABELS: Record<WaiverFilter, string> = {
@@ -157,6 +159,7 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
                     {w.active ? (
                       <>
                         expires {dueTime(w.expires_at)} · {days} {days === 1 ? "day" : "days"} left
+                        {days <= LAST_WEEK_DAYS && <span className="ml-2 text-warning font-medium">ending this week</span>}
                       </>
                     ) : (
                       <span className="text-destructive">expired {dueTime(w.expires_at)}</span>
@@ -170,7 +173,7 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
                     onClick={() => setEditing(w)}
                     aria-label={`Renew or edit waiver for ${title}`}
                   >
-                    {w.active ? "Edit" : "Renew"}
+                    {w.active && days > LAST_WEEK_DAYS ? "Edit" : "Renew"}
                   </Button>
                   <Button
                     variant="outline"

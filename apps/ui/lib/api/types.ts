@@ -79,6 +79,7 @@ export type DestinationKind = "slack" | "teams" | "generic" | "email"
 export type AlertEvent =
   | "score_drop"
   | "waiver_expired"
+  | "waiver_expiring"
   | "new_critical_alert"
   | "stale_pr_summary"
   | "automation_failed"
@@ -1012,6 +1013,7 @@ export type NotificationKind =
   | "job_failed"
   | "permission_drift"
   | "waiver_expired"
+  | "waiver_expiring"
   | "sla_breach"
 
 export interface NotificationPreferences {
