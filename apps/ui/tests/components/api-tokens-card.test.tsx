@@ -77,6 +77,14 @@ describe("ApiTokensCard", () => {
     await waitFor(() => expect(box).toBeChecked())
   })
 
+  it("shows an error when saving the revoke-on-leave policy fails", async () => {
+    listMock.mockResolvedValue([])
+    setPolicyMock.mockRejectedValue(new Error("nope"))
+    renderCard()
+    fireEvent.click(await screen.findByLabelText(/Revoke a member's tokens when they leave/))
+    expect(await screen.findByText(/Couldn't save: nope/)).toBeInTheDocument()
+  })
+
   it("lists tokens with prefix, scope and last used, flagging revoked ones", async () => {
     listMock.mockResolvedValue([
       token(),

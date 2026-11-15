@@ -818,8 +818,8 @@ def test_removing_a_member_revokes_their_api_tokens_when_the_org_opted_in(pg_con
         org_row = cur.fetchone()[0]
         cur.execute("INSERT INTO tenants (kind, org_id) VALUES ('org', %s) RETURNING id", (org_row,))
         tid = cur.fetchone()[0]
-        cur.execute("UPDATE orgs SET tenant_id = %s WHERE id = %s", (tid, org_row))
         cur.execute(f"SET app.tenant_id = {int(tid)}")
+        cur.execute("UPDATE orgs SET tenant_id = %s WHERE id = %s", (tid, org_row))
         # gone is a second github admin so the last-admin guard does not apply.
         cur.execute(
             "INSERT INTO memberships (tenant_id, user_id, role, source) VALUES (%s, %s, 'admin', 'github'), (%s, %s, 'admin', 'github')",
