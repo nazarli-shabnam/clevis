@@ -1024,6 +1024,7 @@ export type NotificationKind =
   | "waiver_expired"
   | "waiver_expiring"
   | "sla_breach"
+  | "api_token_expiring"
 
 export interface NotificationPreferences {
   // Kinds this user has hidden from the org's feed and unread count; empty = show everything.

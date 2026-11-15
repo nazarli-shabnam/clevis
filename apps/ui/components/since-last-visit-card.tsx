@@ -12,6 +12,7 @@ const NOUN: Record<NotificationItem["kind"], [string, string]> = {
   waiver_expired: ["expired waiver", "expired waivers"],
   waiver_expiring: ["expiring waiver", "expiring waivers"],
   sla_breach: ["SLA breach", "SLA breaches"],
+  api_token_expiring: ["expiring API token", "expiring API tokens"],
 }
 
 /** Overview summary of what changed since the user last marked notifications read. Renders nothing when
