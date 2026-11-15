@@ -114,6 +114,13 @@ describe("LoginPage GitHub OAuth button", () => {
     expect(screen.getByRole("link", { name: "Create your account" })).toHaveAttribute("href", "/register?next=%2Finvite%2Fabc123");
   });
 
+  it("explains a lost first-run setup race instead of a GitHub error (#1013)", async () => {
+    searchParams = new URLSearchParams("error=setup_complete");
+    renderPage();
+    expect(await screen.findByText(/Setup was already completed by someone else/i)).toBeInTheDocument();
+    expect(screen.queryByText(/GitHub sign-in failed/i)).not.toBeInTheDocument();
+  });
+
   it("omits the next param when there is none (default '/')", async () => {
     renderPage();
 
