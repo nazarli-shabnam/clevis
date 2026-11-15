@@ -11,6 +11,7 @@ import { Field, FieldLabel, FieldDescription } from "@/components/ui/field"
 import { SectionError } from "@/components/section-error"
 import { EmptyStatePage } from "@/components/empty-state"
 import { PermissionDriftNotice } from "@/components/permission-drift-notice"
+import { GITHUB_LINK_ERRORS, GithubLinkField } from "@/components/github-link-field"
 import { SessionsCard } from "@/components/sessions-card"
 import { ChangePasswordCard } from "@/components/change-password-card"
 import { ChangeEmailCard, DeleteAccountCard } from "@/components/account-cards"
@@ -103,6 +104,7 @@ function ProfileSection() {
           <Input value={user?.email || ""} disabled className="opacity-60 cursor-not-allowed" />
           <FieldDescription>To change it, use the Email address section below.</FieldDescription>
         </Field>
+        <GithubLinkField />
         <p className="text-xs text-muted-foreground -mt-1">
           Switch between your organizations and personal GitHub account from the profile menu in the sidebar.
         </p>
@@ -886,11 +888,25 @@ export default function SettingsPage() {
   const { user } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
+  const queryClient = useQueryClient()
   const [justInstalled, setJustInstalled] = useState(false)
+  // What the GitHub link callback reported (`?github=linked` or `?github_link_error=<code>`), shown once.
+  const [linkResult, setLinkResult] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
+    const linkError = searchParams.get("github_link_error")
+    const linked = searchParams.get("github") === "linked"
     if (searchParams.get("installed") === "1") {
       setJustInstalled(true)
+      router.replace("/settings")
+    } else if (linked || linkError) {
+      setLinkResult(
+        linked
+          ? { ok: true, text: "GitHub account linked." }
+          : { ok: false, text: GITHUB_LINK_ERRORS[linkError ?? ""] ?? "Linking your GitHub account failed. Try again." },
+      )
+      // The profile and the org list both depend on the link.
+      queryClient.invalidateQueries({ queryKey: ["me"] })
       router.replace("/settings")
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -902,6 +918,16 @@ export default function SettingsPage() {
       {justInstalled && (
         <div className="mb-4 px-4 py-2.5 bg-primary/10 border border-primary/30 text-sm text-primary flex items-center gap-1.5">
           <CheckCircle className="size-3.5" /> GitHub App installation connected.
+        </div>
+      )}
+      {linkResult && (
+        <div
+          role={linkResult.ok ? "status" : "alert"}
+          className={`mb-4 px-4 py-2.5 border text-sm flex items-center gap-1.5 ${
+            linkResult.ok ? "bg-primary/10 border-primary/30 text-primary" : "bg-destructive/10 border-destructive/30 text-destructive"
+          }`}
+        >
+          {linkResult.text}
         </div>
       )}
       <div className="flex flex-col gap-4">

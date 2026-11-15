@@ -854,7 +854,17 @@ export const api = {
         pending_invitations: PendingInvitationSummary[]
       }>("/auth/register", { email, password, name, invite_token: inviteToken }),
     me: () =>
-      get<{ id: number; email: string; name: string | null; is_workspace_admin: boolean; email_verified: boolean }>("/auth/me"),
+      get<{
+        id: number
+        email: string
+        name: string | null
+        is_workspace_admin: boolean
+        email_verified: boolean
+        /** The linked GitHub account, once there is one. */
+        github_login?: string | null
+      }>("/auth/me"),
+    /** Start linking a GitHub account to the signed-in user; resolves with the GitHub authorize URL to open. */
+    linkGithub: () => post<{ url: string }>("/auth/github/link", {}),
     patchMe: (name: string) =>
       patch<{ id: number; email: string; name: string | null; is_workspace_admin: boolean }>("/auth/me", { name }),
     revokeSessions: () => post<{ ok: boolean }>("/auth/me/revoke-sessions", {}),

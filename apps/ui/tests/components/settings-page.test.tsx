@@ -16,6 +16,7 @@ const revokeSessionsMock = vi.fn();
 const sessionsMock = vi.fn();
 const configUpdateMock = vi.fn();
 const routerReplace = vi.fn();
+const meMock = vi.fn();
 let searchParams = new URLSearchParams();
 
 // AuthProvider calls the real global `fetch` for /auth/me; unmocked, each failure waits a real
@@ -49,6 +50,8 @@ vi.mock("@/lib/api/client", () => ({
       patchMe: (...args: unknown[]) => patchMeMock(...args),
       revokeSessions: (...args: unknown[]) => revokeSessionsMock(...args),
       sessions: (...args: unknown[]) => sessionsMock(...args),
+      me: (...args: unknown[]) => meMock(...args),
+      linkGithub: vi.fn(),
     },
   },
 }));
@@ -114,6 +117,8 @@ describe("SettingsPage", () => {
     revokeSessionsMock.mockReset();
     sessionsMock.mockReset();
     sessionsMock.mockResolvedValue([]);
+    meMock.mockReset();
+    meMock.mockResolvedValue({ id: 1, email: "admin@example.com", name: "Admin", github_login: null });
     configUpdateMock.mockReset();
     routerReplace.mockClear();
     searchParams = new URLSearchParams();
@@ -392,6 +397,29 @@ describe("SettingsPage", () => {
       expect(screen.getByText("GitHub App installation connected.")).toBeInTheDocument();
     });
     expect(routerReplace).toHaveBeenCalledWith("/settings");
+  });
+
+  it("reports the outcome of linking a GitHub account once and strips it from the URL (#1007)", async () => {
+    searchParams = new URLSearchParams({ github: "linked" });
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([]);
+    configGetAllMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true" });
+    renderPage();
+    expect(await screen.findByText("GitHub account linked.")).toBeInTheDocument();
+    expect(routerReplace).toHaveBeenCalledWith("/settings");
+    cleanup();
+
+    routerReplace.mockClear();
+    searchParams = new URLSearchParams({ github_link_error: "taken" });
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveTextContent("already linked to another Clevis account");
+    expect(routerReplace).toHaveBeenCalledWith("/settings");
+    cleanup();
+
+    searchParams = new URLSearchParams({ github_link_error: "something-new" });
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Linking your GitHub account failed");
   });
 
   it("requires a second click to confirm revoking all sessions, then calls the endpoint", async () => {
