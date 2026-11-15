@@ -29,8 +29,8 @@ import { MemberAccessSheet } from "@/components/member-access-sheet"
 import { NotificationDestinationsCard } from "@/components/notification-destinations-card"
 import { BadgeSettingsCard } from "@/components/badge-settings-card"
 import { ApiTokensCard } from "@/components/api-tokens-card"
+import { useDigestSettings } from "@/lib/use-digest-settings"
 import type {
-  DigestSettings,
   GithubOrgMember,
   GithubOutsideCollaborator,
   InvitationBulkItem,
@@ -574,13 +574,8 @@ export default function OrgMembersPage() {
   })
   const invitations = invitationsQuery.data ?? []
   const isLoading = invitationsQuery.isLoading
-  // The same query as the digest card and the SMTP notice (it also reports whether SMTP is set up).
-  const digestQuery = useQuery<DigestSettings>({
-    queryKey: ["digest", orgLogin],
-    queryFn: () => api.orgs.digest(orgLogin),
-    retry: false,
-    enabled: !rolePending && !notAdmin,
-  })
+  // The same cached query as the digest card and the SMTP notice (it also reports whether SMTP is set up).
+  const digestQuery = useDigestSettings(orgLogin, !rolePending && !notAdmin)
   const canEmailInvites = digestQuery.data?.smtp_configured === true
 
   const [revokingIds, setRevokingIds] = useState<Set<number>>(() => new Set())
