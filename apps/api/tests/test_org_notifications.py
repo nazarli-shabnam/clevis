@@ -625,15 +625,19 @@ def test_api_token_expiry_is_tenant_scoped_and_can_be_dismissed_and_muted(db, wo
     t = world["acme"].tenant_id
     item_id = f"api_token_expiring:{_token(db, t, 'ci-soon', expires_in=timedelta(days=2))}"
     _token(db, world["globex"].tenant_id, "other-org", expires_in=timedelta(days=2))
-    admin = _client(db, world["users"]["admin"])
-    member = _client(db, world["users"]["member"])
+    # A client sets the session's acting user when it is built, so each is built right before its requests.
+    admin = lambda: _client(db, world["users"]["admin"])  # noqa: E731
+    member = lambda: _client(db, world["users"]["member"])  # noqa: E731
 
-    assert [i["id"] for i in admin.get("/orgs/acme/notifications").json()["items"]] == [item_id]
-    assert member.post(f"/orgs/acme/notifications/{item_id}/dismiss").status_code == 404  # admin-only kind
-    assert admin.post("/orgs/acme/notifications/api_token_expiring:999999/dismiss").status_code == 404
-    assert admin.post(f"/orgs/acme/notifications/{item_id}/dismiss").status_code == 204
-    feed = admin.get("/orgs/acme/notifications").json()
+    feed = admin().get("/orgs/acme/notifications")
+    assert feed.status_code == 200, feed.text
+    assert [i["id"] for i in feed.json()["items"]] == [item_id]
+    assert member().post(f"/orgs/acme/notifications/{item_id}/dismiss").status_code == 404  # admin-only kind
+    assert admin().post("/orgs/acme/notifications/api_token_expiring:999999/dismiss").status_code == 404
+    assert admin().post(f"/orgs/acme/notifications/{item_id}/dismiss").status_code == 204
+    feed = admin().get("/orgs/acme/notifications").json()
     assert feed["items"][0]["read"] is True and feed["unread_count"] == 0
 
-    assert admin.put("/orgs/acme/notifications/preferences", json={"muted_kinds": ["api_token_expiring"]}).status_code == 200
-    assert admin.get("/orgs/acme/notifications").json()["items"] == []
+    muted = admin().put("/orgs/acme/notifications/preferences", json={"muted_kinds": ["api_token_expiring"]})
+    assert muted.status_code == 200, muted.text
+    assert admin().get("/orgs/acme/notifications").json()["items"] == []
