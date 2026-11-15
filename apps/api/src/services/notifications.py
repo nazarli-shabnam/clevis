@@ -269,6 +269,7 @@ def notify_score_drop(
     for dest, (ok, detail) in zip(targets, results):
         if not ok:
             notification_repo.release_alert_claim(db, dest.id)
+        notification_repo.record_delivery(db, dest.id, ok, detail)
         audit_repo.write(
             db,
             actor=actor,
@@ -305,6 +306,7 @@ def _notify_event(
     with ThreadPoolExecutor(max_workers=_MAX_PARALLEL_SENDS) as pool:
         results = list(pool.map(lambda d: send(d, event, text, data, email_allowed=allowed), targets))
     for dest, (ok, detail) in zip(targets, results):
+        notification_repo.record_delivery(db, dest.id, ok, detail)
         audit_repo.write(
             db,
             actor=actor,

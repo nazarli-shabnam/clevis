@@ -68,6 +68,11 @@ class DestinationOut(BaseModel):
     enabled: bool
     created_at: datetime
     signed: bool = False
+    # Delivery health, set by the send path: None until the first attempt.
+    last_status: Literal["ok", "failed"] | None = None
+    last_error: str | None = None
+    last_attempt_at: datetime | None = None
+    consecutive_failures: int = 0
     # `email` destinations only (an admin-only endpoint): who receives it.
     recipients: list[str] | None = None
 

@@ -350,6 +350,33 @@ def test_score_drop_respects_cooldown_and_releases_failed_claims(db, acme):
     assert dest.last_notified_at is None  # failed delivery doesn't burn the cooldown
 
 
+def test_delivery_health_tracks_failures_and_recovers(db, acme):
+    org = acme["org"]
+    dest = _dest(db, org, events=("sla_breach",))
+    assert (dest.last_status, dest.consecutive_failures) == (None, 0)
+
+    for expected in (1, 2):
+        with patch("src.services.notifications.send", return_value=(False, "HTTP 404")):
+            notifications._notify_event(db, org.tenant_id, "acme", "sla_breach", "t", {}, actor="system")
+        db.refresh(dest)
+        assert (dest.last_status, dest.last_error, dest.consecutive_failures) == ("failed", "HTTP 404", expected)
+        assert dest.last_attempt_at is not None
+
+    with patch("src.services.notifications.send", return_value=(True, "HTTP 200")):
+        notifications._notify_event(db, org.tenant_id, "acme", "sla_breach", "t", {}, actor="system")
+    db.refresh(dest)
+    assert (dest.last_status, dest.last_error, dest.consecutive_failures) == ("ok", None, 0)
+
+
+def test_score_drop_failure_is_recorded_on_the_destination(db, acme):
+    org = acme["org"]
+    dest = _dest(db, org)
+    with patch("src.services.notifications.send", return_value=(False, "request failed")):
+        notifications.notify_score_drop(db, org.tenant_id, "acme", previous=90, current=70)
+    db.refresh(dest)
+    assert (dest.last_status, dest.last_error, dest.consecutive_failures) == ("failed", "request failed", 1)
+
+
 def test_best_effort_wrapper_swallows_errors(db, acme):
     with patch("src.routers.analytics.notifications.notify_score_drop", side_effect=RuntimeError("boom")):
         _notify_score_drop_best_effort(db, acme["org"], 90, 50)  # must not raise
