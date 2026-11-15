@@ -623,3 +623,76 @@ def test_route_is_registered_on_the_real_app(db, monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
+
+
+def _repo_event(action, *, owner="acme", name, old_name=None, old_owner=None, installation_id=77):
+    changes = {}
+    if old_name:
+        changes["repository"] = {"name": {"from": old_name}}
+    if old_owner:
+        changes["owner"] = {"from": {"organization": {"login": old_owner}}}
+    return {
+        "action": action,
+        "installation": {"id": installation_id},
+        "repository": {"name": name, "owner": {"login": owner}},
+        "changes": changes,
+    }
+
+
+def _tenant_with_repo_rows(db):
+    from datetime import datetime, timedelta, timezone
+
+    from src.core.db import AutomationRepoSetting, CheckWaiver
+
+    org = org_repo.get_or_create(db, github_login="acme", github_org_id=5)
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=77, org_id=org.id
+    )
+    db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
+    waiver = CheckWaiver(
+        tenant_id=org.tenant_id, check_id="branch_protection_enabled", repos=["API", "other"], reason="r",
+        owner="o", created_by="e", expires_at=datetime.now(timezone.utc) + timedelta(days=5),
+    )
+    db.add(waiver)
+    db.add(AutomationRepoSetting(tenant_id=org.tenant_id, repo="acme/api", feature="pr_nudge", enabled=True))
+    db.commit()
+    return org, waiver
+
+
+def test_repository_renamed_rewrites_waivers_and_automation_opt_ins(db, webhook_client):
+    from src.core.db import AutomationRepoSetting
+
+    org, waiver = _tenant_with_repo_rows(db)
+
+    resp = _post(webhook_client, "repository", _repo_event("renamed", name="service", old_name="api"))
+
+    assert resp.status_code == 200
+    db.expire_all()
+    db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
+    assert sorted(waiver.repos) == ["other", "service"]
+    assert [r.repo for r in db.query(AutomationRepoSetting)] == ["acme/service"]
+
+
+def test_repository_transferred_moves_the_automation_key_only(db, webhook_client):
+    from src.core.db import AutomationRepoSetting
+
+    org, waiver = _tenant_with_repo_rows(db)
+
+    resp = _post(webhook_client, "repository", _repo_event("transferred", owner="newco", name="api", old_owner="acme"))
+
+    assert resp.status_code == 200
+    db.expire_all()
+    db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
+    assert sorted(waiver.repos) == ["API", "other"]
+    assert [r.repo for r in db.query(AutomationRepoSetting)] == ["newco/api"]
+
+
+def test_repository_renamed_for_an_unknown_installation_changes_nothing(db, webhook_client):
+    org, waiver = _tenant_with_repo_rows(db)
+
+    resp = _post(webhook_client, "repository", _repo_event("renamed", name="service", old_name="api", installation_id=1))
+
+    assert resp.status_code == 200
+    db.expire_all()
+    db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
+    assert sorted(waiver.repos) == ["API", "other"]

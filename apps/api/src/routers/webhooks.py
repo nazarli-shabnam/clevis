@@ -19,7 +19,13 @@ from src.core.config import settings
 from src.core.db import WebhookDelivery, get_db
 from src.core.rate_limit import rate_limit
 from src.core.redis_client import get_redis_client
-from src.repositories import audit_repo, installation_repo, pending_installation_repo
+from src.repositories import (
+    audit_repo,
+    automation_settings_repo,
+    installation_repo,
+    pending_installation_repo,
+    waiver_repo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +162,8 @@ def _dispatch_event(db: Session, event: str, delivery_id: str, raw_body: bytes, 
     #
     # installation_repositories has nothing to sync yet -- github_installations tracks
     # the installation itself, not per-repo access. Accepted (200) so GitHub doesn't retry.
+    elif event == "repository" and payload.get("action") in {"renamed", "transferred"}:
+        _handle_repository_moved(db, payload)
     elif event in _INGESTED_EVENT_TYPES:
         _handle_ingested_event(db, event, delivery_id, raw_body, payload)
 
@@ -280,6 +288,40 @@ def _handle_installation_created(db: Session, payload: dict) -> None:
         requester_github_id=_as_int(requester.get("id")),
         requester_login=_as_login(requester.get("login")),
     )
+
+
+def _handle_repository_moved(db: Session, payload: dict) -> None:
+    """A repository was renamed or transferred: waivers (by repo name) and automation opt-ins (by ``owner/name``)
+    are keyed by strings, so move them to the new name or they silently stop applying. Not queued: nothing
+    downstream consumes ``repository`` events."""
+    installation_id = _resolve_event_installation_id(payload)
+    repository = payload.get("repository") or {}
+    new_name = _as_login(repository.get("name"))
+    new_owner = _as_login((repository.get("owner") or {}).get("login"))
+    if installation_id is None or new_name is None or new_owner is None:
+        logger.warning("repository.%s webhook has no usable installation/repository", payload.get("action"))
+        return
+    changes = payload.get("changes") or {}
+    old_name = _as_login(((changes.get("repository") or {}).get("name") or {}).get("from")) or new_name
+    old_owner_obj = ((changes.get("owner") or {}).get("from") or {})
+    old_owner = _as_login((old_owner_obj.get("user") or old_owner_obj.get("organization") or {}).get("login")) or new_owner
+    if (old_owner, old_name) == (new_owner, new_name):
+        return
+    tenant_id = db.execute(
+        text("SELECT resolve_installation_tenant_id(:installation_id)"), {"installation_id": installation_id}
+    ).scalar()
+    if tenant_id is None:
+        return
+    # SET LOCAL: RLS context for these writes ends with this commit.
+    db.execute(text(f"SET LOCAL app.tenant_id = {int(tenant_id)}"))
+    waivers = waiver_repo.rename_repo(db, tenant_id, old_name, new_name) if old_name.lower() != new_name.lower() else 0
+    opt_ins = automation_settings_repo.rename_repo(db, tenant_id, f"{old_owner}/{old_name}", f"{new_owner}/{new_name}")
+    db.commit()
+    if waivers or opt_ins:
+        logger.info(
+            "repository %s/%s moved to %s/%s: %d waivers, %d automation opt-ins updated",
+            old_owner, old_name, new_owner, new_name, waivers, opt_ins,
+        )
 
 
 def _handle_installation_deleted(db: Session, payload: dict) -> None:
