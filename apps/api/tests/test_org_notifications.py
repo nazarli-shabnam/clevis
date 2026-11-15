@@ -618,11 +618,12 @@ def test_api_token_nearing_expiry_is_an_admin_only_item_that_links_to_the_token(
 
 def test_api_token_expiry_is_tenant_scoped_and_can_be_dismissed_and_muted(db, world):
     t = world["acme"].tenant_id
-    soon = _token(db, t, "ci-soon", expires_in=timedelta(days=2))
+    # The id is read before the other tenant's row is written: that switches the session's tenant, and RLS would
+    # hide this (now expired) instance from a refresh.
+    item_id = f"api_token_expiring:{_token(db, t, 'ci-soon', expires_in=timedelta(days=2)).id}"
     _token(db, world["globex"].tenant_id, "other-org", expires_in=timedelta(days=2))
     admin = _client(db, world["users"]["admin"])
     member = _client(db, world["users"]["member"])
-    item_id = f"api_token_expiring:{soon.id}"
 
     assert [i["id"] for i in admin.get("/orgs/acme/notifications").json()["items"]] == [item_id]
     assert member.post(f"/orgs/acme/notifications/{item_id}/dismiss").status_code == 404  # admin-only kind
