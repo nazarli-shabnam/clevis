@@ -582,8 +582,10 @@ def test_sla_breaches_page_past_the_per_source_limit_and_all_count_as_unread(db,
 
 
 def _token(db, tenant_id, name, *, expires_in=None, revoked=False):
-    from src.core.db import ApiToken
+    from src.core.db import ApiToken, set_session_tenant
 
+    # api_tokens is tenant-scoped by RLS: under the restricted CI role a row can only be written in its own tenant.
+    set_session_tenant(db, tenant_id)
     row = ApiToken(
         tenant_id=tenant_id, name=name, token_hash=f"hash-{name}", prefix="clv_abcd", created_by="a@e.com",
         expires_at=NOW + expires_in if expires_in is not None else None,
