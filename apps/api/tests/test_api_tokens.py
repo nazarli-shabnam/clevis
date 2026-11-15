@@ -386,6 +386,16 @@ def test_action_main_exit_codes(tmp_path):
     assert check.main({**env, "CLEVIS_THRESHOLD": "abc"}) == 2
 
 
+def test_action_null_score_is_exit_2_not_a_failed_gate(capsys):
+    check = _load_check()
+    env = {"CLEVIS_API_URL": "https://c.example", "CLEVIS_ORG": "acme", "CLEVIS_TOKEN": "clv_x", "CLEVIS_THRESHOLD": "0"}
+    with patch.object(check, "fetch_score", return_value={"score": None, "checks": []}):
+        assert check.main(env) == 2
+    captured = capsys.readouterr()
+    assert "no scored checks yet" in captured.err
+    assert "None" not in captured.out + captured.err
+
+
 def test_action_main_maps_http_and_network_errors_to_exit_2(capsys):
     import urllib.error
 
