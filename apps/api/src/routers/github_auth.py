@@ -6,20 +6,36 @@ Deliberately does NOT link by email match: self-registration has no email-owners
 verification, so auto-linking by email alone would let an attacker who pre-registers a
 victim's email silently inherit that victim's GitHub identity. A matching email on a
 different account redirects with an error instead of linking.
+
+A password account that wants a GitHub identity links it explicitly while signed in
+(``POST /link`` starts it, the same ``/callback`` finishes it): GitHub proves who controls
+the GitHub account, and the start request (authenticated with the caller's own credentials)
+signs a state for that user and their ``token_version`` and binds it to the browser that started
+it. Password login does not set a session cookie, so the callback cannot rely on one; the state
+carries the proof instead. See ``_complete_link``.
 """
 
 import logging
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.app_config import registration_enabled
-from src.core.auth import SETUP_LOCK_KEY, set_session_cookie, start_session
+from src.core.auth import (
+    SESSION_COOKIE_NAME,
+    SETUP_LOCK_KEY,
+    UserOut,
+    decode_access_token,
+    require_auth,
+    set_session_cookie,
+    start_session,
+)
 from src.core.config import settings
-from src.core.db import User, get_db, set_session_user
+from src.core.db import RevokedToken, User, get_db, set_session_user
 from src.core.rate_limit import rate_limit
 from src.repositories import invitation_repo, tenant_repo
 from src.services import auth_audit, github_oauth, org_provisioning
@@ -129,18 +145,7 @@ def find_or_create_user(db: Session, identity: github_oauth.GitHubIdentity) -> U
     return user
 
 
-def _clear_state_cookie(response: Response) -> None:
-    response.delete_cookie(key=github_oauth.STATE_COOKIE_NAME, domain=settings.session_cookie_domain, path="/")
-
-
-@router.get("/login")
-def github_login(request: Request, next: str | None = None):
-    try:
-        state, nonce = github_oauth.sign_state(next=next)
-        url = github_oauth.build_authorize_url(state=state, redirect_uri=_callback_url(request))
-    except github_oauth.GitHubOAuthNotConfigured:
-        return _ui_login_error_redirect("github_not_configured")
-    response = RedirectResponse(url, status_code=307)
+def _set_state_cookie(response: Response, nonce: str) -> None:
     # Binds `state` to this browser -- must be SameSite=Lax (not Strict) so it's still sent
     # on the top-level GET redirect back from github.com.
     response.set_cookie(
@@ -153,7 +158,126 @@ def github_login(request: Request, next: str | None = None):
         domain=settings.session_cookie_domain,
         path="/",
     )
+
+
+def _clear_state_cookie(response: Response) -> None:
+    response.delete_cookie(key=github_oauth.STATE_COOKIE_NAME, domain=settings.session_cookie_domain, path="/")
+
+
+@router.get("/login")
+def github_login(request: Request, next: str | None = None):
+    try:
+        state, nonce = github_oauth.sign_state(next=next)
+        url = github_oauth.build_authorize_url(state=state, redirect_uri=_callback_url(request))
+    except github_oauth.GitHubOAuthNotConfigured:
+        return _ui_login_error_redirect("github_not_configured")
+    response = RedirectResponse(url, status_code=307)
+    _set_state_cookie(response, nonce)
     return response
+
+
+class LinkStartResponse(BaseModel):
+    url: str
+
+
+@router.post("/link", response_model=LinkStartResponse, dependencies=[Depends(rate_limit())])
+def github_link_start(
+    request: Request,
+    response: Response,
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Start linking a GitHub account to the signed-in user: returns the GitHub authorize URL for the browser
+    to open (and sets the state cookie that binds the flow to this browser). A POST with the caller's own
+    credentials, so another site cannot start it for them."""
+    row = db.query(User).filter(User.id == user.id).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if row.github_user_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"This account is already linked to GitHub (@{row.github_login}).",
+        )
+    # The session that started the flow, by the id it carries (require_auth has already verified the token): the
+    # callback refuses the link if that session was logged out meanwhile.
+    presented = request.headers.get("authorization", "")
+    token = presented[7:] if presented[:7].lower() == "bearer " else request.cookies.get(SESSION_COOKIE_NAME)
+    jti = decode_access_token(token).get("jti") if token else None
+    try:
+        state, nonce = github_oauth.sign_state(
+            link_user_id=user.id, link_token_version=row.token_version, link_session_jti=jti
+        )
+        url = github_oauth.build_authorize_url(state=state, redirect_uri=_callback_url(request))
+    except github_oauth.GitHubOAuthNotConfigured:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="GitHub sign-in isn't set up on this server yet, so an account can't be linked. Ask an admin to configure it.",
+        )
+    _set_state_cookie(response, nonce)
+    return LinkStartResponse(url=url)
+
+
+def _ui_settings_redirect(query: str) -> RedirectResponse:
+    base = settings.cors_origins[0] if settings.cors_origins else ""
+    response = RedirectResponse(f"{base}/settings?{query}", status_code=303)
+    _clear_state_cookie(response)
+    return response
+
+
+def _complete_link(
+    request: Request, db: Session, code: str, state: str, session_cookie: str | None
+) -> RedirectResponse:
+    """Finish a link started by ``github_link_start``. Every failure is a redirect back to Settings with a code the
+    UI explains; nothing is written unless the checks pass."""
+    link = github_oauth.decode_state_link(state)
+    if link is None:
+        return _ui_settings_redirect("github_link_error=session")
+    uid, token_version, session_jti = link
+    # The state (signed for this user, bound to this browser) is the proof that they started the flow. Password
+    # login sets no session cookie, so it is not required; but if this browser is signed in as a *different*
+    # account (a cookie that authenticates as someone else), the flow was not started by them.
+    if session_cookie:
+        try:
+            current = require_auth(None, session_cookie, db)
+        except HTTPException:
+            current = None
+        if current is not None and current.id != uid:
+            return _ui_settings_redirect("github_link_error=session")
+    try:
+        user_token = github_oauth.exchange_code_for_token(code, redirect_uri=_callback_url(request))
+        identity = github_oauth.fetch_identity(user_token)
+    except github_oauth.GitHubOAuthNotConfigured:
+        return _ui_settings_redirect("github_link_error=not_configured")
+    except github_oauth.GitHubOAuthError as exc:
+        logger.warning("GitHub link callback failed: %s", exc)
+        return _ui_settings_redirect("github_link_error=oauth")
+
+    # Locked from here to the commit, so two callbacks for one account (two tabs) are serialized: the second
+    # re-reads the first's link and takes the other_account branch instead of overwriting it.
+    user = db.query(User).filter(User.id == uid).with_for_update().first()
+    # Signing out everywhere (token_version) or ending the session that started the flow cancels it.
+    if user is None or user.token_version != token_version:
+        return _ui_settings_redirect("github_link_error=session")
+    if session_jti and db.get(RevokedToken, session_jti) is not None:
+        return _ui_settings_redirect("github_link_error=session")
+    if user.github_user_id is not None and user.github_user_id != identity.github_user_id:
+        # Unlinking is not offered, so a different GitHub identity cannot replace the linked one.
+        return _ui_settings_redirect("github_link_error=other_account")
+    taken = db.query(User).filter(User.github_user_id == identity.github_user_id, User.id != uid).first()
+    if taken is not None:
+        return _ui_settings_redirect("github_link_error=taken")
+    user.github_user_id = identity.github_user_id
+    _refresh_profile(user, identity)
+    try:
+        db.commit()
+    except IntegrityError:
+        # Another account claimed this GitHub identity between the check above and the commit.
+        db.rollback()
+        return _ui_settings_redirect("github_link_error=taken")
+    db.refresh(user)
+    org_provisioning.sync_org_admin_memberships(db, user, user_token)
+    auth_audit.record(db, user, "auth.github_linked", request=request, extra={"github_login": identity.login})
+    return _ui_settings_redirect("github=linked")
 
 
 @router.get("/callback", name="github_callback", dependencies=[Depends(rate_limit())])
@@ -161,9 +285,19 @@ def github_callback(
     request: Request,
     code: str | None = None,
     state: str | None = None,
+    session: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
     db: Session = Depends(get_db),
 ):
     cookie_nonce = request.cookies.get(github_oauth.STATE_COOKIE_NAME)
+    # A sign-in state is the common case. Only a state that is not one, and is a valid link state for this browser,
+    # takes the link path (the two purposes never verify as each other).
+    if (
+        code
+        and state
+        and not github_oauth.verify_state(state, cookie_nonce=cookie_nonce)
+        and github_oauth.verify_state(state, cookie_nonce=cookie_nonce, purpose=github_oauth.LINK_PURPOSE)
+    ):
+        return _complete_link(request, db, code, state, session)
     if not code or not state or not github_oauth.verify_state(state, cookie_nonce=cookie_nonce):
         error_response = _ui_login_error_redirect("github_invalid_state")
         _clear_state_cookie(error_response)

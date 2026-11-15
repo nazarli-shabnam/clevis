@@ -23,6 +23,9 @@ _OAUTH_SCOPE = "read:user user:email read:org"
 _STATE_TTL_SECONDS = 600  # 10 minutes between /login and /callback
 _STATE_ALG = "HS256"
 _STATE_PURPOSE = "github_oauth"
+# State for linking GitHub to an already signed-in account (see routers/github_auth.py). Signed with the same key
+# but a different purpose, so a sign-in state can never complete a link and the other way round.
+LINK_PURPOSE = "github_link"
 
 # Cookie carrying the per-flow nonce that binds `state` to the browser that started it.
 # Exported so the router can use the same name for both setting and reading the cookie.
@@ -77,14 +80,34 @@ def safe_next_path(next_path: str | None) -> str | None:
     return next_path
 
 
-def sign_state(*, now: int | None = None, next: str | None = None) -> tuple[str, str]:
+def sign_state(
+    *,
+    now: int | None = None,
+    next: str | None = None,
+    link_user_id: int | None = None,
+    link_token_version: int = 0,
+    link_session_jti: str | None = None,
+) -> tuple[str, str]:
     """Returns (state, nonce). Callers must also set `nonce` as the STATE_COOKIE_NAME
     cookie value on the browser and pass it back into verify_state() as cookie_nonce.
     `next`, if a valid same-site path, is embedded in the signed payload so the callback
-    can redirect back to it -- see decode_state_next()."""
+    can redirect back to it -- see decode_state_next(). `link_user_id` makes it a link state (purpose
+    LINK_PURPOSE) bound to that user, to their `token_version` at the time (so signing out everywhere before the
+    callback invalidates it) and to the session that started it (`link_session_jti`, so logging that session
+    out does too): see decode_state_link()."""
     issued = int(now if now is not None else time.time())
     nonce = secrets.token_urlsafe(24)
-    payload = {"iat": issued, "exp": issued + _STATE_TTL_SECONDS, "purpose": _STATE_PURPOSE, "nonce": nonce}
+    payload = {
+        "iat": issued,
+        "exp": issued + _STATE_TTL_SECONDS,
+        "purpose": _STATE_PURPOSE if link_user_id is None else LINK_PURPOSE,
+        "nonce": nonce,
+    }
+    if link_user_id is not None:
+        payload["uid"] = link_user_id
+        payload["tv"] = link_token_version
+        if link_session_jti:
+            payload["jti"] = link_session_jti
     validated_next = safe_next_path(next)
     if validated_next:
         payload["next"] = validated_next
@@ -92,17 +115,31 @@ def sign_state(*, now: int | None = None, next: str | None = None) -> tuple[str,
     return state, nonce
 
 
-def verify_state(state: str, *, cookie_nonce: str | None = None) -> bool:
+def verify_state(state: str, *, cookie_nonce: str | None = None, purpose: str = _STATE_PURPOSE) -> bool:
     try:
         payload = jwt.decode(state, settings.auth_secret.get_secret_value(), algorithms=[_STATE_ALG])
     except jwt.InvalidTokenError:
         return False
-    if payload.get("purpose") != _STATE_PURPOSE:
+    if payload.get("purpose") != purpose:
         return False
     token_nonce = payload.get("nonce")
     if not token_nonce or not cookie_nonce or not hmac.compare_digest(token_nonce, cookie_nonce):
         return False
     return True
+
+
+def decode_state_link(state: str) -> tuple[int, int, str | None] | None:
+    """(user id, token_version, starting session's jti or None for a token that has none) a link state was
+    started for. Callers must call verify_state(purpose=LINK_PURPOSE) first."""
+    try:
+        payload = jwt.decode(state, settings.auth_secret.get_secret_value(), algorithms=[_STATE_ALG])
+    except jwt.InvalidTokenError:
+        return None
+    uid, version = payload.get("uid"), payload.get("tv")
+    if any(not isinstance(v, int) or isinstance(v, bool) for v in (uid, version)):
+        return None
+    jti = payload.get("jti")
+    return uid, version, jti if isinstance(jti, str) else None
 
 
 def decode_state_next(state: str) -> str | None:

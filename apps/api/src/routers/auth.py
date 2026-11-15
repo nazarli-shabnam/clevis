@@ -178,6 +178,8 @@ class MeResponse(BaseModel):
     is_workspace_admin: bool
     email_verified: bool
     created_at: datetime
+    # Set once a GitHub account is linked (sign-in with GitHub, or Settings > Profile for a password account).
+    github_login: str | None = None
 
 
 class PatchMeRequest(BaseModel):

@@ -419,3 +419,206 @@ def test_registration_setting_is_read_from_the_database(db):
     assert registration_enabled(db) is True  # no row -> code default
     db.execute(text("INSERT INTO app_config (key, value, updated_at) VALUES ('registration_enabled', 'false', NOW())"))
     assert registration_enabled(db) is False
+
+
+# --- linking GitHub to a signed-in password account (#1007) --------------------------------------
+
+def _password_user(db, email="pw@example.com", **fields):
+    from src.core.db import User
+
+    user = User(email=email, name=None, password_hash="x", is_workspace_admin=False, email_verified=True, **fields)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def _session(user) -> str:
+    from src.core.auth import create_access_token
+
+    return create_access_token(user.id, user.email, False, None, user.token_version)
+
+
+def _start_link(client, user, token=None):
+    return client.post("/auth/github/link", headers={"Authorization": f"Bearer {token or _session(user)}"})
+
+
+def _link_state(resp) -> str:
+    return parse_qs(urlparse(resp.json()["url"]).query)["state"][0]
+
+
+def _finish_link(client, state, identity=None, token="gho_x", oauth_error=None):
+    exchange = {"side_effect": oauth_error} if oauth_error else {"return_value": token}
+    with (
+        patch("src.routers.github_auth.github_oauth.exchange_code_for_token", **exchange),
+        patch("src.routers.github_auth.github_oauth.fetch_identity", return_value=identity or _identity()),
+        patch("src.routers.github_auth.org_provisioning.sync_org_admin_memberships") as sync,
+    ):
+        resp = client.get(f"/auth/github/callback?code=c&state={state}", follow_redirects=False)
+    return resp, sync
+
+
+def test_link_start_requires_a_session_and_an_unlinked_configured_account(gh_client, db, oauth_configured, monkeypatch):
+    assert gh_client.post("/auth/github/link").status_code == 401
+
+    user = _password_user(db)
+    started = _start_link(gh_client, user)
+    assert started.status_code == 200
+    parsed = urlparse(started.json()["url"])
+    assert parsed.netloc == "github.com" and parsed.path == "/login/oauth/authorize"
+    assert "clevis_oauth_state" in started.headers.get("set-cookie", "")
+    state = _link_state(started)
+    nonce = gh_client.cookies.get("clevis_oauth_state")
+    assert github_oauth.verify_state(state, cookie_nonce=nonce, purpose=github_oauth.LINK_PURPOSE)
+    uid, version, jti = github_oauth.decode_state_link(state)
+    assert (uid, version) == (user.id, user.token_version) and jti  # the starting session's id is bound in
+    # A link state is not a sign-in state, so it can never be replayed against the sign-in path.
+    assert not github_oauth.verify_state(state, cookie_nonce=nonce)
+
+    linked = _password_user(db, "linked@example.com", github_user_id=77, github_login="old")
+    already = _start_link(gh_client, linked)
+    assert already.status_code == 409 and "@old" in already.json()["detail"]
+
+    monkeypatch.setattr(settings, "github_app_client_id", None)
+    monkeypatch.setattr(settings, "github_app_client_secret", None)
+    assert _start_link(gh_client, user).status_code == 409
+
+
+def test_a_signed_in_password_user_links_github_and_gets_their_org_memberships(gh_client, db, oauth_configured):
+    from src.core.db import AuditLog
+
+    user = _password_user(db)
+    token = _session(user)
+    state = _link_state(_start_link(gh_client, user, token))
+    # Password login sets no session cookie, so a clean browser has none when GitHub redirects back.
+    assert gh_client.cookies.get("clevis_session") is None
+
+    resp, sync = _finish_link(
+        gh_client, state, _identity(github_user_id=555, login="octo", name="Octo Cat", avatar_url="http://a")
+    )
+
+    assert resp.status_code == 303 and resp.headers["location"].endswith("/settings?github=linked")
+    db.refresh(user)
+    assert (user.github_user_id, user.github_login, user.avatar_url, user.name) == (555, "octo", "http://a", "Octo Cat")
+    # Linking changes neither the sign-in credentials nor the email, and does not start another session.
+    assert user.email == "pw@example.com" and user.password_hash == "x"
+    assert "clevis_session" not in resp.headers.get("set-cookie", "")
+    sync.assert_called_once()
+    assert sync.call_args.args[1].id == user.id and sync.call_args.args[2] == "gho_x"
+    row = db.query(AuditLog).filter(AuditLog.action == "auth.github_linked").one()
+    assert "octo" in row.payload
+
+
+def test_a_browser_signed_in_as_another_account_or_signed_out_everywhere_cannot_finish_the_link(gh_client, db, oauth_configured):
+    user = _password_user(db)
+    other = _password_user(db, "other@example.com")
+
+    # This browser carries a different account's session: the flow was not started by them.
+    state = _link_state(_start_link(gh_client, user))
+    gh_client.cookies.set("clevis_session", _session(other))
+    resp, sync = _finish_link(gh_client, state)
+    assert resp.headers["location"].endswith("/settings?github_link_error=session")
+    gh_client.cookies.delete("clevis_session")
+
+    # "Sign out of all devices" between starting and finishing cancels the flow.
+    state = _link_state(_start_link(gh_client, user))
+    user.token_version += 1
+    db.commit()
+    resp, sync = _finish_link(gh_client, state)
+    assert resp.headers["location"].endswith("/settings?github_link_error=session")
+
+    for u in (user, other):
+        db.refresh(u)
+        assert u.github_user_id is None
+    sync.assert_not_called()
+
+
+def test_logging_out_the_session_that_started_the_link_cancels_it(gh_client, db, oauth_configured):
+    from datetime import datetime, timedelta, timezone
+
+    import jwt as pyjwt
+
+    from src.core.db import RevokedToken
+
+    user = _password_user(db)
+    token = _session(user)
+    state = _link_state(_start_link(gh_client, user, token))
+    jti = pyjwt.decode(token, options={"verify_signature": False})["jti"]
+    # What POST /auth/logout writes for that session.
+    db.add(RevokedToken(jti=jti, user_id=user.id, expires_at=datetime.now(timezone.utc) + timedelta(days=1)))
+    db.commit()
+
+    resp, sync = _finish_link(gh_client, state)
+
+    assert resp.headers["location"].endswith("/settings?github_link_error=session")
+    db.refresh(user)
+    assert user.github_user_id is None
+    sync.assert_not_called()
+
+
+def test_a_link_state_from_another_browser_or_tampered_never_links(gh_client, db, oauth_configured):
+    user = _password_user(db)
+    token = _session(user)
+    state = _link_state(_start_link(gh_client, user, token))
+    gh_client.cookies.set("clevis_session", token)
+
+    gh_client.cookies.set("clevis_oauth_state", "someone-elses-nonce")
+    resp, _ = _finish_link(gh_client, state)
+    assert resp.headers["location"].endswith("/login?error=github_invalid_state")
+    resp, _ = _finish_link(gh_client, state + "x")
+    assert resp.headers["location"].endswith("/login?error=github_invalid_state")
+    db.refresh(user)
+    assert user.github_user_id is None
+
+
+def test_a_github_account_already_linked_to_someone_else_is_refused(gh_client, db, oauth_configured):
+    owner = _password_user(db, "owner@example.com", github_user_id=555, github_login="octo")
+    user = _password_user(db)
+    token = _session(user)
+    gh_client.cookies.set("clevis_session", token)
+
+    state = _link_state(_start_link(gh_client, user, token))
+    resp, sync = _finish_link(gh_client, state, _identity(github_user_id=555))
+
+    assert resp.headers["location"].endswith("/settings?github_link_error=taken")
+    db.refresh(user)
+    db.refresh(owner)
+    assert user.github_user_id is None and owner.github_user_id == 555
+    sync.assert_not_called()
+
+
+def test_an_account_already_linked_to_one_github_identity_cannot_be_moved_to_another(gh_client, db, oauth_configured):
+    user = _password_user(db)
+    token = _session(user)
+    gh_client.cookies.set("clevis_session", token)
+    state = _link_state(_start_link(gh_client, user, token))
+    # Linked (for example in another tab) between start and callback, to a different GitHub identity.
+    user.github_user_id, user.github_login = 900, "mine"
+    db.commit()
+
+    resp, sync = _finish_link(gh_client, state, _identity(github_user_id=901))
+
+    assert resp.headers["location"].endswith("/settings?github_link_error=other_account")
+    db.refresh(user)
+    assert user.github_user_id == 900
+    sync.assert_not_called()
+
+
+def test_relinking_the_same_github_account_is_harmless_and_oauth_failures_are_reported(gh_client, db, oauth_configured):
+    user = _password_user(db)
+    token = _session(user)
+    gh_client.cookies.set("clevis_session", token)
+
+    state = _link_state(_start_link(gh_client, user, token))
+    resp, _ = _finish_link(gh_client, state, oauth_error=github_oauth.GitHubOAuthError("denied"))
+    assert resp.headers["location"].endswith("/settings?github_link_error=oauth")
+
+    user.github_user_id, user.github_login = 555, "octo"
+    db.commit()
+    state = _link_state(_start_link(gh_client, user, token)) if False else None
+    state, nonce = github_oauth.sign_state(link_user_id=user.id)
+    gh_client.cookies.set("clevis_oauth_state", nonce)
+    resp, _ = _finish_link(gh_client, state, _identity(github_user_id=555, login="octo-renamed"))
+    assert resp.headers["location"].endswith("/settings?github=linked")
+    db.refresh(user)
+    assert (user.github_user_id, user.github_login) == (555, "octo-renamed")
