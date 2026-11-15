@@ -624,7 +624,7 @@ def test_api_token_expiry_is_tenant_scoped_and_can_be_dismissed_and_muted(db, wo
 
     assert [i["id"] for i in admin.get("/orgs/acme/notifications").json()["items"]] == [item_id]
     assert member.post(f"/orgs/acme/notifications/{item_id}/dismiss").status_code == 404  # admin-only kind
-    assert admin.post(f"/orgs/acme/notifications/api_token_expiring:999999/dismiss").status_code == 404
+    assert admin.post("/orgs/acme/notifications/api_token_expiring:999999/dismiss").status_code == 404
     assert admin.post(f"/orgs/acme/notifications/{item_id}/dismiss").status_code == 204
     feed = admin.get("/orgs/acme/notifications").json()
     assert feed["items"][0]["read"] is True and feed["unread_count"] == 0
