@@ -470,7 +470,7 @@ def test_link_start_requires_a_session_and_an_unlinked_configured_account(gh_cli
     state = _link_state(started)
     nonce = gh_client.cookies.get("clevis_oauth_state")
     assert github_oauth.verify_state(state, cookie_nonce=nonce, purpose=github_oauth.LINK_PURPOSE)
-    assert github_oauth.decode_state_user_id(state) == user.id
+    assert github_oauth.decode_state_link(state) == (user.id, user.token_version)
     # A link state is not a sign-in state, so it can never be replayed against the sign-in path.
     assert not github_oauth.verify_state(state, cookie_nonce=nonce)
 
@@ -489,7 +489,8 @@ def test_a_signed_in_password_user_links_github_and_gets_their_org_memberships(g
     user = _password_user(db)
     token = _session(user)
     state = _link_state(_start_link(gh_client, user, token))
-    gh_client.cookies.set("clevis_session", token)
+    # Password login sets no session cookie, so a clean browser has none when GitHub redirects back.
+    assert gh_client.cookies.get("clevis_session") is None
 
     resp, sync = _finish_link(
         gh_client, state, _identity(github_user_id=555, login="octo", name="Octo Cat", avatar_url="http://a")
@@ -500,25 +501,28 @@ def test_a_signed_in_password_user_links_github_and_gets_their_org_memberships(g
     assert (user.github_user_id, user.github_login, user.avatar_url, user.name) == (555, "octo", "http://a", "Octo Cat")
     # Linking changes neither the sign-in credentials nor the email, and does not start another session.
     assert user.email == "pw@example.com" and user.password_hash == "x"
-    assert "clevis_session=" not in resp.headers.get("set-cookie", "") or "clevis_session=;" in resp.headers.get("set-cookie", "")
+    assert "clevis_session" not in resp.headers.get("set-cookie", "")
     sync.assert_called_once()
     assert sync.call_args.args[1].id == user.id and sync.call_args.args[2] == "gho_x"
     row = db.query(AuditLog).filter(AuditLog.action == "auth.github_linked").one()
     assert "octo" in row.payload
 
 
-def test_linking_without_the_matching_signed_in_session_changes_nothing(gh_client, db, oauth_configured):
+def test_a_browser_signed_in_as_another_account_or_signed_out_everywhere_cannot_finish_the_link(gh_client, db, oauth_configured):
     user = _password_user(db)
     other = _password_user(db, "other@example.com")
 
-    # No session cookie at all.
-    state = _link_state(_start_link(gh_client, user))
-    resp, sync = _finish_link(gh_client, state)
-    assert resp.headers["location"].endswith("/settings?github_link_error=session")
-
-    # A different account's session in the same browser.
+    # This browser carries a different account's session: the flow was not started by them.
     state = _link_state(_start_link(gh_client, user))
     gh_client.cookies.set("clevis_session", _session(other))
+    resp, sync = _finish_link(gh_client, state)
+    assert resp.headers["location"].endswith("/settings?github_link_error=session")
+    gh_client.cookies.delete("clevis_session")
+
+    # "Sign out of all devices" between starting and finishing cancels the flow.
+    state = _link_state(_start_link(gh_client, user))
+    user.token_version += 1
+    db.commit()
     resp, sync = _finish_link(gh_client, state)
     assert resp.headers["location"].endswith("/settings?github_link_error=session")
 

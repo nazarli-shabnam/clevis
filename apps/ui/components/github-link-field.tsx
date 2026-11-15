@@ -8,7 +8,7 @@ import { api } from "@/lib/api/client"
 
 /** What each `?github_link_error=` code from the API's link callback means for the person who just came back. */
 export const GITHUB_LINK_ERRORS: Record<string, string> = {
-  session: "Linking was started from a different sign-in than the one you came back with. Try again from this account.",
+  session: "Linking couldn't be matched to your sign-in (you may have signed out or switched accounts since you started). Try again.",
   taken: "That GitHub account is already linked to another Clevis account.",
   other_account: "This account is already linked to a different GitHub account.",
   oauth: "GitHub didn't complete the request. Try again.",

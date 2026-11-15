@@ -9,8 +9,10 @@ different account redirects with an error instead of linking.
 
 A password account that wants a GitHub identity links it explicitly while signed in
 (``POST /link`` starts it, the same ``/callback`` finishes it): GitHub proves who controls
-the GitHub account, the active session proves who owns the Clevis account, and the state is
-signed for that user and bound to the browser that started it. See ``_complete_link``.
+the GitHub account, and the start request (authenticated with the caller's own credentials)
+signs a state for that user and their ``token_version`` and binds it to the browser that started
+it. Password login does not set a session cookie, so the callback cannot rely on one; the state
+carries the proof instead. See ``_complete_link``.
 """
 
 import logging
@@ -189,7 +191,7 @@ def github_link_start(
             detail=f"This account is already linked to GitHub (@{row.github_login}).",
         )
     try:
-        state, nonce = github_oauth.sign_state(link_user_id=user.id)
+        state, nonce = github_oauth.sign_state(link_user_id=user.id, link_token_version=row.token_version)
         url = github_oauth.build_authorize_url(state=state, redirect_uri=_callback_url(request))
     except github_oauth.GitHubOAuthNotConfigured:
         raise HTTPException(
@@ -212,15 +214,20 @@ def _complete_link(
 ) -> RedirectResponse:
     """Finish a link started by ``github_link_start``. Every failure is a redirect back to Settings with a code the
     UI explains; nothing is written unless the checks pass."""
-    uid = github_oauth.decode_state_user_id(state)
-    # The signed-in user must be the one the flow was started for: the state alone is not enough if this
-    # browser has since switched accounts. A missing or revoked session fails the same way.
-    try:
-        current = require_auth(None, session_cookie, db)
-    except HTTPException:
+    link = github_oauth.decode_state_link(state)
+    if link is None:
         return _ui_settings_redirect("github_link_error=session")
-    if uid is None or current.id != uid:
-        return _ui_settings_redirect("github_link_error=session")
+    uid, token_version = link
+    # The state (signed for this user, bound to this browser) is the proof that they started the flow. Password
+    # login sets no session cookie, so it is not required; but if this browser is signed in as a *different*
+    # account (a cookie that authenticates as someone else), the flow was not started by them.
+    if session_cookie:
+        try:
+            current = require_auth(None, session_cookie, db)
+        except HTTPException:
+            current = None
+        if current is not None and current.id != uid:
+            return _ui_settings_redirect("github_link_error=session")
     try:
         user_token = github_oauth.exchange_code_for_token(code, redirect_uri=_callback_url(request))
         identity = github_oauth.fetch_identity(user_token)
@@ -230,8 +237,11 @@ def _complete_link(
         logger.warning("GitHub link callback failed: %s", exc)
         return _ui_settings_redirect("github_link_error=oauth")
 
-    user = db.query(User).filter(User.id == uid).first()
-    if user is None:
+    # Locked from here to the commit, so two callbacks for one account (two tabs) are serialized: the second
+    # re-reads the first's link and takes the other_account branch instead of overwriting it.
+    user = db.query(User).filter(User.id == uid).with_for_update().first()
+    # Signing out everywhere (token_version) since the flow started cancels it.
+    if user is None or user.token_version != token_version:
         return _ui_settings_redirect("github_link_error=session")
     if user.github_user_id is not None and user.github_user_id != identity.github_user_id:
         # Unlinking is not offered, so a different GitHub identity cannot replace the linked one.

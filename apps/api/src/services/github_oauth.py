@@ -81,13 +81,18 @@ def safe_next_path(next_path: str | None) -> str | None:
 
 
 def sign_state(
-    *, now: int | None = None, next: str | None = None, link_user_id: int | None = None
+    *,
+    now: int | None = None,
+    next: str | None = None,
+    link_user_id: int | None = None,
+    link_token_version: int = 0,
 ) -> tuple[str, str]:
     """Returns (state, nonce). Callers must also set `nonce` as the STATE_COOKIE_NAME
     cookie value on the browser and pass it back into verify_state() as cookie_nonce.
     `next`, if a valid same-site path, is embedded in the signed payload so the callback
     can redirect back to it -- see decode_state_next(). `link_user_id` makes it a link state (purpose
-    LINK_PURPOSE) bound to that user: see decode_state_user_id()."""
+    LINK_PURPOSE) bound to that user and to their `token_version` at the time (so signing out everywhere
+    before the callback invalidates it): see decode_state_link()."""
     issued = int(now if now is not None else time.time())
     nonce = secrets.token_urlsafe(24)
     payload = {
@@ -98,6 +103,7 @@ def sign_state(
     }
     if link_user_id is not None:
         payload["uid"] = link_user_id
+        payload["tv"] = link_token_version
     validated_next = safe_next_path(next)
     if validated_next:
         payload["next"] = validated_next
@@ -118,14 +124,17 @@ def verify_state(state: str, *, cookie_nonce: str | None = None, purpose: str = 
     return True
 
 
-def decode_state_user_id(state: str) -> int | None:
-    """The user a link state was started for. Callers must call verify_state(purpose=LINK_PURPOSE) first."""
+def decode_state_link(state: str) -> tuple[int, int] | None:
+    """(user id, token_version) a link state was started for. Callers must call
+    verify_state(purpose=LINK_PURPOSE) first."""
     try:
         payload = jwt.decode(state, settings.auth_secret.get_secret_value(), algorithms=[_STATE_ALG])
     except jwt.InvalidTokenError:
         return None
-    uid = payload.get("uid")
-    return uid if isinstance(uid, int) and not isinstance(uid, bool) else None
+    uid, version = payload.get("uid"), payload.get("tv")
+    if any(not isinstance(v, int) or isinstance(v, bool) for v in (uid, version)):
+        return None
+    return uid, version
 
 
 def decode_state_next(state: str) -> str | None:
