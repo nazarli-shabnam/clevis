@@ -236,15 +236,16 @@ def _waiver_expired_items(db: Session, org_login: str, tenant_id: int, since: da
 
 def _waiver_expiring_items(db: Session, org_login: str, tenant_id: int) -> list[dict]:
     """Waivers inside their last warning window (the widest of ``WARNING_DAYS``). Dated by the moment each entered
-    it (never before the waiver itself existed, so a new one is not born already read), so marking the feed read
-    clears it and it does not reappear; a standing warning until the waiver is renewed
-    or lapses (then ``waiver_expired`` takes over), so it is not cut by the feed's ``days``."""
+    its narrowest warning window so far (never before the waiver itself existed, so a new one is not born already
+    read): marking the feed read or dismissing the item clears it, and reaching the next window (7 days, then 1)
+    dates it later, so it is unread again. A standing warning until the waiver is renewed or lapses (then
+    ``waiver_expired`` takes over), so it is not cut by the feed's ``days``."""
     now = datetime.now(timezone.utc)
-    window = timedelta(days=max(waiver_service.WARNING_DAYS))
     items: list[dict] = []
     for w in waiver_repo.candidates_for_expiry_warning(db, tenant_id, now, max(waiver_service.WARNING_DAYS)):
         expires_at = _aware(w.expires_at)
         days_left = max(1, -(-int((expires_at - now).total_seconds()) // 86400))
+        window = timedelta(days=min(d for d in waiver_service.WARNING_DAYS if expires_at - now <= timedelta(days=d)))
         items.append(
             {
                 "id": f"waiver_expiring:{w.id}",

@@ -114,9 +114,12 @@ def _deliver_bulk(items: list, *, org_login: str, tenant_id: int, inviter: str) 
     down = threading.Event()
 
     def send(item):
-        # Once any send finds the server down, queued ones neither take an hourly-cap slot nor try SMTP.
+        # Once any send finds the server down, queued ones neither take an hourly-cap slot nor try SMTP; nor
+        # does one that only gets a thread after the budget ran out (it is reported as not sent).
         if down.is_set():
             return "failed", True
+        if time.monotonic() >= deadline:
+            return "limited", False
         result = _email_invitation(item.email, org_login, inviter, item.invite_link, tenant_id)
         if result[1]:
             down.set()

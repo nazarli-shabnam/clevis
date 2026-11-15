@@ -440,6 +440,17 @@ def test_a_new_waiver_warning_is_not_born_before_the_waiver_existed(db, world):
     assert datetime.fromisoformat(item["at"]) >= soon.created_at.astimezone(timezone.utc) - timedelta(seconds=1)
 
 
+def test_each_warning_window_dates_the_item_so_the_one_day_warning_is_unread_again(db, world):
+    from src.routers.org_notifications import _waiver_expiring_items
+
+    old = NOW - timedelta(days=30)  # long-lived waivers, so the creation-time lower bound does not apply
+    week = _waiver(db, world["org"], BP, days=5, created_at=old)  # inside the 7-day window only
+    day = _waiver(db, world["org"], BP, days=0.5, created_at=old)  # inside both: dated at the 1-day window
+    at = {i["id"]: i["at"] for i in _waiver_expiring_items(db, "acme-w", world["org"].tenant_id)}
+    assert abs(at[f"waiver_expiring:{week.id}"] - (week.expires_at - timedelta(days=7))) < timedelta(seconds=1)
+    assert abs(at[f"waiver_expiring:{day.id}"] - (day.expires_at - timedelta(days=1))) < timedelta(seconds=1)
+
+
 def test_editing_only_the_reason_keeps_a_warning_the_sweep_has_not_sent_yet(db, world):
     w = _waiver(db, world["org"], BP, days=3)  # inside the last week, stage 0: the sweep has not warned yet
     admin = _client(db, world["users"]["admin"])
