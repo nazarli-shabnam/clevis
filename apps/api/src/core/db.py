@@ -383,6 +383,8 @@ class Org(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # Opt-in public score badge; off by default.
     badge_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    # Migration 0088: revoke the API tokens a member created when they are removed from the org.
+    revoke_tokens_on_creator_leave: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     # Per-org override of the instance-wide `score_hygiene_checks` setting; NULL = follow the instance.
     score_hygiene_checks: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # Per-org override of the instance-wide `scheduled_scan_cadence`: True = scan on a schedule, False = never,
@@ -672,6 +674,8 @@ class ApiToken(Base):
     prefix: Mapped[str] = mapped_column(String, nullable=False)
     scope: Mapped[str] = mapped_column(String, nullable=False, server_default="read")
     created_by: Mapped[str] = mapped_column(String, nullable=False)
+    # NULL = unknown creator (created before migration 0088 with an email that matched no user, or the user is gone).
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -132,6 +132,8 @@ export interface ApiToken {
   last_used_at: string | null
   revoked_at: string | null
   expires_at: string | null
+  /** The creator is known and is no longer a member of the org, yet the token still works until revoked. */
+  creator_left?: boolean
 }
 
 /** Returned once, at creation: `token` is never retrievable again. */

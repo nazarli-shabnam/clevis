@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 const listMock = vi.fn()
 const createMock = vi.fn()
 const revokeMock = vi.fn()
+const policyMock = vi.fn()
+const setPolicyMock = vi.fn()
 let searchParams = new URLSearchParams()
 
 vi.mock("next/navigation", () => ({ useSearchParams: () => searchParams }))
@@ -15,6 +17,8 @@ vi.mock("@/lib/api/client", () => ({
       list: (...a: unknown[]) => listMock(...a),
       create: (...a: unknown[]) => createMock(...a),
       revoke: (...a: unknown[]) => revokeMock(...a),
+      policy: (...a: unknown[]) => policyMock(...a),
+      setPolicy: (...a: unknown[]) => setPolicyMock(...a),
     },
   },
 }))
@@ -47,11 +51,32 @@ beforeEach(() => {
   listMock.mockReset()
   createMock.mockReset()
   revokeMock.mockReset()
+  policyMock.mockReset()
+  setPolicyMock.mockReset()
+  policyMock.mockResolvedValue({ revoke_on_creator_leave: false })
   searchParams = new URLSearchParams()
 })
 afterEach(cleanup)
 
 describe("ApiTokensCard", () => {
+  it("warns about an active token whose creator left the org", async () => {
+    listMock.mockResolvedValue([token({ creator_left: true }), token({ id: 2, name: "fine" })])
+    renderCard()
+    expect(await screen.findByText(/is no longer a member of this org/)).toBeInTheDocument()
+    expect(screen.getAllByText(/is no longer a member of this org/)).toHaveLength(1)
+  })
+
+  it("toggles the revoke-on-leave policy", async () => {
+    listMock.mockResolvedValue([])
+    setPolicyMock.mockResolvedValue({ revoke_on_creator_leave: true })
+    renderCard()
+    const box = await screen.findByLabelText(/Revoke a member's tokens when they leave/)
+    expect(box).not.toBeChecked()
+    fireEvent.click(box)
+    await waitFor(() => expect(setPolicyMock).toHaveBeenCalledWith("acme", true))
+    await waitFor(() => expect(box).toBeChecked())
+  })
+
   it("lists tokens with prefix, scope and last used, flagging revoked ones", async () => {
     listMock.mockResolvedValue([
       token(),
