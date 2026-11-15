@@ -6,8 +6,16 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, EmailStr, Field, St
 InvitationStatus = Literal["pending", "accepted", "revoked", "expired"]
 
 
+# "limited": not sent because the org is over its hourly cap on invitation emails, or a bulk request ran out of
+# its delivery time before this one started. "unconfirmed": the send was still running when a bulk request had to
+# answer, so it may yet go out. Either way the invitation and its link exist.
+EmailStatus = Literal["sent", "failed", "limited", "unconfirmed"]
+
+
 class InvitationCreate(BaseModel):
     email: EmailStr
+    # Opt in to emailing the link too (needs SMTP). Off by default: the link is always returned to copy.
+    send_email: bool = False
 
 
 MAX_BULK_INVITES = 50
@@ -29,6 +37,7 @@ class InvitationBulkCreate(BaseModel):
     ] = Field(
         min_length=1, max_length=MAX_BULK_INVITES
     )
+    send_email: bool = False
 
 
 class InvitationOut(BaseModel):
@@ -46,6 +55,8 @@ class InvitationOut(BaseModel):
 class InvitationCreateResponse(BaseModel):
     invitation: InvitationOut
     invite_link: str
+    # None unless `send_email` was requested. "failed" still leaves a valid invitation and link.
+    email_status: EmailStatus | None = None
 
 
 class InvitationBulkItem(BaseModel):
@@ -53,6 +64,7 @@ class InvitationBulkItem(BaseModel):
     status: Literal["created", "already_pending", "invalid", "failed"]
     invitation: InvitationOut | None = None
     invite_link: str | None = None
+    email_status: EmailStatus | None = None
 
 
 class InvitationBulkResponse(BaseModel):

@@ -19,9 +19,10 @@ from sqlalchemy.orm import Session
 
 from src.core._sanitize import sanitize_error
 from src.core.auth import UserOut, require_auth
-from src.core.db import CheckWaiver, Job, ScanResult, SecurityAlert, get_db
+from src.core.db import ApiToken, CheckWaiver, Job, ScanResult, SecurityAlert, get_db
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import (
+    api_token_repo,
     installation_repo,
     notification_dismissal_repo,
     notification_preference_repo,
@@ -31,6 +32,7 @@ from src.repositories import (
 )
 from src.schemas.notification_feed import NotificationFeed, NotificationItem, NotificationPreferences
 from src.services import app_permissions, dependabot_burndown
+from src.services import waivers as waiver_service
 from src.services.scan_service import comparable_scans
 
 router = APIRouter()
@@ -44,7 +46,7 @@ MAX_LIMIT = 200
 _PER_SOURCE = 40
 # The stable ids the feed hands out: a kind plus the source row's integer id.
 _MAX_SCANS_IN_WINDOW = 1000
-_ITEM_ID = re.compile(r"^(critical_alert|score_drop|job_failed|permission_drift|waiver_expired|sla_breach):[0-9]{1,18}$")
+_ITEM_ID = re.compile(r"^(critical_alert|score_drop|job_failed|permission_drift|waiver_expired|waiver_expiring|sla_breach|api_token_expiring):[0-9]{1,18}$")
 
 
 def _aware(value: datetime) -> datetime:
@@ -232,6 +234,60 @@ def _waiver_expired_items(db: Session, org_login: str, tenant_id: int, since: da
     ]
 
 
+def _waiver_expiring_items(db: Session, org_login: str, tenant_id: int) -> list[dict]:
+    """Waivers inside their last warning window (the widest of ``WARNING_DAYS``). Dated by the moment each entered
+    its narrowest warning window so far (never before the waiver itself existed, so a new one is not born already
+    read): marking the feed read or dismissing the item clears it, and reaching the next window (7 days, then 1)
+    dates it later, so it is unread again. A standing warning until the waiver is renewed or lapses (then
+    ``waiver_expired`` takes over), so it is not cut by the feed's ``days``."""
+    now = datetime.now(timezone.utc)
+    items: list[dict] = []
+    for w in waiver_repo.candidates_for_expiry_warning(db, tenant_id, now, max(waiver_service.WARNING_DAYS)):
+        expires_at = _aware(w.expires_at)
+        days_left = max(1, -(-int((expires_at - now).total_seconds()) // 86400))
+        window = timedelta(days=min(d for d in waiver_service.WARNING_DAYS if expires_at - now <= timedelta(days=d)))
+        items.append(
+            {
+                "id": f"waiver_expiring:{w.id}",
+                "kind": "waiver_expiring",
+                "at": max(expires_at - window, _aware(w.created_at)),
+                "title": f"Waiver for {w.check_id} expires in {days_left} day{'s' if days_left != 1 else ''}",
+                "detail": f"Owner {w.owner}: {w.reason}"[:140],
+                "href": f"/settings/org/{quote(org_login, safe='')}/members?waiver={w.id}",
+            }
+        )
+    return items
+
+
+def _api_token_expiring_items(db: Session, org_login: str, tenant_id: int) -> list[dict]:
+    """Active API tokens that expire within the warning window. Dated by the moment each entered the
+    window (expiry minus WINDOW_DAYS), so marking the feed read clears it and it does not reappear;
+    it is a standing warning, so it is not cut by the feed's ``days``. Gone once revoked or expired."""
+    now = datetime.now(timezone.utc)
+    items: list[dict] = []
+    for t in api_token_repo.list_for_tenant(db, tenant_id):
+        if t.revoked_at is not None or t.expires_at is None:
+            continue
+        expires_at = _aware(t.expires_at)
+        if not now < expires_at <= now + timedelta(days=WINDOW_DAYS):
+            continue
+        days_left = max(1, -(-int((expires_at - now).total_seconds()) // 86400))
+        items.append(
+            {
+                "id": f"api_token_expiring:{t.id}",
+                "kind": "api_token_expiring",
+                # Not before the token existed: a token whose whole lifetime is shorter than the window would
+                # otherwise be dated before the admin's read marker and arrive already "read".
+                "at": max(expires_at - timedelta(days=WINDOW_DAYS), _aware(t.created_at)),
+                "title": f"API token \"{t.name}\" expires in {days_left} day{'s' if days_left != 1 else ''}",
+                "detail": "Rotate it before CI jobs using it start failing.",
+                # The API tokens card lives on the Members page; ?token highlights this one.
+                "href": f"/settings/org/{quote(org_login, safe='')}/members?token={t.id}",
+            }
+        )
+    return items
+
+
 def _sla_breach_items(
     db: Session, tenant_id: int, since: datetime, per_source: int, cursor: Cursor | None = None
 ) -> list[dict]:
@@ -375,11 +431,15 @@ def get_notifications(
         raw += _permission_drift_items(db, ctx, org_login, since)
     if is_admin and "waiver_expired" not in muted:
         raw += _waiver_expired_items(db, org_login, tenant_id, since)
+    if is_admin and "waiver_expiring" not in muted:
+        raw += _waiver_expiring_items(db, org_login, tenant_id)
+    if is_admin and "api_token_expiring" not in muted:
+        raw += _api_token_expiring_items(db, org_login, tenant_id)
     if "sla_breach" not in muted:
         raw += _sla_breach_items(db, tenant_id, since, per_source, cursor)
 
     if cursor is not None:
-        # permission drift and waivers are not row-limited, so they are cut here instead of in a query.
+        # permission drift, waivers and token expiries are not row-limited, so they are cut here instead of in a query.
         raw = [i for i in raw if _item_key(i) < cursor]
     raw.sort(key=_item_key, reverse=True)
     items = [
@@ -454,6 +514,8 @@ def _item_exists(db: Session, ctx: OrgContext, org_login: str, kind: str, row_id
     elif kind == "permission_drift":
         install = installation_repo.get_for_org(db, org_id=ctx.org.id, account_login=org_login)
         return install is not None and install.id == row_id
+    elif kind == "api_token_expiring":
+        model = ApiToken
     else:
         model = CheckWaiver
     return db.query(model.id).filter(model.id == row_id, model.tenant_id == tenant_id).first() is not None

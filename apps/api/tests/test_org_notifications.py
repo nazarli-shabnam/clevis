@@ -579,3 +579,69 @@ def test_sla_breaches_page_past_the_per_source_limit_and_all_count_as_unread(db,
     second = member.get("/orgs/acme/notifications", params={"before": last["at"], "before_id": last["id"]}).json()
     seen = {i["id"] for i in first["items"]} | {i["id"] for i in second["items"]}
     assert len(second["items"]) == 10 and len(seen) == 60
+
+
+def _token(db, tenant_id, name, *, expires_in=None, revoked=False):
+    from src.core.db import ApiToken, set_session_tenant
+
+    # api_tokens is tenant-scoped by RLS: under the restricted CI role a row can only be written in its own tenant.
+    set_session_tenant(db, tenant_id)
+    row = ApiToken(
+        tenant_id=tenant_id, name=name, token_hash=f"hash-{name}", prefix="clv_abcd", created_by="a@e.com",
+        expires_at=NOW + expires_in if expires_in is not None else None,
+        revoked_at=NOW if revoked else None,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    token_id = row.id
+    # Leave no tenant context behind: the request under test resolves its own, and a leftover one (another
+    # tenant's, under the restricted CI role) would hide the org it is asking about.
+    db.info.pop("tenant_id", None)
+    db.commit()
+    return token_id
+
+
+def test_api_token_nearing_expiry_is_an_admin_only_item_that_links_to_the_token(db, world):
+    t = world["acme"].tenant_id
+    # 12 hours past the day boundary, so "4 days" holds however long the suite has been running since NOW.
+    soon = _token(db, t, "ci-soon", expires_in=timedelta(days=3, hours=12))
+    _token(db, t, "ci-far", expires_in=timedelta(days=40))
+    _token(db, t, "ci-never")
+    _token(db, t, "ci-lapsed", expires_in=timedelta(days=-1))
+    _token(db, t, "ci-revoked", expires_in=timedelta(days=2), revoked=True)
+
+    admin = _client(db, world["users"]["admin"]).get("/orgs/acme/notifications").json()
+    member = _client(db, world["users"]["member"]).get("/orgs/acme/notifications").json()
+
+    assert [i["kind"] for i in member["items"]] == []
+    [item] = [i for i in admin["items"] if i["kind"] == "api_token_expiring"]
+    assert item["id"] == f"api_token_expiring:{soon}"
+    assert item["title"] == 'API token "ci-soon" expires in 4 days'
+    assert item["href"] == f"/settings/org/acme/members?token={soon}"
+    assert item["read"] is False and admin["unread_count"] == 1
+    # The warning is never dated before the token existed (its lifetime here is shorter than the 14-day window),
+    # or a read marker set earlier would swallow it.
+    assert datetime.fromisoformat(item["at"]) >= NOW
+
+
+def test_api_token_expiry_is_tenant_scoped_and_can_be_dismissed_and_muted(db, world):
+    t = world["acme"].tenant_id
+    item_id = f"api_token_expiring:{_token(db, t, 'ci-soon', expires_in=timedelta(days=2))}"
+    _token(db, world["globex"].tenant_id, "other-org", expires_in=timedelta(days=2))
+    # A client sets the session's acting user when it is built, so each is built right before its requests.
+    admin = lambda: _client(db, world["users"]["admin"])  # noqa: E731
+    member = lambda: _client(db, world["users"]["member"])  # noqa: E731
+
+    feed = admin().get("/orgs/acme/notifications")
+    assert feed.status_code == 200, feed.text
+    assert [i["id"] for i in feed.json()["items"]] == [item_id]
+    assert member().post(f"/orgs/acme/notifications/{item_id}/dismiss").status_code == 404  # admin-only kind
+    assert admin().post("/orgs/acme/notifications/api_token_expiring:999999/dismiss").status_code == 404
+    assert admin().post(f"/orgs/acme/notifications/{item_id}/dismiss").status_code == 204
+    feed = admin().get("/orgs/acme/notifications").json()
+    assert feed["items"][0]["read"] is True and feed["unread_count"] == 0
+
+    muted = admin().put("/orgs/acme/notifications/preferences", json={"muted_kinds": ["api_token_expiring"]})
+    assert muted.status_code == 200, muted.text
+    assert admin().get("/orgs/acme/notifications").json()["items"] == []

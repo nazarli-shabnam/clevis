@@ -319,3 +319,182 @@ def test_a_lapsed_waiver_shows_in_the_admins_notifications_only(db, world):
     member = _client(db, world["users"]["member"], notifications_router).get("/orgs/acme-w/notifications").json()
     assert [i["kind"] for i in admin["items"]] == ["waiver_expired"] and admin["unread_count"] == 1
     assert member["items"] == []
+
+
+# --- warning before expiry (#951) ---------------------------------------------------------------
+
+def test_warning_stage_counts_the_windows_an_expiry_is_already_inside():
+    now = datetime.now(timezone.utc)
+    stage = waiver_service.warning_stage
+    assert stage(now + timedelta(days=30), now) == 0
+    assert stage(now + timedelta(days=7, seconds=1), now) == 0
+    assert stage(now + timedelta(days=7), now) == 1
+    assert stage(now + timedelta(days=3), now) == 1
+    assert stage(now + timedelta(days=1), now) == 2
+    assert stage(now + timedelta(hours=2), now) == 2
+
+
+def test_create_and_renew_do_not_warn_about_the_date_just_chosen(db, world):
+    admin = _client(db, world["users"]["admin"])
+    far = admin.post("/orgs/acme-w/waivers", json=_body(days=30)).json()
+    soon = admin.post("/orgs/acme-w/waivers", json=_body(days=5)).json()
+    stage = lambda wid: db.query(CheckWaiver).filter(CheckWaiver.id == wid).one().expiry_warning_stage  # noqa: E731
+    assert (stage(far["id"]), stage(soon["id"])) == (0, 1)
+
+    # Renewing re-arms the warnings for the new date, or marks the windows it is already inside.
+    admin.put(f"/orgs/acme-w/waivers/{soon['id']}", json=_body(days=60))
+    db.expire_all()
+    assert stage(soon["id"]) == 0
+    admin.put(f"/orgs/acme-w/waivers/{far['id']}", json=_body(days=1))
+    db.expire_all()
+    assert stage(far["id"]) == 2
+
+
+def test_sweep_announces_each_warning_window_once_and_never_for_far_or_lapsed_waivers(db, world):
+    seven = _waiver(db, world["org"], BP, days=6)
+    one = _waiver(db, world["org"], BP, days=0.5)
+    _waiver(db, world["org"], BP, days=30)
+    _waiver(db, world["org"], BP, days=-1, expiry_noted_at=NOW)
+    with patch("src.services.waiver_expiry_sweep.notifications.notify_waiver_expiring") as notify, patch(
+        "src.services.waiver_expiry_sweep.notifications.notify_waiver_expired"
+    ) as expired:
+        run_waiver_expiry_sweep(db)
+        run_waiver_expiry_sweep(db)  # a second tick repeats nothing
+
+    assert notify.call_count == 1
+    sent = {p["waiver_id"]: p["days_left"] for p in notify.call_args.args[3]}
+    assert sent == {seven.id: 7, one.id: 1}
+    expired.assert_not_called()
+    assert db.query(AuditLog).filter(AuditLog.action == "waiver.expiring").count() == 2
+    db.refresh(seven), db.refresh(one)
+    assert (seven.expiry_warning_stage, one.expiry_warning_stage) == (1, 2)
+
+
+def test_a_waiver_crossing_the_second_window_is_announced_again_at_that_stage(db, world):
+    w = _waiver(db, world["org"], BP, days=6)
+    with patch("src.services.waiver_expiry_sweep.notifications.notify_waiver_expiring") as notify:
+        run_waiver_expiry_sweep(db)
+        w.expires_at = datetime.now(timezone.utc) + timedelta(hours=10)  # time passes
+        db.commit()
+        run_waiver_expiry_sweep(db)
+    assert [c.args[3][0]["days_left"] for c in notify.call_args_list] == [7, 1]
+
+
+def test_a_failed_warning_alert_does_not_undo_the_stamp_and_is_not_retried(db, world):
+    w = _waiver(db, world["org"], BP, days=3)
+    with patch(
+        "src.services.waiver_expiry_sweep.notifications.notify_waiver_expiring", side_effect=RuntimeError("down")
+    ) as notify:
+        run_waiver_expiry_sweep(db)
+        run_waiver_expiry_sweep(db)
+    assert notify.call_count == 1
+    db.refresh(w)
+    assert w.expiry_warning_stage == 1
+
+
+def test_the_expiring_alert_event_reaches_subscribed_destinations_only(db, world):
+    from src.repositories import notification_repo
+    from src.services import notifications
+
+    tenant = world["org"].tenant_id
+    for events in (["waiver_expiring"], ["waiver_expired"]):
+        notification_repo.create(
+            db, tenant_id=tenant, kind="slack", name="-".join(events), encrypted_url="v2:x",
+            events=events, min_score_drop=10, enabled=True,
+        )
+    with patch("src.services.notifications.send", return_value=(True, "ok")) as send, patch(
+        "src.services.notifications.allowed_emails_for", return_value=set()
+    ):
+        notifications.notify_waiver_expiring(
+            db, tenant, "acme-w", [{"waiver_id": 1, "check_id": BP, "expires_at": "x", "days_left": 7}]
+        )
+    assert send.call_count == 1
+    dest, event, text = send.call_args.args[:3]
+    assert dest.name == "waiver_expiring" and event == "waiver_expiring"
+    assert "within 7 days" in text and BP in text
+
+
+def test_waivers_in_their_last_week_show_in_the_admins_bell_only_with_a_renew_link(db, world):
+    soon = _waiver(db, world["org"], BP, days=3.5)
+    _waiver(db, world["org"], BP, days=30)
+    admin = _client(db, world["users"]["admin"], notifications_router)
+    member = _client(db, world["users"]["member"], notifications_router)
+
+    feed = admin.get("/orgs/acme-w/notifications").json()
+    [item] = [i for i in feed["items"] if i["kind"] == "waiver_expiring"]
+    assert item["id"] == f"waiver_expiring:{soon.id}"
+    assert item["title"] == f"Waiver for {BP} expires in 4 days"
+    assert item["href"] == f"/settings/org/acme-w/members?waiver={soon.id}"
+    assert member.get("/orgs/acme-w/notifications").json()["items"] == []
+    # Per-item dismiss works (admin-only kind: the member gets a 404), and the kind can be muted.
+    assert member.post(f"/orgs/acme-w/notifications/{item['id']}/dismiss").status_code == 404
+    assert admin.post(f"/orgs/acme-w/notifications/{item['id']}/dismiss").status_code == 204
+    assert admin.put("/orgs/acme-w/notifications/preferences", json={"muted_kinds": ["waiver_expiring"]}).status_code == 200
+    assert [i["kind"] for i in admin.get("/orgs/acme-w/notifications").json()["items"]] == []
+
+
+def test_a_new_waiver_warning_is_not_born_before_the_waiver_existed(db, world):
+    soon = _waiver(db, world["org"], BP, days=3)
+    admin = _client(db, world["users"]["admin"], notifications_router)
+    [item] = [i for i in admin.get("/orgs/acme-w/notifications").json()["items"] if i["kind"] == "waiver_expiring"]
+    assert datetime.fromisoformat(item["at"]) >= soon.created_at.astimezone(timezone.utc) - timedelta(seconds=1)
+
+
+def test_each_warning_window_dates_the_item_so_the_one_day_warning_is_unread_again(db, world):
+    from src.routers.org_notifications import _waiver_expiring_items
+
+    old = NOW - timedelta(days=30)  # long-lived waivers, so the creation-time lower bound does not apply
+    week = _waiver(db, world["org"], BP, days=5, created_at=old)  # inside the 7-day window only
+    day = _waiver(db, world["org"], BP, days=0.5, created_at=old)  # inside both: dated at the 1-day window
+    at = {i["id"]: i["at"] for i in _waiver_expiring_items(db, "acme-w", world["org"].tenant_id)}
+    assert abs(at[f"waiver_expiring:{week.id}"] - (week.expires_at - timedelta(days=7))) < timedelta(seconds=1)
+    assert abs(at[f"waiver_expiring:{day.id}"] - (day.expires_at - timedelta(days=1))) < timedelta(seconds=1)
+
+
+def test_editing_only_the_reason_keeps_a_warning_the_sweep_has_not_sent_yet(db, world):
+    w = _waiver(db, world["org"], BP, days=3)  # inside the last week, stage 0: the sweep has not warned yet
+    admin = _client(db, world["users"]["admin"])
+    resp = admin.put(f"/orgs/acme-w/waivers/{w.id}", json={**_body(days=3), "expires_at": w.expires_at.isoformat(), "reason": "new reason"})
+    assert resp.status_code == 200, resp.text
+    db.refresh(w)
+    assert w.reason == "new reason" and w.expiry_warning_stage == 0
+    with patch("src.services.waiver_expiry_sweep.notifications.notify_waiver_expiring") as notify:
+        run_waiver_expiry_sweep(db)
+    assert notify.call_count == 1  # the pending warning was not skipped by the edit
+
+    # Moving the date does re-arm: it recomputes the stage for the new expiry.
+    admin.put(f"/orgs/acme-w/waivers/{w.id}", json=_body(days=60))
+    db.refresh(w)
+    assert w.expiry_warning_stage == 0
+
+
+def test_a_group_alert_states_only_the_earliest_deadline(db, world):
+    from src.repositories import notification_repo
+    from src.services import notifications
+
+    tenant = world["org"].tenant_id
+    notification_repo.create(
+        db, tenant_id=tenant, kind="slack", name="n", encrypted_url="v2:x", events=["waiver_expiring"],
+        min_score_drop=10, enabled=True,
+    )
+    with patch("src.services.notifications.send", return_value=(True, "ok")) as send, patch(
+        "src.services.notifications.allowed_emails_for", return_value=set()
+    ):
+        notifications.notify_waiver_expiring(
+            db, tenant, "acme-w",
+            [
+                {"waiver_id": 1, "check_id": BP, "expires_at": "x", "days_left": 7},
+                {"waiver_id": 2, "check_id": "repository_license_present", "expires_at": "y", "days_left": 1},
+            ],
+        )
+    text = send.call_args.args[2]
+    assert "2 check waivers" in text and "the earliest within 1 day" in text
+    assert "both" not in text and "expire within" not in text
+
+
+def test_the_sweep_locks_the_waivers_it_is_about_to_stamp(db, world):
+    _waiver(db, world["org"], BP, days=3)
+    now = datetime.now(timezone.utc)
+    from src.repositories import waiver_repo
+
+    assert [w.check_id for w in waiver_repo.candidates_for_expiry_warning(db, world["org"].tenant_id, now, 7, lock=True)] == [BP]

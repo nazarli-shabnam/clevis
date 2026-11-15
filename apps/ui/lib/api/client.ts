@@ -1,4 +1,5 @@
 import type {
+  PendingInstallation,
   NotificationDestination,
   NotificationDestinationInput,
   NotificationDestinationPatch,
@@ -667,6 +668,8 @@ export const api = {
   },
   installations: {
     list: () => get<InstallationMeta[]>("/me/installations"),
+    // Organization installations GitHub announced that nobody has connected yet, where you approved or asked for it.
+    pending: () => get<PendingInstallation[]>("/me/pending-installations"),
     // Org-connected installation (list() only returns personal ones). 404 = org not connected,
     // 403 = not a member -- callers should treat either as "not installed".
     listForOrg: (orgLogin: string) => get<InstallationMeta[]>(`/orgs/${encodeURIComponent(orgLogin)}/installations`),
@@ -792,10 +795,17 @@ export const api = {
   },
   ingestionHealth: (orgLogin: string) => get<IngestionHealth>(`/orgs/${encodeURIComponent(orgLogin)}/ingestion-health`),
   invitations: {
-    create: (orgLogin: string, email: string) =>
-      post<InvitationCreateResponse>(`/orgs/${encodeURIComponent(orgLogin)}/invitations`, { email }),
-    createMany: (orgLogin: string, emails: string[]) =>
-      post<InvitationBulkResponse>(`/orgs/${encodeURIComponent(orgLogin)}/invitations/bulk`, { emails }),
+    // sendEmail also emails the link (the server needs SMTP, else it answers 409 and creates nothing).
+    create: (orgLogin: string, email: string, sendEmail = false) =>
+      post<InvitationCreateResponse>(`/orgs/${encodeURIComponent(orgLogin)}/invitations`, {
+        email,
+        ...(sendEmail ? { send_email: true } : {}),
+      }),
+    createMany: (orgLogin: string, emails: string[], sendEmail = false) =>
+      post<InvitationBulkResponse>(`/orgs/${encodeURIComponent(orgLogin)}/invitations/bulk`, {
+        emails,
+        ...(sendEmail ? { send_email: true } : {}),
+      }),
     list: (orgLogin: string) => get<InvitationOut[]>(`/orgs/${encodeURIComponent(orgLogin)}/invitations`),
     regenerate: (orgLogin: string, invitationId: number) =>
       post<InvitationCreateResponse>(`/orgs/${encodeURIComponent(orgLogin)}/invitations/${invitationId}/regenerate`, {}),
@@ -878,7 +888,17 @@ export const api = {
         pending_invitations: PendingInvitationSummary[]
       }>("/auth/register", { email, password, name, invite_token: inviteToken }),
     me: () =>
-      get<{ id: number; email: string; name: string | null; is_workspace_admin: boolean; email_verified: boolean }>("/auth/me"),
+      get<{
+        id: number
+        email: string
+        name: string | null
+        is_workspace_admin: boolean
+        email_verified: boolean
+        /** The linked GitHub account, once there is one. */
+        github_login?: string | null
+      }>("/auth/me"),
+    /** Start linking a GitHub account to the signed-in user; resolves with the GitHub authorize URL to open. */
+    linkGithub: () => post<{ url: string }>("/auth/github/link", {}),
     patchMe: (name: string) =>
       patch<{ id: number; email: string; name: string | null; is_workspace_admin: boolean }>("/auth/me", { name }),
     revokeSessions: () => post<{ ok: boolean }>("/auth/me/revoke-sessions", {}),

@@ -1132,6 +1132,14 @@ describe("installations.lookup / installations.sync", () => {
     );
   }
 
+  it("GETs /me/pending-installations (#1014)", async () => {
+    stubOkJson([{ installation_id: 501, account_login: "acme", created_at: "2026-11-15T00:00:00Z", role: "approver" }]);
+    const result = await api.installations.pending();
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toMatch(/\/me\/pending-installations$/);
+    expect(result[0]).toMatchObject({ installation_id: 501, role: "approver" });
+  });
+
   it("GETs /me/installations/lookup/{id}", async () => {
     stubOkJson({ account_login: "shabnam", account_type: "User" });
     const result = await api.installations.lookup(42);
@@ -1273,6 +1281,23 @@ describe("api.invitations (bulk / regenerate / resend)", () => {
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body as string)).toEqual({ emails: ["a@x.com", "b@x.com"] });
     expect(result).toEqual({ results: [] });
+  });
+
+  it("asks the server to email the link only when told to (#953)", async () => {
+    stubOkJson({ results: [] });
+    await api.invitations.createMany("acme", ["a@x.com"], true);
+    const bulk = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(JSON.parse(bulk[1].body as string)).toEqual({ emails: ["a@x.com"], send_email: true });
+    stubOkJson({ invitation: {}, invite_link: "x" });
+    await api.invitations.create("acme", "a@x.com", true);
+    const sent = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(JSON.parse(sent[1].body as string)).toEqual({ email: "a@x.com", send_email: true });
+
+    stubOkJson({ invitation: {}, invite_link: "x" });
+    await api.invitations.create("acme", "a@x.com");
+    const plain = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(plain[0])).toContain("/orgs/acme/invitations");
+    expect(JSON.parse(plain[1].body as string)).toEqual({ email: "a@x.com" });
   });
 
   it("POSTs to the regenerate and resend routes of one invitation", async () => {
@@ -1436,6 +1461,20 @@ describe("waivers, notification preferences and evidence endpoints", () => {
     expect(url).toMatch(/\/orgs\/acme\/notifications\/preferences$/);
     expect(init.method).toBe("PUT");
     expect(JSON.parse(String(init.body))).toEqual({ muted_kinds: ["score_drop"] });
+  });
+
+  it("reads the profile with its linked GitHub login and starts linking with a POST (#1007)", async () => {
+    const me = stub({ id: 1, email: "a@e.com", github_login: "octo" });
+    const profile = await api.auth.me();
+    expect(me()[0]).toMatch(/\/auth\/me$/);
+    expect(profile.github_login).toBe("octo");
+
+    const link = stub({ url: "https://github.com/login/oauth/authorize?state=s" });
+    const started = await api.auth.linkGithub();
+    const [url, init] = link();
+    expect(url).toMatch(/\/auth\/github\/link$/);
+    expect(init.method).toBe("POST");
+    expect(started.url).toContain("github.com");
   });
 
   it("evidence.download sends the range and reads the filename and truncation header", async () => {

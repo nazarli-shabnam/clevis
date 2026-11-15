@@ -79,6 +79,7 @@ export type DestinationKind = "slack" | "teams" | "generic" | "email"
 export type AlertEvent =
   | "score_drop"
   | "waiver_expired"
+  | "waiver_expiring"
   | "new_critical_alert"
   | "stale_pr_summary"
   | "automation_failed"
@@ -515,6 +516,15 @@ export interface InstallationMeta {
   automations?: AutomationPermission[]
 }
 
+/** An organization installation GitHub announced that nobody has connected to Clevis yet, as it concerns you. */
+export interface PendingInstallation {
+  installation_id: number
+  account_login: string
+  created_at: string
+  /** "approver" completed it on GitHub and can connect it; "requester" asked for it. */
+  role: "approver" | "requester"
+}
+
 export interface InstallationLookup {
   account_login: string
   account_type: string
@@ -548,9 +558,13 @@ export interface InvitationOut {
   expires_at: string
 }
 
+/** Present only when the invite asked to be emailed; "failed" still leaves a valid invitation and link. */
+export type InvitationEmailStatus = "sent" | "failed" | "limited" | "unconfirmed"
+
 export interface InvitationCreateResponse {
   invitation: InvitationOut
   invite_link: string
+  email_status?: InvitationEmailStatus | null
 }
 
 export interface InvitationBulkItem {
@@ -558,6 +572,7 @@ export interface InvitationBulkItem {
   status: "created" | "already_pending" | "invalid" | "failed"
   invitation: InvitationOut | null
   invite_link: string | null
+  email_status?: InvitationEmailStatus | null
 }
 
 export interface InvitationBulkResponse {
@@ -1012,7 +1027,9 @@ export type NotificationKind =
   | "job_failed"
   | "permission_drift"
   | "waiver_expired"
+  | "waiver_expiring"
   | "sla_breach"
+  | "api_token_expiring"
 
 export interface NotificationPreferences {
   // Kinds this user has hidden from the org's feed and unread count; empty = show everything.
