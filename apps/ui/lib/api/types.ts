@@ -95,6 +95,11 @@ export interface NotificationDestination {
   created_at: string
   /** generic webhooks only: a signing secret is set. The URL and secret are never returned. */
   signed: boolean
+  /** Delivery health from the last send attempt; `null` until the first one. */
+  last_status?: "ok" | "failed" | null
+  last_error?: string | null
+  last_attempt_at?: string | null
+  consecutive_failures?: number
   /** email destinations only. */
   recipients: string[] | null
 }

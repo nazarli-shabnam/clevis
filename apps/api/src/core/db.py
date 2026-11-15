@@ -583,6 +583,11 @@ class NotificationDestination(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     # Last time an alert claimed this destination; drives the cooldown (see notifications.notify_score_drop).
     last_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Delivery health (migration 0087), set by notification_repo.record_delivery after every send attempt.
+    last_status: Mapped[str | None] = mapped_column(String, nullable=True)  # ok | failed
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
