@@ -117,7 +117,7 @@ export function PermissionDriftNotice({
     <div className={`${wrap} border border-warning/30 bg-warning/5 px-3 py-2.5 flex flex-col gap-1.5`}>
       <p className="text-warning font-medium flex items-center gap-1.5">
         <Warning className="size-3.5 shrink-0" />
-        {items.length} automation{items.length === 1 ? " needs" : "s need"} extra GitHub access
+        {items.length} automation{items.length === 1 ? " needs" : "s need"} extra GitHub access for {install.account_login}
       </p>
       <ul className="text-muted-foreground list-disc pl-6">
         {items.map((i) => (

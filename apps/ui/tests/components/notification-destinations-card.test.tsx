@@ -230,4 +230,73 @@ describe("NotificationDestinationsCard", () => {
     expect(await screen.findByText("#sec", { selector: "p, span" })).toBeInTheDocument()
     expect(listMock).toHaveBeenCalledTimes(2)
   })
+
+  describe("editing in place (#950)", () => {
+    const openEdit = async (d: Record<string, unknown> = {}) => {
+      listMock.mockResolvedValue([dest(d)])
+      renderCard()
+      fireEvent.click(await screen.findByRole("button", { name: /^Edit / }))
+      return screen.getByRole("form", { name: /^Edit / })
+    }
+
+    it("sends only the changed fields and leaves the write-only URL alone when blank", async () => {
+      updateMock.mockResolvedValue(dest())
+      const form = await openEdit()
+      const save = within(form).getByRole("button", { name: "Save changes" })
+      expect(save).toBeDisabled()
+      fireEvent.change(within(form).getByLabelText("Name"), { target: { value: " #renamed " } })
+      fireEvent.change(within(form).getByLabelText("Score-drop threshold (points)"), { target: { value: "25" } })
+      fireEvent.click(save)
+      await waitFor(() => expect(updateMock).toHaveBeenCalledWith("acme", 1, { name: "#renamed", min_score_drop: 25 }))
+      await waitFor(() => expect(screen.queryByRole("form", { name: /^Edit / })).not.toBeInTheDocument())
+    })
+
+    it("rotates the URL and the signing secret of a webhook, never prefilled", async () => {
+      updateMock.mockResolvedValue(dest())
+      const form = await openEdit({ kind: "generic", signed: true })
+      expect(within(form).getByLabelText("New webhook URL")).toHaveValue("")
+      expect(within(form).getByLabelText("New signing secret")).toHaveValue("")
+      fireEvent.change(within(form).getByLabelText("New webhook URL"), { target: { value: " https://hooks.example/new " } })
+      fireEvent.change(within(form).getByLabelText("New signing secret"), { target: { value: "s3cret" } })
+      fireEvent.click(within(form).getByRole("button", { name: "Save changes" }))
+      await waitFor(() =>
+        expect(updateMock).toHaveBeenCalledWith("acme", 1, { url: "https://hooks.example/new", secret: "s3cret" }),
+      )
+    })
+
+    it("edits an email destination's recipients and rejects an empty list", async () => {
+      updateMock.mockResolvedValue(dest())
+      const form = await openEdit({ kind: "email", recipients: ["a@e.com", "b@e.com"] })
+      const recipients = within(form).getByLabelText("Recipients")
+      expect(recipients).toHaveValue("a@e.com, b@e.com")
+      expect(within(form).queryByLabelText("New webhook URL")).not.toBeInTheDocument()
+      fireEvent.change(recipients, { target: { value: " , " } })
+      expect(within(form).getByRole("button", { name: "Save changes" })).toBeDisabled()
+      fireEvent.change(recipients, { target: { value: "a@e.com c@e.com" } })
+      fireEvent.click(within(form).getByRole("button", { name: "Save changes" }))
+      await waitFor(() => expect(updateMock).toHaveBeenCalledWith("acme", 1, { recipients: ["a@e.com", "c@e.com"] }))
+    })
+
+    it("blocks an out-of-range threshold or empty name", async () => {
+      const form = await openEdit()
+      const save = within(form).getByRole("button", { name: "Save changes" })
+      fireEvent.change(within(form).getByLabelText("Score-drop threshold (points)"), { target: { value: "0" } })
+      expect(save).toBeDisabled()
+      fireEvent.change(within(form).getByLabelText("Score-drop threshold (points)"), { target: { value: "20" } })
+      expect(save).toBeEnabled()
+      fireEvent.change(within(form).getByLabelText("Name"), { target: { value: "  " } })
+      expect(save).toBeDisabled()
+    })
+
+    it("keeps the form open with the server's error when the save fails, and Cancel closes it", async () => {
+      updateMock.mockRejectedValue(new Error("Recipient x@e.com is not a verified member"))
+      const form = await openEdit()
+      fireEvent.change(within(form).getByLabelText("Name"), { target: { value: "other" } })
+      fireEvent.click(within(form).getByRole("button", { name: "Save changes" }))
+      expect(await within(form).findByRole("alert")).toHaveTextContent("not a verified member")
+      expect(screen.getAllByRole("alert")).toHaveLength(1)
+      fireEvent.click(within(form).getByRole("button", { name: "Cancel" }))
+      expect(screen.queryByRole("form", { name: /^Edit / })).not.toBeInTheDocument()
+    })
+  })
 })
