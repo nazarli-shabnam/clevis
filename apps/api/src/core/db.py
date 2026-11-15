@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Date,
+    BigInteger,
     DateTime,
     ForeignKey,
     SmallInteger,
@@ -608,6 +609,29 @@ class CheckWaiver(Base):
     # current expiry; 0 = none. Create and renew set it to the windows the expiry is already inside, so the
     # admin who just chose a date is not warned about it, and a renewal re-arms the later warnings.
     expiry_warning_stage: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="0")
+
+
+class PendingInstallation(Base):
+    """A GitHub App installation Clevis heard about (``installation.created``) that nobody has connected yet.
+    A notice board only: it grants nothing and creates no org. Not tenant data (none exists until the org is
+    connected), so no RLS; reads are filtered by the signed-in user's GitHub id (migration 0086)."""
+
+    __tablename__ = "pending_installations"
+    __table_args__ = (
+        Index("ix_pending_installations_sender", "sender_github_id"),
+        Index("ix_pending_installations_requester", "requester_github_id"),
+    )
+
+    installation_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    account_login: Mapped[str] = mapped_column(Text, nullable=False)
+    account_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # `sender` is whoever completed the installation on GitHub (the approving owner for a request);
+    # `requester` is the member who asked for it, when GitHub reports one.
+    sender_github_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    sender_login: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requester_github_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    requester_login: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class ApiToken(Base):

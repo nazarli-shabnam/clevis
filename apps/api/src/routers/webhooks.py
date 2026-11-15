@@ -19,7 +19,7 @@ from src.core.config import settings
 from src.core.db import WebhookDelivery, get_db
 from src.core.rate_limit import rate_limit
 from src.core.redis_client import get_redis_client
-from src.repositories import audit_repo, installation_repo
+from src.repositories import audit_repo, installation_repo, pending_installation_repo
 
 logger = logging.getLogger(__name__)
 
@@ -146,11 +146,13 @@ def _dispatch_event(db: Session, event: str, delivery_id: str, raw_body: bytes, 
             payload.get("action"),
             (payload.get("installation") or {}).get("id"),
         )
-    # installation.created is deliberately a no-op: rows are only ever written to
-    # github_installations by the authenticated sync endpoints, which independently
-    # verify the installation_id genuinely belongs to the claimed account before
-    # persisting. Auto-creating a row from this webhook would trust GitHub's payload
-    # alone to decide which Clevis org/user it belongs to, with no ownership check.
+    elif event == "installation" and payload.get("action") == "created":
+        _handle_installation_created(db, payload)
+    # installation.created only records a *notice* (pending_installations): rows are still only ever written to
+    # github_installations by the authenticated sync endpoints, which independently verify the installation_id
+    # genuinely belongs to the claimed account, and that the caller is a live GitHub admin of it, before
+    # persisting. Creating a row from this webhook would trust GitHub's payload alone to decide which Clevis
+    # org/user it belongs to, with no ownership check.
     #
     # installation_repositories has nothing to sync yet -- github_installations tracks
     # the installation itself, not per-repo access. Accepted (200) so GitHub doesn't retry.
@@ -242,11 +244,50 @@ def _handle_installation_permissions_accepted(db: Session, payload: dict) -> Non
         )
 
 
+def _as_int(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _as_login(value: object) -> str | None:
+    return value[:100] if isinstance(value, str) and value else None
+
+
+def _handle_installation_created(db: Session, payload: dict) -> None:
+    """Remember an organization installation nobody has connected, so Settings can offer it to the owner who
+    approved it and tell the member who asked for it what is still needed. Only a notice: no org, membership or
+    installation row is created here (see the note in ``_dispatch_event``)."""
+    installation = payload.get("installation") or {}
+    installation_id = _as_int(installation.get("id"))
+    account = installation.get("account") or {}
+    login = _as_login(account.get("login"))
+    # A personal installation always reaches the Setup URL in its owner's own browser; only organizations can be
+    # approved by someone else and then never reach Clevis.
+    if installation_id is None or login is None or account.get("type") != "Organization":
+        return
+    already_connected = db.execute(
+        text("SELECT resolve_installation_tenant_id(:installation_id)"), {"installation_id": installation_id}
+    ).scalar()
+    if already_connected is not None:
+        return
+    sender, requester = payload.get("sender") or {}, payload.get("requester") or {}
+    pending_installation_repo.record(
+        db,
+        installation_id=installation_id,
+        account_login=login,
+        account_id=_as_int(account.get("id")),
+        sender_github_id=_as_int(sender.get("id")),
+        sender_login=_as_login(sender.get("login")),
+        requester_github_id=_as_int(requester.get("id")),
+        requester_login=_as_login(requester.get("login")),
+    )
+
+
 def _handle_installation_deleted(db: Session, payload: dict) -> None:
     installation_id = (payload.get("installation") or {}).get("id")
     if not isinstance(installation_id, int) or isinstance(installation_id, bool):
         logger.warning("installation.deleted webhook has a missing/non-integer installation.id: %r", installation_id)
         return
+    pending_installation_repo.delete_by_installation_id(db, installation_id)
     removed, tenant_id = installation_repo.delete_by_installation_id(db, installation_id)
     if removed:
         audit_repo.write(

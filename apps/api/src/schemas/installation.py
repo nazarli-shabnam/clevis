@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -36,6 +37,16 @@ class AutomationPermissionOut(BaseModel):
     # Empty both when everything is granted and when permissions were never synced
     # (`permissions_synced_at` is None) -- the UI tells those apart off the timestamp.
     missing: dict[str, str] = {}
+
+
+class PendingInstallationOut(BaseModel):
+    """An organization installation GitHub announced that nobody has connected to Clevis yet, as it concerns the
+    signed-in user: ``approver`` completed it on GitHub (and can connect it), ``requester`` asked for it."""
+
+    installation_id: int
+    account_login: str
+    created_at: datetime
+    role: Literal["approver", "requester"]
 
 
 class InstallationOut(BaseModel):

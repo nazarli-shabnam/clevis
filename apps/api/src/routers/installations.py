@@ -17,12 +17,20 @@ from src.core.auth import UserOut, require_auth
 from src.core.db import Org, User, get_db
 from src.core.rate_limit import check_account_rate_limit
 from src.core.rbac import OrgContext, require_org_role, resolve_org_role, set_tenant_session_context
-from src.repositories import audit_repo, installation_repo, org_membership_repo, org_repo, tenant_repo
+from src.repositories import (
+    audit_repo,
+    installation_repo,
+    org_membership_repo,
+    org_repo,
+    pending_installation_repo,
+    tenant_repo,
+)
 from src.schemas.installation import (
     AutomationPermissionOut,
     BlockedFeatureOut,
     InstallationLookupOut,
     InstallationOut,
+    PendingInstallationOut,
     SyncInstallationsInput,
     SyncInstallationsResponse,
 )
@@ -395,7 +403,42 @@ def sync_org_installation(
         account_type=payload.account_type,
         resolve_token=lambda: resolve_org_token(db, org_id=org.id, account_login=payload.account_login, client_token=None, for_job=True),
     )
+    if payload.installation_id is not None:
+        # Connected, so the notice (if any) is done. Best-effort: a stale notice is also filtered out on read.
+        try:
+            pending_installation_repo.delete_by_installation_id(db, payload.installation_id)
+        except Exception:
+            db.rollback()
+            logger.warning("Could not clear the pending installation notice for %s", payload.installation_id, exc_info=True)
     return {"synced": True, "token_ref": row.token_ref}
+
+
+@router.get("/me/pending-installations", response_model=list[PendingInstallationOut])
+def list_pending_installations(user: UserOut = Depends(require_auth), db: Session = Depends(get_db)):
+    """Organization installations GitHub announced that nobody has connected yet, where the caller is the person
+    who approved it (and can connect it from Settings) or who asked for it. Only a notice: connecting still goes
+    through ``POST /orgs/{org}/installations/sync``, which checks that the caller is a live GitHub admin of the
+    org. Without a linked GitHub account there is nothing to match, so the list is empty."""
+    me = db.query(User).filter(User.id == user.id).first()
+    if me is None or me.github_user_id is None:
+        return []
+    out: list[PendingInstallationOut] = []
+    for row in pending_installation_repo.list_for_github_user(db, me.github_user_id):
+        # Connected since (by anyone): no longer pending, even if the row was not cleaned up.
+        connected = db.execute(
+            text("SELECT resolve_installation_tenant_id(:installation_id)"), {"installation_id": row.installation_id}
+        ).scalar()
+        if connected is not None:
+            continue
+        out.append(
+            PendingInstallationOut(
+                installation_id=row.installation_id,
+                account_login=row.account_login,
+                created_at=row.created_at,
+                role="approver" if row.sender_github_id == me.github_user_id else "requester",
+            )
+        )
+    return out
 
 
 @router.get("/me/installations", response_model=list[InstallationOut])

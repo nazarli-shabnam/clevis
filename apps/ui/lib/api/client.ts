@@ -1,4 +1,5 @@
 import type {
+  PendingInstallation,
   NotificationDestination,
   NotificationDestinationInput,
   NotificationDestinationPatch,
@@ -667,6 +668,8 @@ export const api = {
   },
   installations: {
     list: () => get<InstallationMeta[]>("/me/installations"),
+    // Organization installations GitHub announced that nobody has connected yet, where you approved or asked for it.
+    pending: () => get<PendingInstallation[]>("/me/pending-installations"),
     // Org-connected installation (list() only returns personal ones). 404 = org not connected,
     // 403 = not a member -- callers should treat either as "not installed".
     listForOrg: (orgLogin: string) => get<InstallationMeta[]>(`/orgs/${encodeURIComponent(orgLogin)}/installations`),

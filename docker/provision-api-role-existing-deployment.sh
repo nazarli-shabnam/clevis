@@ -117,6 +117,17 @@ BEGIN
 END
 $do$;
 
+-- pending_installations (migration 0086): notices from installation.created webhooks. The API writes it from the
+-- webhook receiver, reads it for Settings and deletes rows once connected or past their age limit; no sequence
+-- is used (the primary key is GitHub's installation id) and the worker never touches it.
+DO $do$
+BEGIN
+  IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'pending_installations') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON pending_installations TO clevis_api;
+  END IF;
+END
+$do$;
+
 -- org_members + repo_collaborators (migration 0040): same reasoning as security_alerts
 -- above -- both upsert AND delete (a row is removed on member_removed/removed, not
 -- soft-marked), so DELETE is needed alongside SELECT/INSERT/UPDATE; both have a
