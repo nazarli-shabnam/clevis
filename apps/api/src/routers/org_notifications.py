@@ -31,6 +31,7 @@ from src.repositories import (
 )
 from src.schemas.notification_feed import NotificationFeed, NotificationItem, NotificationPreferences
 from src.services import app_permissions, dependabot_burndown
+from src.services import waivers as waiver_service
 from src.services.scan_service import comparable_scans
 
 router = APIRouter()
@@ -44,7 +45,7 @@ MAX_LIMIT = 200
 _PER_SOURCE = 40
 # The stable ids the feed hands out: a kind plus the source row's integer id.
 _MAX_SCANS_IN_WINDOW = 1000
-_ITEM_ID = re.compile(r"^(critical_alert|score_drop|job_failed|permission_drift|waiver_expired|sla_breach):[0-9]{1,18}$")
+_ITEM_ID = re.compile(r"^(critical_alert|score_drop|job_failed|permission_drift|waiver_expired|waiver_expiring|sla_breach):[0-9]{1,18}$")
 
 
 def _aware(value: datetime) -> datetime:
@@ -232,6 +233,29 @@ def _waiver_expired_items(db: Session, org_login: str, tenant_id: int, since: da
     ]
 
 
+def _waiver_expiring_items(db: Session, org_login: str, tenant_id: int) -> list[dict]:
+    """Waivers inside their last warning window (the widest of ``WARNING_DAYS``). Dated by the moment each entered
+    it, so marking the feed read clears it and it does not reappear; a standing warning until the waiver is renewed
+    or lapses (then ``waiver_expired`` takes over), so it is not cut by the feed's ``days``."""
+    now = datetime.now(timezone.utc)
+    window = timedelta(days=max(waiver_service.WARNING_DAYS))
+    items: list[dict] = []
+    for w in waiver_repo.candidates_for_expiry_warning(db, tenant_id, now, max(waiver_service.WARNING_DAYS)):
+        expires_at = _aware(w.expires_at)
+        days_left = max(1, -(-int((expires_at - now).total_seconds()) // 86400))
+        items.append(
+            {
+                "id": f"waiver_expiring:{w.id}",
+                "kind": "waiver_expiring",
+                "at": expires_at - window,
+                "title": f"Waiver for {w.check_id} expires in {days_left} day{'s' if days_left != 1 else ''}",
+                "detail": f"Owner {w.owner}: {w.reason}"[:140],
+                "href": f"/settings/org/{quote(org_login, safe='')}/members?waiver={w.id}",
+            }
+        )
+    return items
+
+
 def _sla_breach_items(
     db: Session, tenant_id: int, since: datetime, per_source: int, cursor: Cursor | None = None
 ) -> list[dict]:
@@ -375,6 +399,8 @@ def get_notifications(
         raw += _permission_drift_items(db, ctx, org_login, since)
     if is_admin and "waiver_expired" not in muted:
         raw += _waiver_expired_items(db, org_login, tenant_id, since)
+    if is_admin and "waiver_expiring" not in muted:
+        raw += _waiver_expiring_items(db, org_login, tenant_id)
     if "sla_breach" not in muted:
         raw += _sla_breach_items(db, tenant_id, since, per_source, cursor)
 

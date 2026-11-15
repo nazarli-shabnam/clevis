@@ -9,6 +9,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    SmallInteger,
     ForeignKeyConstraint,
     Index,
     Integer,
@@ -603,6 +604,10 @@ class CheckWaiver(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     # Set once the expiry sweep has audited and alerted this waiver's lapse, so that happens once.
     expiry_noted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # How many "about to expire" windows (services/waivers.WARNING_DAYS) the sweep has already announced for the
+    # current expiry; 0 = none. Create and renew set it to the windows the expiry is already inside, so the
+    # admin who just chose a date is not warned about it, and a renewal re-arms the later warnings.
+    expiry_warning_stage: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="0")
 
 
 class ApiToken(Base):

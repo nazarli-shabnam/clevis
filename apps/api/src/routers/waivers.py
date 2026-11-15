@@ -91,6 +91,7 @@ def create_waiver(
         owner=body.owner,
         expires_at=_aware(body.expires_at),
         created_by=user.email,
+        expiry_warning_stage=waiver_service.warning_stage(_aware(body.expires_at), now),
     )
     audit_repo.write(
         db, actor=user.email, action="waiver.create", target=ctx.org.github_login,
@@ -120,10 +121,15 @@ def update_waiver(
     _validate(body, now)
     waiver = _get_or_404(db, ctx, waiver_id)
     before = _payload(waiver)
+    old_expiry = _aware(waiver.expires_at)
     waiver.check_id, waiver.repos, waiver.reason = body.check_id, body.repos, body.reason
     waiver.owner, waiver.expires_at = body.owner, _aware(body.expires_at)
     # A renewed waiver can lapse (and be announced) again.
     waiver.expiry_noted_at = None
+    # It is also warned about again before it does, but only when the expiry actually moved: an edit that leaves
+    # the date alone (just a reason or owner) must not advance the stage past a warning the sweep has not sent yet.
+    if waiver.expires_at != old_expiry:
+        waiver.expiry_warning_stage = waiver_service.warning_stage(waiver.expires_at, now)
     audit_repo.write(
         db, actor=user.email, action="waiver.update", target=ctx.org.github_login,
         payload={"before": before, "after": _payload(waiver)}, tenant_id=ctx.org.tenant_id, commit=False,

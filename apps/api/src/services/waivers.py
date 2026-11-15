@@ -31,6 +31,15 @@ from src.services.analytics_service import tally
 # A waiver is a temporary exception, not a permanent opt-out.
 MAX_WAIVER_DAYS = 90
 MAX_WAIVERS_PER_TENANT = 100
+# How long before a waiver lapses admins are warned, widest first. Each window is announced once.
+WARNING_DAYS = (7, 1)
+
+
+def warning_stage(expires_at: datetime, now: datetime) -> int:
+    """How many of the ``WARNING_DAYS`` windows ``expires_at`` is already inside (0 = none, 1 = within the
+    first, 2 = within both). A waiver's ``expiry_warning_stage`` below this is a warning still to announce."""
+    remaining = expires_at - now
+    return sum(remaining <= timedelta(days=days) for days in WARNING_DAYS)
 
 # Checks whose result never names the failing repos (org-level MFA; the hygiene checks only report counters),
 # so a repo-scoped waiver for one can never match and would silently do nothing: only org-wide ones are accepted.

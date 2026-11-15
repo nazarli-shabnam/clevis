@@ -5,7 +5,13 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr, model_va
 
 
 EventName = Literal[
-    "score_drop", "waiver_expired", "new_critical_alert", "stale_pr_summary", "automation_failed", "sla_breach"
+    "score_drop",
+    "waiver_expired",
+    "waiver_expiring",
+    "new_critical_alert",
+    "stale_pr_summary",
+    "automation_failed",
+    "sla_breach",
 ]
 
 

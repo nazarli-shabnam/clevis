@@ -316,6 +316,19 @@ describe("CheckCard waived badge", () => {
     expect(await screen.findByText(/10 days left/)).toBeInTheDocument()
   })
 
+  it("marks a waiver in its last week and offers Renew, and leaves later ones alone (#951)", async () => {
+    const day = 86_400_000
+    listMock.mockResolvedValue([
+      waiver({ id: 1, expires_at: new Date(Date.now() + 3 * day - 3_600_000).toISOString() }),
+      waiver({ id: 2, check_id: "repository_license_present", expires_at: new Date(Date.now() + 10 * day).toISOString() }),
+    ])
+    renderCard()
+    expect(await screen.findByText("ending this week")).toBeInTheDocument()
+    expect(screen.getAllByText("ending this week")).toHaveLength(1)
+    const buttons = screen.getAllByRole("button", { name: /Renew or edit waiver for/ })
+    expect(buttons.map((b) => b.textContent)).toEqual(["Renew", "Edit"])
+  })
+
   it("edits a waiver in place with PUT, prefilled from it, and returns to the add form", async () => {
     listMock.mockResolvedValue([waiver({ repos: ["legacy-api"] })])
     updateMock.mockResolvedValue(waiver())
