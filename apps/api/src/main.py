@@ -48,6 +48,7 @@ from src.routers import (
     tokens,
     waivers,
     webhooks,
+    internal_jobs,
     workflow_lint,
 )
 from src.services.automation_loop import automation_loop
@@ -167,3 +168,4 @@ app.include_router(evidence.router, tags=["audit"])
 app.include_router(tokens.router, prefix="/tokens", tags=["tokens"])
 app.include_router(config.router, prefix="/config", tags=["config"])
 app.include_router(webhooks.router, tags=["webhooks"])
+app.include_router(internal_jobs.router)
