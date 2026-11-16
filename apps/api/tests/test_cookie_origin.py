@@ -75,5 +75,5 @@ def test_security_headers_are_added_and_auth_responses_are_not_cached():
     assert c.get("/auth/me").headers["Cache-Control"] == "no-store"
     assert c.get("/auth/me").headers["X-Content-Type-Options"] == "nosniff"
     assert c.get("/auth/own").headers["Cache-Control"] == "private, max-age=5"  # a route's own value wins
-    other = c.get("/orgs/x")
-    assert other.headers["X-Content-Type-Options"] == "nosniff" and "Cache-Control" not in other.headers
+    plain = c.get("/orgs/x")
+    assert plain.headers["X-Content-Type-Options"] == "nosniff" and "Cache-Control" not in plain.headers

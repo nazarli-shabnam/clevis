@@ -15,12 +15,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from src.core.config import settings
-from src.services import github_app_credentials
 from src.core.db import WebhookDelivery, get_db
 from src.core.rate_limit import rate_limit
 from src.core.redis_client import get_redis_client
 from src.repositories import audit_repo, installation_repo, pending_installation_repo
+from src.services import github_app_credentials
 
 logger = logging.getLogger(__name__)
 
