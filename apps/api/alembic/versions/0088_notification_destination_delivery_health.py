@@ -11,16 +11,16 @@ next delivery). ``last_status`` is ``ok`` or ``failed``; ``last_error`` is the s
 table's existing policy and the API role's table privileges already cover new columns. Downgrade drops the columns
 (the health information is lost; nothing else depends on it).
 
-Revision ID: 0087
-Revises: 0086
+Revision ID: 0088
+Revises: 0087
 Create Date: 2026-11-16
 """
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0087"
-down_revision = "0086"
+revision = "0088"
+down_revision = "0087"
 branch_labels = None
 depends_on = None
 
