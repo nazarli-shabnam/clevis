@@ -11,8 +11,10 @@ Three tables grow with traffic and never shrank before this sweep:
   them; this removes the rows themselves.
 * ``repo_events`` -- the normalized event store. The per-day rollup ``repo_event_daily_counts`` is kept.
 
-``audit_logs`` and ``scan_results`` are deliberately never purged: the audit trail is a compliance record
-and the scan history feeds the score trend. That is the policy, not an omission.
+``audit_logs``, ``scan_results`` and ``security_alerts`` are deliberately never purged: the audit trail is a
+compliance record, the scan history feeds the score trend, and alert rows are small, bounded by the alerts
+GitHub ever raised, and read by the SLA and burn-down views (which query only the rows they need, not the
+whole table). That is the policy, not an omission.
 
 Windows are ``app_config`` keys (days). ``0`` switches a purge off. Each table also has a floor under the
 configured value, because shorter windows would break something that still reads those rows:
