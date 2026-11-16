@@ -17,6 +17,7 @@ from typing import Literal
 from src.core.db import get_db
 from src.core.db import OrgMember as OrgMemberRow
 from src.core.db import RepoCollaborator, RepoEvent
+from src.core.path_params import Username
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import installation_repo
 from src.schemas.collab import (
@@ -258,7 +259,7 @@ def list_github_invitations(
 @router.get("/github/orgs/{org_login}/members/{username}/membership", response_model=MembershipStatus)
 def get_membership(
     org_login: str,
-    username: str,
+    username: Username,
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     db: Session = Depends(get_db),
     x_github_token: str | None = Header(default=None),
@@ -276,7 +277,7 @@ def get_membership(
 @router.get("/github/orgs/{org_login}/members/{username}/access", response_model=MemberAccess)
 def get_member_access(
     org_login: str,
-    username: str,
+    username: Username,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     db: Session = Depends(get_db),
 ):

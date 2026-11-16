@@ -601,3 +601,12 @@ def test_membership_non_member_forbidden(db):
     client = _non_member_client(db)
     resp = client.get("/github/orgs/acme/members/alice/membership")
     assert resp.status_code == 403
+
+
+@pytest.mark.parametrize("encoded", ["x%3Fy", "x%23y", "x%25y"])
+def test_membership_and_access_reject_usernames_github_would_not_accept(collab_client, encoded):
+    # Starlette decodes the path before routing, so %3F reaches the handler as "?" and would
+    # change which GitHub URL gets called. Both routes must 422 before any interpolation.
+    for suffix in ("membership", "access"):
+        resp = collab_client.get(f"/github/orgs/acme/members/{encoded}/{suffix}")
+        assert resp.status_code == 422, f"{encoded}/{suffix}: {resp.status_code}"
