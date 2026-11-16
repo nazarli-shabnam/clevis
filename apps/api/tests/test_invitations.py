@@ -876,3 +876,44 @@ def test_a_slow_first_send_counts_against_the_same_bulk_budget(db, acme_org, mon
     assert all(r["invite_link"] for r in results)
     assert [r["email_status"] for r in results] == ["unconfirmed", "limited", "limited"]
     time.sleep(0.8)  # let the abandoned send finish before the patch is removed
+
+
+# --- GET /invitations/mine (#1023) ---
+
+def _invite(db, acme_org, email):
+    resp = _client(db, acme_org["admin"]).post("/orgs/acme/invitations", json={"email": email})
+    assert resp.status_code == 200
+    return resp.json()["invitation"]
+
+
+def test_mine_lists_the_verified_callers_pending_invitations_with_a_working_token(db, acme_org):
+    invitation = _invite(db, acme_org, "bob@acme.com")
+    token = db.query(Invitation).filter(Invitation.id == invitation["id"]).one().token
+    _invite(db, acme_org, "carol@acme.com")  # someone else's: never listed
+
+    resp = _client(db, acme_org["invitee"]).get("/invitations/mine")
+
+    assert resp.status_code == 200
+    [mine] = resp.json()
+    assert mine["org_login"] == "acme" and mine["token"] == token
+    assert _client(db, acme_org["invitee"]).post(f"/invitations/{mine['token']}/accept").status_code == 200
+
+
+def test_mine_is_empty_until_the_email_is_verified(db, acme_org):
+    unverified = _make_user(db, "dave@acme.com", email_verified=False)
+    _invite(db, acme_org, "dave@acme.com")
+
+    assert _client(db, unverified).get("/invitations/mine").json() == []
+
+
+def test_mine_excludes_expired_revoked_and_accepted_invitations(db, acme_org):
+    expired = _invite(db, acme_org, "bob@acme.com")
+    db.query(Invitation).filter(Invitation.id == expired["id"]).update(
+        {Invitation.expires_at: datetime.now(timezone.utc) - timedelta(days=1)}
+    )
+    db.commit()
+    assert _client(db, acme_org["invitee"]).get("/invitations/mine").json() == []
+
+    revoked = _invite(db, acme_org, "bob@acme.com")
+    assert _client(db, acme_org["admin"]).post(f"/orgs/acme/invitations/{revoked['id']}/revoke").status_code == 200
+    assert _client(db, acme_org["invitee"]).get("/invitations/mine").json() == []

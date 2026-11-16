@@ -29,3 +29,5 @@ def _matching(pattern: re.Pattern[str], what: str):
 
 Owner = Annotated[str, _matching(OWNER_RE, "owner")]
 Repo = Annotated[str, _matching(REPO_NAME_RE, "repository name")]
+# GitHub logins share Owner's alphabet; used where a login is interpolated into a GitHub URL.
+Username = Annotated[str, _matching(OWNER_RE, "username")]

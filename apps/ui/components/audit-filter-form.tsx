@@ -23,7 +23,7 @@ export function AuditFilterForm({
   /** The workspace view filters by exact action through its own dropdown instead. */
   showActionPrefix?: boolean
 }) {
-  const field = (id: string, label: string, key: keyof FilterForm, props: { type?: string; placeholder?: string } = {}) => (
+  const field = (id: string, label: string, key: keyof FilterForm, props: { type?: string; placeholder?: string; min?: string; max?: string } = {}) => (
     <div className="flex flex-col gap-1">
       <label htmlFor={id} className="text-xs font-medium text-foreground">{label}</label>
       <Input
@@ -47,8 +47,8 @@ export function AuditFilterForm({
       {showActionPrefix && field("act-prefix", "Action starts with", "actionPrefix", { placeholder: "e.g. token." })}
       {field("act-actor", "Actor", "actor", { placeholder: "email" })}
       {field("act-target", "Target contains", "target", { placeholder: "e.g. acme/api" })}
-      {field("act-from", "From (UTC)", "from", { type: "date" })}
-      {field("act-to", "To (UTC)", "to", { type: "date" })}
+      {field("act-from", "From (UTC)", "from", { type: "date", max: form.to || undefined })}
+      {field("act-to", "To (UTC)", "to", { type: "date", min: form.from || undefined })}
       <Button type="submit" size="sm">Apply filters</Button>
       {filtered && (
         <button

@@ -100,6 +100,7 @@ function AuditCard({ orgLogin }: { orgLogin: string }) {
           message={`Couldn't load the audit log: ${query.error.message}`}
           onRetry={() => query.refetch()}
           retrying={query.isFetching}
+          error={query.error}
         />
       ) : rows.length === 0 ? (
         <EmptyStateInline noun="audit events" qualifier={filtered ? "matching these filters" : undefined} />

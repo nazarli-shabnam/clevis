@@ -623,3 +623,171 @@ def test_route_is_registered_on_the_real_app(db, monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
+
+
+def test_organization_renamed_applies_the_rename_and_moves_the_saved_token(db, webhook_client, redis_client):
+    from src.core.db import SavedToken
+
+    org = org_repo.get_or_create(db, github_login="old-name", github_org_id=321)
+    db.add(SavedToken(org="old-name", encrypted_token="x", tenant_id=org.tenant_id))
+    db.commit()
+
+    resp = _post(
+        webhook_client,
+        "organization",
+        {"action": "renamed", "organization": {"id": 321, "login": "new-name"}, "changes": {"login": {"from": "old-name"}}},
+    )
+
+    assert resp.status_code == 200
+    db.refresh(org)
+    assert org.github_login == "new-name"
+    assert db.query(SavedToken).one().org == "new-name"
+
+
+def test_organization_renamed_for_an_unknown_org_creates_nothing(db, webhook_client, redis_client):
+    resp = _post(
+        webhook_client,
+        "organization",
+        {"action": "renamed", "organization": {"id": 999, "login": "ghost"}, "changes": {"login": {"from": "x"}}},
+    )
+
+    assert resp.status_code == 200
+    assert db.query(Org).filter(Org.github_login == "ghost").count() == 0
+
+
+def _repo_event(action, *, owner="acme", name, old_name=None, old_owner=None, installation_id=77):
+    changes = {}
+    if old_name:
+        changes["repository"] = {"name": {"from": old_name}}
+    if old_owner:
+        changes["owner"] = {"from": {"organization": {"login": old_owner}}}
+    return {
+        "action": action,
+        "installation": {"id": installation_id},
+        "repository": {"name": name, "owner": {"login": owner}},
+        "changes": changes,
+    }
+
+
+def _tenant_with_repo_rows(db):
+    from datetime import datetime, timedelta, timezone
+
+    from src.core.db import AutomationRepoSetting, CheckWaiver
+
+    org = org_repo.get_or_create(db, github_login="acme", github_org_id=5)
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=77, org_id=org.id
+    )
+    db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
+    waiver = CheckWaiver(
+        tenant_id=org.tenant_id, check_id="branch_protection_enabled", repos=["API", "other"], reason="r",
+        owner="o", created_by="e", expires_at=datetime.now(timezone.utc) + timedelta(days=5),
+    )
+    db.add(waiver)
+    db.add(AutomationRepoSetting(tenant_id=org.tenant_id, repo="acme/api", feature="pr_nudge", enabled=True))
+    db.commit()
+    return org, waiver
+
+
+def test_repository_renamed_rewrites_waivers_and_automation_opt_ins(db, webhook_client):
+    from src.core.db import AutomationRepoSetting
+
+    org, waiver = _tenant_with_repo_rows(db)
+
+    resp = _post(webhook_client, "repository", _repo_event("renamed", name="service", old_name="api"))
+
+    assert resp.status_code == 200
+    db.expire_all()
+    db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
+    assert sorted(waiver.repos) == ["other", "service"]
+    assert [r.repo for r in db.query(AutomationRepoSetting)] == ["acme/service"]
+
+
+def test_repository_transferred_moves_the_automation_key_only(db, webhook_client):
+    from src.core.db import AutomationRepoSetting
+
+    org, waiver = _tenant_with_repo_rows(db)
+
+    resp = _post(webhook_client, "repository", _repo_event("transferred", owner="newco", name="api", old_owner="acme"))
+
+    assert resp.status_code == 200
+    db.expire_all()
+    db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
+    assert sorted(waiver.repos) == ["API", "other"]
+    assert [r.repo for r in db.query(AutomationRepoSetting)] == ["newco/api"]
+
+
+def test_repository_renamed_for_an_unknown_installation_changes_nothing(db, webhook_client):
+    org, waiver = _tenant_with_repo_rows(db)
+
+    resp = _post(webhook_client, "repository", _repo_event("renamed", name="service", old_name="api", installation_id=1))
+
+    assert resp.status_code == 200
+    db.expire_all()
+    db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
+    assert sorted(waiver.repos) == ["API", "other"]
+
+
+def test_organization_renamed_without_a_usable_id_or_login_is_ignored(db, webhook_client, redis_client):
+    org = org_repo.get_or_create(db, github_login="old-name", github_org_id=321)
+
+    resp = _post(webhook_client, "organization", {"action": "renamed", "organization": {"login": "new-name"}})
+
+    assert resp.status_code == 200
+    db.refresh(org)
+    assert org.github_login == "old-name"
+
+
+def test_organization_renamed_onto_another_connected_orgs_login_is_not_applied(db, webhook_client, redis_client):
+    org_repo.get_or_create(db, github_login="taken", github_org_id=111)
+    renamed = org_repo.get_or_create(db, github_login="old-name", github_org_id=321)
+
+    resp = _post(
+        webhook_client,
+        "organization",
+        {"action": "renamed", "organization": {"id": 321, "login": "taken"}, "changes": {"login": {"from": "old-name"}}},
+    )
+
+    assert resp.status_code == 200
+    db.refresh(renamed)
+    assert renamed.github_login == "old-name"
+
+
+def test_organization_renamed_onto_a_connected_org_without_a_github_id_is_not_applied(db, webhook_client, redis_client):
+    taken = org_repo.get_or_create(db, github_login="taken")  # connected by login only: no GitHub id yet
+    renamed = org_repo.get_or_create(db, github_login="old-name", github_org_id=321)
+
+    resp = _post(
+        webhook_client,
+        "organization",
+        {"action": "renamed", "organization": {"id": 321, "login": "taken"}, "changes": {"login": {"from": "old-name"}}},
+    )
+
+    assert resp.status_code == 200
+    db.refresh(renamed)
+    db.refresh(taken)
+    assert renamed.github_login == "old-name" and taken.github_org_id is None
+
+
+def test_repository_event_without_a_usable_installation_changes_nothing(db, webhook_client):
+    org, waiver = _tenant_with_repo_rows(db)
+    payload = _repo_event("renamed", name="service", old_name="api")
+    del payload["installation"]
+
+    resp = _post(webhook_client, "repository", payload)
+
+    assert resp.status_code == 200
+    db.expire_all()
+    db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
+    assert sorted(waiver.repos) == ["API", "other"]
+
+
+def test_repository_event_that_does_not_change_the_name_or_owner_changes_nothing(db, webhook_client):
+    org, waiver = _tenant_with_repo_rows(db)
+
+    resp = _post(webhook_client, "repository", _repo_event("renamed", name="api"))
+
+    assert resp.status_code == 200
+    db.expire_all()
+    db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
+    assert sorted(waiver.repos) == ["API", "other"]
