@@ -770,11 +770,10 @@ function InstanceConfigSection() {
     setSaving(key)
     setErrors((prev) => ({ ...prev, [key]: "" }))
     try {
-      await api.config.update(key, value)
-      const updated = await qc.fetchQuery<Record<string, string>>({
-        queryKey: ["config"],
-        queryFn: api.config.getAll,
-      })
+      // PUT answers with the fresh map; use it (and refresh the cache) rather than refetching, because
+      // fetchQuery would resolve with the pre-save map while the cached copy is still within staleTime.
+      const updated = await api.config.update(key, value)
+      qc.setQueryData(["config"], updated)
       setValues((prev) => mergeSavedConfigValue(prev, updated, key))
     } catch (err) {
       setErrors((prev) => ({ ...prev, [key]: err instanceof Error ? err.message : "Save failed" }))

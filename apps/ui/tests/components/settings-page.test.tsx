@@ -303,6 +303,27 @@ describe("SettingsPage", () => {
     await waitFor(() => expect(configUpdateMock).toHaveBeenCalledWith("digest_cadence", "weekly"));
   });
 
+  it("keeps the saved value shown from the PUT response, not a cached pre-save config (#1081)", async () => {
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([]);
+    // GET keeps answering with the old map (as the within-staleTime cache would); only PUT knows the new one.
+    configGetAllMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true", digest_cadence: "off" });
+    configUpdateMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true", digest_cadence: "weekly" });
+
+    renderPage();
+
+    const cadence = (await screen.findAllByDisplayValue("Off"))[0] as HTMLSelectElement;
+    fireEvent.change(cadence, { target: { value: "weekly" } });
+    const row = cadence.closest("div")!.parentElement!;
+    fireEvent.click(within(row).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(configUpdateMock).toHaveBeenCalledWith("digest_cadence", "weekly"));
+    await waitFor(() => expect(within(row).queryByRole("button", { name: "Saving..." })).not.toBeInTheDocument());
+    expect(cadence.value).toBe("weekly");
+    expect(configGetAllMock).toHaveBeenCalledTimes(1);
+  });
+
   it("saves the visible cadence value even when it was never in the server config", async () => {
     orgsMineMock.mockResolvedValue([]);
     installationsListMock.mockResolvedValue([]);
