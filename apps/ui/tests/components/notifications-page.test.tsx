@@ -199,4 +199,12 @@ describe("NotificationsPage", () => {
     expect(await screen.findByText(/belong to an organization/)).toBeInTheDocument();
     expect(feedMock).not.toHaveBeenCalled();
   });
+
+  it("asks to pick an account when no scope is selected", async () => {
+    scope = null;
+    renderPage();
+
+    expect(await screen.findByText(/No account selected yet/)).toBeInTheDocument();
+    expect(feedMock).not.toHaveBeenCalled();
+  });
 });
