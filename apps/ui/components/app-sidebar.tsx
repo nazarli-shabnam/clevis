@@ -34,6 +34,12 @@ function healthDotColor(score: number | null | undefined): string | null {
   return "bg-red-400"
 }
 
+/** The dot's meaning in words, so it is not conveyed by colour alone (WCAG 1.4.1). */
+function healthDotLabel(score: number): string {
+  const state = score >= 80 ? "healthy" : score >= 50 ? "needs attention" : "at risk"
+  return `Security score ${score}, ${state}`
+}
+
 interface Profile {
   name: string
   org: string
@@ -336,6 +342,7 @@ export function AppSidebar() {
   })
 
   const healthDot = healthDotColor(cockpit?.latest_score)
+  const healthLabel = cockpit?.latest_score != null ? healthDotLabel(cockpit.latest_score) : ""
   // Read after mount (never during render: the server render has no localStorage, and it can throw
   // in private mode) and again on navigation, since the Activity page writes the stamp when opened.
   const [lastSeenAt, setLastSeenAt] = useState<string | null>(null)
@@ -447,7 +454,10 @@ export function AppSidebar() {
                         >
                           <span>{item.title}</span>
                           {"showHealthDot" in item && item.showHealthDot && healthDot && (
-                            <span className={`ml-auto size-1.5 rounded-full ${healthDot}`} />
+                            <span className="ml-auto flex items-center" title={healthLabel}>
+                              <span aria-hidden className={`size-1.5 rounded-full ${healthDot}`} />
+                              <span className="sr-only">{" "}{healthLabel}</span>
+                            </span>
                           )}
                           {"showUnreadBadge" in item && item.showUnreadBadge && unreadCount > 0 && (
                             <span className="ml-auto text-[0.625rem] font-medium bg-primary/20 text-primary rounded-full px-1.5 py-0.5 tabular-nums">
