@@ -749,6 +749,20 @@ def test_repository_transfer_with_a_rename_uses_the_last_recorded_name(db, webho
     assert [r.repo for r in db.query(AutomationRepoSetting)] == ["newco/renamed"]
 
 
+def test_repo_move_chain_longer_than_twenty_hops_and_rename_back_loop_resolve(db):
+    from src.repositories import repo_move_repo
+
+    org = org_repo.get_or_create(db, github_login="chain-org")
+    db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
+    for i in range(25, 0, -1):  # delivered newest first
+        final = repo_move_repo.record(db, org.tenant_id, 1, f"o/n{i}", f"o/n{i + 1}")
+    assert final == "o/n26"
+
+    repo_move_repo.record(db, org.tenant_id, 2, "o/a", "o/b")
+    repo_move_repo.record(db, org.tenant_id, 2, "o/b", "o/a")  # renamed back: no terminal target
+    assert repo_move_repo.last_known_name(db, org.tenant_id, 2) == "o/a"
+
+
 def test_repository_renamed_for_an_unknown_installation_changes_nothing(db, webhook_client):
     org, waiver = _tenant_with_repo_rows(db)
 
