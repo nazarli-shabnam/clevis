@@ -743,7 +743,7 @@ const CONFIG_FIELDS: {
   { key: "webhook_requeue_poll_seconds", label: "Webhook Re-queue Interval", description: "Seconds between retries of webhook deliveries that failed to queue.", type: "number" },
   { key: "retention_webhook_deliveries_days", label: "Keep Webhook Deliveries (days)", description: "Days to keep webhook payloads once they are processed or given up on (default 30). 0 keeps them forever. Deliveries still waiting to be queued are never deleted.", type: "number", defaultValue: "30" },
   { key: "retention_jobs_days", label: "Keep Finished Jobs (days)", description: "Days to keep finished (done or failed) background jobs (default 30, minimum 8 when set). 0 keeps them forever.", type: "number", defaultValue: "30" },
-  { key: "retention_repo_events_days", label: "Keep Activity Events (days)", description: "Days to keep stored GitHub activity events (default 180, minimum 100 when set). Daily activity counts, the audit log and scan history are always kept. 0 keeps events forever.", type: "number", defaultValue: "180" },
+  { key: "retention_repo_events_days", label: "Keep Activity Events (days)", description: "Days to keep stored GitHub activity events (default 180, minimum 100 when set). Daily activity counts, security alerts, the audit log and scan history are always kept. 0 keeps events forever.", type: "number", defaultValue: "180" },
 ]
 
 function InstanceConfigSection() {
