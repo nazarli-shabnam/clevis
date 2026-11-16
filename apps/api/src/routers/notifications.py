@@ -10,6 +10,7 @@ from src.core._crypto import decrypt_job_token, encrypt_job_token
 from src.core.auth import UserOut, require_auth
 from src.core.config import settings
 from src.core.db import NotificationDestination, get_db
+from src.core.path_params import RowId
 from src.core.rate_limit import check_account_rate_limit
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import audit_repo, notification_repo
@@ -129,7 +130,7 @@ def _get_or_404(
 
 @router.patch("/orgs/{org_login}/notification-destinations/{destination_id}", response_model=DestinationOut)
 def update_destination(
-    destination_id: int,
+    destination_id: RowId,
     body: DestinationUpdate,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     user: UserOut = Depends(require_auth),
@@ -200,7 +201,7 @@ def update_destination(
 
 @router.delete("/orgs/{org_login}/notification-destinations/{destination_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_destination(
-    destination_id: int,
+    destination_id: RowId,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
@@ -221,7 +222,7 @@ def delete_destination(
 
 @router.post("/orgs/{org_login}/notification-destinations/{destination_id}/test", response_model=TestSendResult)
 def test_destination(
-    destination_id: int,
+    destination_id: RowId,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),

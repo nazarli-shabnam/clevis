@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import Org, User, get_db
+from src.core.path_params import RowId
 from src.core.rate_limit import check_account_rate_limit
 from src.core.rbac import OrgContext, require_org_role, resolve_org_role, set_tenant_session_context
 from src.repositories import (
@@ -166,7 +167,7 @@ def _refresh_permissions(db: Session, installation_id: int):
 
 @router.get("/me/installations/lookup/{installation_id}", response_model=InstallationLookupOut)
 def lookup_installation(
-    installation_id: int,
+    installation_id: RowId,
     request: Request,
     user: UserOut = Depends(require_auth),
 ):
@@ -188,7 +189,7 @@ def lookup_installation(
     "/orgs/{org_login}/installations/{installation_id}/refresh-permissions", response_model=InstallationOut
 )
 def refresh_org_installation_permissions(
-    installation_id: int,
+    installation_id: RowId,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
@@ -233,7 +234,7 @@ def _uninstall_on_github(installation_id: int) -> None:
 
 @router.delete("/orgs/{org_login}/installations/{installation_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_org_installation(
-    installation_id: int,
+    installation_id: RowId,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
@@ -451,7 +452,7 @@ def list_personal_installations(
 
 @router.delete("/me/installations/{installation_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_personal_installation(
-    installation_id: int,
+    installation_id: RowId,
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
@@ -476,7 +477,7 @@ def delete_personal_installation(
 
 @router.post("/me/installations/{installation_id}/refresh-permissions", response_model=InstallationOut)
 def refresh_personal_installation_permissions(
-    installation_id: int,
+    installation_id: RowId,
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):

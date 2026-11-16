@@ -708,7 +708,7 @@ def test_lookup_installation_is_rate_limited_per_user_across_ids(db):
 def test_lookup_installation_is_rate_limited_per_ip_across_users(db):
     users = [_make_user(db, f"u{i}@e.com", github_login=f"u{i}") for i in range(3)]
     with _mock_installation("acme", "Organization"):
-        codes = [_client(db, users[i % 3]).get(f"/me/installations/lookup/{i}").status_code for i in range(22)]
+        codes = [_client(db, users[i % 3]).get(f"/me/installations/lookup/{i}").status_code for i in range(1, 23)]
     assert codes[20:] == [429, 429]
 
 
