@@ -90,6 +90,40 @@ class TestExhaustedRetries:
             with pytest.raises(httpx.RequestError):
                 client.request("GET", "/test")
 
+    @pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE"])
+    def test_a_write_that_timed_out_is_attempted_once(self, client, method):
+        # The timeout can hit after GitHub applied the write; re-sending would duplicate a comment / review / PR.
+        with (
+            patch("src.services.github_client.httpx.Client") as mock_client_cls,
+            patch("src.services.github_client.time.sleep"),
+        ):
+            mock_ctx = MagicMock()
+            mock_ctx.__enter__ = MagicMock(return_value=mock_ctx)
+            mock_ctx.__exit__ = MagicMock(return_value=False)
+            mock_ctx.request.side_effect = httpx.ReadTimeout("slow")
+            mock_client_cls.return_value = mock_ctx
+
+            with pytest.raises(httpx.ReadTimeout):
+                client.request(method, "/test", json={})
+
+        assert mock_ctx.request.call_count == 1
+
+    def test_a_write_is_retried_when_the_connection_was_never_established(self, client):
+        ok_resp = _make_response(200, {"data": "hello"})
+        with (
+            patch("src.services.github_client.httpx.Client") as mock_client_cls,
+            patch("src.services.github_client.time.sleep"),
+        ):
+            mock_ctx = MagicMock()
+            mock_ctx.__enter__ = MagicMock(return_value=mock_ctx)
+            mock_ctx.__exit__ = MagicMock(return_value=False)
+            mock_ctx.request.side_effect = [httpx.ConnectError("refused"), ok_resp]
+            mock_client_cls.return_value = mock_ctx
+
+            assert client.request("POST", "/test", json={}) == {"data": "hello"}
+
+        assert mock_ctx.request.call_count == 2
+
     def test_success_on_second_attempt_returns_value(self, client):
         err_resp = _make_response(429)
         err_resp.raise_for_status = MagicMock()

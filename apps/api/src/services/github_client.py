@@ -8,6 +8,10 @@ from src.core.config import settings
 # A 5xx can mean the write was applied before the gateway failed, so only these are retried on one.
 # Rate-limit responses (429 / secondary 403) mean nothing was applied and are retried for any method.
 _RETRY_5XX_METHODS = ("GET", "HEAD")
+# The same goes for a transport failure: a read timeout or a dropped connection can happen after GitHub
+# applied the write, so only a request that provably never left (the connection was not established) is
+# retried for any other method.
+_NEVER_SENT = (httpx.ConnectError, httpx.ConnectTimeout)
 
 
 def _retry_wait(method: str, resp: httpx.Response, attempt: int) -> float | None:
@@ -51,8 +55,8 @@ class GitHubClient:
             for attempt in range(3):
                 try:
                     resp = client.request(method, url, headers=self.headers, params=params, json=json)
-                except httpx.RequestError:
-                    if attempt < 2:
+                except httpx.RequestError as exc:
+                    if attempt < 2 and (method.upper() in _RETRY_5XX_METHODS or isinstance(exc, _NEVER_SENT)):
                         time.sleep(2 ** attempt)
                         continue
                     raise
