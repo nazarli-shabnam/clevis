@@ -780,6 +780,14 @@ def test_policy_on_revokes_the_leavers_tokens_only_and_audits(db, acme):
     assert json.loads(log.payload)["reason"] == "creator_left_org"
 
 
+def test_creating_a_token_still_works_for_a_current_member_when_the_policy_is_on(db, acme):
+    _client(db, acme["admin"]).put("/orgs/acme/api-token-policy", json={"revoke_on_creator_leave": True})
+
+    resp = _client(db, acme["admin"]).post("/orgs/acme/api-tokens", json={"name": "ci"})
+
+    assert resp.status_code == 201
+
+
 def test_policy_off_by_default_keeps_the_leavers_token_working(db, acme):
     from src.repositories import tenant_repo
 

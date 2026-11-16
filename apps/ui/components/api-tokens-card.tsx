@@ -239,6 +239,14 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
           Revoke a member&apos;s tokens when they leave this org
         </label>
       )}
+      {policy.isError && (
+        <SectionError
+          message={`Couldn't load the token policy: ${policy.error instanceof Error ? policy.error.message : "unknown error"}`}
+          error={policy.error}
+          onRetry={() => policy.refetch()}
+          retrying={policy.isFetching}
+        />
+      )}
       {setPolicy.isError && (
         <p role="alert" className="px-4 pt-1 text-xs text-destructive">
           Couldn&apos;t save: {setPolicy.error.message}

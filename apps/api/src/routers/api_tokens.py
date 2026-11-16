@@ -22,7 +22,7 @@ from src.core.auth import UserOut, require_auth
 from src.core.db import Membership, get_db, release_connection, set_session_tenant
 from src.core.rate_limit import check_account_rate_limit
 from src.core.rbac import OrgContext, require_org_role
-from src.repositories import api_token_repo, audit_repo, org_repo, scan_results_repo
+from src.repositories import api_token_repo, audit_repo, org_repo, scan_results_repo, tenant_repo
 from src.repositories.api_token_repo import ResolvedToken
 from src.routers.analytics import _run_overview
 from src.services.scan_service import persist_scan_and_alert
@@ -118,6 +118,11 @@ def create_token(
     ]
     if len(active) >= _MAX_TOKENS_PER_ORG:
         raise HTTPException(status_code=409, detail=f"At most {_MAX_TOKENS_PER_ORG} active tokens per organization")
+    if ctx.org.revoke_tokens_on_creator_leave:
+        # Lock the creator's membership row: a removal that commits first is seen here (no row), and one that
+        # waits on this lock runs its revoke sweep after this token is inserted, so it is swept too.
+        if tenant_repo.get_membership(db, ctx.org.tenant_id, user.id, for_update=True) is None:
+            raise HTTPException(status_code=403, detail="You are no longer a member of this organization")
     row, token = api_token_repo.create(
         db,
         tenant_id=ctx.org.tenant_id,

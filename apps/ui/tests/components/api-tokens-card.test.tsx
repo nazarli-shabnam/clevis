@@ -77,6 +77,15 @@ describe("ApiTokensCard", () => {
     await waitFor(() => expect(box).toBeChecked())
   })
 
+  it("shows a retryable error when the policy fails to load", async () => {
+    listMock.mockResolvedValue([])
+    policyMock.mockRejectedValueOnce(new Error("boom"))
+    renderCard()
+    expect(await screen.findByText(/Couldn't load the token policy: boom/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }))
+    expect(await screen.findByLabelText(/Revoke a member's tokens when they leave/)).toBeInTheDocument()
+  })
+
   it("shows an error when saving the revoke-on-leave policy fails", async () => {
     listMock.mockResolvedValue([])
     setPolicyMock.mockRejectedValue(new Error("nope"))

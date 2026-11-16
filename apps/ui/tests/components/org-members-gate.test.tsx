@@ -40,7 +40,7 @@ vi.mock("@/lib/api/client", () => ({
     },
     tokens: { resolve: vi.fn().mockRejectedValue(new Error("no saved token")) },
     notificationDestinations: { list: vi.fn().mockResolvedValue([]), create: vi.fn(), update: vi.fn(), test: vi.fn(), remove: vi.fn() },
-    apiTokens: { list: vi.fn().mockResolvedValue([]), create: vi.fn(), revoke: vi.fn() },
+    apiTokens: { list: vi.fn().mockResolvedValue([]), create: vi.fn(), revoke: vi.fn(), policy: vi.fn().mockResolvedValue({ revoke_on_creator_leave: false }), setPolicy: vi.fn() },
   },
 }));
 
