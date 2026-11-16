@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from src.core.api_token_auth import require_scope
 from src.core.auth import UserOut, require_auth
 from src.core.db import get_db, release_connection, set_session_tenant
+from src.core.path_params import RowId
 from src.core.rate_limit import check_account_rate_limit
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import api_token_repo, audit_repo, org_repo, scan_results_repo
@@ -114,7 +115,7 @@ def create_token(
 
 @router.delete("/orgs/{org_login}/api-tokens/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
 def revoke_token(
-    token_id: int,
+    token_id: RowId,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),

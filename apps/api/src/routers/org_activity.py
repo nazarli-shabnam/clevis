@@ -59,7 +59,7 @@ def org_audit_log(
     target: str | None = Query(default=None, max_length=200, description="Target containing this text"),
     since: datetime | None = Query(default=None, description="Created at or after this time"),
     until: datetime | None = Query(default=None, description="Created before this time"),
-    before_id: int | None = Query(default=None, ge=1, description="Cursor: only rows older than this id"),
+    before_id: int | None = Query(default=None, ge=1, le=2_147_483_647, description="Cursor: only rows older than this id"),
     limit: int = Query(default=100, ge=1, le=MAX_LIMIT),
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     db: Session = Depends(get_db),
@@ -146,7 +146,7 @@ def export_org_audit_log(
 @router.get("/orgs/{org_login}/jobs", response_model=list[JobOut])
 def org_jobs(
     org_login: str,
-    before_id: int | None = Query(default=None, ge=1, description="Cursor: only jobs older than this id"),
+    before_id: int | None = Query(default=None, ge=1, le=2_147_483_647, description="Cursor: only jobs older than this id"),
     limit: int = Query(default=50, ge=1, le=200),
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     db: Session = Depends(get_db),

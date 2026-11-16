@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import Membership, User, get_db
+from src.core.path_params import RowId
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import audit_repo, tenant_repo
 
@@ -85,7 +86,7 @@ def list_org_memberships(
 
 @router.put("/orgs/{org_login}/members/{user_id}", response_model=OrgMembershipOut)
 def update_org_membership(
-    user_id: int,
+    user_id: RowId,
     body: OrgMembershipRoleIn,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     user: UserOut = Depends(require_auth),
@@ -131,7 +132,7 @@ def leave_org(
 
 @router.delete("/orgs/{org_login}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_org_membership(
-    user_id: int,
+    user_id: RowId,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
