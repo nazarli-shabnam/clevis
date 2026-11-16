@@ -130,6 +130,7 @@ _EXPECTED_FORCE_RLS_TABLES = {
     "check_waivers",
     "api_tokens",
     "security_alert_syncs",
+    "repo_move_edges",
 }
 
 

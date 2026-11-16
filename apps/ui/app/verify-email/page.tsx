@@ -16,7 +16,7 @@ export default function VerifyEmailPage() {
   const [errorMessage, setErrorMessage] = useState("")
   const { user } = useAuth()
   // Only once verified, and only for a signed-in user: the server answers for the session's own address.
-  const invitations = useMyInvitations(state === "success" && !!user)
+  const invitations = useMyInvitations(state === "success" && !!user, undefined, user?.id)
   // Tracks the token already POSTed (not a boolean) so a genuinely new token still runs.
   const attemptedToken = useRef<string | null>(null)
 

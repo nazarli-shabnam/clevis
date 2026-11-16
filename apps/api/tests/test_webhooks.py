@@ -655,7 +655,7 @@ def test_organization_renamed_for_an_unknown_org_creates_nothing(db, webhook_cli
     assert db.query(Org).filter(Org.github_login == "ghost").count() == 0
 
 
-def _repo_event(action, *, owner="acme", name, old_name=None, old_owner=None, installation_id=77):
+def _repo_event(action, *, owner="acme", name, old_name=None, old_owner=None, installation_id=77, repo_id=None):
     changes = {}
     if old_name:
         changes["repository"] = {"name": {"from": old_name}}
@@ -664,7 +664,7 @@ def _repo_event(action, *, owner="acme", name, old_name=None, old_owner=None, in
     return {
         "action": action,
         "installation": {"id": installation_id},
-        "repository": {"name": name, "owner": {"login": owner}},
+        "repository": {"name": name, "owner": {"login": owner}, **({"id": repo_id} if repo_id else {})},
         "changes": changes,
     }
 
@@ -715,6 +715,52 @@ def test_repository_transferred_moves_the_automation_key_only(db, webhook_client
     db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
     assert sorted(waiver.repos) == ["API", "other"]
     assert [r.repo for r in db.query(AutomationRepoSetting)] == ["newco/api"]
+
+
+def test_repository_renames_delivered_out_of_order_end_at_the_final_name(db, webhook_client):
+    from src.core.db import AutomationRepoSetting
+
+    org, waiver = _tenant_with_repo_rows(db)
+
+    _post(webhook_client, "repository", _repo_event("renamed", name="final", old_name="service", repo_id=9))
+    resp = _post(webhook_client, "repository", _repo_event("renamed", name="service", old_name="api", repo_id=9))
+
+    assert resp.status_code == 200
+    db.expire_all()
+    db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
+    assert sorted(waiver.repos) == ["final", "other"]
+    assert [r.repo for r in db.query(AutomationRepoSetting)] == ["acme/final"]
+
+
+def test_repository_transfer_with_a_rename_uses_the_last_recorded_name(db, webhook_client):
+    from src.core.db import AutomationRepoSetting
+
+    org, waiver = _tenant_with_repo_rows(db)
+
+    _post(webhook_client, "repository", _repo_event("renamed", name="service", old_name="api", repo_id=9))
+    resp = _post(
+        webhook_client, "repository", _repo_event("transferred", owner="newco", name="renamed", old_owner="acme", repo_id=9)
+    )
+
+    assert resp.status_code == 200
+    db.expire_all()
+    db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
+    assert sorted(waiver.repos) == ["other", "renamed"]
+    assert [r.repo for r in db.query(AutomationRepoSetting)] == ["newco/renamed"]
+
+
+def test_repo_move_chain_longer_than_twenty_hops_and_rename_back_loop_resolve(db):
+    from src.repositories import repo_move_repo
+
+    org = org_repo.get_or_create(db, github_login="chain-org")
+    db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
+    for i in range(25, 0, -1):  # delivered newest first
+        final = repo_move_repo.record(db, org.tenant_id, 1, f"o/n{i}", f"o/n{i + 1}")
+    assert final == "o/n26"
+
+    repo_move_repo.record(db, org.tenant_id, 2, "o/a", "o/b")
+    repo_move_repo.record(db, org.tenant_id, 2, "o/b", "o/a")  # renamed back: no terminal target
+    assert repo_move_repo.last_known_name(db, org.tenant_id, 2) == "o/a"
 
 
 def test_repository_renamed_for_an_unknown_installation_changes_nothing(db, webhook_client):

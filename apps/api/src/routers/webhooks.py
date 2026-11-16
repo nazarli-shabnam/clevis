@@ -24,6 +24,7 @@ from src.repositories import (
     installation_repo,
     org_repo,
     pending_installation_repo,
+    repo_move_repo,
     waiver_repo,
 )
 from src.services import github_app_credentials
@@ -326,12 +327,6 @@ def _handle_repository_moved(db: Session, payload: dict) -> None:
     if installation_id is None or new_name is None or new_owner is None:
         logger.warning("repository.%s webhook has no usable installation/repository", payload.get("action"))
         return
-    changes = payload.get("changes") or {}
-    old_name = _as_login(((changes.get("repository") or {}).get("name") or {}).get("from")) or new_name
-    old_owner_obj = ((changes.get("owner") or {}).get("from") or {})
-    old_owner = _as_login((old_owner_obj.get("user") or old_owner_obj.get("organization") or {}).get("login")) or new_owner
-    if (old_owner, old_name) == (new_owner, new_name):
-        return
     tenant_id = db.execute(
         text("SELECT resolve_installation_tenant_id(:installation_id)"), {"installation_id": installation_id}
     ).scalar()
@@ -339,13 +334,32 @@ def _handle_repository_moved(db: Session, payload: dict) -> None:
         return
     # SET LOCAL: RLS context for these writes ends with this commit.
     db.execute(text(f"SET LOCAL app.tenant_id = {int(tenant_id)}"))
-    waivers = waiver_repo.rename_repo(db, tenant_id, old_name, new_name) if old_name.lower() != new_name.lower() else 0
-    opt_ins = automation_settings_repo.rename_repo(db, tenant_id, f"{old_owner}/{old_name}", f"{new_owner}/{new_name}")
+    repo_id = _as_int(repository.get("id"))
+    changes = payload.get("changes") or {}
+    old_name = _as_login(((changes.get("repository") or {}).get("name") or {}).get("from"))
+    if old_name is None and repo_id is not None and payload.get("action") == "transferred":
+        # A transfer that also renames carries no changes.repository: take the name the repo last moved to.
+        known = repo_move_repo.last_known_name(db, tenant_id, repo_id)
+        old_name = known.split("/", 1)[1] if known else None
+    old_name = old_name or new_name
+    old_owner_obj = ((changes.get("owner") or {}).get("from") or {})
+    old_owner = _as_login((old_owner_obj.get("user") or old_owner_obj.get("organization") or {}).get("login")) or new_owner
+    if (old_owner, old_name) == (new_owner, new_name):
+        return
+    final_full = f"{new_owner}/{new_name}"
+    if repo_id is not None:
+        # Follows moves already recorded, so an event delivered after a later one still lands on the final name.
+        recorded = repo_move_repo.record(db, tenant_id, repo_id, f"{old_owner}/{old_name}".lower(), final_full.lower())
+        if recorded != final_full.lower():
+            final_full = recorded
+    final_name = final_full.split("/", 1)[1]
+    waivers = waiver_repo.rename_repo(db, tenant_id, old_name, final_name) if old_name.lower() != final_name.lower() else 0
+    opt_ins = automation_settings_repo.rename_repo(db, tenant_id, f"{old_owner}/{old_name}", final_full)
     db.commit()
     if waivers or opt_ins:
         logger.info(
-            "repository %s/%s moved to %s/%s: %d waivers, %d automation opt-ins updated",
-            old_owner, old_name, new_owner, new_name, waivers, opt_ins,
+            "repository %s/%s moved to %s: %d waivers, %d automation opt-ins updated",
+            old_owner, old_name, final_full, waivers, opt_ins,
         )
 
 

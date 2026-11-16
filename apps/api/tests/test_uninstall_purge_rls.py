@@ -23,8 +23,9 @@ _INSERTS = (
     " VALUES (:t, 'r', 'dependabot', 1, 'open', now(), now())",
     "INSERT INTO org_membership_sync_cursors (tenant_id, org_login) VALUES (:t, 'acme')",
     "INSERT INTO security_alert_syncs (tenant_id, repo, kind) VALUES (:t, 'r', 'dependabot')",
+    "INSERT INTO repo_move_edges (tenant_id, github_repo_id, old_name, new_name) VALUES (:t, 1, 'a/x', 'a/y')",
 )
-_TABLES = ("repo_events", "repo_event_daily_counts", "activity_sync_cursors", "security_alerts", "org_membership_sync_cursors", "security_alert_syncs")
+_TABLES = ("repo_events", "repo_event_daily_counts", "activity_sync_cursors", "security_alerts", "org_membership_sync_cursors", "security_alert_syncs", "repo_move_edges")
 
 
 @pytest.fixture
