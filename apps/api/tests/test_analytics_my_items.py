@@ -355,3 +355,35 @@ def test_my_prs_keeps_githubs_default_sort(http):
         http.get("/me/github/my-prs?owner=acme")
 
     assert "sort" not in seen
+
+
+@pytest.mark.parametrize("path", ["/me/github/my-prs", "/me/github/my-reviews", "/me/github/my-issues"])
+@pytest.mark.parametrize(
+    "failure,status",
+    [
+        (
+            httpx.HTTPStatusError(
+                "rate limited",
+                request=httpx.Request("GET", "https://api.github.com/search/issues"),
+                response=httpx.Response(403, request=httpx.Request("GET", "https://api.github.com/search/issues")),
+            ),
+            400,
+        ),
+        (httpx.RequestError("boom", request=httpx.Request("GET", "https://api.github.com/search/issues")), 503),
+    ],
+)
+def test_a_failed_search_is_an_error_not_an_empty_list(http, path, failure, status):
+    def _request(method, path_, params=None):
+        if path_ == "/user":
+            return {"login": "octocat"}
+        raise failure
+
+    with (
+        patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
+        patch("src.routers.analytics.GitHubClient") as mock_client,
+    ):
+        mock_client.return_value.request.side_effect = _request
+        resp = http.get(f"{path}?owner=acme")
+
+    assert resp.status_code == status
+    assert "items" not in resp.json()
