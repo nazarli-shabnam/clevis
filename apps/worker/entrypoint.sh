@@ -1,6 +1,13 @@
 #!/bin/sh
 set -e
 
+# An environment value wins; otherwise the key the `init-secrets` service generated (shared with the API only;
+# the worker never receives AUTH_SECRET).
+if [ -z "$JOB_SECRET_KEY" ] && [ -r /run/clevis/job/job_secret ]; then
+  JOB_SECRET_KEY=$(cat /run/clevis/job/job_secret)
+  export JOB_SECRET_KEY
+fi
+
 if [ -z "$DB_NAME" ] || [ -z "$JOB_SECRET_KEY" ] || [ -z "$REDIS_PASSWORD" ]; then
   echo "ERROR: DB_NAME, JOB_SECRET_KEY, and REDIS_PASSWORD must be set" >&2
   exit 1

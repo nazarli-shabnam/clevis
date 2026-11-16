@@ -75,7 +75,7 @@ Clevis is three independently deployable services around one shared check librar
 ```bash
 git clone https://github.com/nazarli-shabnam/clevis
 cd clevis
-cp .env.example .env        # fill in the six required variables (DB_USER, DB_PASSWORD, DB_NAME, JOB_SECRET_KEY, AUTH_SECRET, REDIS_PASSWORD); the rest have defaults
+cp .env.example .env        # fill in the required variables (DB_USER, DB_PASSWORD, DB_NAME, REDIS_PASSWORD; JOB_SECRET_KEY and AUTH_SECRET are generated on first start unless you set them); the rest have defaults
 docker compose -f docker-compose.yml -f docker-compose.local.yml up --build -d
 ```
 
