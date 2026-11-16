@@ -47,3 +47,17 @@ class CookieOriginMiddleware(BaseHTTPMiddleware):
         ):
             return JSONResponse({"detail": "Cross-origin request refused"}, status_code=403)
         return await call_next(request)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Headers every response should carry whatever sits in front of the API: ``nosniff`` (a browser never
+    reinterprets a JSON/SVG/CSV body as script or HTML), and ``Cache-Control: no-store`` on ``/auth/*`` so a
+    token, session or identity response is not kept by a shared cache. A route that sets its own
+    ``Cache-Control`` keeps it."""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        if request.url.path.startswith("/auth/"):
+            response.headers.setdefault("Cache-Control", "no-store")
+        return response
