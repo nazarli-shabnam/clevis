@@ -182,7 +182,7 @@ async function downloadFile(
 }
 
 // An Error that also carries the HTTP status, so a caller can treat one specific status as data.
-class ApiError extends Error {
+export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
     super(message)
   }
