@@ -221,10 +221,27 @@ def _persist_personal_scan(db: Session, user: UserOut, result: dict) -> None:
     if org is not None:
         org = org_repo.ensure_tenant_linked(db, org)
         if tenant_repo.get_membership(db, org.tenant_id, user.id) is not None:
-            _persist_scan(db, result, tenant_id=org.tenant_id, scanned_by_user_id=user.id, owner=org.github_login)
+            # The alert reads the org's notification destinations (RLS), which needs the tenant context.
+            set_tenant_session_context(db, org.tenant_id, user.id)
+            # The same persist-and-alert step the org route, the API-token route and the scheduled sweep use,
+            # so a drop found by a member's UI scan is announced instead of silently becoming the baseline.
+            scan_service.persist_scan_and_alert(
+                db, org, result, org.tenant_id, scanned_by_user_id=user.id, owner=org.github_login
+            )
             return
     personal_tenant = tenant_repo.ensure_personal_tenant(db, user.id)
     _persist_scan(db, result, tenant_id=personal_tenant.id, scanned_by_user_id=user.id)
+
+
+def _member_org_tenant_id(db: Session, user: UserOut, owner: str) -> int | None:
+    """The tenant of the Clevis org for `owner` when the user belongs to it, else None. Decides which scan
+    slot a personal-endpoint scan holds: a member's scan is stored under the org and runs on its shared
+    installation token, so it counts against the org's cap like every other org scan."""
+    org = org_repo.get_by_login_ci(db, owner)
+    if org is None:
+        return None
+    org = org_repo.ensure_tenant_linked(db, org)
+    return org.tenant_id if tenant_repo.get_membership(db, org.tenant_id, user.id) is not None else None
 
 
 def _hygiene_setting_for_member(db: Session, user: UserOut, owner: str) -> bool | None:
@@ -366,6 +383,8 @@ async def personal_analytics_overview(
         raise HTTPException(status_code=400, detail=str(exc))
     score_hygiene = await anyio.to_thread.run_sync(lambda: _hygiene_setting_for_member(db, user, payload.owner))
     stored_identity = await anyio.to_thread.run_sync(lambda: _stored_identity_for_member(db, user, payload.owner))
+    member_tenant_id = await anyio.to_thread.run_sync(lambda: _member_org_tenant_id(db, user, payload.owner))
+    slot_key = f"org:{member_tenant_id}" if member_tenant_id is not None else f"user:{user.id}"
     # No DB connection is held across the GitHub calls below (see release_connection).
     release_connection(db)
     account_type = await _get_account_type(payload.owner, token)
@@ -375,7 +394,7 @@ async def personal_analytics_overview(
         owner = payload.owner
 
         def work(session: Session) -> dict:
-            with scan_limiter.scan_slot(f"user:{user.id}"):
+            with scan_limiter.scan_slot(slot_key):
                 result = _overview_blocking(
                     owner, token, account_type=account_type, score_hygiene=score_hygiene, stored_identity=stored_identity
                 )
@@ -391,7 +410,7 @@ async def personal_analytics_overview(
                 )
             )
         )
-    with scan_limiter.scan_slot(f"user:{user.id}"):
+    with scan_limiter.scan_slot(slot_key):
         result = await _run_overview(
             payload.owner, token, account_type=account_type, score_hygiene=score_hygiene, stored_identity=stored_identity
         )

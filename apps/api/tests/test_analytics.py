@@ -352,6 +352,57 @@ def test_org_overview_fires_score_drop_notification_against_the_previous_scan(ht
     notify.assert_called_once_with(db, org.tenant_id, "acme", 90, 60, actor="system")
 
 
+def test_a_members_ui_scan_through_the_personal_route_alerts_on_a_drop_and_takes_the_org_slot(http, db, mock_user):
+    from contextlib import contextmanager
+
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="admin")
+    scans = [{**MOCK_OVERVIEW, "score": 90}, {**MOCK_OVERVIEW, "score": 60}]
+    slots = []
+
+    @contextmanager
+    def fake_slot(key):
+        slots.append(key)
+        yield
+
+    with (
+        patch("src.routers.analytics.get_overview", side_effect=scans),
+        patch("src.routers.analytics.notifications.notify_score_drop") as notify,
+        patch("src.routers.analytics.scan_limiter.scan_slot", fake_slot),
+        patch("src.routers.analytics.get_account_type", return_value="Organization"),
+    ):
+        http.post("/me/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
+        notify.assert_not_called()  # first scan: nothing to compare against
+        http.post("/me/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
+
+    notify.assert_called_once_with(db, org.tenant_id, "acme", 90, 60, actor="system")
+    assert slots == [f"org:{org.tenant_id}"] * 2
+
+
+def test_a_non_members_personal_scan_neither_alerts_nor_takes_an_org_slot(http, db, mock_user):
+    from contextlib import contextmanager
+
+    org_repo.get_or_create(db, github_login="acme")  # the user is not a member
+    slots = []
+
+    @contextmanager
+    def fake_slot(key):
+        slots.append(key)
+        yield
+
+    with (
+        patch("src.routers.analytics.get_overview", side_effect=[{**MOCK_OVERVIEW, "score": 90}, {**MOCK_OVERVIEW, "score": 20}]),
+        patch("src.routers.analytics.notifications.notify_score_drop") as notify,
+        patch("src.routers.analytics.scan_limiter.scan_slot", fake_slot),
+        patch("src.routers.analytics.get_account_type", return_value="Organization"),
+    ):
+        http.post("/me/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
+        http.post("/me/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
+
+    notify.assert_not_called()
+    assert slots == [f"user:{mock_user.id}"] * 2
+
+
 def test_score_drop_ignores_another_tenants_scan_of_the_same_owner(http, db, mock_user):
     org = org_repo.get_or_create(db, github_login="acme")
     org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="admin")
