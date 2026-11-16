@@ -127,6 +127,31 @@ class ReconcileOrgMembershipPayload(BaseModel):
     token: str = Field(min_length=1)
 
 
+def _job_token(job_id: int, encrypted: str) -> str:
+    """The GitHub token for this attempt. The payload's token is decrypted first (a corrupt one still fails the
+    job as before) and is the fallback; when WORKER_API_TOKEN is set the API is asked for a fresh installation
+    token, because the payload's was minted at enqueue time and may be near or past its 60-minute life after
+    queue wait, a long run or retry backoff. A PAT-backed job, a disabled endpoint or any error keeps the
+    payload token."""
+    fallback = decrypt_job_token(encrypted, settings.job_secret_key.get_secret_value())
+    api_token = settings.worker_api_token
+    if api_token is None or not api_token.get_secret_value():  # compose passes "" when it is not configured
+        return fallback
+    try:
+        resp = httpx.post(
+            f"{settings.api_internal_url.rstrip('/')}/internal/jobs/{job_id}/installation-token",
+            headers={"Authorization": f"Bearer {api_token.get_secret_value()}"},
+            timeout=15,
+        )
+        if resp.status_code == 200 and isinstance(resp.json().get("token"), str) and resp.json()["token"]:
+            return resp.json()["token"]
+        if resp.status_code != 404:  # 404 = PAT-backed job / endpoint off: the normal "no refresh" answer
+            log.warning("job %d: token refresh answered %d; using the payload token", job_id, resp.status_code)
+    except (httpx.HTTPError, ValueError) as error:
+        log.warning("job %d: token refresh failed (%s); using the payload token", job_id, type(error).__name__)
+    return fallback
+
+
 def _fenced_update(conn: psycopg.Connection, job_id: int, sql: str, params: tuple) -> bool:
     """Run a status UPDATE fenced on (status='processing', retry_count) and commit.
 
@@ -269,7 +294,7 @@ def _handle_clear_actions_cache(conn: psycopg.Connection, job_id: int, payload_r
         return
 
     try:
-        token = decrypt_job_token(payload.token, settings.job_secret_key.get_secret_value())
+        token = _job_token(job_id, payload.token)
     except Exception as error:
         log.error("job %d failed to decrypt its token: %s", job_id, error)
         _mark_failed(conn, job_id, sanitize_error(error), retry_count)
@@ -336,7 +361,7 @@ def _handle_backfill_repo_events(conn: psycopg.Connection, job_id: int, payload_
         return
 
     try:
-        token = decrypt_job_token(payload.token, settings.job_secret_key.get_secret_value())
+        token = _job_token(job_id, payload.token)
     except Exception as error:
         log.error("job %d failed to decrypt its token: %s", job_id, error)
         _mark_failed(conn, job_id, sanitize_error(error), retry_count)
@@ -441,7 +466,7 @@ def _handle_backfill_security_alerts(conn: psycopg.Connection, job_id: int, payl
         return
 
     try:
-        token = decrypt_job_token(payload.token, settings.job_secret_key.get_secret_value())
+        token = _job_token(job_id, payload.token)
     except Exception as error:
         log.error("job %d failed to decrypt its token: %s", job_id, error)
         _mark_failed(conn, job_id, sanitize_error(error), retry_count)
@@ -540,7 +565,7 @@ def _handle_reconcile_org_membership(conn: psycopg.Connection, job_id: int, payl
         return
 
     try:
-        token = decrypt_job_token(payload.token, settings.job_secret_key.get_secret_value())
+        token = _job_token(job_id, payload.token)
     except Exception as error:
         log.error("job %d failed to decrypt its token: %s", job_id, error)
         _mark_failed(conn, job_id, sanitize_error(error), retry_count)

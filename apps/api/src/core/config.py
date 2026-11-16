@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     github_app_private_key: SecretStr | None = None
     github_app_client_secret: SecretStr | None = None
     github_app_webhook_secret: SecretStr | None = None
+    # Shared with the worker only: lets it fetch a fresh installation token for a running job (routers/internal_jobs.py).
+    worker_api_token: SecretStr | None = None
 
     # Session cookie defaults are production-safe (HTTPS). Set session_cookie_secure=false for local
     # http, session_cookie_samesite="none" when the UI and API are on different sites.

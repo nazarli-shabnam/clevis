@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     database_url: SecretStr
     job_secret_key: SecretStr
     github_api_base: str = "https://api.github.com"
+    # Where to ask the API for a fresh installation token per job attempt. Optional: without WORKER_API_TOKEN the
+    # worker keeps using the token in the job payload.
+    api_internal_url: str = "http://api:8080"
+    worker_api_token: SecretStr | None = None
     # SecretStr: a production URL may embed AUTH credentials.
     redis_url: SecretStr
 
