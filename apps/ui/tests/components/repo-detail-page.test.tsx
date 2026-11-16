@@ -427,12 +427,13 @@ describe("RepoDetailPage", () => {
 
   it("defers the Actions Cache tab's own token-resolve call until the tab is opened", async () => {
     renderPage();
-    // One call so far: the page's own resolveMutation for stats/pulls, fired on mount.
-    await waitFor(() => expect(tokensResolveMock).toHaveBeenCalledTimes(1));
+    // The page itself resolves nothing on mount (#1082): the API picks the installation token server-side.
+    await waitFor(() => expect(reposStatsMock).toHaveBeenCalled());
+    expect(tokensResolveMock).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("tab", { name: /actions cache/i }));
-    // Opening the tab fires CachePanel's own separate resolve call.
-    await waitFor(() => expect(tokensResolveMock).toHaveBeenCalledTimes(2));
+    // Opening the tab fires CachePanel's own resolve call.
+    await waitFor(() => expect(tokensResolveMock).toHaveBeenCalledTimes(1));
   });
 
   it("keeps a token typed into the Actions Cache tab after switching to another tab and back", async () => {
@@ -461,15 +462,16 @@ describe("RepoDetailPage", () => {
     await waitFor(() => expect(screen.getByText(/7 open prs/i)).toBeInTheDocument());
   });
 
-  it("uses an auto-resolved saved token for the stats/pulls/security calls", async () => {
+  it("never resolves a saved PAT for the page's own calls, which pass an empty token (#1082)", async () => {
     tokensResolveMock.mockReset();
     tokensResolveMock.mockResolvedValue({ token: "ghp_resolved_1234567890123456789" });
 
     renderPage();
 
-    await waitFor(() =>
-      expect(reposStatsMock).toHaveBeenCalledWith("acme", "acme", "demo", "ghp_resolved_1234567890123456789"),
-    );
+    await waitFor(() => expect(reposStatsMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
+    await waitFor(() => expect(reposPullsMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
+    expect(reposStatsMock).toHaveBeenCalledTimes(1); // no second round trip once a token "settles"
+    expect(tokensResolveMock).not.toHaveBeenCalled();
   });
 
   it("does not carry a requested flow-metrics card over to the next repo", async () => {
@@ -492,10 +494,7 @@ describe("RepoDetailPage", () => {
     expect(reposFlowMetricsMock).toHaveBeenCalledTimes(1);
   });
 
-  it("holds the flow-metrics request until the saved token has resolved", async () => {
-    let resolveToken!: (v: { token: string }) => void;
-    tokensResolveMock.mockReset();
-    tokensResolveMock.mockReturnValue(new Promise((r) => (resolveToken = r)));
+  it("requests flow metrics with an empty token as soon as they are asked for", async () => {
     reposFlowMetricsMock.mockResolvedValue({
       repository: "acme/demo",
       window_days: 30,
@@ -507,13 +506,7 @@ describe("RepoDetailPage", () => {
     renderPage();
 
     fireEvent.click(await screen.findByRole("button", { name: "Load metrics" }));
-    await new Promise((r) => setTimeout(r, 20));
-    expect(reposFlowMetricsMock).not.toHaveBeenCalled();
-
-    resolveToken({ token: "ghp_resolved_1234567890123456789" });
-    await waitFor(() =>
-      expect(reposFlowMetricsMock).toHaveBeenCalledWith("acme", "acme", "demo", "ghp_resolved_1234567890123456789"),
-    );
+    await waitFor(() => expect(reposFlowMetricsMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
     expect(reposFlowMetricsMock).toHaveBeenCalledTimes(1);
   });
 
