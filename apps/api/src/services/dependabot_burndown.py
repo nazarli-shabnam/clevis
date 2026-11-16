@@ -31,7 +31,7 @@ def sla_days() -> dict[str, int | None]:
             value = int(get_config(f"dependabot_sla_{severity}_days", str(default)))
         except ValueError:
             value = default
-        out[severity] = value if value >= 1 else default
+        out[severity] = value if 1 <= value <= 3650 else default
     return out
 
 

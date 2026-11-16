@@ -119,7 +119,7 @@ def sla_windows(read_config) -> dict[str, int]:
             value = int(read_config(f"dependabot_sla_{severity}_days", str(default)))
         except ValueError:
             value = default
-        out[severity] = value if value >= 1 else default
+        out[severity] = value if 1 <= value <= 3650 else default  # same bound as the API reader
     return out
 
 

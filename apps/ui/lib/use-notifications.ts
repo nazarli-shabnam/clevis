@@ -3,7 +3,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
-import type { NotificationFeed, NotificationKind, NotificationPreferences } from "@/lib/api/types"
+import type { MyOrgMembership, NotificationFeed, NotificationKind, NotificationPreferences } from "@/lib/api/types"
 
 export const notificationsKey = (org: string) => ["notifications", org] as const
 export const notificationPrefsKey = (org: string) => ["notification-preferences", org] as const
@@ -22,11 +22,17 @@ export function useNotifications({ full = false }: { full?: boolean } = {}) {
   const { scope } = useActiveScope()
   const org = scope?.kind === "org" ? scope.login : ""
   const queryClient = useQueryClient()
+  // A workspace admin can keep an org scope through a saved token alone; the notification routes need a
+  // membership and answer 403, so do not call them for such an org. A failed lookup assumes membership.
+  const mine = useQuery<MyOrgMembership[]>({ queryKey: ["my-orgs"], queryFn: () => api.orgs.mine(), retry: false, enabled: org !== "" })
+  const notMember = org !== "" && mine.isSuccess && !mine.data.some((m) => m.org_login.toLowerCase() === org.toLowerCase())
+  // Wait for the membership answer so a not-a-member scope never fires the 403ing request even once.
+  const feedReady = org !== "" && !mine.isPending && !notMember
 
   const short = useQuery<NotificationFeed>({
     queryKey: notificationsKey(org),
     queryFn: () => api.notifications.feed(org),
-    enabled: org !== "" && !full,
+    enabled: feedReady && !full,
     retry: false,
     refetchInterval: REFRESH_MS,
   })
@@ -39,7 +45,7 @@ export function useNotifications({ full = false }: { full?: boolean } = {}) {
       const tail = last.items[last.items.length - 1]
       return last.items.length === FULL_FEED_PAGE ? { before: tail.at, before_id: tail.id } : undefined
     },
-    enabled: org !== "" && full,
+    enabled: feedReady && full,
     retry: false,
     refetchInterval: REFRESH_MS,
   })
@@ -47,7 +53,10 @@ export function useNotifications({ full = false }: { full?: boolean } = {}) {
   // Only the first page carries the unread count (later pages are older items).
   const items = full ? (pages?.flatMap((p) => p.items) ?? []) : (short.data?.items ?? [])
   const unread = full ? (pages?.[0]?.unread_count ?? 0) : (short.data?.unread_count ?? 0)
-  const { isError, error, isLoading, isFetching, refetch } = full ? long : short
+  const { isError, error, isFetching, refetch } = full ? long : short
+  // The feed queries stay disabled until the membership answer arrives, and a disabled query is not "loading", so
+  // count that wait as loading or an empty cache shows "nothing yet" before the feed is even requested.
+  const isLoading = (full ? long : short).isLoading || (org !== "" && mine.isPending)
   // A failed "Load more" keeps the loaded list on screen; it is reported separately from a failed first load.
   const loadMoreFailed = full && long.isFetchNextPageError
   // A failed background refresh with a list already loaded keeps the list on screen (`refreshFailed`);
@@ -68,7 +77,7 @@ export function useNotifications({ full = false }: { full?: boolean } = {}) {
   })
 
   const more = { hasMore: !!long.hasNextPage, loadingMore: long.isFetchingNextPage, loadMoreFailed, refreshFailed, loadMore: () => long.fetchNextPage() }
-  return { org, query, markRead, dismiss, items, unread, ...more }
+  return { org, notMember, query, markRead, dismiss, items, unread, ...more }
 }
 
 /** The caller's muted notification kinds for `org`. Loaded only while `enabled` (the settings panel is

@@ -12,6 +12,7 @@ import { SectionError } from "@/components/section-error"
 import { EmptyStatePage } from "@/components/empty-state"
 import { PermissionDriftNotice } from "@/components/permission-drift-notice"
 import { PendingInstallationsCard } from "@/components/pending-installations-card"
+import { GithubAppSetupCard } from "@/components/github-app-setup-card"
 import { GithubLinkField, githubLinkErrorMessage } from "@/components/github-link-field"
 import { SessionsCard } from "@/components/sessions-card"
 import { ChangePasswordCard } from "@/components/change-password-card"
@@ -513,6 +514,8 @@ function SavedTokensSection() {
   // one row's request can't lock the others, and each failure is reported on its own row.
   const [deletingOrgs, setDeletingOrgs] = useState<Set<string>>(() => new Set())
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({})
+  // The saved secret cannot be recovered once deleted, so the row's trash button asks first.
+  const [confirmDeleteOrg, setConfirmDeleteOrg] = useState<string | null>(null)
 
   const remove = useMutation({
     mutationFn: (org: string) => api.tokens.delete(org),
@@ -592,7 +595,7 @@ function SavedTokensSection() {
                   </td>
                   <td className="px-4 py-2.5 text-right">
                     <button
-                      onClick={() => remove.mutate(t.org)}
+                      onClick={() => setConfirmDeleteOrg(t.org)}
                       disabled={deletingOrgs.has(t.org)}
                       className="text-muted-foreground hover:text-destructive transition-colors"
                       aria-label={`Delete token for ${t.org}`}
@@ -606,6 +609,22 @@ function SavedTokensSection() {
           </table>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmDeleteOrg !== null}
+        onOpenChange={(open) => { if (!open) setConfirmDeleteOrg(null) }}
+        title="Delete this saved token?"
+        description={
+          confirmDeleteOrg
+            ? `The saved token for ${confirmDeleteOrg} is removed and cannot be recovered. Anything that relies on it stops working until you add a token again.`
+            : ""
+        }
+        confirmLabel="Delete token"
+        onConfirm={() => {
+          if (confirmDeleteOrg) remove.mutate(confirmDeleteOrg)
+          setConfirmDeleteOrg(null)
+        }}
+      />
 
       <div className="border-t border-border p-4">
         <p className="text-xs font-medium text-foreground mb-3">Add token</p>
@@ -741,9 +760,9 @@ const CONFIG_FIELDS: {
   { key: "membership_reconcile_poll_seconds", label: "Membership Reconcile Interval", description: "Seconds between org-membership reconciliation sweeps.", type: "number" },
   { key: "membership_reconcile_stale_hours", label: "Membership Stale After", description: "Hours since the last membership sync before it's reconciled again.", type: "number" },
   { key: "webhook_requeue_poll_seconds", label: "Webhook Re-queue Interval", description: "Seconds between retries of webhook deliveries that failed to queue.", type: "number" },
-  { key: "retention_webhook_deliveries_days", label: "Keep Webhook Deliveries (days)", description: "Days to keep webhook payloads once they are processed or given up on (default 30). 0 keeps them forever. Deliveries still waiting to be queued are never deleted.", type: "number", defaultValue: "30" },
+  { key: "retention_webhook_deliveries_days", label: "Keep Webhook Deliveries (days)", description: "Days to keep webhook payloads once they are processed or given up on (default 30, minimum 30 when set). 0 keeps them forever. Deliveries still waiting to be queued are never deleted.", type: "number", defaultValue: "30" },
   { key: "retention_jobs_days", label: "Keep Finished Jobs (days)", description: "Days to keep finished (done or failed) background jobs (default 30, minimum 8 when set). 0 keeps them forever.", type: "number", defaultValue: "30" },
-  { key: "retention_repo_events_days", label: "Keep Activity Events (days)", description: "Days to keep stored GitHub activity events (default 180, minimum 100 when set). Daily activity counts, the audit log and scan history are always kept. 0 keeps events forever.", type: "number", defaultValue: "180" },
+  { key: "retention_repo_events_days", label: "Keep Activity Events (days)", description: "Days to keep stored GitHub activity events (default 180, minimum 100 when set). Daily activity counts, security alerts, the audit log and scan history are always kept. 0 keeps events forever.", type: "number", defaultValue: "180" },
 ]
 
 function InstanceConfigSection() {
@@ -770,11 +789,12 @@ function InstanceConfigSection() {
     setSaving(key)
     setErrors((prev) => ({ ...prev, [key]: "" }))
     try {
-      await api.config.update(key, value)
-      const updated = await qc.fetchQuery<Record<string, string>>({
-        queryKey: ["config"],
-        queryFn: api.config.getAll,
-      })
+      // PUT answers with the fresh map; use it (and refresh the cache) rather than refetching, because
+      // fetchQuery would resolve with the pre-save map while the cached copy is still within staleTime.
+      const updated = await api.config.update(key, value)
+      // Only this key: the response is a whole map from the moment of its own save, so replacing the cache with a
+      // slower, older response would revert a key another save has since changed.
+      qc.setQueryData<Record<string, string>>(["config"], (cached) => mergeSavedConfigValue(cached ?? updated, updated, key))
       setValues((prev) => mergeSavedConfigValue(prev, updated, key))
     } catch (err) {
       setErrors((prev) => ({ ...prev, [key]: err instanceof Error ? err.message : "Save failed" }))
@@ -940,6 +960,7 @@ export default function SettingsPage() {
         <AppearanceSection />
         <OrgMembershipsSection />
         <PendingInstallationsCard />
+        {user?.is_workspace_admin && <GithubAppSetupCard />}
         <ConnectedOrgsSection />
         {user?.is_workspace_admin && <SavedTokensSection />}
         {user?.is_workspace_admin && <InstanceConfigSection />}

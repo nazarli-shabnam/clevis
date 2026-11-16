@@ -96,6 +96,12 @@ function TokenRow({
           {token.last_used_at ? `last used ${relativeTime(token.last_used_at)}` : "never used"}
           {status === "active" && token.expires_at ? ` · expires ${dueTime(token.expires_at)}` : ""}
         </p>
+        {status === "active" && token.creator_left && (
+          <p className="text-amber-500">
+            {token.created_by} is no longer a member of this org, but this token still works. Revoke it if it is not
+            needed.
+          </p>
+        )}
         {revoke.isError && (
           <p role="alert" className="text-destructive">
             Couldn&apos;t revoke: {revoke.error.message}
@@ -161,6 +167,13 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
   const queryKey = ["api-tokens", orgLogin]
   const query = useQuery<ApiToken[]>({ queryKey, queryFn: () => api.apiTokens.list(orgLogin), retry: false })
 
+  const policyKey = ["api-token-policy", orgLogin]
+  const policy = useQuery({ queryKey: policyKey, queryFn: () => api.apiTokens.policy(orgLogin), retry: false })
+  const setPolicy = useMutation({
+    mutationFn: (on: boolean) => api.apiTokens.setPolicy(orgLogin, on),
+    onSuccess: (data) => queryClient.setQueryData(policyKey, data),
+  })
+
   const [name, setName] = useState("")
   const [expiry, setExpiry] = useState(0)
   // Held only in component state: the API never returns the secret again.
@@ -215,6 +228,30 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
         <code className="font-mono">clevis-score</code> GitHub Action). They cannot change configuration. The secret is
         shown once, when you create the token. Every change is written to the audit log.
       </p>
+      {policy.data && (
+        <label className="px-4 pt-3 flex items-center gap-2 text-xs text-foreground">
+          <input
+            type="checkbox"
+            checked={policy.data.revoke_on_creator_leave}
+            disabled={setPolicy.isPending}
+            onChange={(e) => setPolicy.mutate(e.target.checked)}
+          />
+          Revoke a member&apos;s tokens when they leave this org
+        </label>
+      )}
+      {policy.isError && (
+        <SectionError
+          message={`Couldn't load the token policy: ${policy.error instanceof Error ? policy.error.message : "unknown error"}`}
+          error={policy.error}
+          onRetry={() => policy.refetch()}
+          retrying={policy.isFetching}
+        />
+      )}
+      {setPolicy.isError && (
+        <p role="alert" className="px-4 pt-1 text-xs text-destructive">
+          Couldn&apos;t save: {setPolicy.error.message}
+        </p>
+      )}
 
       {created && (
         <div role="status" className="m-4 rounded-md border border-border bg-muted/30 p-3 flex flex-col gap-2">

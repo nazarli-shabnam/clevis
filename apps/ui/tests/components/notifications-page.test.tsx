@@ -6,11 +6,13 @@ const feedMock = vi.fn();
 const markReadMock = vi.fn();
 const dismissMock = vi.fn();
 const prefsMock = vi.fn();
+const minesMock = vi.fn();
 let scope: { kind: "org" | "personal"; login: string } | null = { kind: "org", login: "acme" };
 
 vi.mock("@/lib/active-scope", () => ({ useActiveScope: () => ({ scope }) }));
 vi.mock("@/lib/api/client", () => ({
   api: {
+    orgs: { mine: (...a: unknown[]) => minesMock(...a) },
     notifications: {
       feed: (...a: unknown[]) => feedMock(...a),
       markRead: (...a: unknown[]) => markReadMock(...a),
@@ -40,12 +42,33 @@ function renderPage() {
 
 describe("NotificationsPage", () => {
   beforeEach(() => {
-    [feedMock, markReadMock, dismissMock, prefsMock].forEach((m) => m.mockReset());
+    [feedMock, markReadMock, dismissMock, prefsMock, minesMock].forEach((m) => m.mockReset());
     markReadMock.mockResolvedValue(null);
     dismissMock.mockResolvedValue(null);
+    minesMock.mockResolvedValue([{ org_login: "acme", role: "member" }]);
     scope = { kind: "org", login: "acme" };
   });
   afterEach(cleanup);
+
+  it("explains a saved-token-only scope instead of calling the feed", async () => {
+    minesMock.mockResolvedValue([{ org_login: "other", role: "admin" }]);
+    renderPage();
+
+    expect(await screen.findByText(/You are not a member of acme/)).toBeInTheDocument();
+    expect(feedMock).not.toHaveBeenCalled();
+  });
+
+  it("shows loading, not an empty feed, while the membership lookup is still pending", async () => {
+    let resolveMine: (v: unknown) => void = () => {};
+    minesMock.mockReturnValue(new Promise((resolve) => { resolveMine = resolve; }));
+    feedMock.mockResolvedValue(feed([item("a", "score_drop")]));
+    renderPage();
+
+    expect(screen.queryByText(/Nothing in the last/)).not.toBeInTheDocument();
+    expect(feedMock).not.toHaveBeenCalled();
+    resolveMine([{ org_login: "acme", role: "member" }]);
+    expect(await screen.findByText("title a")).toBeInTheDocument();
+  });
 
   it("asks the API for the long window, not the bell's default one", async () => {
     feedMock.mockResolvedValue(feed([item("a", "score_drop")]));
@@ -197,6 +220,14 @@ describe("NotificationsPage", () => {
     renderPage();
 
     expect(await screen.findByText(/belong to an organization/)).toBeInTheDocument();
+    expect(feedMock).not.toHaveBeenCalled();
+  });
+
+  it("asks to pick an account when no scope is selected", async () => {
+    scope = null;
+    renderPage();
+
+    expect(await screen.findByText(/No account selected yet/)).toBeInTheDocument();
     expect(feedMock).not.toHaveBeenCalled();
   });
 });

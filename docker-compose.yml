@@ -64,6 +64,38 @@ services:
     networks:
       - clevis
 
+  # One-shot writer for the two secrets the operator would otherwise generate by hand. Each is created once, with
+  # umask 077 and an atomic rename, on its own named volume and owned by the app uid (10001) the api/worker run
+  # as. An existing file is never touched, and a JOB_SECRET_KEY / AUTH_SECRET set in .env still takes precedence
+  # (the entrypoints only read the files when the variable is empty). The job secret is shared with the worker;
+  # the auth secret is mounted into the api only, so the worker still never receives AUTH_SECRET.
+  init-secrets:
+    container_name: init-secrets
+    image: busybox:1.37
+    mem_limit: 32m
+    restart: "no"
+    volumes:
+      - job-secret:/job
+      - auth-secret:/auth
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+        umask 077
+        gen() {
+          [ -s "$$1" ] && return 0
+          head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$$1.tmp"
+          chown 10001:10001 "$$1.tmp"
+          mv "$$1.tmp" "$$1"
+          echo "init-secrets: generated $$2 (saved tokens encrypted under an earlier key will not decrypt)"
+        }
+        gen /job/job_secret JOB_SECRET_KEY
+        gen /auth/auth_secret AUTH_SECRET
+        chown 10001:10001 /job /auth
+    networks:
+      - clevis
+
   api:
     container_name: api
     build:
@@ -74,7 +106,12 @@ services:
       - .env
     expose:
       - "8080"
+    volumes:
+      - job-secret:/run/clevis/job:ro
+      - auth-secret:/run/clevis/auth:ro
     depends_on:
+      init-secrets:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
       redis:
@@ -100,15 +137,21 @@ services:
     # secrets and the Postgres superuser password must not be in its environment.
     environment:
       DB_NAME: ${DB_NAME}
-      JOB_SECRET_KEY: ${JOB_SECRET_KEY}
+      JOB_SECRET_KEY: ${JOB_SECRET_KEY:-}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # Optional: lets the worker ask the API for a fresh installation token per job attempt (shared with the API).
+      WORKER_API_TOKEN: ${WORKER_API_TOKEN:-}
       GITHUB_API_BASE: ${GITHUB_API_BASE:-https://api.github.com}
       WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD:-}
       # Fallback credential for deployments without a dedicated worker role: entrypoint.sh only uses
       # DB_USER/DB_PASSWORD when WORKER_DB_PASSWORD is empty, so the superuser password is passed only then.
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${WORKER_DB_PASSWORD:-${DB_PASSWORD}}
+    volumes:
+      - job-secret:/run/clevis/job:ro
     depends_on:
+      init-secrets:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
       api:
@@ -172,3 +215,7 @@ networks:
 volumes:
   pgdata:
   redisdata:
+  # Generated once by init-secrets. Back these up together with pgdata: without job-secret every saved token and
+  # notification destination stops decrypting; without auth-secret everyone is signed out.
+  job-secret:
+  auth-secret:

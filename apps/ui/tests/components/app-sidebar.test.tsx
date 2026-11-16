@@ -272,24 +272,33 @@ describe("AppSidebar health dot and unread badge", () => {
     cockpitResponse = { latest_score: 90, recent_events: [] };
     renderSidebar();
 
-    const link = await screen.findByRole("link", { name: "Health & Security" });
+    // The state is also said in words (#1089): the dot is not the only signal.
+    const link = await screen.findByRole("link", { name: /^Health & Security/ });
     await waitFor(() => expect(link.querySelector(".bg-green-400")).not.toBeNull());
+    await waitFor(() => expect(link).toHaveTextContent("Security score 90, healthy"));
+    expect(link.querySelector("[title]")).toHaveAttribute("title", "Security score 90, healthy");
   });
 
   it("shows a yellow dot for a mid score", async () => {
     cockpitResponse = { latest_score: 60, recent_events: [] };
     renderSidebar();
 
-    const link = await screen.findByRole("link", { name: "Health & Security" });
+    // The state is also said in words (#1089): the dot is not the only signal.
+    const link = await screen.findByRole("link", { name: /^Health & Security/ });
     await waitFor(() => expect(link.querySelector(".bg-yellow-400")).not.toBeNull());
+    await waitFor(() => expect(link).toHaveTextContent("Security score 60, needs attention"));
+    expect(link.querySelector("[title]")).toHaveAttribute("title", "Security score 60, needs attention");
   });
 
   it("shows a red dot for a low score", async () => {
     cockpitResponse = { latest_score: 20, recent_events: [] };
     renderSidebar();
 
-    const link = await screen.findByRole("link", { name: "Health & Security" });
+    // The state is also said in words (#1089): the dot is not the only signal.
+    const link = await screen.findByRole("link", { name: /^Health & Security/ });
     await waitFor(() => expect(link.querySelector(".bg-red-400")).not.toBeNull());
+    await waitFor(() => expect(link).toHaveTextContent("Security score 20, at risk"));
+    expect(link.querySelector("[title]")).toHaveAttribute("title", "Security score 20, at risk");
   });
 
   it("shows an unread badge counting events newer than the last-seen timestamp", async () => {
@@ -760,7 +769,7 @@ describe("AppSidebar scope switcher", () => {
     renderSidebar();
 
     fireEvent.click(await screen.findByRole("button", { name: /user|legacy/i }));
-    await screen.findByText("Organization · saved token");
+    await screen.findByText("Organization · saved token, not a member");
     expect(localStorage.getItem("active_scope")).toBe(JSON.stringify({ kind: "org", login: "legacy" }));
   });
 

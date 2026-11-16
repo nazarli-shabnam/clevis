@@ -3,6 +3,7 @@ concrete piece of the feat/aggregates-api-sse foundation -- see docs/plan.md's S
 
 import asyncio
 import json
+import time
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 
@@ -11,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from src.core.auth import UserOut, require_auth
+from src.core.auth import UserOut, current_session_claims, require_auth
 from src.core.db import User, get_db
 from src.repositories import installation_repo, org_membership_repo, org_repo
 from src.routers.github import _activity_summary_stream, router as github_router
@@ -355,6 +356,7 @@ async def test_stream_route_survives_the_request_session_closing_before_the_body
     app = FastAPI()
     app.include_router(github_router)
     app.dependency_overrides[require_auth] = lambda: _MEMBER
+    app.dependency_overrides[current_session_claims] = lambda: {"token_version": 0, "exp": time.time() + 600}
     app.dependency_overrides[get_db] = _closing_get_db
 
     class _Enough(Exception):
@@ -395,3 +397,56 @@ async def test_stream_route_survives_the_request_session_closing_before_the_body
     assert body.startswith("event: activity_summary\ndata: ")
     payload = json.loads(body.split("data: ", 1)[1].strip())
     assert payload["totals"] == [{"repo": "acme/api", "event_type": "push", "count": 4}]
+
+
+def _remove_member(db, org):
+    from src.repositories import tenant_repo
+
+    tenant_repo.delete_membership(db, org.tenant_id, _MEMBER.id, commit=False)
+
+
+@pytest.mark.asyncio
+async def test_stream_ends_with_unauthorized_once_the_member_is_removed(db, acme_org_with_installation, rbac_ctx_factory):
+    from src.core.db import User
+    from src.routers.github import _stream_authorization_check
+
+    ctx = rbac_ctx_factory(acme_org_with_installation)
+    check = _stream_authorization_check(acme_org_with_installation.tenant_id, _MEMBER.id, db.get(User, _MEMBER.id).token_version, None)
+
+    gen = _activity_summary_stream(
+        "acme", ctx, days=7, poll_interval=0, session_scope=_reuse_session(db), still_authorized=check
+    )
+    (first,) = await _take(gen, 1)
+    assert first.startswith("event: activity_summary")
+    _remove_member(db, acme_org_with_installation)
+    (last,) = await _take(gen, 1)
+    assert last.startswith("event: unauthorized")
+    with pytest.raises(StopAsyncIteration):
+        await gen.__anext__()
+
+
+def test_authorization_check_rejects_a_bumped_token_version_and_a_revoked_session(db, acme_org_with_installation, rbac_ctx_factory):
+    from datetime import datetime, timedelta, timezone
+
+    from src.core.db import RevokedToken, User
+    from src.routers.github import _stream_authorization_check
+
+    rbac_ctx_factory(acme_org_with_installation)
+    version = db.get(User, _MEMBER.id).token_version
+    assert _stream_authorization_check(acme_org_with_installation.tenant_id, _MEMBER.id, version, "j1")(db) is True
+    assert _stream_authorization_check(acme_org_with_installation.tenant_id, _MEMBER.id, version + 1, "j1")(db) is False
+    db.add(RevokedToken(jti="j1", user_id=_MEMBER.id, expires_at=datetime.now(timezone.utc) + timedelta(hours=1)))
+    db.flush()
+    assert _stream_authorization_check(acme_org_with_installation.tenant_id, _MEMBER.id, version, "j1")(db) is False
+
+
+def test_authorization_check_rejects_a_token_past_its_expiry_even_with_no_denylist_row(db, acme_org_with_installation, rbac_ctx_factory):
+    import time
+
+    from src.core.db import User
+    from src.routers.github import _stream_authorization_check
+
+    rbac_ctx_factory(acme_org_with_installation)
+    tenant_id, version = acme_org_with_installation.tenant_id, db.get(User, _MEMBER.id).token_version
+    assert _stream_authorization_check(tenant_id, _MEMBER.id, version, "j1", time.time() + 60)(db) is True
+    assert _stream_authorization_check(tenant_id, _MEMBER.id, version, "j1", time.time() - 1)(db) is False

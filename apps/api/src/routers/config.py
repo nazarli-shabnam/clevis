@@ -38,7 +38,10 @@ _INT_KEYS = {
 }
 # Retention windows in days: 0 switches that purge off, and nothing is kept longer than ten years.
 _RETENTION_KEYS = {"retention_webhook_deliveries_days", "retention_jobs_days", "retention_repo_events_days"}
-_MAX_RETENTION_DAYS = 3650
+# Day and hour settings end up in `timedelta` arithmetic against `now`, which raises OverflowError for a huge
+# value, so nothing is accepted beyond ten years.
+_MAX_DAYS = 3650
+_MAX_HOURS = _MAX_DAYS * 24
 _BOOL_KEYS = {"registration_enabled", "score_hygiene_checks"}
 # key -> allowed values, for small closed-vocabulary settings.
 _ENUM_KEYS = {
@@ -79,8 +82,9 @@ def update_config(
         minimum = 0 if key in _RETENTION_KEYS else 1
         if parsed_int < minimum:
             raise HTTPException(status_code=422, detail=f"{key} must be at least {minimum}")
-        if key in _RETENTION_KEYS and parsed_int > _MAX_RETENTION_DAYS:
-            raise HTTPException(status_code=422, detail=f"{key} must be at most {_MAX_RETENTION_DAYS}")
+        maximum = _MAX_DAYS if key.endswith("_days") else _MAX_HOURS if key.endswith("_hours") else None
+        if maximum is not None and parsed_int > maximum:
+            raise HTTPException(status_code=422, detail=f"{key} must be at most {maximum}")
 
     if key in _BOOL_KEYS and body.value not in ("true", "false"):
         raise HTTPException(status_code=422, detail=f"{key} must be 'true' or 'false'")

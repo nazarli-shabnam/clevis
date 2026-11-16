@@ -74,3 +74,21 @@ def release_alert_claim(db: Session, destination_id: int) -> None:
         update(NotificationDestination).where(NotificationDestination.id == destination_id).values(last_notified_at=None)
     )
     db.commit()
+
+
+def record_delivery(db: Session, destination_id: int, ok: bool, detail: str) -> None:
+    """Record one send attempt on the destination: status, short reason, time and the consecutive-failure
+    count (reset by a success). One atomic UPDATE so concurrent sends cannot lose an increment."""
+    db.execute(
+        update(NotificationDestination)
+        .where(NotificationDestination.id == destination_id)
+        .values(
+            last_status="ok" if ok else "failed",
+            last_error=None if ok else detail[:300],
+            last_attempt_at=func.now(),
+            consecutive_failures=0
+            if ok
+            else NotificationDestination.consecutive_failures + 1,
+        )
+    )
+    db.commit()

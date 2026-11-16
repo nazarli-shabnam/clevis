@@ -31,11 +31,15 @@ function renderPage() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  // A fresh element each time: re-rendering the very same element object would bail out before the
+  // (mocked) search params are read again.
+  const tree = () => (
     <QueryClientProvider client={queryClient}>
       <MyWorkPage />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(tree());
+  return { ...view, rerenderSamePage: () => view.rerender(tree()) };
 }
 
 const ROW = {
@@ -113,5 +117,43 @@ describe("MyWorkPage (tabbed /my)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "My PRs" }));
     expect(replace).toHaveBeenCalledWith("?", { scroll: false });
+  });
+  it("keeps the current page on screen while the next one loads, and never requests a stale page after a tab switch (#1091)", async () => {
+    tabParam = "reviews";
+    localStorage.setItem("default_org", "acme");
+    const page2 = { items: [{ ...ROW, number: 99, title: "Second page" }], total_count: 60, page: 2, per_page: 25 };
+    let resolvePage2: (v: unknown) => void = () => {};
+    myReviewsMock.mockImplementation((_org: string, page: number) =>
+      page === 1
+        ? Promise.resolve({ items: [ROW], total_count: 60, page: 1, per_page: 25 })
+        : new Promise((resolve) => { resolvePage2 = resolve; }),
+    );
+    myPrsMock.mockResolvedValue({ items: [{ ...ROW, number: 7, title: "A PR" }], total_count: 1, page: 1, per_page: 25 });
+
+    const { rerenderSamePage } = renderPage();
+    expect(await screen.findByText("Fix bug")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(myReviewsMock).toHaveBeenCalledWith("acme", 2, 25));
+    // The list is not replaced by "Loading..." while page 2 is in flight.
+    expect(screen.getByText("Fix bug")).toBeInTheDocument();
+    resolvePage2(page2);
+    expect(await screen.findByText("Second page")).toBeInTheDocument();
+
+    // Switching tab starts that list at page 1: the PRs query is never asked for page 2, and the reviews
+    // rows are not shown under the PRs tab while it loads.
+    tabParam = null;
+    rerenderSamePage();
+    await waitFor(() => expect(myPrsMock).toHaveBeenCalledWith("acme", 1, 25));
+    expect(myPrsMock).not.toHaveBeenCalledWith("acme", 2, 25);
+    expect(await screen.findByText("A PR")).toBeInTheDocument();
+    expect(screen.queryByText("Second page")).not.toBeInTheDocument();
+
+    // Coming back without having paged the PRs list: reviews start at page 1 again, not at the page 2 left behind.
+    myReviewsMock.mockClear();
+    tabParam = "reviews";
+    rerenderSamePage();
+    await waitFor(() => expect(myReviewsMock).toHaveBeenCalledWith("acme", 1, 25));
+    expect(myReviewsMock).not.toHaveBeenCalledWith("acme", 2, 25);
   });
 });

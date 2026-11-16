@@ -797,11 +797,12 @@ describe("api.repos", () => {
     );
   }
 
-  it("POSTs to /orgs/{org}/repos with token: undefined when the token field is empty", async () => {
+  it("POSTs to /me/repos/{owner} (works for personal accounts too) with token: undefined when the token field is empty", async () => {
     stubOkJson({ org: "acme", total: 0, repos: [] });
     const result = await api.repos.list("acme", "");
     const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(String(url)).toContain("/orgs/acme/repos");
+    expect(String(url)).toContain("/me/repos/acme");
+    expect(String(url)).not.toContain("/orgs/");
     expect(JSON.parse(init.body as string)).toEqual({ token: undefined });
     expect(result).toEqual({ org: "acme", total: 0, repos: [] });
   });
@@ -1448,6 +1449,34 @@ describe("waivers, notification preferences and evidence endpoints", () => {
     await api.apiTokens.revoke("acme", 7)
     expect(revoke()[0]).toMatch(/\/orgs\/acme\/api-tokens\/7$/)
     expect(revoke()[1].method).toBe("DELETE")
+  })
+
+  it("the GitHub App setup routes post the manifest request and the one-time code", async () => {
+    const status = stub({ source: "none" })
+    await api.githubApp.status()
+    expect(status()[0]).toMatch(/\/github-app$/)
+
+    const manifest = stub({ post_url: "u", manifest: {}, state: "s" })
+    await api.githubApp.manifest({ ui_origin: "http://localhost:3000", read_only: true })
+    expect(manifest()[0]).toMatch(/\/github-app\/manifest$/)
+    expect(JSON.parse(String(manifest()[1].body))).toEqual({ ui_origin: "http://localhost:3000", read_only: true })
+
+    const convert = stub({ slug: "x", app_id: "1" })
+    await api.githubApp.convert({ code: "c", state: "s" })
+    expect(convert()[0]).toMatch(/\/github-app\/manifest\/convert$/)
+    expect(JSON.parse(String(convert()[1].body))).toEqual({ code: "c", state: "s" })
+  })
+
+  it("the api-token revoke-on-leave policy is read and written per org", async () => {
+    const read = stub({ revoke_on_creator_leave: false })
+    await api.apiTokens.policy("a/b")
+    expect(read()[0]).toMatch(/\/orgs\/a%2Fb\/api-token-policy$/)
+
+    const write = stub({ revoke_on_creator_leave: true })
+    await api.apiTokens.setPolicy("acme", true)
+    expect(write()[0]).toMatch(/\/orgs\/acme\/api-token-policy$/)
+    expect(write()[1].method).toBe("PUT")
+    expect(JSON.parse(String(write()[1].body))).toEqual({ revoke_on_creator_leave: true })
   })
 
   it("notification preferences are read and replaced per org", async () => {

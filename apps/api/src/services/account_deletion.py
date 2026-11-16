@@ -16,7 +16,7 @@ from sqlalchemy import text, update
 from sqlalchemy.orm import Session
 
 from src.core.db import Base, Membership, ScanResult, User
-from src.repositories import audit_repo, tenant_repo
+from src.repositories import api_token_repo, audit_repo, tenant_repo
 
 
 # Cleared by the purge function above, or handled separately (memberships; tenants/orgs form a foreign-key cycle).
@@ -73,6 +73,7 @@ def delete_account(db: Session, user: User) -> None:
             tenant_id=org.tenant_id, commit=False,
         )
         db.execute(text("DELETE FROM memberships WHERE tenant_id = :t AND user_id = :u"), {"t": org.tenant_id, "u": user_id})
+        api_token_repo.revoke_for_departed_creator(db, org.tenant_id, user_id)
 
     # Invitations they sent and scans they ran stay behind in orgs they already left (leaving deletes only the
     # membership row), and would block the final user delete on the foreign keys, so clear every org tenant.

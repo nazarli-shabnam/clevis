@@ -1047,3 +1047,26 @@ def test_a_5xx_backs_off_exponentially_even_when_it_carries_a_rate_limit_reset_h
     with patch("time.sleep") as mock_sleep, patch("httpx.Client.get", side_effect=lambda url, headers: next(responses)):
         assert _get("https://x/y", "tok") == {"ok": 1}
     mock_sleep.assert_called_once_with(1)  # 2**attempt, not ~50s
+
+
+def test_branch_names_with_url_special_characters_are_quoted_in_every_check_request():
+    # `#`, `?` and `%` in a branch name would otherwise start a fragment/query or a bogus escape.
+    repos = [{"name": "demo", "default_branch": "a#b?c%d"}]
+    urls = []
+
+    def fake_get(url, token):
+        urls.append(url)
+        return {"protected": True, "protection": {"allow_force_pushes": {"enabled": False}}}
+
+    def fake_pages(base_url, path, token):
+        urls.append(base_url + path)
+        return []
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("checks.github_checks._get", fake_get)
+        mp.setattr("checks.github_checks._get_all_pages", fake_pages)
+        BranchProtectionEnabled().run(owner="acme", token="tok", repos=repos)
+        DefaultBranchNoForcePushCheck().run(owner="acme", token="tok", repos=repos)
+
+    assert urls and all("a%23b%3Fc%25d" in u for u in urls)
+    assert not any("a#b" in u or "?c" in u for u in urls)

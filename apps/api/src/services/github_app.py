@@ -24,6 +24,7 @@ import jwt
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
 from src.core.config import settings
+from src.services import github_app_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -57,13 +58,13 @@ _mint_locks: dict[int, threading.Lock] = {}
 
 
 def _require_config() -> tuple[str, str]:
-    app_id = settings.github_app_id
-    private_key = settings.github_app_private_key
+    app_id = github_app_credentials.app_id()
+    private_key = github_app_credentials.private_key()
     if not app_id or not private_key:
         raise GitHubAppNotConfigured(
-            "GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY must be set to use GitHub App auth"
+            "GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY must be set (or the App created from Settings) to use GitHub App auth"
         )
-    return app_id, private_key.get_secret_value()
+    return app_id, private_key
 
 
 def warn_if_private_key_invalid() -> None:
@@ -71,11 +72,11 @@ def warn_if_private_key_invalid() -> None:
 
     Otherwise the mistake only surfaces at the first installation-token request, as an org that looks
     empty or a 5xx. Deliberately a log line, not a startup failure: the rest of Clevis works without the App."""
-    key = settings.github_app_private_key
-    if key is None or not key.get_secret_value():
+    key = github_app_credentials.private_key()
+    if not key:
         return
     try:
-        load_pem_private_key(key.get_secret_value().encode(), password=None)
+        load_pem_private_key(key.encode(), password=None)
     except Exception as exc:
         logger.error(
             "GITHUB_APP_PRIVATE_KEY is set but is not a valid PEM private key (%s). Put the whole .pem on one line "
@@ -244,7 +245,7 @@ def get_org_membership_role(installation_token: str, org_login: str, username: s
 
 def credentials_configured() -> bool:
     """Whether the App's id and private key are set (what minting tokens needs)."""
-    return bool(settings.github_app_id and settings.github_app_private_key)
+    return bool(github_app_credentials.app_id() and github_app_credentials.private_key())
 
 
 # GET /app is cached because the slug is requested by an unauthenticated endpoint: a hit lasts an
@@ -268,8 +269,8 @@ def get_app_slug() -> str | None:
 
     None when the App is not configured or GitHub can't be asked; never raises."""
     global _slug_cache
-    if settings.github_app_slug:
-        return settings.github_app_slug
+    if configured_slug := github_app_credentials.slug():
+        return configured_slug
     if not credentials_configured():
         return None
     if (hit := _fresh_cached_slug()) is not None:

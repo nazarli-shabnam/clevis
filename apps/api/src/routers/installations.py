@@ -382,7 +382,7 @@ def sync_org_installation(
     set_tenant_session_context(db, org.tenant_id, user.id)
     row = installation_repo.create(
         db,
-        account_login=payload.account_login,
+        account_login=org.github_login,  # the org's canonical login, not whatever casing the caller typed
         account_type=payload.account_type,
         auth_mode=payload.auth_mode,
         installation_id=payload.installation_id,
@@ -529,7 +529,7 @@ def sync_personal_installation(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="This installation does not belong to your own GitHub account",
             )
-    elif payload.account_login != db_user.github_login:
+    elif payload.account_login.lower() != db_user.github_login.lower():
         # Nothing was verified against GitHub, so the stored login is all there is to compare.
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -537,7 +537,8 @@ def sync_personal_installation(
         )
     row = installation_repo.create(
         db,
-        account_login=payload.account_login,
+        # GitHub's canonical login from the verified installation, else the linked account's login.
+        account_login=((installation or {}).get("account") or {}).get("login") or db_user.github_login,
         account_type=payload.account_type,
         auth_mode=payload.auth_mode,
         installation_id=payload.installation_id,

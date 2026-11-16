@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
-import { useMutation, useQuery } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { FlowMetricsCard } from "@/components/flow-metrics-card"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -16,7 +16,6 @@ import type { CheckWaiver, RepoSecurityRow } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
 import { setActiveScope } from "@/lib/active-scope"
 import { parseOwnerRepo } from "@/lib/repo-segment"
-import { shouldApplyResolvedToken } from "@/lib/token-resolve"
 import { AreaTimeChart } from "@/components/charts/area-time-chart"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
 import { HeatmapCalendar } from "@/components/charts/heatmap-calendar"
@@ -157,7 +156,9 @@ export default function RepoDetailPage() {
   const repo = parsed?.repo ?? ""
 
   const [tab, setTab] = useState<Tab>("overview")
-  const [token, setToken] = useState("")
+  // The API resolves the installation token server-side (falling back to a saved token for a workspace
+  // admin), so the page never fetches or holds a PAT; "" is what the sibling pages pass too.
+  const token = ""
 
   const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({ overview: null, cache: null, security: null })
 
@@ -179,21 +180,6 @@ export default function RepoDetailPage() {
       focusTab(TABS[nextIndex].id)
     }
   }
-
-  const resolveMutation = useMutation({
-    mutationFn: (org: string) => api.tokens.resolve(org),
-    onSuccess: (data, org) => {
-      if (shouldApplyResolvedToken(org, owner)) setToken(data.token)
-    },
-  })
-
-  useEffect(() => {
-    if (owner) {
-      setToken("")
-      resolveMutation.mutate(owner)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [owner])
 
   useEffect(() => {
     // /repos/<repo>?tab=security opens that tab (the burn-down page links here). Read after mount to match
@@ -225,8 +211,7 @@ export default function RepoDetailPage() {
   const securityRowQuery = useQuery({
     queryKey: ["repo-detail-security-row", owner, repo, token],
     queryFn: () => api.security.repoRow(owner, repo, token),
-    // Wait for the saved-token lookup to settle (either way) so a repo that needs it isn't fetched tokenless first.
-    enabled: tab === "security" && !!owner && !!repo && (resolveMutation.isSuccess || resolveMutation.isError),
+    enabled: tab === "security" && !!owner && !!repo,
   })
 
   // Waivers are org-scoped; a personal account has none, and a failed lookup just means no badge.
@@ -457,7 +442,6 @@ export default function RepoDetailPage() {
           owner={owner}
           repo={repo}
           token={token}
-          tokenReady={resolveMutation.isSuccess || resolveMutation.isError}
         />
 
         {statsQuery.isError && (

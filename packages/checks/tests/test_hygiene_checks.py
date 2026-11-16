@@ -258,3 +258,15 @@ def test_unpinned_actions_truncated_tree_is_unknown_unless_a_violation_was_seen(
 
     failing = _run(h.UnpinnedActions(), [_repo()], get_with_wf)
     assert failing["status"] == "fail" and failing["value"]["unpinned_uses"] == 1
+
+
+def test_the_default_branch_is_quoted_in_the_tree_request():
+    urls = []
+
+    def get(url, token):
+        urls.append(url)
+        return _tree("CODEOWNERS")
+
+    _run(h.HYGIENE_CHECKS[0](), [_repo("a", default_branch="main#2")], get)
+
+    assert urls and "/git/trees/main%232?recursive=1" in urls[0]

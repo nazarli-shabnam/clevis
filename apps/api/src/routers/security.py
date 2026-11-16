@@ -8,10 +8,11 @@ token resolution goes through `resolve_owner_token` rather than `require_org_rol
 
 import re
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from src.core.path_params import Owner, Repo
@@ -430,6 +431,11 @@ def org_dependabot_burndown(
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     db: Session = Depends(get_db),
 ):
+    # Open alerts always count; a closed one only matters while it can still show in the trend window (a
+    # closed alert whose close day is before the window contributes nothing), so older closed rows are
+    # not loaded.
+    window = max(1, min(days, dependabot_burndown.TREND_MAX_DAYS))
+    now = datetime.now(timezone.utc)
     rows = (
         db.query(
             SecurityAlert.repo,
@@ -439,7 +445,11 @@ def org_dependabot_burndown(
             SecurityAlert.created_at,
             SecurityAlert.updated_at,
         )
-        .filter(SecurityAlert.tenant_id == ctx.org.tenant_id, SecurityAlert.kind == "dependabot")
+        .filter(
+            SecurityAlert.tenant_id == ctx.org.tenant_id,
+            SecurityAlert.kind == "dependabot",
+            or_(SecurityAlert.state == "open", SecurityAlert.updated_at >= now - timedelta(days=window + 1)),
+        )
         .all()
     )
-    return dependabot_burndown.compute(rows, datetime.now(timezone.utc), days, dependabot_burndown.sla_days())
+    return dependabot_burndown.compute(rows, now, days, dependabot_burndown.sla_days())

@@ -8,6 +8,7 @@ import hashlib
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -19,9 +20,10 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from src.core.db import RepoEvent, RepoEventDailyCount, SessionLocal, get_db
-from src.core.rbac import OrgContext, require_org_role, set_tenant_session_context
-from src.repositories import installation_repo
+from src.core.auth import UserOut, current_revocation_key, current_session_claims, require_auth
+from src.core.db import RepoEvent, RepoEventDailyCount, RevokedToken, SessionLocal, User, get_db
+from src.core.rbac import _ROLE_RANK, OrgContext, require_org_role, set_tenant_session_context
+from src.repositories import installation_repo, tenant_repo
 from src.schemas.github import (
     ActivitySummaryEntry,
     ActivitySummaryResponse,
@@ -281,13 +283,52 @@ def _stream_poll_session():
         _teardown_stream_session(db)
 
 
-def _run_activity_summary_poll(session_scope, org_login: str, ctx: OrgContext, days: int) -> ActivitySummaryResponse:
+def _stream_authorization_check(
+    tenant_id: int,
+    user_id: int,
+    token_version: int,
+    revocation_key: str | None,
+    expires_at: float | None = None,
+):
+    """A per-poll recheck of what the stream was opened with: the session is not revoked ("sign out everywhere"
+    bumps token_version, a logout or revoke denylists the jti) and the user is still a member of the org.
+    Without it a removed member would keep receiving events until the 15-minute cap.
+
+    ``token_version`` and ``expires_at`` come from the verified JWT, not from a later database read: a revoke that
+    lands between authentication and the stream opening would otherwise become the baseline. A logout purges
+    denylist rows once their token has expired, so an expired token ends the stream even with no row to find."""
+
+    def check(db: Session) -> bool:
+        if expires_at is not None and time.time() >= expires_at:
+            return False
+        user = db.get(User, user_id)
+        if user is None or user.token_version != token_version:
+            return False
+        if revocation_key and db.get(RevokedToken, revocation_key) is not None:
+            return False
+        # Against the tenant the stream was opened for, not a fresh lookup by login (an org can be renamed).
+        membership = tenant_repo.get_membership(db, tenant_id, user_id)
+        return membership is not None and _ROLE_RANK.get(membership.role, -1) >= _ROLE_RANK["member"]
+
+    return check
+
+
+def _run_activity_summary_poll(
+    session_scope, org_login: str, ctx: OrgContext, days: int, still_authorized: Callable[[Session], bool] | None = None
+) -> ActivitySummaryResponse | None:
     """One snapshot read on its own session (see _stream_poll_session). Runs in a
     threadpool worker via anyio.to_thread; the SET LOCAL statement_timeout bounds a read
-    that blocks so stream cancellation isn't stuck waiting on Postgres."""
+    that blocks so stream cancellation isn't stuck waiting on Postgres. Returns None when
+    `still_authorized` says the stream's user may no longer read it."""
     with session_scope() as db:
+        # The tenant context first: the membership re-check reads RLS-protected `memberships`, which is empty
+        # for a session with no context (every stream would then end as unauthorized).
         set_tenant_session_context(db, ctx.org.tenant_id, ctx.membership.user_id)
+        # Before the authorization reads too: a lock on `users` or `memberships` would otherwise hold this poll's
+        # connection and thread past the bound.
         db.execute(text(f"SET LOCAL statement_timeout = {int(_SSE_SNAPSHOT_TIMEOUT_MS)}"))
+        if still_authorized is not None and not still_authorized(db):
+            return None
         return _activity_summary_snapshot(db, org_login, ctx, days)
 
 
@@ -298,6 +339,7 @@ async def _activity_summary_stream(
     poll_interval: float = _SSE_POLL_INTERVAL_SECONDS,
     *,
     session_scope=_stream_poll_session,
+    still_authorized: Callable[[Session], bool] | None = None,
 ):
     """Async SSE body generator. Uses `await asyncio.sleep` (not blocking `time.sleep`) so
     a stream open for up to _SSE_MAX_DURATION_SECONDS doesn't pin one of Starlette's shared
@@ -310,7 +352,12 @@ async def _activity_summary_stream(
     deadline = time.monotonic() + _SSE_MAX_DURATION_SECONDS
     last_key: tuple | None = None
     while time.monotonic() < deadline:
-        snapshot = await anyio.to_thread.run_sync(_run_activity_summary_poll, session_scope, org_login, ctx, days)
+        snapshot = await anyio.to_thread.run_sync(
+            _run_activity_summary_poll, session_scope, org_login, ctx, days, still_authorized
+        )
+        if snapshot is None:
+            yield 'event: unauthorized\ndata: {"detail": "Session or membership is no longer valid"}\n\n'
+            return
         key = (snapshot.connected, tuple(sorted((t.repo, t.event_type, t.count) for t in snapshot.totals)))
         if key != last_key:
             yield f"event: activity_summary\ndata: {snapshot.model_dump_json()}\n\n"
@@ -341,6 +388,9 @@ async def org_activity_summary_stream(
     org_login: str,
     days: int = _ACTIVITY_SUMMARY_DEFAULT_DAYS,
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
+    user: UserOut = Depends(require_auth),
+    revocation_key: str | None = Depends(current_revocation_key),
+    claims: dict = Depends(current_session_claims),
 ):
     """SSE channel pushing the same shape org_activity_summary returns, whenever it
     changes. See _activity_summary_stream.
@@ -355,7 +405,12 @@ async def org_activity_summary_stream(
         org=SimpleNamespace(id=ctx.org.id, tenant_id=ctx.org.tenant_id),
         membership=SimpleNamespace(user_id=ctx.membership.user_id),
     )
-    return StreamingResponse(_activity_summary_stream(org_login, detached, days), media_type="text/event-stream")
+    check = _stream_authorization_check(
+        ctx.org.tenant_id, user.id, claims.get("token_version", 0), revocation_key, claims.get("exp")
+    )
+    return StreamingResponse(
+        _activity_summary_stream(org_login, detached, days, still_authorized=check), media_type="text/event-stream"
+    )
 
 
 def _run_duration_seconds(run: dict) -> int | None:

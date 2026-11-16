@@ -142,11 +142,11 @@ def revoke_github_membership(
     Caller must have set app.tenant_id (memberships' RLS tenant clause)."""
     admins = _lock_admin_count(cur, tenant_id)
     cur.execute(
-        "SELECT m.id, m.role FROM memberships m JOIN users u ON u.id = m.user_id "
+        "SELECT m.id, m.role, m.user_id FROM memberships m JOIN users u ON u.id = m.user_id "
         "WHERE m.tenant_id = %(tenant_id)s AND m.source = 'github' AND u.github_user_id = %(gh_id)s",
         {"tenant_id": tenant_id, "gh_id": github_user_id},
     )
-    for membership_id, role in cur.fetchall():
+    for membership_id, role, user_id in cur.fetchall():
         if role == "admin":
             if admins <= 1:
                 _audit_refused_last_admin(
@@ -159,6 +159,25 @@ def revoke_github_membership(
             "INSERT INTO audit_logs (actor, action, target, payload, tenant_id, created_at) "
             "VALUES (%s, 'membership.github_revoked', %s, %s, %s, NOW())",
             (actor, login, json.dumps({"previous_role": role, "reason": reason}), tenant_id),
+        )
+        _revoke_creator_tokens(cur, tenant_id=tenant_id, user_id=user_id)
+
+
+def _revoke_creator_tokens(cur: psycopg.Cursor, *, tenant_id: int, user_id: int) -> None:
+    """Mirror of the API's ``api_token_repo.revoke_for_departed_creator``: if the org opted in, revoke the active
+    tokens the removed member created, auditing each. Caller must have set app.tenant_id."""
+    cur.execute(
+        "UPDATE api_tokens t SET revoked_at = NOW() "
+        "WHERE t.tenant_id = %(t)s AND t.created_by_user_id = %(u)s AND t.revoked_at IS NULL "
+        "AND EXISTS (SELECT 1 FROM orgs o WHERE o.tenant_id = t.tenant_id AND o.revoke_tokens_on_creator_leave) "
+        "RETURNING t.id, t.name",
+        {"t": tenant_id, "u": user_id},
+    )
+    for token_id, name in cur.fetchall():
+        cur.execute(
+            "INSERT INTO audit_logs (actor, action, target, payload, tenant_id, created_at) "
+            "VALUES ('system', 'api_token.auto_revoked', %s, %s, %s, NOW())",
+            (name, json.dumps({"token_id": token_id, "reason": "creator_left_org", "creator_user_id": user_id}), tenant_id),
         )
 
 

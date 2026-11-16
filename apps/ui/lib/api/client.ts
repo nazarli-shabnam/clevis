@@ -1,4 +1,6 @@
 import type {
+  GithubAppManifest,
+  GithubAppStatus,
   MyInvitation,
   PendingInstallation,
   NotificationDestination,
@@ -494,8 +496,10 @@ export const api = {
       ),
   },
   repos: {
-    list: (org: string, token: string) =>
-      post<RepoListResponse>(`/orgs/${encodeURIComponent(org)}/repos`, { token: token || undefined }),
+    // /me/repos/{owner} works for an org the caller belongs to and for a personal account, which has no
+    // Clevis org row for /orgs/{org}/repos to resolve.
+    list: (owner: string, token: string) =>
+      post<RepoListResponse>(`/me/repos/${encodeURIComponent(owner)}`, { token: token || undefined }),
     stats: (org: string, owner: string, repo: string, token: string) =>
       post<RepoStatsResponse>(
         `/orgs/${encodeURIComponent(org)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/stats`,
@@ -753,6 +757,12 @@ export const api = {
         ...(expiresInDays ? { expires_in_days: expiresInDays } : {}),
       }),
     revoke: (orgLogin: string, id: number) => del(`/orgs/${encodeURIComponent(orgLogin)}/api-tokens/${id}`),
+    policy: (orgLogin: string) =>
+      get<{ revoke_on_creator_leave: boolean }>(`/orgs/${encodeURIComponent(orgLogin)}/api-token-policy`),
+    setPolicy: (orgLogin: string, revokeOnCreatorLeave: boolean) =>
+      put<{ revoke_on_creator_leave: boolean }>(`/orgs/${encodeURIComponent(orgLogin)}/api-token-policy`, {
+        revoke_on_creator_leave: revokeOnCreatorLeave,
+      }),
   },
   orgs: {
     mine: () => get<MyOrgMembership[]>("/me/orgs"),
@@ -864,6 +874,13 @@ export const api = {
     resolve: (org: string) =>
       post<{ token: string }>("/tokens/resolve", { org }),
     delete: (org: string) => del(`/tokens/${encodeURIComponent(org)}`),
+  },
+  githubApp: {
+    status: () => get<GithubAppStatus>("/github-app"),
+    manifest: (body: { ui_origin: string; organization?: string; read_only?: boolean; name?: string; replace?: boolean }) =>
+      post<GithubAppManifest>("/github-app/manifest", body),
+    convert: (body: { code: string; state: string }) =>
+      post<{ slug: string; app_id: string }>("/github-app/manifest/convert", body),
   },
   config: {
     getAll: () => get<Record<string, string>>("/config"),

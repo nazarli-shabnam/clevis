@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, defer
 
 from src.core._sanitize import sanitize_error
 from src.core.db import Job
+from src.services import job_refresh
 
 
 def enqueue(
@@ -25,11 +26,21 @@ def enqueue(
     row that records why it exists."""
     job = Job(job_type=job_type, payload=json.dumps(payload), status=status, tenant_id=tenant_id)
     db.add(job)
+    db.flush()
+    field = job_refresh.ACCOUNT_FIELD.get(job_type)
+    if tenant_id is not None and field and isinstance(payload.get(field), str) and payload[field]:
+        # Lets the worker fetch a fresh installation token for exactly this job, tenant and account; see job_refresh.
+        expires_at = job_refresh.new_expiry()
+        signed = {
+            **payload,
+            job_refresh.EXP_FIELD: expires_at,
+            job_refresh.SIG_FIELD: job_refresh.sign(job.id, tenant_id, payload[field], expires_at),
+        }
+        job.payload = json.dumps(signed)
+        db.flush()
     if commit:
         db.commit()
         db.refresh(job)
-    else:
-        db.flush()
     return job.id
 
 

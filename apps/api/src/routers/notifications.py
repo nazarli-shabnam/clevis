@@ -237,6 +237,7 @@ def test_destination(
         {"org": ctx.org.github_login},
         email_allowed=notifications.allowed_emails_for(db, ctx.org.tenant_id, [dest]),
     )
+    notification_repo.record_delivery(db, dest.id, ok, detail)
     audit_repo.write(
         db,
         actor=user.email,

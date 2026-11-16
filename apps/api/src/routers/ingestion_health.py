@@ -18,6 +18,8 @@ from src.core.rbac import OrgContext, require_org_role
 router = APIRouter()
 
 _WINDOW = timedelta(hours=24)
+# Permanent losses (abandoned / dropped) stay on the card for a month, long enough to be noticed.
+_LOSS_LOOKBACK = timedelta(days=30)
 
 
 class IngestionHealth(BaseModel):
@@ -41,6 +43,13 @@ class IngestionHealth(BaseModel):
     dropped: int
     # Still waiting for the worker (status "queued").
     pending: int
+    # Rows still waiting for the worker (queued or queue_failed) however old, and the oldest one's received_at:
+    # a worker or Redis outage longer than the window must not look healthy.
+    backlog: int
+    oldest_backlog_at: datetime | None
+    # Deliveries permanently lost (abandoned or dropped) in the last `loss_lookback_days`.
+    loss_lookback_days: int
+    lost_recent: int
     # Last successful event backfill / gap-heal, and membership reconcile.
     last_backfill_at: datetime | None
     last_membership_reconcile_at: datetime | None
@@ -71,6 +80,20 @@ def ingestion_health(
         .group_by(WebhookDelivery.status)
         .all()
     )
+    backlog, oldest_backlog = (
+        db.query(func.count(), func.min(WebhookDelivery.received_at))
+        .filter(mine, WebhookDelivery.status.in_(("queued", "queue_failed")))
+        .one()
+    )
+    lost_recent = (
+        db.query(func.count())
+        .filter(
+            mine,
+            WebhookDelivery.status.in_(("queue_abandoned", "dropped")),
+            WebhookDelivery.received_at >= datetime.now(timezone.utc) - _LOSS_LOOKBACK,
+        )
+        .scalar()
+    )
     backfill = db.query(ActivitySyncCursor.last_synced_at).filter(ActivitySyncCursor.tenant_id == tenant_id).scalar()
     reconcile = (
         db.query(OrgMembershipSyncCursor.last_synced_at).filter(OrgMembershipSyncCursor.tenant_id == tenant_id).scalar()
@@ -86,6 +109,10 @@ def ingestion_health(
         queue_abandoned=by_status.get("queue_abandoned", 0),
         dropped=by_status.get("dropped", 0),
         pending=by_status.get("queued", 0),
+        backlog=backlog,
+        oldest_backlog_at=oldest_backlog,
+        loss_lookback_days=_LOSS_LOOKBACK.days,
+        lost_recent=lost_recent,
         last_backfill_at=backfill,
         last_membership_reconcile_at=reconcile,
     )

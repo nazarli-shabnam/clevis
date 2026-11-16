@@ -486,7 +486,7 @@ export default function PullRequestsPage() {
           </p>
         )}
         {!hasOrg ? (
-          <EmptyStateNoAccount bare message={scope?.kind === "personal" ? "This view lists organization repositories. Pick an organization from the profile menu." : undefined} />
+          <EmptyStateNoAccount bare orgOnly={scope?.kind === "personal"} message={scope?.kind === "personal" ? "This view lists organization repositories. Install the Clevis GitHub App on an organization, or pick one from the profile menu if you already have." : undefined} />
         ) : reposQuery.isError ? (
           <SectionError
             message={reposQuery.error instanceof Error ? reposQuery.error.message : "Failed to load repositories."}

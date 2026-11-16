@@ -91,6 +91,14 @@ describe("CachesPage", () => {
     expect(reposListMock).not.toHaveBeenCalled();
   });
 
+  it("explains that the list is organization-only for a personal scope and makes no calls", async () => {
+    localStorage.clear();
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "personal", login: "octocat" }));
+    renderPage();
+    expect(await screen.findByText(/This view lists organization repositories/)).toBeInTheDocument();
+    expect(reposListMock).not.toHaveBeenCalled();
+  });
+
   it("ranks repositories by cache size, biggest first, and shows totals", async () => {
     seed({ api: [entry(10 * MB, 1)], web: [entry(300 * MB, 1)], docs: [entry(50 * MB, 1)] });
     renderPage();

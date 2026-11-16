@@ -6,11 +6,13 @@ const feedMock = vi.fn();
 const markReadMock = vi.fn();
 const prefsMock = vi.fn();
 const setPrefsMock = vi.fn();
+const minesMock = vi.fn();
 let scope: { kind: "org" | "personal"; login: string } | null = { kind: "org", login: "acme" };
 
 vi.mock("@/lib/active-scope", () => ({ useActiveScope: () => ({ scope }) }));
 vi.mock("@/lib/api/client", () => ({
   api: {
+    orgs: { mine: (...a: unknown[]) => minesMock(...a) },
     notifications: {
       feed: (...a: unknown[]) => feedMock(...a),
       markRead: (...a: unknown[]) => markReadMock(...a),
@@ -43,9 +45,20 @@ describe("NotificationBell", () => {
     prefsMock.mockReset();
     setPrefsMock.mockReset();
     prefsMock.mockResolvedValue({ muted_kinds: [] });
+    minesMock.mockReset();
+    minesMock.mockResolvedValue([{ org_login: "acme", role: "member" }]);
     scope = { kind: "org", login: "acme" };
   });
   afterEach(cleanup);
+
+  it("hides the bell and skips the feed for an org scope held only through a saved token", async () => {
+    minesMock.mockResolvedValue([{ org_login: "other", role: "admin" }]);
+    wrap(<NotificationBell />);
+
+    await waitFor(() => expect(minesMock).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByRole("button", { name: /notifications/i })).not.toBeInTheDocument());
+    expect(feedMock).not.toHaveBeenCalled();
+  });
 
   it("shows the unread count on the bell and lists items when opened", async () => {
     feedMock.mockResolvedValue(feed([item("a", "critical_alert"), item("b", "score_drop", true)]));

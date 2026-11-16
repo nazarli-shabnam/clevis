@@ -85,6 +85,7 @@ class _FakeResponse:
         self.links = links or {}
         self.status_code = status_code
         self.headers = headers or {}
+        self.text = ""
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -207,6 +208,26 @@ def test_retry_delay_seconds_ignores_a_past_x_rate_limit_reset():
     resp = _FakeResponse({}, status_code=429, headers={"X-RateLimit-Reset": "999900"})
     with patch("backfill.time.time", return_value=1000000.0):
         assert backfill._retry_delay_seconds(resp, 0) == backfill._MAX_RETRY_AFTER_SECONDS
+
+
+def test_retry_delay_seconds_does_not_pace_a_5xx_by_x_rate_limit_reset():
+    # GitHub sends the rate-limit headers on every response; a 502 must back off 1-2 s, not sleep to the reset.
+    resp = _FakeResponse({}, status_code=502, headers={"X-RateLimit-Reset": "1000030"})
+    with patch("backfill.time.time", return_value=1000000.0):
+        assert backfill._retry_delay_seconds(resp, 1) == 2
+
+
+def test_a_headerless_secondary_rate_limit_403_is_not_skippable_so_the_job_is_requeued():
+    resp = _FakeResponse({}, status_code=403)
+    resp.text = '{"message": "You have exceeded a secondary rate limit. Please wait."}'
+    assert backfill._is_secondary_rate_limit(resp) is True
+    assert backfill._is_skippable(httpx.HTTPStatusError("x", request=MagicMock(), response=resp)) is False
+
+
+def test_a_plain_permission_403_is_still_skippable():
+    resp = _FakeResponse({}, status_code=403)
+    resp.text = '{"message": "Resource not accessible by integration"}'
+    assert backfill._is_skippable(httpx.HTTPStatusError("x", request=MagicMock(), response=resp)) is True
 
 
 def test_retry_delay_seconds_falls_back_to_exponential_for_a_plain_5xx():

@@ -25,7 +25,7 @@ vi.mock("@/lib/api/client", () => ({
     },
     orgMemberships: { list: vi.fn().mockResolvedValue([]), setRole: vi.fn(), remove: vi.fn() },
     waivers: { list: vi.fn().mockResolvedValue([]), create: vi.fn(), revoke: vi.fn() },
-    ingestionHealth: vi.fn().mockResolvedValue({ has_deliveries: true, has_webhook_deliveries: true, last_received_at: null, last_processed_at: null, window_hours: 24, received: 0, queue_failed: 0, queue_abandoned: 0, dropped: 0, pending: 0, last_backfill_at: null, last_membership_reconcile_at: null }),
+    ingestionHealth: vi.fn().mockResolvedValue({ has_deliveries: true, has_webhook_deliveries: true, last_received_at: null, last_processed_at: null, window_hours: 24, received: 0, queue_failed: 0, queue_abandoned: 0, dropped: 0, pending: 0, backlog: 0, oldest_backlog_at: null, loss_lookback_days: 30, lost_recent: 0, last_backfill_at: null, last_membership_reconcile_at: null }),
     invitations: {
       list: (...args: unknown[]) => listMock(...args),
       revoke: vi.fn(),
@@ -40,7 +40,7 @@ vi.mock("@/lib/api/client", () => ({
     },
     tokens: { resolve: vi.fn().mockRejectedValue(new Error("no saved token")) },
     notificationDestinations: { list: vi.fn().mockResolvedValue([]), create: vi.fn(), update: vi.fn(), test: vi.fn(), remove: vi.fn() },
-    apiTokens: { list: vi.fn().mockResolvedValue([]), create: vi.fn(), revoke: vi.fn() },
+    apiTokens: { list: vi.fn().mockResolvedValue([]), create: vi.fn(), revoke: vi.fn(), policy: vi.fn().mockResolvedValue({ revoke_on_creator_leave: false }), setPolicy: vi.fn() },
   },
 }));
 

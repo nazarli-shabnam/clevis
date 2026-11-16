@@ -23,7 +23,7 @@ jobs:
   triage:
     runs-on: ubuntu-latest
     permissions:
-      issues: write # labels/assignee/milestone on issues
+      issues: write # labels/milestone on issues (assignee on PRs only)
       pull-requests: write # ...and the same on PRs (pull_request_target)
     steps:
       - uses: actions/github-script@v9
@@ -96,8 +96,9 @@ jobs:
               }
             }
 
-            // 2. Assign the author (only if nobody is assigned yet)
-            if (!(item.assignees && item.assignees.length)) {
+            // 2. Assign the author of a pull request (only if nobody is assigned yet). Issues are left unassigned:
+            // reporting is not owning, and an outside reporter cannot be assigned anyway.
+            if (context.payload.pull_request && !(item.assignees && item.assignees.length)) {
               try {
                 const res = await github.rest.issues.addAssignees({ ...repo, issue_number, assignees: [author] });
                 // GitHub silently drops non-assignable users (non-collaborators)

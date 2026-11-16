@@ -125,7 +125,7 @@ def _alert(db, org, number, kind="dependabot", **kw):
             severity=kw.get("severity", "critical"),
             details={},
             created_at=now - timedelta(days=kw.get("age", 10)),
-            updated_at=now,
+            updated_at=now - timedelta(days=kw.get("closed_age", 0)),
         )
     )
     db.commit()
@@ -146,6 +146,27 @@ def test_endpoint_reports_only_this_orgs_dependabot_alerts(db, acme):
     assert critical["open"] == 1 and critical["breaches"] == 1 and critical["sla_days"] == 7
     assert [r["repo"] for r in body["repos"]] == ["acme/api"]
     assert len(body["trend"]) == 7
+
+
+def test_endpoint_trend_counts_recently_closed_alerts_and_ignores_long_closed_ones(db, acme):
+    _alert(db, acme, 1, state="closed", age=200, closed_age=3)  # open until 3 days ago: inside a 7-day window
+    _alert(db, acme, 2, state="closed", age=400, closed_age=300)  # long closed: contributes nothing
+    _alert(db, acme, 3, state="closed", age=500, closed_age=400)
+    db.execute(text(f"SET app.tenant_id = {int(acme.tenant_id)}"))
+
+    body = _client(db).get("/orgs/acme/security/dependabot-burndown?days=7").json()
+
+    open_critical = [point["critical"] for point in body["trend"]]
+    assert open_critical == [1, 1, 1, 0, 0, 0, 0]  # alert 1 only, until the day it closed
+    assert next(s for s in body["severities"] if s["severity"] == "critical")["open"] == 0
+
+
+def test_a_stored_sla_beyond_ten_years_falls_back_to_the_default(db, acme):
+    _alert(db, acme, 1, age=10)
+    db.execute(text(f"SET app.tenant_id = {int(acme.tenant_id)}"))
+    with patch("src.services.dependabot_burndown.get_config", side_effect=lambda k, d: "1000000"):
+        body = _client(db).get("/orgs/acme/security/dependabot-burndown").json()
+    assert next(s for s in body["severities"] if s["severity"] == "critical")["sla_days"] == 7
 
 
 def test_endpoint_uses_configured_sla_and_falls_back_on_bad_values(db, acme):

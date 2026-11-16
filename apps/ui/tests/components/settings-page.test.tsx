@@ -15,6 +15,7 @@ const patchMeMock = vi.fn();
 const revokeSessionsMock = vi.fn();
 const sessionsMock = vi.fn();
 const configUpdateMock = vi.fn();
+const githubAppStatusMock = vi.fn();
 const routerReplace = vi.fn();
 const meMock = vi.fn();
 let searchParams = new URLSearchParams();
@@ -43,6 +44,7 @@ vi.mock("@/lib/api/client", () => ({
       upsert: (...args: unknown[]) => tokensUpsertMock(...args),
       delete: (...args: unknown[]) => tokensDeleteMock(...args),
     },
+    githubApp: { status: (...args: unknown[]) => githubAppStatusMock(...args) },
     config: {
       getAll: (...args: unknown[]) => configGetAllMock(...args),
       update: (...args: unknown[]) => configUpdateMock(...args),
@@ -121,6 +123,10 @@ describe("SettingsPage", () => {
     meMock.mockReset();
     meMock.mockResolvedValue({ id: 1, email: "admin@example.com", name: "Admin", github_login: null });
     configUpdateMock.mockReset();
+    githubAppStatusMock.mockReset();
+    githubAppStatusMock.mockResolvedValue({
+      source: "none", configured: false, app_id: null, slug: null, permissions: {}, read_only_permissions: {}, events: [],
+    });
     routerReplace.mockClear();
     searchParams = new URLSearchParams();
     localStorage.clear();
@@ -301,6 +307,27 @@ describe("SettingsPage", () => {
     fireEvent.click(within(row).getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(configUpdateMock).toHaveBeenCalledWith("digest_cadence", "weekly"));
+  });
+
+  it("keeps the saved value shown from the PUT response, not a cached pre-save config (#1081)", async () => {
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([]);
+    // GET keeps answering with the old map (as the within-staleTime cache would); only PUT knows the new one.
+    configGetAllMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true", digest_cadence: "off" });
+    configUpdateMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true", digest_cadence: "weekly" });
+
+    renderPage();
+
+    const cadence = (await screen.findAllByDisplayValue("Off"))[0] as HTMLSelectElement;
+    fireEvent.change(cadence, { target: { value: "weekly" } });
+    const row = cadence.closest("div")!.parentElement!;
+    fireEvent.click(within(row).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(configUpdateMock).toHaveBeenCalledWith("digest_cadence", "weekly"));
+    await waitFor(() => expect(within(row).queryByRole("button", { name: "Saving..." })).not.toBeInTheDocument());
+    expect(cadence.value).toBe("weekly");
+    expect(configGetAllMock).toHaveBeenCalledTimes(1);
   });
 
   it("saves the visible cadence value even when it was never in the server config", async () => {
@@ -770,6 +797,30 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("button", { name: /sign out of all devices/i })).toBeEnabled();
   });
 
+  it("asks for confirmation, naming the org, before deleting a saved token (#1088)", async () => {
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([
+      { org: "acme", label: null, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" },
+    ]);
+    configGetAllMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true" });
+    tokensDeleteMock.mockResolvedValue(undefined);
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete token for acme" }));
+    expect(await screen.findByText(/saved token for acme is removed and cannot be recovered/i)).toBeInTheDocument();
+    expect(tokensDeleteMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByText(/cannot be recovered/i)).not.toBeInTheDocument());
+    expect(tokensDeleteMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete token for acme" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete token" }));
+    await waitFor(() => expect(tokensDeleteMock).toHaveBeenCalledWith("acme"));
+  });
+
   it("reports a failed saved-token delete on its own row without locking the other rows", async () => {
     orgsMineMock.mockResolvedValue([]);
     installationsListMock.mockResolvedValue([]);
@@ -787,7 +838,11 @@ describe("SettingsPage", () => {
     const deleteAcme = await screen.findByRole("button", { name: "Delete token for acme" });
     const deleteBeta = screen.getByRole("button", { name: "Delete token for beta" });
     fireEvent.click(deleteAcme);
+    fireEvent.click(await screen.findByRole("button", { name: "Delete token" }));
+    await waitFor(() => expect(deleteAcme).toBeDisabled());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Delete token" })).not.toBeInTheDocument());
     fireEvent.click(deleteBeta);
+    fireEvent.click(await screen.findByRole("button", { name: "Delete token" }));
     await waitFor(() => expect(deleteAcme).toBeDisabled());
     expect(deleteBeta).toBeDisabled();
 

@@ -18,6 +18,7 @@ import httpx
 import jwt
 
 from src.core.config import settings
+from src.services import github_app_credentials
 
 _OAUTH_SCOPE = "read:user user:email read:org"
 _STATE_TTL_SECONDS = 600  # 10 minutes between /login and /callback
@@ -42,18 +43,18 @@ class GitHubOAuthError(RuntimeError):
 
 
 def _require_client() -> tuple[str, str]:
-    client_id = settings.github_app_client_id
-    client_secret = settings.github_app_client_secret
+    client_id = github_app_credentials.client_id()
+    client_secret = github_app_credentials.client_secret()
     if not client_id or not client_secret:
         raise GitHubOAuthNotConfigured(
             "GITHUB_APP_CLIENT_ID and GITHUB_APP_CLIENT_SECRET must be set for GitHub login"
         )
-    return client_id, client_secret.get_secret_value()
+    return client_id, client_secret
 
 
 def is_configured() -> bool:
     """Whether "Sign in with GitHub" can start at all (client id and secret are set)."""
-    return bool(settings.github_app_client_id and settings.github_app_client_secret)
+    return bool(github_app_credentials.client_id() and github_app_credentials.client_secret())
 
 
 def _web_base() -> str:
