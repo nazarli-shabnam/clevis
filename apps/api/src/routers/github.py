@@ -309,9 +309,11 @@ def _run_activity_summary_poll(
     that blocks so stream cancellation isn't stuck waiting on Postgres. Returns None when
     `still_authorized` says the stream's user may no longer read it."""
     with session_scope() as db:
+        # The tenant context first: the membership re-check reads RLS-protected `memberships`, which is empty
+        # for a session with no context (every stream would then end as unauthorized).
+        set_tenant_session_context(db, ctx.org.tenant_id, ctx.membership.user_id)
         if still_authorized is not None and not still_authorized(db):
             return None
-        set_tenant_session_context(db, ctx.org.tenant_id, ctx.membership.user_id)
         db.execute(text(f"SET LOCAL statement_timeout = {int(_SSE_SNAPSHOT_TIMEOUT_MS)}"))
         return _activity_summary_snapshot(db, org_login, ctx, days)
 
