@@ -24,6 +24,7 @@ _SKIPPED = frozenset({
     "tenants", "orgs", "memberships", "github_installations",
     "security_alerts", "org_members", "repo_collaborators", "activity_sync_cursors", "org_membership_sync_cursors",
     "automation_repo_settings", "repo_event_daily_counts", "repo_events", "security_alert_syncs",
+    "repo_move_edges",
 })
 
 

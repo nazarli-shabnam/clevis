@@ -247,6 +247,20 @@ class SecurityAlertSync(Base):
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class RepoMoveEdge(Base):
+    """One `old -> new` ``owner/name`` move of a GitHub repository (by its stable numeric id), lowercased
+    (migration 0090). Lets the repository.renamed/transferred handler apply moves that arrive out of order
+    and recover a transfer-and-rename's old name."""
+
+    __tablename__ = "repo_move_edges"
+
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), primary_key=True)
+    github_repo_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    old_name: Mapped[str] = mapped_column(String, primary_key=True)
+    new_name: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class OrgMember(Base):
     """Current org membership (row deleted on member_removed), populated from `organization` webhooks.
 
