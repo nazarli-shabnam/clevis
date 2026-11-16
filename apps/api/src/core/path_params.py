@@ -34,3 +34,6 @@ Repo = Annotated[str, _matching(REPO_NAME_RE, "repository name")]
 # Integer row ids in path segments: the backing columns are 32-bit ``INTEGER``, so a larger value
 # would reach the database as an out-of-range comparison (an unhandled 500) instead of a clean 404.
 RowId = Annotated[int, Path(ge=1, le=2_147_483_647)]
+
+# GitHub logins share Owner's alphabet; used where a login is interpolated into a GitHub URL.
+Username = Annotated[str, _matching(OWNER_RE, "username")]

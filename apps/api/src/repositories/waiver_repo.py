@@ -3,7 +3,7 @@
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from src.core.db import CheckWaiver
@@ -77,3 +77,22 @@ def create(db: Session, **fields) -> CheckWaiver:
 def delete(db: Session, waiver: CheckWaiver) -> None:
     db.delete(waiver)
     db.flush()
+
+
+def rename_repo(db: Session, tenant_id: int, old_name: str, new_name: str) -> int:
+    """Rewrite a renamed repository inside the tenant's repo-scoped waivers (names match case-insensitively).
+    Returns the number of waivers changed. Does not commit."""
+    result = db.execute(
+        text(
+            """
+            UPDATE check_waivers
+            SET repos = ARRAY(
+                SELECT DISTINCT CASE WHEN lower(r) = :old THEN :new ELSE r END FROM unnest(repos) AS r
+            )
+            WHERE tenant_id = :tenant_id AND repos IS NOT NULL
+              AND :old = ANY (SELECT lower(x) FROM unnest(repos) AS x)
+            """
+        ),
+        {"tenant_id": tenant_id, "old": old_name.lower(), "new": new_name},
+    )
+    return result.rowcount

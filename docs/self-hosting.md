@@ -26,6 +26,7 @@ This is the infrastructure/ops guide — getting the Clevis stack itself running
    - **Webhook events** — subscribe to `Dependabot alert`, `Code scanning alert`, and `Secret scanning alert`, and grant the matching read-only permissions (**Dependabot alerts**, **Code scanning alerts**, **Secret scanning alerts**) under "Permissions & events". Without these, `POST /webhooks/github` never receives `dependabot_alert`/`code_scanning_alert`/`secret_scanning_alert` deliveries at all — GitHub only sends events an App is both permitted to read and subscribed to, silently, with no error on either side. These feed the Security dashboard's per-repo alert data — `apps/worker/src/event_consumer.py` normalizes them into `security_alerts` (post-S6 PR 2).
    - Also subscribe to `Member` and `Organization` — these need only the **Members** organization permission set to **Read-only**. Feeds the Collaborators dashboard's org-membership/repo-access data — normalized into `org_members`/`repo_collaborators` (post-S6 Collaborators PR 1). Don't subscribe to `Membership`/`Team`: `POST /webhooks/github` doesn't ingest them (issue #411 — team-based repo access has no normalizer yet, and ingesting with nothing to consume them just accumulated unbounded rows), so GitHub deliveries for them would only add noise with nothing on the Clevis side reading it.
    - Also subscribe to `Push`, `Pull request`, `Issues`, `Release`, and `Create` (needs the **Contents**, **Pull requests**, **Issues**, and **Metadata** repository permissions at **Read-only**). `apps/worker/src/event_consumer.py` normalizes these into `repo_events`, which powers the Activity Feed and the commit heatmap / Overview aggregates. Without them the Activity Feed still works but falls back to a rate-limited live GitHub read (only the last ~30 org events, no history), and the heatmap/aggregates stay sparse — they're only otherwise seeded by the one-time install-time backfill, which ages out.
+   - Also subscribe to `Repository` (needs only the **Metadata** repository permission). When a repo is renamed or transferred, Clevis rewrites the repo names in its scoped check waivers and its PR-nudge / Dependabot-triage opt-ins; without the event they silently stop applying to the repo's new name. The event is acted on directly and not stored.
    - Grant read access to the repository/organization data the security checks and dashboards need: **Contents**, **Metadata**, **Administration**, **Pull requests**, **Issues** and **Actions** (workflow runs, Actions cache list) repository permissions, and **Members** organization permission, all at **Read-only**.
    - **Optional — Clear Actions caches:** the repo Cache page's "Clear caches" needs the **Actions** repository permission at **Read and write**.
    - **Optional — Actions-minutes usage card (issue #294):** to show the Overview page's "Actions Usage" card, grant the App the organization **Administration** permission at **Read-only** (this is what gates `GET /organizations/{org}/settings/billing/usage/summary`, the enhanced-billing usage API — the older `/settings/billing/actions` endpoint it used to call was retired by GitHub on 2025-09-26). Billing data was an explicitly deferred roadmap area; without this permission the card just doesn't render (the API returns a 400 and the query fails silently). No write access is needed.
@@ -242,6 +243,54 @@ docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\du
 5. Confirm: neither service logs the `NOT enforced` warning, `/healthz` is ok, and sign-in, the Overview page and a scan work. A `permission denied for table ...` error in the API or worker log means a grant is missing: re-run the provisioning script for that role (new tables added by later migrations need their grants too).
 
 **Roll back.** Unset `API_DB_PASSWORD` / `WORKER_DB_PASSWORD` and restart. The services go back to connecting as `DB_USER`, as before. The `clevis_api` / `clevis_worker` roles stay valid logins with their old passwords; if you want them gone, `ALTER ROLE clevis_api NOLOGIN` (and the same for `clevis_worker`) or drop them once nothing uses them.
+
+## Secrets, backups and upgrades
+
+### What `AUTH_SECRET` and `JOB_SECRET_KEY` protect
+
+Clevis has two long-lived secrets in `.env`. Neither can be recovered from the database, so keep a copy of both somewhere other than the server (a password manager or your secrets store).
+
+| Secret | Protects | If you change or lose it |
+|--------|----------|--------------------------|
+| `AUTH_SECRET` (at least 32 characters) | Signs every session token, the GitHub sign-in `state`, and the password-reset and email-change links. | Everyone is signed out; sign-in links already in flight (GitHub sign-in started, reset or email-change emails already sent) stop working. Nothing stored is lost: API tokens, the badge, connected orgs and all data are unaffected, and users just sign in again. |
+| `JOB_SECRET_KEY` | Derives the key that encrypts tokens saved in Settings, notification destinations (webhook URL, signing secret, email recipients) and the GitHub token inside each queued job. The API and the worker must have the same value. | Nothing is deleted, but the encrypted values become unreadable: saved tokens are treated as absent (an org that only has a saved token stops resolving a GitHub token), every destination fails to send (each attempt is audited as `notification.sent` with `ok: false`), and jobs queued before the change fail to decrypt. The database keeps the old ciphertext, so restoring the old key brings everything back. |
+
+`JOB_SECRET_KEY` is not versioned: there is no way to run two keys at once, so a rotation is a re-entry of the encrypted values, not a transparent re-encryption.
+
+### Rotating `AUTH_SECRET`
+
+1. Generate a new value (`openssl rand -hex 32`) and put it in `.env`.
+2. Restart the API (`docker compose up -d api`). The worker does not read it.
+3. Tell users they will be asked to sign in again. Do this at a quiet time; there is nothing to migrate.
+
+### Rotating `JOB_SECRET_KEY`
+
+1. Make sure you still have what you are about to re-enter: the GitHub token behind each saved token (Settings, saved tokens; a workspace admin can load it before the change), and each notification destination's webhook URL / signing secret / recipients (these are write-only and never shown again).
+2. Let the queue drain, or accept that unfinished jobs will fail: `docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT status, count(*) FROM jobs WHERE status IN ('"'"'queued'"'"','"'"'processing'"'"') GROUP BY 1"'`.
+3. Set the new value in `.env` and restart the API and the worker together (`docker compose up -d api worker`). They must never run with different values.
+4. Re-save each saved token in Settings, and re-enter the URL (and secret, for signed webhooks) or recipients of each notification destination (edit it and fill the field). A destination that cannot be decrypted keeps failing to send until you do.
+5. Re-run anything that failed while the key was changing (cache clears and backfills are enqueued again from the UI; the sweeps re-enqueue backfills on their own).
+
+If you rotate by accident or lose the new value, putting the previous `JOB_SECRET_KEY` back and restarting recovers everything you have not re-entered yet (step 4): until then nothing was overwritten. A value re-saved under the new key is encrypted with it and replaces the old ciphertext, so the previous key can no longer read it; after re-entering, recover it from the database backup taken before the rotation, or enter it again.
+
+### Backup and restore
+
+Back up two things together: the Postgres database and your `.env` (at minimum `JOB_SECRET_KEY`, `AUTH_SECRET` and the GitHub App values). A database backup without `JOB_SECRET_KEY` restores fine but leaves the encrypted values unreadable, as above. Redis holds only the webhook queue (every delivery is also stored in `webhook_deliveries`, and the re-enqueue sweep recovers rows that missed the queue), so it does not need a backup.
+
+```bash
+# Backup (run on the host; writes a plain-SQL dump)
+docker compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > clevis-$(date +%F).sql
+```
+
+To restore onto a fresh volume: set the same `.env` (the same `DB_*`, `API_DB_PASSWORD` / `WORKER_DB_PASSWORD` and both secrets), start only the database (`docker compose up -d db`; on a new volume this runs the role-creation scripts, which the dump's `GRANT`s need to exist), load the dump (`docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" "$POSTGRES_DB"' < clevis-YYYY-MM-DD.sql`), then `docker compose up -d`. Test a restore before you need one.
+
+### Upgrading
+
+1. Back up the database (above) and note the current commit.
+2. `git pull`, then `docker compose up -d --build`. The UI image bakes in `NEXT_PUBLIC_*` values at build time, so rebuild it rather than only pulling.
+3. Database migrations run automatically when the API container starts (`alembic upgrade head` in `apps/api/entrypoint.sh`, as the `DB_USER` credential). The worker only starts once the API reports healthy, but that ordering does not stop a worker that is already running while the API container is replaced and migrates. Stop it first with `docker compose stop worker` (before step 2), and start it again with `docker compose up -d worker` once the API reports healthy; watch the API logs (`docker compose logs -f api`) until `/healthz` is ok.
+4. Migrations only move forward. To roll back after a bad upgrade, restore the pre-upgrade backup together with the previous commit; do not run `alembic downgrade` against production data.
+5. If you use the dedicated database roles, a `permission denied for table ...` error after an upgrade means a grant is missing: re-run the provisioning script for that role (see "Enabling Row-Level Security enforcement").
 
 ## Observability
 

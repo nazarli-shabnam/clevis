@@ -32,6 +32,7 @@ from src.schemas.invitation import (
     InvitationCreateResponse,
     InvitationOut,
     InvitationPreview,
+    MyInvitation,
 )
 from src.services import email
 
@@ -406,6 +407,23 @@ def resend_invitation(
             detail="The email couldn't be sent. The previous link no longer works; use Regenerate link to get a new one.",
         )
     return invitation
+
+
+@router.get("/invitations/mine", response_model=list[MyInvitation])
+def my_invitations(user: UserOut = Depends(require_auth), db: Session = Depends(get_db)):
+    """Pending invitations for the caller's own address, with their accept tokens, so an invitee who lost the link
+    (or only just verified their email) can still accept. Empty until the email is verified: the mailbox is
+    what entitles someone to the token. Declared before ``/invitations/{token}`` so ``mine`` is not read as one."""
+    db_user = db.query(User).filter(User.id == user.id).first()
+    if db_user is None or not db_user.email_verified:
+        return []
+    invitations = invitation_repo.list_pending_for_email(db, db_user.email)
+    orgs = {o.id: o for o in db.query(Org).filter(Org.id.in_([i.org_id for i in invitations])).all()} if invitations else {}
+    return [
+        MyInvitation(org_login=orgs[i.org_id].github_login, token=i.token, expires_at=i.expires_at)
+        for i in invitations
+        if i.org_id in orgs
+    ]
 
 
 @router.get("/invitations/{token}", response_model=InvitationPreview)
