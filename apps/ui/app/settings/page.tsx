@@ -513,6 +513,8 @@ function SavedTokensSection() {
   // one row's request can't lock the others, and each failure is reported on its own row.
   const [deletingOrgs, setDeletingOrgs] = useState<Set<string>>(() => new Set())
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({})
+  // The saved secret cannot be recovered once deleted, so the row's trash button asks first.
+  const [confirmDeleteOrg, setConfirmDeleteOrg] = useState<string | null>(null)
 
   const remove = useMutation({
     mutationFn: (org: string) => api.tokens.delete(org),
@@ -592,7 +594,7 @@ function SavedTokensSection() {
                   </td>
                   <td className="px-4 py-2.5 text-right">
                     <button
-                      onClick={() => remove.mutate(t.org)}
+                      onClick={() => setConfirmDeleteOrg(t.org)}
                       disabled={deletingOrgs.has(t.org)}
                       className="text-muted-foreground hover:text-destructive transition-colors"
                       aria-label={`Delete token for ${t.org}`}
@@ -606,6 +608,22 @@ function SavedTokensSection() {
           </table>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmDeleteOrg !== null}
+        onOpenChange={(open) => { if (!open) setConfirmDeleteOrg(null) }}
+        title="Delete this saved token?"
+        description={
+          confirmDeleteOrg
+            ? `The saved token for ${confirmDeleteOrg} is removed and cannot be recovered. Anything that relies on it stops working until you add a token again.`
+            : ""
+        }
+        confirmLabel="Delete token"
+        onConfirm={() => {
+          if (confirmDeleteOrg) remove.mutate(confirmDeleteOrg)
+          setConfirmDeleteOrg(null)
+        }}
+      />
 
       <div className="border-t border-border p-4">
         <p className="text-xs font-medium text-foreground mb-3">Add token</p>
