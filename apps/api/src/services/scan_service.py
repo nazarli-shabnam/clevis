@@ -47,7 +47,16 @@ def comparable_scans(previous: dict, result: dict) -> bool:
     return scored_ids(previous["checks"]) == scored_ids(result["checks"])
 
 
-def persist_scan_and_alert(db: Session, org, result: dict, tenant_id: int, *, actor: str = "system") -> dict | None:
+def persist_scan_and_alert(
+    db: Session,
+    org,
+    result: dict,
+    tenant_id: int,
+    *,
+    actor: str = "system",
+    scanned_by_user_id: int | None = None,
+    owner: str | None = None,
+) -> dict | None:
     """Store an org scan and alert if it dropped from the org's previous one.
 
     The baseline matches on tenant and case-insensitive owner, so scans typed in different casing (UI
@@ -62,7 +71,7 @@ def persist_scan_and_alert(db: Session, org, result: dict, tenant_id: int, *, ac
     baseline = previous
     if previous and not scan_results_repo.is_clean_baseline(previous):
         baseline = scan_results_repo.latest_without_errors(db, org.github_login, tenant_id)
-    persist_scan(db, result, tenant_id=tenant_id)
+    persist_scan(db, result, tenant_id=tenant_id, scanned_by_user_id=scanned_by_user_id, owner=owner)
     if baseline and comparable_scans(baseline, result):
         notify_score_drop_best_effort(db, org, baseline["score"], result["score"], actor=actor)
     return previous
