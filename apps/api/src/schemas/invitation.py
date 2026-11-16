@@ -12,6 +12,15 @@ InvitationStatus = Literal["pending", "accepted", "revoked", "expired"]
 EmailStatus = Literal["sent", "failed", "limited", "unconfirmed"]
 
 
+class MyInvitation(BaseModel):
+    """A pending invitation addressed to the signed-in, email-verified caller. ``token`` is the accept capability
+    (the same one the emailed link carries): safe to show only because the caller owns the mailbox."""
+
+    org_login: str
+    token: str
+    expires_at: datetime
+
+
 class InvitationCreate(BaseModel):
     email: EmailStr
     # Opt in to emailing the link too (needs SMTP). Off by default: the link is always returned to copy.

@@ -85,6 +85,13 @@ export type AlertEvent =
   | "automation_failed"
   | "sla_breach"
 
+/** A pending invitation addressed to the signed-in, verified user; `token` is the accept link's token. */
+export interface MyInvitation {
+  org_login: string
+  token: string
+  expires_at: string
+}
+
 export interface NotificationDestination {
   id: number
   kind: DestinationKind

@@ -4,7 +4,7 @@ from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from src.core.db import ActivitySyncCursor, GitHubInstallation, Org, OrgMembershipSyncCursor, ScanResult
+from src.core.db import ActivitySyncCursor, GitHubInstallation, Org, OrgMembershipSyncCursor, SavedToken, ScanResult
 from src.repositories import tenant_repo
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,8 @@ def _apply_rename(db: Session, org: Org, new_login: str) -> None:
     Installation lookups (token resolution) match ``account_login`` and scan history, export, digest
     and the public badge match ``scan_results.owner``, so leaving either on the old login orphans
     them after a rename. The sync cursors cache the login too, and the gap-heal and membership-reconcile
-    sweeps resolve a token from it. Scans an org member ran from their personal tenant keep the old owner."""
+    sweeps resolve a token from it. The PAT saved for the org is keyed by login too (``saved_tokens.org``);
+    for a PAT-only org it is the only token source. Scans an org member ran from their personal tenant keep the old owner."""
     old_login = org.github_login
     org.github_login = new_login
     if org.tenant_id is not None:
@@ -83,6 +84,15 @@ def _apply_rename(db: Session, org: Org, new_login: str) -> None:
         db.query(OrgMembershipSyncCursor).filter(OrgMembershipSyncCursor.tenant_id == org.tenant_id).update(
             {OrgMembershipSyncCursor.org_login: new_login}, synchronize_session=False
         )
+        # saved_tokens.org is unique. RLS hides other tenants' rows, so a pre-check could miss a token saved
+        # under the new login; try the move in a savepoint and leave the old row if the name is taken.
+        try:
+            with db.begin_nested():
+                db.query(SavedToken).filter(
+                    SavedToken.tenant_id == org.tenant_id, func.lower(SavedToken.org) == old_login.lower()
+                ).update({SavedToken.org: new_login}, synchronize_session=False)
+        except IntegrityError:
+            logger.warning("saved token for %r not moved: a token already exists under %r", old_login, new_login)
     db.commit()
     db.refresh(org)
 
