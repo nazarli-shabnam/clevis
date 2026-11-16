@@ -14,7 +14,9 @@ It follows scheduled_scan_sweep.py and keeps its safety rails, because it writes
 - a run in which any repository or PR errored is recorded as failed (retried after FAILURE_RETRY), not as a
   success that would hold the rest back for a whole cadence; a missing/unmintable token is recorded the same
   way, so such orgs cannot occupy every per-tick slot;
-- when an org enables more than MAX_REPOS_PER_RUN repos, each run takes the next window of them.
+- when an org enables more than MAX_REPOS_PER_RUN repos, each run takes the next window of them;
+- a repo GitHub answers 404 or 301 for (deleted, removed from the installation, or renamed) is a stale opt-in:
+  it is audited and skipped, not counted as a failure, so it cannot fail every run of the org.
 The nudge mode (``pr_nudge_mode``) and stale-days settings apply as for a manual nudge. Mode ``off`` runs
 nothing and records nothing, so the first run after it is turned on is not held back by a skipped one.
 """
@@ -67,20 +69,30 @@ def _repo_parts(full_repo: str) -> tuple[str, str]:
     return owner, name
 
 
+# Deleted or no longer visible to the installation (404), or renamed/transferred (301, not followed).
+_STALE_REPO_STATUSES = (301, 404)
+
+
+def _is_stale_repo(exc: Exception) -> bool:
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in _STALE_REPO_STATUSES
+
+
 def _run_pr_nudges(db: Session, client: GitHubClient, tenant_id: int, org_login: str, repos: list, actor: str) -> dict:
     mode = get_config(pr_nudge.MODE_KEY, pr_nudge.DEFAULT_MODE)
     stale_days = pr_nudge.configured_stale_days()
-    nudged_total, failed = 0, 0
+    nudged_total, failed, stale = 0, 0, 0
     for setting in repos:
         owner, name = _repo_parts(setting.repo)
         try:
             results = pr_nudge.run_nudge_sweep(client, owner, name, stale_days=stale_days, mode=mode)
         except (httpx.HTTPStatusError, httpx.RequestError) as exc:
-            failed += 1
-            audit_repo.write(
-                db, actor, "pr_nudge.sweep", setting.repo,
-                {"mode": mode, "stale_days": stale_days, "error": type(exc).__name__}, tenant_id=tenant_id,
-            )
+            payload = {"mode": mode, "stale_days": stale_days, "error": type(exc).__name__}
+            if _is_stale_repo(exc):
+                stale += 1
+                payload["stale_repo"] = exc.response.status_code
+            else:
+                failed += 1
+            audit_repo.write(db, actor, "pr_nudge.sweep", setting.repo, payload, tenant_id=tenant_id)
             continue
         acted = [asdict(r) for r in results if r.action in ("commented", "labeled", "error")]
         if any(r["action"] == "error" for r in acted):
@@ -98,13 +110,13 @@ def _run_pr_nudges(db: Session, client: GitHubClient, tenant_id: int, org_login:
             logger.exception("stale PR summary alert failed for %s", setting.repo)
     if failed:
         raise RuntimeError(f"{failed} of {len(repos)} repositories failed")
-    return {"repos": len(repos), "nudged": nudged_total, "failed": failed}
+    return {"repos": len(repos), "nudged": nudged_total, "failed": failed, "stale": stale}
 
 
 def _run_dependabot_triage(
     db: Session, client: GitHubClient, tenant_id: int, org_login: str, repos: list, actor: str
 ) -> dict:
-    acted, failed = 0, 0
+    acted, failed, stale = 0, 0, 0
     for setting in repos:
         owner, name = _repo_parts(setting.repo)
         try:
@@ -115,6 +127,13 @@ def _run_dependabot_triage(
                 dry_run=False,
             )
         except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            if _is_stale_repo(exc):
+                stale += 1
+                audit_repo.write(
+                    db, actor, "dependabot_triage.stale_repo", setting.repo,
+                    {"reason": type(exc).__name__, "status": exc.response.status_code}, tenant_id=tenant_id,
+                )
+                continue
             failed += 1
             audit_repo.write(
                 db, actor, "dependabot_triage.error", setting.repo, {"reason": type(exc).__name__}, tenant_id=tenant_id
@@ -131,7 +150,7 @@ def _run_dependabot_triage(
             )
     if failed:
         raise RuntimeError(f"{failed} of {len(repos)} repositories failed")
-    return {"repos": len(repos), "acted": acted, "failed": failed}
+    return {"repos": len(repos), "acted": acted, "failed": failed, "stale": stale}
 
 
 @dataclass(frozen=True)
