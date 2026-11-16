@@ -1,5 +1,7 @@
 """Creating the GitHub App from Settings (manifest flow) and reading its credentials from the database."""
 
+import contextlib
+from itertools import count
 from unittest.mock import patch
 
 import httpx
@@ -35,8 +37,18 @@ def _no_env_app(monkeypatch):
     github_app.clear_cache()
 
 
+@pytest.fixture(autouse=True)
+def _resolver_reads_the_test_session(db, monkeypatch):
+    """The resolver opens its own session in production; the test's rows live in an uncommitted transaction that a
+    second connection cannot see, so hand it the test session."""
+    monkeypatch.setattr(github_app_credentials, "SessionLocal", lambda: contextlib.nullcontext(db))
+
+
+_emails = count(1)
+
+
 def _user(db, admin=True) -> UserOut:
-    row = User(email=f"{'a' if admin else 'm'}@example.com", name=None, password_hash=None, is_workspace_admin=admin)
+    row = User(email=f"gha{next(_emails)}@example.com", name=None, password_hash=None, is_workspace_admin=admin)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -199,7 +211,7 @@ def test_the_environment_wins_field_by_field_over_the_stored_app(db, monkeypatch
 def test_a_state_from_another_admin_or_a_replay_without_confirmation_is_refused(db):
     first = _user(db)
     state = _manifest(_client(db, first)).json()["state"]
-    other = User(email="b@example.com", name=None, password_hash=None, is_workspace_admin=True)
+    other = User(email=f"gha{next(_emails)}@example.com", name=None, password_hash=None, is_workspace_admin=True)
     db.add(other)
     db.commit()
     db.refresh(other)

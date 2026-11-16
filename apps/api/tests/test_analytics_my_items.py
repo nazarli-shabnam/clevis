@@ -244,7 +244,8 @@ def test_page_times_per_page_over_1000_returns_empty_without_calling_github(http
     assert body == {"items": [], "total_count": 1000, "page": 11, "per_page": 100, "identity_unresolved": False}
 
 
-def test_search_failure_degrades_to_empty_not_500(http):
+def test_search_failure_is_a_github_error_not_an_empty_list(http):
+    # A failed search used to answer 200 with no items, which the page showed as "nothing open" (#1083).
     def _request_side_effect(method, path, params=None):
         if path == "/user":
             return {"login": "octocat"}
@@ -263,10 +264,8 @@ def test_search_failure_degrades_to_empty_not_500(http):
         mock_client.return_value.request.side_effect = _request_side_effect
         resp = http.get("/me/github/my-prs?owner=acme")
 
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["items"] == []
-    assert body["total_count"] == 0
+    assert resp.status_code == 400
+    assert "403" in resp.json()["detail"] and "items" not in resp.json()
 
 
 def test_non_dict_search_response_degrades_to_empty(http):
