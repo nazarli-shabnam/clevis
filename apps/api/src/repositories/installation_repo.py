@@ -37,7 +37,9 @@ def upsert(
     if (org_id is None) == (owner_user_id is None):
         raise ValueError("Exactly one of org_id or owner_user_id must be set")
 
-    query = db.query(GitHubInstallation).filter(GitHubInstallation.account_login == account_login)
+    # GitHub logins are case-insensitive, so a re-sync in another casing finds the existing row instead of
+    # inserting a second one (the unique indexes are case-sensitive and would allow it).
+    query = db.query(GitHubInstallation).filter(func.lower(GitHubInstallation.account_login) == account_login.lower())
     if org_id is not None:
         query = query.filter(GitHubInstallation.org_id == org_id)
     else:
@@ -54,7 +56,7 @@ def upsert(
             # A re-sync without an id (e.g. the org/personal sync routes) must not wipe the
             # one GitHub gave us -- token minting and webhook tenant resolution depend on it.
             existing.installation_id = installation_id
-        existing.token_ref = token_ref
+        existing.token_ref = f"tok_{existing.account_login}"  # the stored (canonical) casing, not the caller's
         existing.tenant_id = tenant_id
         db.commit()
         db.refresh(existing)
