@@ -14,6 +14,7 @@ from src.core.db import User, get_db
 from src.repositories import org_membership_repo, org_repo
 from src.routers.api_tokens import router as api_tokens_router
 from src.routers.installations import router as installations_router
+from src.routers.invitations import router as invitations_router
 from src.routers.jobs import router as jobs_router
 from src.routers.notifications import router as notifications_router
 from src.routers.org_activity import router as org_activity_router
@@ -64,6 +65,9 @@ def test_a_path_id_above_the_database_integer_range_is_422_not_a_500(db, world):
             (notifications_router, ""),
         ),
         ("delete", f"/orgs/acme/installations/{BIG}", (installations_router, "")),
+        ("post", f"/orgs/acme/invitations/{BIG}/revoke", (invitations_router, "")),
+        ("post", f"/orgs/acme/invitations/{BIG}/regenerate", (invitations_router, "")),
+        ("post", f"/orgs/acme/invitations/{BIG}/resend", (invitations_router, "")),
         ("get", f"/me/installations/lookup/{BIG}", (installations_router, "")),
         ("delete", f"/me/installations/{BIG}", (installations_router, "")),
         ("get", f"/jobs/{BIG}", (jobs_router, "/jobs")),

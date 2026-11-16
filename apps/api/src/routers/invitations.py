@@ -20,6 +20,7 @@ from src.core.auth import UserOut, require_auth
 from src.core.config import settings
 from src.core.db import Org, User, get_db
 from src.core.rate_limit import check_account_rate_limit, rate_limit
+from src.core.path_params import RowId
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import audit_repo, invitation_repo, org_membership_repo
 from src.schemas.invitation import (
@@ -306,7 +307,7 @@ def list_invitations(
 
 @router.post("/orgs/{org_login}/invitations/{invitation_id}/revoke", response_model=InvitationOut)
 def revoke_invitation(
-    invitation_id: int,
+    invitation_id: RowId,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
@@ -359,7 +360,7 @@ def _reissue(db: Session, ctx: OrgContext, invitation_id: int):
     dependencies=[Depends(rate_limit())],
 )
 def regenerate_invitation(
-    invitation_id: int,
+    invitation_id: RowId,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
@@ -379,7 +380,7 @@ def regenerate_invitation(
     dependencies=[Depends(rate_limit())],
 )
 def resend_invitation(
-    invitation_id: int,
+    invitation_id: RowId,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
