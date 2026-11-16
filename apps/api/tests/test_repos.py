@@ -202,6 +202,22 @@ def test_personal_list_repos_still_lists_an_org_the_caller_belongs_to(repos_clie
     assert mock_client.return_value.request_paginated.call_args.args[0] == "/orgs/acme/repos"
 
 
+def test_personal_list_repos_refuses_a_member_below_the_role_the_pasted_token_needs(repos_client):
+    from src.services.token_resolution import InsufficientOrgRole
+
+    with patch("src.routers.repos.resolve_owner_token", side_effect=InsufficientOrgRole("admin role required")):
+        resp = repos_client.post("/me/repos/acme", json={"token": _PAT})
+    assert resp.status_code == 403 and "admin role required" in resp.json()["detail"]
+
+
+def test_personal_list_repos_maps_a_github_failure_while_resolving_the_account_type(repos_client):
+    import httpx
+
+    with patch("src.routers.repos.get_account_type", side_effect=httpx.ConnectError("down")):
+        resp = repos_client.post("/me/repos/octocat", json={"token": _PAT})
+    assert resp.status_code == 503
+
+
 def test_personal_list_repos_without_any_token_is_400(repos_client):
     assert repos_client.post("/me/repos/octocat", json={}).status_code == 400
 
