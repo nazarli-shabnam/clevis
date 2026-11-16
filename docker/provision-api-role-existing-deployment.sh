@@ -128,6 +128,16 @@ BEGIN
 END
 $do$;
 
+-- repo_move_edges (migration 0090): remembered old -> new repo names. The API reads and writes it (no DELETE: the
+-- uninstall purge is SECURITY DEFINER); composite primary key, so no sequence; the worker never touches it.
+DO $do$
+BEGIN
+  IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'repo_move_edges') THEN
+    GRANT SELECT, INSERT, UPDATE ON repo_move_edges TO clevis_api;
+  END IF;
+END
+$do$;
+
 -- github_app_credentials (migration 0087): the GitHub App's encrypted credentials when it was created from
 -- Settings. The API reads them to mint tokens and verify webhooks and writes them once at creation; the primary key
 -- is the constant 1 (no sequence) and the worker role deliberately gets nothing, so it can never read the App key.
