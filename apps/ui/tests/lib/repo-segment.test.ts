@@ -21,8 +21,17 @@ describe("repo-segment", () => {
     expect(parseOwnerRepo("acme~demo/../etc")).toBeNull();
     expect(parseOwnerRepo("-leading-hyphen~demo")).toBeNull();
     expect(parseOwnerRepo("trailing-hyphen-~demo")).toBeNull();
-    expect(parseOwnerRepo("double--hyphen~demo")).toBeNull();
     expect(parseOwnerRepo("acme~demo?query=1")).toBeNull();
+  });
+
+  it("accepts Enterprise Managed User owners (underscore) and owners with a double hyphen (#1090)", () => {
+    expect(parseOwnerRepo("octocat_acme~demo")).toEqual({ owner: "octocat_acme", repo: "demo" });
+    expect(parseOwnerRepo("double--hyphen~demo")).toEqual({ owner: "double--hyphen", repo: "demo" });
+    // The real safety checks still hold.
+    expect(parseOwnerRepo("octo.cat~demo")).toBeNull();
+    expect(parseOwnerRepo("..~demo")).toBeNull();
+    expect(parseOwnerRepo("a_b/c~demo")).toBeNull();
+    expect(parseOwnerRepo("a_b?x=1~demo")).toBeNull();
   });
 
   it("rejects \".\" and \"..\" as repo names but keeps dotted names", () => {
