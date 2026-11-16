@@ -1,8 +1,20 @@
 #!/bin/sh
 set -e
 
+# JOB_SECRET_KEY and AUTH_SECRET: an environment value always wins (multi-replica / multi-host deployments
+# must share one value this way). When unset, use the one the `init-secrets` service generated on its first run
+# and keeps on a named volume (see docker-compose.yml); the check below then fails only if neither exists.
+if [ -z "$JOB_SECRET_KEY" ] && [ -r /run/clevis/job/job_secret ]; then
+  JOB_SECRET_KEY=$(cat /run/clevis/job/job_secret)
+  export JOB_SECRET_KEY
+fi
+if [ -z "$AUTH_SECRET" ] && [ -r /run/clevis/auth/auth_secret ]; then
+  AUTH_SECRET=$(cat /run/clevis/auth/auth_secret)
+  export AUTH_SECRET
+fi
+
 if [ -z "$DB_USER" ] || [ -z "$DB_NAME" ] || [ -z "$DB_PASSWORD" ] || [ -z "$JOB_SECRET_KEY" ] || [ -z "$AUTH_SECRET" ] || [ -z "$REDIS_PASSWORD" ]; then
-  echo "ERROR: DB_USER, DB_NAME, DB_PASSWORD, JOB_SECRET_KEY, AUTH_SECRET, and REDIS_PASSWORD must all be set" >&2
+  echo "ERROR: DB_USER, DB_NAME, DB_PASSWORD, REDIS_PASSWORD, JOB_SECRET_KEY and AUTH_SECRET must all be set (the last two may come from the init-secrets volume)" >&2
   exit 1
 fi
 
