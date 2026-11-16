@@ -55,14 +55,15 @@ export default function MyWorkPage() {
   const { scope } = useActiveScope()
   const org = scope?.login ?? ""
   const [orgChecked, setOrgChecked] = useState(false)
-  const [page, setPage] = useState(1)
   useEffect(() => {
     setOrgChecked(true)
   }, [])
-  // Reset to page 1 on account/tab change so a stale offset doesn't query the new list out of range.
-  useEffect(() => {
-    setPage(1)
-  }, [org, activeTab])
+  // The page belongs to one (org, tab) list. Keyed by it, a switch reads as page 1 in the same render, so the
+  // query never fires with the old tab's offset (which was a wasted search call, or an out-of-range page).
+  const listKey = `${org}|${activeTab}`
+  const [pageState, setPageState] = useState({ listKey, page: 1 })
+  const page = pageState.listKey === listKey ? pageState.page : 1
+  const setPage = (next: number) => setPageState({ listKey, page: next })
 
   function selectTab(id: TabId) {
     const params = new URLSearchParams(searchParams.toString())
@@ -76,6 +77,9 @@ export default function MyWorkPage() {
     queryFn: () => config.fetch(org, page, PER_PAGE),
     enabled: org.trim().length > 0,
     retry: false,
+    // Keep the current page on screen while the next one loads, but never another tab's or org's list.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[0] === config.queryKey && previousQuery.queryKey[1] === org ? previous : undefined,
   })
 
   return (
