@@ -7,6 +7,9 @@ purpose: the worker has no GitHub App private key (a compromised worker would ot
 write-capable tokens for every tenant's installation); it holds only ``WORKER_API_TOKEN``, which can fetch a
 token solely for the installation of a job that is in progress.
 
+Only a job whose payload carries the API's signature over (job id, tenant, account) is served, because the worker's
+DB role can rewrite ``jobs`` rows (see services/job_refresh.py).
+
 Disabled (404) unless ``WORKER_API_TOKEN`` is configured. Without it, or when this answers anything but a
 token, the worker keeps using the token from the job payload, exactly as before."""
 
@@ -20,18 +23,10 @@ from sqlalchemy.orm import Session
 
 from src.core.config import settings
 from src.core.db import GitHubInstallation, Job, get_db, set_session_tenant
-from src.services import github_app
+from src.services import github_app, job_refresh
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/internal", tags=["internal"])
-
-# The payload field naming the GitHub account each job type works on.
-_ACCOUNT_FIELD = {
-    "github.clear_actions_cache": "owner",
-    "github.backfill_repo_events": "account_login",
-    "github.backfill_security_alerts": "account_login",
-    "github.reconcile_org_membership": "org_login",
-}
 
 
 def _require_worker(authorization: str | None) -> None:
@@ -52,15 +47,19 @@ def job_installation_token(
     _require_worker(authorization)
 
     job = db.get(Job, job_id)
-    field = _ACCOUNT_FIELD.get(job.job_type) if job else None
+    field = job_refresh.ACCOUNT_FIELD.get(job.job_type) if job else None
     # Only a job that is being worked on, for a known tenant, and of a type that talks to GitHub.
     if job is None or field is None or job.status != "processing" or job.tenant_id is None:
         raise HTTPException(status_code=404, detail="No running job to issue a token for")
     try:
-        login = str(json.loads(job.payload).get(field) or "")
-    except ValueError:
-        login = ""
-    if not login:
+        payload = json.loads(job.payload)
+        login = str(payload.get(field) or "")
+        signature = payload.get(job_refresh.SIG_FIELD)
+    except (ValueError, AttributeError):
+        login, signature = "", None
+    # The worker can rewrite jobs rows, so the tenant and account are only trusted when the API's signature over
+    # (job id, tenant, account) still verifies: a tampered row, or a signature moved from another job, fails here.
+    if not login or not job_refresh.verify(signature, job.id, job.tenant_id, login):
         raise HTTPException(status_code=404, detail="No running job to issue a token for")
 
     set_session_tenant(db, job.tenant_id)
