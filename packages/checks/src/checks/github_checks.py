@@ -1,6 +1,7 @@
 import threading
 import time
 from contextlib import contextmanager
+from urllib.parse import quote
 
 import httpx
 
@@ -10,6 +11,12 @@ from checks.base import Check, CheckMetadata
 # PaginationTruncatedError rather than returning a partial list: a check scored over part of the
 # data would report "pass" for resources it never looked at.
 _MAX_PAGES = 50
+
+
+def _q(branch) -> str:
+    """A branch name as one URL path segment: `#`, `?` and `%` are legal in git branch names and would
+    otherwise start a fragment/query or a bogus escape. An empty repo's null default branch stays "None"."""
+    return quote(str(branch), safe="")
 
 
 class PaginationTruncatedError(RuntimeError):
@@ -189,14 +196,14 @@ def _has_non_fast_forward_rule(base_url: str, owner: str, repo: str, branch: str
     """True when an active ruleset blocks force pushes on ``branch`` (rulesets don't show up
     in the classic /protection endpoint). Every page is read. A failed lookup raises -- the
     caller must treat it as unknown, not as "no rule"."""
-    rules = _get_all_pages(base_url, f"/repos/{owner}/{repo}/rules/branches/{branch}", token)
+    rules = _get_all_pages(base_url, f"/repos/{owner}/{repo}/rules/branches/{_q(branch)}", token)
     return any(isinstance(r, dict) and r.get("type") == "non_fast_forward" for r in rules)
 
 
 def _branch_exists(base_url: str, owner: str, repo: str, branch: str, token: str) -> bool:
     """False for a missing default branch (an empty repository); other errors raise."""
     try:
-        _get(f"{base_url}/repos/{owner}/{repo}/branches/{branch}", token)
+        _get(f"{base_url}/repos/{owner}/{repo}/branches/{_q(branch)}", token)
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
             return False
@@ -279,7 +286,7 @@ class BranchProtectionEnabled(Check):
             checked += 1
             branch = repo.get("default_branch")
             try:
-                details = _get(f"{base_url}/repos/{owner}/{repo['name']}/branches/{branch}", token)
+                details = _get(f"{base_url}/repos/{owner}/{repo['name']}/branches/{_q(branch)}", token)
                 if details.get("protected"):
                     protected += 1
                 else:
@@ -510,7 +517,7 @@ class DefaultBranchNoForcePushCheck(Check):
             try:
                 # The plain /branches/{branch} response never includes
                 # `allow_force_pushes`; only the protection sub-resource does.
-                details = _get(f"{base_url}/repos/{owner}/{name}/branches/{branch}/protection", token)
+                details = _get(f"{base_url}/repos/{owner}/{name}/branches/{_q(branch)}/protection", token)
                 classic_allows = bool((details.get("allow_force_pushes") or {}).get("enabled"))
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code != 404:

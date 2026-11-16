@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import re
+from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
@@ -51,7 +52,7 @@ def _repo_paths(base_url: str, owner: str, repo: dict, token: str) -> tuple[set[
         return repo[_TREE_KEY]
     try:
         tree = _gh._get(
-            f"{base_url}/repos/{owner}/{repo['name']}/git/trees/{repo.get('default_branch')}?recursive=1", token
+            f"{base_url}/repos/{owner}/{repo['name']}/git/trees/{quote(str(repo.get('default_branch')), safe='')}?recursive=1", token
         )
     except httpx.HTTPStatusError as exc:
         # 409: empty repository. 404 only means "empty" when there is no default branch to look up;
