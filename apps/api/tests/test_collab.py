@@ -604,9 +604,10 @@ def test_membership_non_member_forbidden(db):
 
 
 @pytest.mark.parametrize("encoded", ["x%3Fy", "x%23y", "x%25y"])
-def test_membership_and_access_reject_usernames_github_would_not_accept(collab_client, encoded):
+def test_membership_and_access_reject_usernames_github_would_not_accept(admin_collab_client, encoded):
     # Starlette decodes the path before routing, so %3F reaches the handler as "?" and would
-    # change which GitHub URL gets called. Both routes must 422 before any interpolation.
+    # change which GitHub URL gets called. Both routes must 422 before any interpolation. The
+    # admin client is used because the access route requires it (min_role="admin").
     for suffix in ("membership", "access"):
-        resp = collab_client.get(f"/github/orgs/acme/members/{encoded}/{suffix}")
+        resp = admin_collab_client.get(f"/github/orgs/acme/members/{encoded}/{suffix}")
         assert resp.status_code == 422, f"{encoded}/{suffix}: {resp.status_code}"
