@@ -1,15 +1,17 @@
 """Full org-roster GitHub fetch for the membership-reconciliation job.
 
-Mirrors apps/api/src/routers/collab.py's endpoints and fallbacks; retry helpers are
-duplicated from backfill.py since apps/worker doesn't import apps/api.
+Mirrors apps/api/src/routers/collab.py's endpoints and fallbacks; rate-limit helpers are
+shared via _rate_limit.py since apps/worker doesn't import apps/api.
 """
 
 import time
 
 import httpx
 
+from _rate_limit import MAX_RETRY_AFTER_SECONDS, has_rate_limit_headers, is_secondary_rate_limit, retry_delay_seconds
+
 _PER_PAGE = 100
-_MAX_RETRY_AFTER_SECONDS = 60
+_MAX_RETRY_AFTER_SECONDS = MAX_RETRY_AFTER_SECONDS
 
 
 class RosterIncomplete(Exception):
@@ -54,35 +56,9 @@ def _get_all_pages(client: httpx.Client, base: str, headers: dict, path: str, pa
     return results
 
 
-def _has_rate_limit_headers(resp: httpx.Response) -> bool:
-    return resp.status_code == 403 and ("Retry-After" in resp.headers or resp.headers.get("X-RateLimit-Remaining") == "0")
-
-
-def _is_secondary_rate_limit(resp: httpx.Response) -> bool:
-    # GitHub also sends this 403 with neither header signal; only the message then tells it from a
-    # permission refusal. That variant is not slept on in-line (no wait hint to honour): it surfaces
-    # so the job is requeued with its own backoff.
-    return _has_rate_limit_headers(resp) or (resp.status_code == 403 and "secondary rate limit" in resp.text.lower())
-
-
-def _retry_delay_seconds(resp: httpx.Response, attempt: int) -> float:
-    raw = resp.headers.get("Retry-After")
-    if raw is not None:
-        try:
-            return min(float(raw), _MAX_RETRY_AFTER_SECONDS)
-        except ValueError:
-            pass
-    reset_raw = resp.headers.get("X-RateLimit-Reset")
-    if reset_raw is not None:
-        try:
-            delay = float(reset_raw) - time.time()
-            if delay > 0:
-                return min(delay, _MAX_RETRY_AFTER_SECONDS)
-        except ValueError:
-            pass
-    if resp.status_code == 429 or _has_rate_limit_headers(resp):
-        return _MAX_RETRY_AFTER_SECONDS
-    return 2**attempt
+_has_rate_limit_headers = has_rate_limit_headers
+_is_secondary_rate_limit = is_secondary_rate_limit
+_retry_delay_seconds = retry_delay_seconds
 
 
 def _get_with_retry(client: httpx.Client, url: str, headers: dict, params: dict | None) -> httpx.Response:

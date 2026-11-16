@@ -14,44 +14,16 @@ from datetime import datetime
 
 import httpx
 
+from _rate_limit import MAX_RETRY_AFTER_SECONDS, has_rate_limit_headers, is_secondary_rate_limit, retry_delay_seconds
+
 # Bound on top of GitHub's own ~300-event cap, so a looping Link header can't run forever.
 _MAX_PAGES = 3
 _PER_PAGE = 100
 
-# Cap on a server-supplied Retry-After so a malformed/huge value can't stall a job.
-_MAX_RETRY_AFTER_SECONDS = 60
-
-
-def _is_secondary_rate_limit(resp: httpx.Response) -> bool:
-    """GitHub's secondary rate limit often returns 403 (not 429) with Retry-After or
-    X-RateLimit-Remaining: 0; a genuine permission-denied 403 has neither."""
-    if resp.status_code != 403:
-        return False
-    return "Retry-After" in resp.headers or resp.headers.get("X-RateLimit-Remaining") == "0"
-
-
-def _retry_delay_seconds(resp: httpx.Response, attempt: int) -> float:
-    """Prefer Retry-After, then X-RateLimit-Reset, both capped at _MAX_RETRY_AFTER_SECONDS.
-
-    With neither header, a rate-limit 429/403 waits the full cap; other statuses (5xx)
-    fall back to exponential backoff."""
-    raw = resp.headers.get("Retry-After")
-    if raw is not None:
-        try:
-            return min(float(raw), _MAX_RETRY_AFTER_SECONDS)
-        except ValueError:
-            pass
-    reset_raw = resp.headers.get("X-RateLimit-Reset")
-    if reset_raw is not None:
-        try:
-            delay = float(reset_raw) - time.time()
-            if delay > 0:
-                return min(delay, _MAX_RETRY_AFTER_SECONDS)
-        except ValueError:
-            pass
-    if resp.status_code == 429 or _is_secondary_rate_limit(resp):
-        return _MAX_RETRY_AFTER_SECONDS
-    return 2**attempt
+# Rate-limit helpers are shared with the other GitHub readers (see _rate_limit.py).
+_MAX_RETRY_AFTER_SECONDS = MAX_RETRY_AFTER_SECONDS
+_is_secondary_rate_limit = is_secondary_rate_limit
+_retry_delay_seconds = retry_delay_seconds
 
 
 def _get_with_retry(client: httpx.Client, url: str, headers: dict, params: dict | None) -> httpx.Response:
@@ -64,7 +36,7 @@ def _get_with_retry(client: httpx.Client, url: str, headers: dict, params: dict 
                 time.sleep(2**attempt)
                 continue
             raise
-        if (resp.status_code == 429 or _is_secondary_rate_limit(resp) or resp.status_code >= 500) and attempt < 2:
+        if (resp.status_code == 429 or has_rate_limit_headers(resp) or resp.status_code >= 500) and attempt < 2:
             time.sleep(_retry_delay_seconds(resp, attempt))
             continue
         return resp
