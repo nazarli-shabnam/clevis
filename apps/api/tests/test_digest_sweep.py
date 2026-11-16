@@ -211,21 +211,34 @@ def test_tenant_context_is_reapplied_after_each_recipient_commit(db):
     assert events.count("acquire") >= 3
 
 
-def test_a_recipient_that_keeps_failing_is_given_up_on_for_the_period(db):
+def test_when_every_recipient_keeps_failing_the_period_stays_open_and_is_retried_after_a_back_off(db):
     org = _seed_org_with_scan(db, "digest-sweep-giveup")
     _admin(db, org.tenant_id, "bad-mailbox@e.com")
+    down = {"yes": True}
 
     def sender(address, subject, body):
-        raise RuntimeError("550 no such mailbox")
+        if down["yes"]:
+            raise RuntimeError("550 no such mailbox")
 
     for attempt in range(1, digest_sweep.MAX_ATTEMPTS_PER_RECIPIENT + 1):
         assert _run_with_sender(db, sender).call_count == 1
         actions = _actions(db, org.tenant_id)
         assert actions.count("digest.recipient_failed") == attempt
-        # The give-up marker appears with the last failed attempt, not earlier.
-        assert ("digest.sent" in actions) == (attempt == digest_sweep.MAX_ATTEMPTS_PER_RECIPIENT)
+        # Nobody was reached, so the period is never closed as "sent"; the failed round is marked instead,
+        # with the last failed attempt, not earlier.
+        assert "digest.sent" not in actions
+        assert ("digest.failed" in actions) == (attempt == digest_sweep.MAX_ATTEMPTS_PER_RECIPIENT)
 
+    # Within the back-off nothing is tried.
     _run_with_sender(db, sender).assert_not_called()
+
+    # Once the back-off has passed the address gets a fresh set of attempts, and a success closes the period.
+    down["yes"] = False
+    with patch.object(digest_sweep, "FAILURE_BACKOFF", timedelta(seconds=-1)):
+        retried = _run_with_sender(db, sender)
+    assert retried.call_count == 1
+    actions = _actions(db, org.tenant_id)
+    assert actions.count("digest.sent") == 1 and actions.count("digest.failed") == 1
 
 
 def test_is_due_treats_a_naive_timestamp_as_utc():
