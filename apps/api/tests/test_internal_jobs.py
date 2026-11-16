@@ -30,14 +30,17 @@ def configured(monkeypatch):
     monkeypatch.setattr(settings, "worker_api_token", SecretStr(SECRET))
 
 
-def _job(db, tenant_id, *, status="processing", job_type="github.backfill_repo_events", payload=None, sign=True):
+def _job(db, tenant_id, *, status="processing", job_type="github.backfill_repo_events", payload=None, sign=True, expires_at=None):
     payload = payload or {"account_login": "acme"}
     job = Job(job_type=job_type, payload=json.dumps(payload), status=status, tenant_id=tenant_id)
     db.add(job)
     db.flush()
     field = job_refresh.ACCOUNT_FIELD.get(job_type)
     if sign and field and payload.get(field):
-        job.payload = json.dumps({**payload, job_refresh.SIG_FIELD: job_refresh.sign(job.id, tenant_id, payload[field])})
+        exp = job_refresh.new_expiry() if expires_at is None else expires_at
+        job.payload = json.dumps(
+            {**payload, job_refresh.EXP_FIELD: exp, job_refresh.SIG_FIELD: job_refresh.sign(job.id, tenant_id, payload[field], exp)}
+        )
     db.commit()
     return job.id
 
@@ -141,8 +144,20 @@ def test_enqueue_signs_the_jobs_that_can_be_refreshed(db):
     org = org_repo.get_or_create(db, github_login="acme")
     job_id = job_repo.enqueue(db, "github.backfill_repo_events", {"account_login": "acme", "token": "t"}, org.tenant_id)
     payload = json.loads(db.get(Job, job_id).payload)
-    assert job_refresh.verify(payload[job_refresh.SIG_FIELD], job_id, org.tenant_id, "ACME")  # login case-insensitive
+    exp = payload[job_refresh.EXP_FIELD]
+    assert job_refresh.verify(payload[job_refresh.SIG_FIELD], exp, job_id, org.tenant_id, "ACME")  # login case-insensitive
+    assert not job_refresh.verify(payload[job_refresh.SIG_FIELD], exp + 1, job_id, org.tenant_id, "ACME")  # exp is signed
     assert payload["token"] == "t" and payload["account_login"] == "acme"
     # No tenant, or a job type that never refreshes: no signature.
     assert job_refresh.SIG_FIELD not in json.loads(db.get(Job, job_repo.enqueue(db, "github.backfill_repo_events", {"account_login": "acme"}, None)).payload)
     assert job_refresh.SIG_FIELD not in json.loads(db.get(Job, job_repo.enqueue(db, "api.scan", {"actor": "a"}, org.tenant_id)).payload)
+
+
+def test_an_expired_signature_is_refused_even_for_a_running_job(http, db, configured):
+    import time
+
+    org = _org_with_installation(db)
+    job_id = _job(db, org.tenant_id, expires_at=int(time.time()) - 5)
+    with patch("src.routers.internal_jobs.github_app.get_installation_token", return_value="x") as mint:
+        assert _post(http, job_id).status_code == 404
+    mint.assert_not_called()

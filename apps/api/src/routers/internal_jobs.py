@@ -55,11 +55,12 @@ def job_installation_token(
         payload = json.loads(job.payload)
         login = str(payload.get(field) or "")
         signature = payload.get(job_refresh.SIG_FIELD)
+        expires_at = payload.get(job_refresh.EXP_FIELD)
     except (ValueError, AttributeError):
-        login, signature = "", None
+        login, signature, expires_at = "", None, None
     # The worker can rewrite jobs rows, so the tenant and account are only trusted when the API's signature over
     # (job id, tenant, account) still verifies: a tampered row, or a signature moved from another job, fails here.
-    if not login or not job_refresh.verify(signature, job.id, job.tenant_id, login):
+    if not login or not job_refresh.verify(signature, expires_at, job.id, job.tenant_id, login):
         raise HTTPException(status_code=404, detail="No running job to issue a token for")
 
     set_session_tenant(db, job.tenant_id)
