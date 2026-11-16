@@ -212,6 +212,34 @@ def test_sync_personal_installation(db):
     assert resp.json()["synced"] is True
 
 
+def test_a_differently_cased_org_sync_updates_the_existing_row_instead_of_adding_one(db, acme_org):
+    from src.core.db import GitHubInstallation
+
+    for login, installation_id in (("acme", 1), ("Acme", 2)):
+        with _mock_installation("acme", "Organization"):
+            resp = _client(db, acme_org["admin"]).post(
+                "/orgs/acme/installations/sync",
+                json={"account_login": login, "account_type": "Organization", "installation_id": installation_id},
+            )
+        assert resp.status_code == 200
+
+    rows = db.query(GitHubInstallation).filter(GitHubInstallation.org_id == acme_org["org"].id).all()
+    assert [(r.account_login, r.installation_id, r.token_ref) for r in rows] == [("acme", 2, "tok_acme")]
+
+
+def test_a_differently_cased_personal_sync_without_an_id_is_accepted_and_stores_the_canonical_login(db):
+    from src.core.db import GitHubInstallation
+
+    me = _make_user(db, "octo@e.com", github_login="octocat", github_user_id=4242)
+    resp = _client(db, me).post(
+        "/me/installations/sync",
+        json={"account_login": "Octocat", "account_type": "User"},
+    )
+    assert resp.status_code == 200
+    rows = db.query(GitHubInstallation).filter(GitHubInstallation.owner_user_id == me.id).all()
+    assert [r.account_login for r in rows] == ["octocat"]
+
+
 def test_a_password_account_is_pointed_at_the_link_github_action(db):
     me = _make_user(db, "pw@e.com")  # no github_login: a password account
     with _mock_installation("pw", "User"):
