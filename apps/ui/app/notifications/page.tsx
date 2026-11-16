@@ -19,7 +19,7 @@ const FULL_FEED_DAYS = 90
 
 export default function NotificationsPage() {
   const { scope } = useActiveScope()
-  const { org, query, markRead, dismiss, items, unread, hasMore, loadingMore, loadMoreFailed, refreshFailed, loadMore } = useNotifications({ full: true })
+  const { org, notMember, query, markRead, dismiss, items, unread, hasMore, loadingMore, loadMoreFailed, refreshFailed, loadMore } = useNotifications({ full: true })
   const [customizing, setCustomizing] = useState(false)
   // Kinds shown; all by default. Client-side: the feed is already one bounded request, and the per-user
   // mute preferences (in the bell) are what hide a kind server-side.
@@ -83,7 +83,11 @@ export default function NotificationsPage() {
             Couldn&apos;t mark &ldquo;{items.find((n) => n.id === dismiss.variables)?.title ?? "that notification"}&rdquo; as read: {dismiss.error.message}
           </p>
         )}
-        {!org ? (
+        {notMember ? (
+          <p role="status" className="px-4 py-8 text-sm text-muted-foreground">
+            You are not a member of {org}; this scope only works through its saved token. Ask an org admin to add you, or pick another scope.
+          </p>
+        ) : !org ? (
           <EmptyStateNoAccount bare orgOnly={scope?.kind === "personal"} message={scope?.kind === "personal" ? "Notifications belong to an organization. Install the Clevis GitHub App on an organization, or pick one from the profile menu if you already have." : undefined} />
         ) : query.isError ? (
           <SectionError message={query.error.message} onRetry={() => query.refetch()} retrying={query.isFetching} />

@@ -760,7 +760,7 @@ describe("AppSidebar scope switcher", () => {
     renderSidebar();
 
     fireEvent.click(await screen.findByRole("button", { name: /user|legacy/i }));
-    await screen.findByText("Organization · saved token");
+    await screen.findByText("Organization · saved token, not a member");
     expect(localStorage.getItem("active_scope")).toBe(JSON.stringify({ kind: "org", login: "legacy" }));
   });
 

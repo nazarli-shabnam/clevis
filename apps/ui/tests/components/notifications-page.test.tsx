@@ -6,11 +6,13 @@ const feedMock = vi.fn();
 const markReadMock = vi.fn();
 const dismissMock = vi.fn();
 const prefsMock = vi.fn();
+const minesMock = vi.fn();
 let scope: { kind: "org" | "personal"; login: string } | null = { kind: "org", login: "acme" };
 
 vi.mock("@/lib/active-scope", () => ({ useActiveScope: () => ({ scope }) }));
 vi.mock("@/lib/api/client", () => ({
   api: {
+    orgs: { mine: (...a: unknown[]) => minesMock(...a) },
     notifications: {
       feed: (...a: unknown[]) => feedMock(...a),
       markRead: (...a: unknown[]) => markReadMock(...a),
@@ -40,12 +42,21 @@ function renderPage() {
 
 describe("NotificationsPage", () => {
   beforeEach(() => {
-    [feedMock, markReadMock, dismissMock, prefsMock].forEach((m) => m.mockReset());
+    [feedMock, markReadMock, dismissMock, prefsMock, minesMock].forEach((m) => m.mockReset());
     markReadMock.mockResolvedValue(null);
     dismissMock.mockResolvedValue(null);
+    minesMock.mockResolvedValue([{ org_login: "acme", role: "member" }]);
     scope = { kind: "org", login: "acme" };
   });
   afterEach(cleanup);
+
+  it("explains a saved-token-only scope instead of calling the feed", async () => {
+    minesMock.mockResolvedValue([{ org_login: "other", role: "admin" }]);
+    renderPage();
+
+    expect(await screen.findByText(/You are not a member of acme/)).toBeInTheDocument();
+    expect(feedMock).not.toHaveBeenCalled();
+  });
 
   it("asks the API for the long window, not the bell's default one", async () => {
     feedMock.mockResolvedValue(feed([item("a", "score_drop")]));

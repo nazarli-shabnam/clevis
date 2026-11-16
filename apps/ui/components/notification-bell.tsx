@@ -49,11 +49,11 @@ export function PreferencesPanel({ org }: { org: string }) {
 
 /** Header bell for the active org's notifications, with an unread badge and a mark-all-read action. */
 export function NotificationBell() {
-  const { org, query, markRead, items, unread } = useNotifications()
+  const { org, notMember, query, markRead, items, unread } = useNotifications()
   const [open, setOpen] = useState(false)
   const [customizing, setCustomizing] = useState(false)
 
-  if (!org) return null
+  if (!org || notMember) return null
 
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>

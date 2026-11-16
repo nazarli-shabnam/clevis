@@ -249,7 +249,7 @@ export function AppSidebar() {
       .map((t) => ({
         scope: { kind: "org", login: t.org } as ActiveScope,
         label: t.org,
-        sublabel: "Organization · saved token",
+        sublabel: "Organization · saved token, not a member",
       }))
     return [...personal, ...orgs, ...tokenOrgs]
   }, [installs, memberships, savedTokens, isWorkspaceAdmin])
