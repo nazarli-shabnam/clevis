@@ -810,6 +810,52 @@ def test_reconcile_revokes_github_membership_of_a_user_missing_from_the_roster(p
     assert json.loads(audit_payload)["reason"] == "reconcile"
 
 
+def test_removing_a_member_revokes_their_api_tokens_when_the_org_opted_in(pg_conn, gh_users):
+    suffix = uuid.uuid4().hex[:8]
+    gone_id, admin_id = gh_users["gone"][0], gh_users["admin"][0]
+    with pg_conn.cursor() as cur:
+        cur.execute("INSERT INTO orgs (github_login, revoke_tokens_on_creator_leave) VALUES (%s, TRUE) RETURNING id", (f"tok-org-{suffix}",))
+        org_row = cur.fetchone()[0]
+        cur.execute("INSERT INTO tenants (kind, org_id) VALUES ('org', %s) RETURNING id", (org_row,))
+        tid = cur.fetchone()[0]
+        cur.execute(f"SET app.tenant_id = {int(tid)}")
+        cur.execute("UPDATE orgs SET tenant_id = %s WHERE id = %s", (tid, org_row))
+        # gone is a second github admin so the last-admin guard does not apply.
+        cur.execute(
+            "INSERT INTO memberships (tenant_id, user_id, role, source) VALUES (%s, %s, 'admin', 'github'), (%s, %s, 'admin', 'github')",
+            (tid, gone_id, tid, admin_id),
+        )
+        for who, uid in (("gone", gone_id), ("admin", admin_id)):
+            cur.execute(
+                "INSERT INTO api_tokens (tenant_id, name, token_hash, prefix, created_by, created_by_user_id) "
+                "VALUES (%s, %s, %s, 'clv_', 'x', %s)",
+                (tid, f"{who}-{suffix}", f"hash-{who}-{suffix}", uid),
+            )
+    pg_conn.commit()
+    try:
+        with pg_conn.cursor() as cur:
+            cur.execute(f"SET app.tenant_id = {int(tid)}")
+            org_membership_store.revoke_github_membership(cur, tenant_id=tid, github_user_id=gh_users["gone"][1], login="gh-gone")
+        pg_conn.commit()
+        with pg_conn.cursor() as cur:
+            cur.execute("SELECT name, revoked_at IS NOT NULL FROM api_tokens WHERE tenant_id = %s", (tid,))
+            revoked = dict(cur.fetchall())
+            cur.execute("SELECT count(*) FROM audit_logs WHERE tenant_id = %s AND action = 'api_token.auto_revoked'", (tid,))
+            audited = cur.fetchone()[0]
+        assert revoked == {f"gone-{suffix}": True, f"admin-{suffix}": False}
+        assert audited == 1
+    finally:
+        pg_conn.rollback()
+        with pg_conn.cursor() as cur:
+            cur.execute(f"SET app.tenant_id = {int(tid)}")
+            for table in ("api_tokens", "audit_logs", "memberships"):
+                cur.execute(f"DELETE FROM {table} WHERE tenant_id = %s", (tid,))
+            cur.execute("UPDATE orgs SET tenant_id = NULL WHERE id = %s", (org_row,))
+            cur.execute("DELETE FROM tenants WHERE id = %s", (tid,))
+            cur.execute("DELETE FROM orgs WHERE id = %s", (org_row,))
+        pg_conn.commit()
+
+
 def test_reconcile_demotes_a_github_admin_that_github_lists_as_member(pg_conn, tenant_id, gh_users):
     members = [
         _roster_member("someone-else", 1, "admin"),

@@ -194,6 +194,12 @@ function DestinationRow({ orgLogin, dest }: { orgLogin: string; dest: Notificati
               {!dest.enabled ? " · paused" : ""}
             </span>
           </p>
+          {dest.last_status === "failed" && (
+            <p role="status" className="text-destructive">
+              Failing{dest.consecutive_failures ? ` (${dest.consecutive_failures} in a row)` : ""}
+              {dest.last_error ? `: ${dest.last_error}` : ""}. Alerts to this destination are not being delivered.
+            </p>
+          )}
           {dest.recipients && dest.recipients.length > 0 && (
             <p className="text-muted-foreground break-all">{dest.recipients.join(", ")}</p>
           )}

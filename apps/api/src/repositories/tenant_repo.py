@@ -3,6 +3,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.db import Membership, Org, Tenant
+from src.repositories import api_token_repo
 
 
 def _set_session_user(db: Session, user_id: int) -> None:
@@ -199,6 +200,7 @@ def delete_membership(db: Session, tenant_id: int, user_id: int, *, commit: bool
     db.query(Membership).filter(
         Membership.tenant_id == tenant_id, Membership.user_id == user_id
     ).delete()
+    api_token_repo.revoke_for_departed_creator(db, tenant_id, user_id)
     # commit=False: see update_membership_role.
     if commit:
         db.commit()

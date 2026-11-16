@@ -13,6 +13,7 @@ from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from src.core.db import ApiToken
+from src.repositories import audit_repo
 
 TOKEN_PREFIX = "clv_"
 
@@ -63,7 +64,13 @@ def touch(db: Session, token_id: int) -> None:
 
 
 def create(
-    db: Session, *, tenant_id: int, name: str, created_by: str, expires_in_days: int | None = None
+    db: Session,
+    *,
+    tenant_id: int,
+    name: str,
+    created_by: str,
+    created_by_user_id: int | None = None,
+    expires_in_days: int | None = None,
 ) -> tuple[ApiToken, str]:
     token = generate()
     row = ApiToken(
@@ -72,6 +79,7 @@ def create(
         token_hash=hash_token(token),
         prefix=token[: len(TOKEN_PREFIX) + 4],
         created_by=created_by,
+        created_by_user_id=created_by_user_id,
         expires_at=datetime.now(timezone.utc) + timedelta(days=expires_in_days) if expires_in_days else None,
     )
     db.add(row)
@@ -87,3 +95,27 @@ def get(db: Session, tenant_id: int, token_id: int) -> ApiToken | None:
     return db.execute(
         select(ApiToken).where(ApiToken.tenant_id == tenant_id, ApiToken.id == token_id)
     ).scalar_one_or_none()
+
+
+def revoke_for_departed_creator(db: Session, tenant_id: int, user_id: int) -> int:
+    """Revoke the active tokens ``user_id`` created in this org, if the org opted in
+    (``orgs.revoke_tokens_on_creator_leave``). Called wherever a membership is removed; a no-op otherwise.
+    The worker's ``revoke_github_membership`` does the same in raw SQL. Audited per token; does not commit."""
+    revoked = db.execute(
+        text(
+            """
+            UPDATE api_tokens t SET revoked_at = now()
+            WHERE t.tenant_id = :t AND t.created_by_user_id = :u AND t.revoked_at IS NULL
+              AND EXISTS (SELECT 1 FROM orgs o WHERE o.tenant_id = t.tenant_id AND o.revoke_tokens_on_creator_leave)
+            RETURNING t.id, t.name
+            """
+        ),
+        {"t": tenant_id, "u": user_id},
+    ).all()
+    for token_id, name in revoked:
+        audit_repo.write(
+            db, "system", "api_token.auto_revoked", name,
+            {"token_id": token_id, "reason": "creator_left_org", "creator_user_id": user_id},
+            tenant_id=tenant_id, commit=False,
+        )
+    return len(revoked)

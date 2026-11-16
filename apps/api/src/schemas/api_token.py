@@ -23,6 +23,9 @@ class ApiTokenOut(BaseModel):
     last_used_at: datetime | None = None
     revoked_at: datetime | None = None
     expires_at: datetime | None = None
+    # The creator is known and is no longer a member of the org: the token still works unless revoked
+    # (or the org auto-revokes, see ApiTokenPolicy).
+    creator_left: bool = False
 
 
 class ApiTokenCreated(ApiTokenOut):
@@ -32,6 +35,11 @@ class ApiTokenCreated(ApiTokenOut):
 
 class BadgeSettings(BaseModel):
     enabled: bool
+
+
+class ApiTokenPolicy(BaseModel):
+    # Revoke the tokens a member created when they are removed from the org (off by default).
+    revoke_on_creator_leave: bool
 
 
 class ScoreCheck(BaseModel):

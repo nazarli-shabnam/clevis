@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from src.core.api_token_auth import require_scope
 from src.core.auth import UserOut, require_auth
-from src.core.db import get_db, release_connection, set_session_tenant
+from src.core.db import Membership, get_db, release_connection, set_session_tenant
 from src.core.rate_limit import check_account_rate_limit
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import api_token_repo, audit_repo, org_repo, scan_results_repo
@@ -30,6 +30,7 @@ from src.schemas.api_token import (
     ApiTokenCreate,
     ApiTokenCreated,
     ApiTokenOut,
+    ApiTokenPolicy,
     BadgeSettings,
     ScoreCheck,
     ScoreOut,
@@ -64,7 +65,39 @@ def _recent_scan(db: Session, token: ResolvedToken) -> dict | None:
 
 @router.get("/orgs/{org_login}/api-tokens", response_model=list[ApiTokenOut])
 def list_tokens(ctx: OrgContext = Depends(require_org_role(min_role="admin")), db: Session = Depends(get_db)):
-    return api_token_repo.list_for_tenant(db, ctx.org.tenant_id)
+    members = {uid for (uid,) in db.query(Membership.user_id).filter(Membership.tenant_id == ctx.org.tenant_id)}
+    out = []
+    for row in api_token_repo.list_for_tenant(db, ctx.org.tenant_id):
+        item = ApiTokenOut.model_validate(row)
+        item.creator_left = row.created_by_user_id is not None and row.created_by_user_id not in members
+        out.append(item)
+    return out
+
+
+@router.get("/orgs/{org_login}/api-token-policy", response_model=ApiTokenPolicy)
+def get_token_policy(ctx: OrgContext = Depends(require_org_role(min_role="admin"))):
+    return ApiTokenPolicy(revoke_on_creator_leave=ctx.org.revoke_tokens_on_creator_leave)
+
+
+@router.put("/orgs/{org_login}/api-token-policy", response_model=ApiTokenPolicy)
+def set_token_policy(
+    body: ApiTokenPolicy,
+    ctx: OrgContext = Depends(require_org_role(min_role="admin")),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    ctx.org.revoke_tokens_on_creator_leave = body.revoke_on_creator_leave
+    audit_repo.write(
+        db,
+        actor=user.email,
+        action="api_token_policy.updated",
+        target=ctx.org.github_login,
+        payload={"revoke_on_creator_leave": body.revoke_on_creator_leave},
+        tenant_id=ctx.org.tenant_id,
+        commit=False,
+    )
+    db.commit()
+    return body
 
 
 @router.post("/orgs/{org_login}/api-tokens", response_model=ApiTokenCreated, status_code=status.HTTP_201_CREATED)
@@ -90,6 +123,7 @@ def create_token(
         tenant_id=ctx.org.tenant_id,
         name=body.name,
         created_by=user.email,
+        created_by_user_id=user.id,
         expires_in_days=body.expires_in_days,
     )
     audit_repo.write(
