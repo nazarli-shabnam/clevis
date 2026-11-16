@@ -791,6 +791,30 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("button", { name: /sign out of all devices/i })).toBeEnabled();
   });
 
+  it("asks for confirmation, naming the org, before deleting a saved token (#1088)", async () => {
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([
+      { org: "acme", label: null, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" },
+    ]);
+    configGetAllMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true" });
+    tokensDeleteMock.mockResolvedValue(undefined);
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete token for acme" }));
+    expect(await screen.findByText(/saved token for acme is removed and cannot be recovered/i)).toBeInTheDocument();
+    expect(tokensDeleteMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByText(/cannot be recovered/i)).not.toBeInTheDocument());
+    expect(tokensDeleteMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete token for acme" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete token" }));
+    await waitFor(() => expect(tokensDeleteMock).toHaveBeenCalledWith("acme"));
+  });
+
   it("reports a failed saved-token delete on its own row without locking the other rows", async () => {
     orgsMineMock.mockResolvedValue([]);
     installationsListMock.mockResolvedValue([]);
@@ -808,7 +832,11 @@ describe("SettingsPage", () => {
     const deleteAcme = await screen.findByRole("button", { name: "Delete token for acme" });
     const deleteBeta = screen.getByRole("button", { name: "Delete token for beta" });
     fireEvent.click(deleteAcme);
+    fireEvent.click(await screen.findByRole("button", { name: "Delete token" }));
+    await waitFor(() => expect(deleteAcme).toBeDisabled());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Delete token" })).not.toBeInTheDocument());
     fireEvent.click(deleteBeta);
+    fireEvent.click(await screen.findByRole("button", { name: "Delete token" }));
     await waitFor(() => expect(deleteAcme).toBeDisabled());
     expect(deleteBeta).toBeDisabled();
 
