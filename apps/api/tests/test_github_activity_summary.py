@@ -3,6 +3,7 @@ concrete piece of the feat/aggregates-api-sse foundation -- see docs/plan.md's S
 
 import asyncio
 import json
+import time
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 
@@ -11,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from src.core.auth import UserOut, require_auth
+from src.core.auth import UserOut, current_session_claims, require_auth
 from src.core.db import User, get_db
 from src.repositories import installation_repo, org_membership_repo, org_repo
 from src.routers.github import _activity_summary_stream, router as github_router
@@ -355,6 +356,7 @@ async def test_stream_route_survives_the_request_session_closing_before_the_body
     app = FastAPI()
     app.include_router(github_router)
     app.dependency_overrides[require_auth] = lambda: _MEMBER
+    app.dependency_overrides[current_session_claims] = lambda: {"token_version": 0, "exp": time.time() + 600}
     app.dependency_overrides[get_db] = _closing_get_db
 
     class _Enough(Exception):
@@ -436,3 +438,15 @@ def test_authorization_check_rejects_a_bumped_token_version_and_a_revoked_sessio
     db.add(RevokedToken(jti="j1", user_id=_MEMBER.id, expires_at=datetime.now(timezone.utc) + timedelta(hours=1)))
     db.flush()
     assert _stream_authorization_check(acme_org_with_installation.tenant_id, _MEMBER.id, version, "j1")(db) is False
+
+
+def test_authorization_check_rejects_a_token_past_its_expiry_even_with_no_denylist_row(db, acme_org_with_installation, rbac_ctx_factory):
+    import time
+
+    from src.core.db import User
+    from src.routers.github import _stream_authorization_check
+
+    rbac_ctx_factory(acme_org_with_installation)
+    tenant_id, version = acme_org_with_installation.tenant_id, db.get(User, _MEMBER.id).token_version
+    assert _stream_authorization_check(tenant_id, _MEMBER.id, version, "j1", time.time() + 60)(db) is True
+    assert _stream_authorization_check(tenant_id, _MEMBER.id, version, "j1", time.time() - 1)(db) is False

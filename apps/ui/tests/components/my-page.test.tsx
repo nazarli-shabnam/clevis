@@ -148,5 +148,12 @@ describe("MyWorkPage (tabbed /my)", () => {
     expect(myPrsMock).not.toHaveBeenCalledWith("acme", 2, 25);
     expect(await screen.findByText("A PR")).toBeInTheDocument();
     expect(screen.queryByText("Second page")).not.toBeInTheDocument();
+
+    // Coming back without having paged the PRs list: reviews start at page 1 again, not at the page 2 left behind.
+    myReviewsMock.mockClear();
+    tabParam = "reviews";
+    rerenderSamePage();
+    await waitFor(() => expect(myReviewsMock).toHaveBeenCalledWith("acme", 1, 25));
+    expect(myReviewsMock).not.toHaveBeenCalledWith("acme", 2, 25);
   });
 });

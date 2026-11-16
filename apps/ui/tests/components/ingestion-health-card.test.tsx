@@ -104,6 +104,14 @@ describe("IngestionHealthCard", () => {
     expect(await screen.findByText(/2 webhook deliveries were permanently lost in the last 30 days/)).toBeInTheDocument()
   })
 
+  it("keeps reporting a permanent loss next to a stale backlog", async () => {
+    healthMock.mockResolvedValue(health({ backlog: 1, oldest_backlog_at: ago(3_600_000), lost_recent: 2 }))
+    renderCard()
+    const status = await screen.findByRole("status")
+    expect(status).toHaveTextContent(/1 webhook delivery has been waiting/)
+    expect(status).toHaveTextContent(/2 webhook deliveries were permanently lost in the last 30 days/)
+  })
+
   it("singular wording for one permanent loss", async () => {
     healthMock.mockResolvedValue(health({ lost_recent: 1 }))
     renderCard()

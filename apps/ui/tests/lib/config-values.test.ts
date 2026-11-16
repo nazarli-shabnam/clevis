@@ -36,4 +36,13 @@ describe("mergeSavedConfigValue", () => {
       registration_enabled: "false",
     });
   });
+
+  it("keeps another key's newer cached value when an older save response arrives late", () => {
+    const cachedAfterSaveB = { worker_poll_seconds: "45", registration_enabled: "true" };
+    const lateResponseOfSaveA = { worker_poll_seconds: "60", registration_enabled: "false" };
+    expect(mergeSavedConfigValue(cachedAfterSaveB, lateResponseOfSaveA, "worker_poll_seconds")).toEqual({
+      worker_poll_seconds: "60",
+      registration_enabled: "true",
+    });
+  });
 });

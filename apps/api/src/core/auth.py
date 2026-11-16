@@ -217,6 +217,21 @@ def current_revocation_key(
     return _revocation_key(token, payload)
 
 
+def current_session_claims(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+    session: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+) -> dict:
+    """The verified claims of the token this request authenticated with (same token choice as require_auth).
+
+    A long-lived response such as an SSE stream needs the ``token_version`` and ``exp`` this request was accepted
+    under: re-reading the version from the database later could pick up a concurrent "sign out everywhere" as
+    its baseline, and the denylist row of a logged-out token is purged once the token expires."""
+    token = credentials.credentials if credentials else session
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    return decode_access_token(token)
+
+
 def _revocation_key(token: str, payload: dict) -> str:
     """Return a verified JWT's jti, or a namespaced fingerprint for a legacy token.
 

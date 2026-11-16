@@ -136,6 +136,12 @@ def blocked_features(granted: dict[str, str] | None) -> list[BlockedFeature]:
 # the per-feature checks above, which only compare what an installation was granted.
 ORG_ADMINISTRATION_PERMISSION: dict[str, str] = {"organization_administration": "read"}
 
+# The user permission "Email addresses": "Sign in with GitHub" falls back to ``GET /user/emails`` when the profile
+# has no public email, and a GitHub App user token can only call it with this permission (the ``user:email`` OAuth
+# scope does nothing for an App). A user permission, so an installation's own permissions never list it and the
+# per-feature checks above must not require it.
+USER_EMAIL_PERMISSION: dict[str, str] = {"emails": "read"}
+
 
 def manifest_permissions(read_only: bool = False) -> dict[str, str]:
     """Every permission Clevis uses, generated from the tables above so a manifest cannot drift from the code.
@@ -144,6 +150,7 @@ def manifest_permissions(read_only: bool = False) -> dict[str, str]:
     optional feature, each at the highest level any of them needs."""
     out = dict(BASELINE_PERMISSIONS)
     out.update(ORG_ADMINISTRATION_PERMISSION)
+    out.update(USER_EMAIL_PERMISSION)
     if not read_only:
         for spec in FEATURE_PERMISSIONS.values():
             for perm, level in spec.permissions.items():

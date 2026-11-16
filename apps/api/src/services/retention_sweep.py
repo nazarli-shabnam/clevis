@@ -63,7 +63,9 @@ class RetentionPolicy:
     min_days: int
 
 
-WEBHOOK_DELIVERIES = RetentionPolicy("retention_webhook_deliveries_days", default_days=30, min_days=1)
+# 30: the ingestion-health card counts dropped and abandoned deliveries over a 30-day lookback, so purging them
+# sooner would make a permanent loss disappear from the card early.
+WEBHOOK_DELIVERIES = RetentionPolicy("retention_webhook_deliveries_days", default_days=30, min_days=30)
 JOBS = RetentionPolicy("retention_jobs_days", default_days=30, min_days=8)
 REPO_EVENTS = RetentionPolicy("retention_repo_events_days", default_days=180, min_days=100)
 

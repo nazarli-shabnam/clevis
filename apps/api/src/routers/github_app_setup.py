@@ -11,10 +11,11 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_workspace_admin
-from src.core.db import User, get_db
+from src.core.db import GitHubAppCredentials, User, get_db
 from src.repositories import audit_repo, tenant_repo
 from src.routers.webhooks import _INGESTED_EVENT_TYPES
 from src.services import app_permissions, github_app, github_app_credentials, github_app_manifest
@@ -124,7 +125,13 @@ def convert_manifest(
         claims = github_app_manifest.verify_state(
             body.state, user_id=user.id, token_version=db_user.token_version if db_user else 0
         )
-        if github_app_credentials.stored() is not None and not claims.get("rep"):
+        # One conversion at a time, from this check through the commit below: otherwise two overlapping "first App"
+        # conversions both see no App, and the slower one silently overwrites the credentials of the first. A
+        # transaction-level advisory lock (a row lock cannot cover a row that does not exist yet) is released by
+        # that commit or by the rollback; the check reads the table itself, not the few-seconds-old credentials cache.
+        db.execute(text("SELECT pg_advisory_xact_lock(hashtext('github_app_credentials'))"))
+        already_created = db.query(GitHubAppCredentials.id).filter(GitHubAppCredentials.id == 1).first() is not None
+        if already_created and not claims.get("rep"):
             raise ManifestError("An App was already created from Settings; start again and confirm replacing it.")
         data = github_app_manifest.convert_code(body.code)
     except ManifestError as exc:

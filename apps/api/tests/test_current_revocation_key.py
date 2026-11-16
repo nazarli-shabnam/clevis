@@ -41,3 +41,22 @@ def test_no_token_or_an_unverifiable_one_has_no_key():
     assert current_revocation_key(_bearer("not-a-jwt"), None) is None
     expired = _token(jti="old", exp=datetime.now(timezone.utc) - timedelta(minutes=1))
     assert current_revocation_key(_bearer(expired), None) is None
+
+
+def test_current_session_claims_returns_the_verified_version_and_expiry():
+    from src.core.auth import current_session_claims
+
+    claims = current_session_claims(_bearer(_token(jti="abc")), None)
+    assert claims["jti"] == "abc" and "exp" in claims and claims.get("token_version", 0) == 0
+
+
+def test_current_session_claims_rejects_a_missing_or_bad_token():
+    import pytest
+    from fastapi import HTTPException
+
+    from src.core.auth import current_session_claims
+
+    for creds in (None, _bearer("not-a-jwt")):
+        with pytest.raises(HTTPException) as exc:
+            current_session_claims(creds, None)
+        assert exc.value.status_code == 401

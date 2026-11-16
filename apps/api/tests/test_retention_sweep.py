@@ -171,6 +171,16 @@ def test_repo_events_window_cannot_be_set_below_githubs_event_window(db):
     assert _left(db, RepoEvent, RepoEvent.delivery_id, ["ev-95d", "ev-120d"]) == {"ev-95d"}
 
 
+def test_webhook_delivery_window_cannot_be_set_below_the_ingestion_health_lookback(db):
+    """The ingestion-health card looks back 30 days for permanent losses; purging dropped ones sooner hides them."""
+    _delivery(db, status="dropped", age_days=20, name="floor-20d")
+    _delivery(db, status="dropped", age_days=45, name="floor-45d")
+
+    _run(db, retention_webhook_deliveries_days="7")
+
+    assert _left(db, WebhookDelivery, WebhookDelivery.delivery_id, ["floor-20d", "floor-45d"]) == {"floor-20d"}
+
+
 # ── configuration ────────────────────────────────────────────────────────────
 
 def test_zero_switches_a_purge_off(db):

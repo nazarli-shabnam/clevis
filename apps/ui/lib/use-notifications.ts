@@ -53,7 +53,10 @@ export function useNotifications({ full = false }: { full?: boolean } = {}) {
   // Only the first page carries the unread count (later pages are older items).
   const items = full ? (pages?.flatMap((p) => p.items) ?? []) : (short.data?.items ?? [])
   const unread = full ? (pages?.[0]?.unread_count ?? 0) : (short.data?.unread_count ?? 0)
-  const { isError, error, isLoading, isFetching, refetch } = full ? long : short
+  const { isError, error, isFetching, refetch } = full ? long : short
+  // The feed queries stay disabled until the membership answer arrives, and a disabled query is not "loading", so
+  // count that wait as loading or an empty cache shows "nothing yet" before the feed is even requested.
+  const isLoading = (full ? long : short).isLoading || (org !== "" && mine.isPending)
   // A failed "Load more" keeps the loaded list on screen; it is reported separately from a failed first load.
   const loadMoreFailed = full && long.isFetchNextPageError
   // A failed background refresh with a list already loaded keeps the list on screen (`refreshFailed`);

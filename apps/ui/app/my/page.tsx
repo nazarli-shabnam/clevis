@@ -62,6 +62,9 @@ export default function MyWorkPage() {
   // query never fires with the old tab's offset (which was a wasted search call, or an out-of-range page).
   const listKey = `${org}|${activeTab}`
   const [pageState, setPageState] = useState({ listKey, page: 1 })
+  // Reset in the same render when the list changes (React re-renders at once). Reading the stale state as page 1
+  // is not enough: it would stay stored, and returning to that list later would bring its old page back.
+  if (pageState.listKey !== listKey) setPageState({ listKey, page: 1 })
   const page = pageState.listKey === listKey ? pageState.page : 1
   const setPage = (next: number) => setPageState({ listKey, page: next })
 

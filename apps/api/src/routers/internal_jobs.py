@@ -21,12 +21,27 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from src.core._crypto import decrypt_job_token
 from src.core.config import settings
 from src.core.db import GitHubInstallation, Job, get_db, set_session_tenant
 from src.services import github_app, job_refresh
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/internal", tags=["internal"])
+
+
+def _queued_with_an_installation_token(payload: dict) -> bool:
+    """Whether the token the API put in the job payload is an installation token (``ghs_``), not a pasted PAT.
+
+    A job queued with a PAT must keep running in that token's scope: swapping in an installation token (an App
+    connected after the job was queued, or a failed mint at enqueue that fell back to the PAT) would widen what the
+    job sees, and a backfill that closes alerts missing from its listing would then close ones outside the
+    installation's repositories. An unreadable payload token is treated as not an installation token."""
+    try:
+        token = decrypt_job_token(str(payload.get("token") or ""), settings.job_secret_key.get_secret_value())
+    except Exception:
+        return False
+    return token.startswith("ghs_")
 
 
 def _require_worker(authorization: str | None) -> None:
@@ -62,6 +77,9 @@ def job_installation_token(
     # (job id, tenant, account) still verifies: a tampered row, or a signature moved from another job, fails here.
     if not login or not job_refresh.verify(signature, expires_at, job.id, job.tenant_id, login):
         raise HTTPException(status_code=404, detail="No running job to issue a token for")
+    if not _queued_with_an_installation_token(payload):
+        # Queued with a PAT: the worker keeps the payload token.
+        raise HTTPException(status_code=404, detail="No installation token to refresh for this job")
 
     set_session_tenant(db, job.tenant_id)
     installation = (

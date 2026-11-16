@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { Suspense, useEffect, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { CircleNotch, CheckCircle, Warning } from "@phosphor-icons/react"
 import { PageHeader } from "@/components/page-header"
@@ -11,7 +11,7 @@ import { api } from "@/lib/api/client"
 // exchanged by the API for the App's credentials, which it stores; nothing secret reaches the browser.
 type Status = "working" | "success" | "error"
 
-export default function GithubAppCallbackPage() {
+function GithubAppCallbackContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [status, setStatus] = useState<Status>("working")
@@ -88,5 +88,14 @@ export default function GithubAppCallbackPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+// useSearchParams needs a Suspense boundary or `next build` cannot prerender this route.
+export default function GithubAppCallbackPage() {
+  return (
+    <Suspense fallback={null}>
+      <GithubAppCallbackContent />
+    </Suspense>
   )
 }

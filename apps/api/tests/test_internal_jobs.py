@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from src.core._crypto import encrypt_job_token
 from src.core.config import settings
 from src.core.db import Job, get_db
 from src.repositories import installation_repo, org_repo
@@ -30,8 +31,12 @@ def configured(monkeypatch):
     monkeypatch.setattr(settings, "worker_api_token", SecretStr(SECRET))
 
 
+def _enc(token):
+    return encrypt_job_token(token, settings.job_secret_key.get_secret_value())
+
+
 def _job(db, tenant_id, *, status="processing", job_type="github.backfill_repo_events", payload=None, sign=True, expires_at=None):
-    payload = payload or {"account_login": "acme"}
+    payload = payload or {"account_login": "acme", "token": _enc("ghs_queued")}
     job = Job(job_type=job_type, payload=json.dumps(payload), status=status, tenant_id=tenant_id)
     db.add(job)
     db.flush()
@@ -97,6 +102,14 @@ def test_a_job_without_an_installation_or_of_another_type_gets_nothing(http, db,
     assert _post(http, _job(db, org.tenant_id)).status_code == 404  # PAT-backed: no installation
     assert _post(http, _job(db, org.tenant_id, job_type="api.scan")).status_code == 404
     assert _post(http, 999999).status_code == 404
+
+
+def test_a_job_queued_with_a_pat_never_gets_an_installation_token(http, db, configured):
+    org = _org_with_installation(db)
+    pat_job = _job(db, org.tenant_id, payload={"account_login": "acme", "token": _enc("ghp_pasted")})
+    with patch("src.routers.internal_jobs.github_app.get_installation_token") as mint:
+        assert _post(http, pat_job).status_code == 404
+    mint.assert_not_called()
 
 
 def test_a_mint_failure_is_a_502_so_the_worker_falls_back(http, db, configured):

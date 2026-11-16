@@ -82,12 +82,14 @@ def test_the_manifest_requests_everything_the_code_uses_and_every_url_comes_from
     assert perms["administration"] == "write" and perms["contents"] == "write" and perms["workflows"] == "write"
     assert perms["actions"] == "write" and perms["checks"] == "read" and perms["statuses"] == "read"
     assert perms["organization_administration"] == "read" and perms["metadata"] == "read"
+    assert perms["emails"] == "read"  # sign-in falls back to GET /user/emails
 
 
 def test_read_only_drops_every_write_permission():
     perms = app_permissions.manifest_permissions(True)
     assert "write" not in perms.values() and "workflows" not in perms
     assert set(app_permissions.BASELINE_PERMISSIONS) <= set(perms)
+    assert perms["emails"] == "read"
 
 
 def test_the_post_url_targets_the_user_or_the_organization_and_rejects_a_bad_org_name():
@@ -225,6 +227,17 @@ def test_a_state_from_another_admin_or_a_replay_without_confirmation_is_refused(
     assert _convert(client, state).status_code == 422
     replace_state = _manifest(client, replace=True).json()["state"]
     assert _convert(client, replace_state).status_code == 200
+
+
+def test_the_replacement_check_reads_the_table_not_a_stale_credentials_cache(db, monkeypatch):
+    """Two overlapping first-time conversions: the loser's cached "no App yet" must not let it overwrite the winner."""
+    user = _user(db)
+    client = _client(db, user)
+    state = _manifest(client).json()["state"]
+    assert _convert(client, state).status_code == 200
+    monkeypatch.setattr(github_app_credentials, "stored", lambda: None)  # what a cache filled before the winner saw
+    second_state = github_app_manifest.sign_state(user_id=user.id, token_version=0, replace=False)
+    assert _convert(client, second_state).status_code == 422
 
 
 def test_a_refused_code_stores_nothing(db):

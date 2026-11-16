@@ -20,7 +20,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from src.core.auth import UserOut, current_revocation_key, require_auth
+from src.core.auth import UserOut, current_revocation_key, current_session_claims, require_auth
 from src.core.db import RepoEvent, RepoEventDailyCount, RevokedToken, SessionLocal, User, get_db
 from src.core.rbac import _ROLE_RANK, OrgContext, require_org_role, set_tenant_session_context
 from src.repositories import installation_repo, tenant_repo
@@ -283,12 +283,24 @@ def _stream_poll_session():
         _teardown_stream_session(db)
 
 
-def _stream_authorization_check(tenant_id: int, user_id: int, token_version: int, revocation_key: str | None):
+def _stream_authorization_check(
+    tenant_id: int,
+    user_id: int,
+    token_version: int,
+    revocation_key: str | None,
+    expires_at: float | None = None,
+):
     """A per-poll recheck of what the stream was opened with: the session is not revoked ("sign out everywhere"
     bumps token_version, a logout or revoke denylists the jti) and the user is still a member of the org.
-    Without it a removed member would keep receiving events until the 15-minute cap."""
+    Without it a removed member would keep receiving events until the 15-minute cap.
+
+    ``token_version`` and ``expires_at`` come from the verified JWT, not from a later database read: a revoke that
+    lands between authentication and the stream opening would otherwise become the baseline. A logout purges
+    denylist rows once their token has expired, so an expired token ends the stream even with no row to find."""
 
     def check(db: Session) -> bool:
+        if expires_at is not None and time.time() >= expires_at:
+            return False
         user = db.get(User, user_id)
         if user is None or user.token_version != token_version:
             return False
@@ -312,9 +324,11 @@ def _run_activity_summary_poll(
         # The tenant context first: the membership re-check reads RLS-protected `memberships`, which is empty
         # for a session with no context (every stream would then end as unauthorized).
         set_tenant_session_context(db, ctx.org.tenant_id, ctx.membership.user_id)
+        # Before the authorization reads too: a lock on `users` or `memberships` would otherwise hold this poll's
+        # connection and thread past the bound.
+        db.execute(text(f"SET LOCAL statement_timeout = {int(_SSE_SNAPSHOT_TIMEOUT_MS)}"))
         if still_authorized is not None and not still_authorized(db):
             return None
-        db.execute(text(f"SET LOCAL statement_timeout = {int(_SSE_SNAPSHOT_TIMEOUT_MS)}"))
         return _activity_summary_snapshot(db, org_login, ctx, days)
 
 
@@ -376,7 +390,7 @@ async def org_activity_summary_stream(
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     user: UserOut = Depends(require_auth),
     revocation_key: str | None = Depends(current_revocation_key),
-    db: Session = Depends(get_db),
+    claims: dict = Depends(current_session_claims),
 ):
     """SSE channel pushing the same shape org_activity_summary returns, whenever it
     changes. See _activity_summary_stream.
@@ -391,7 +405,9 @@ async def org_activity_summary_stream(
         org=SimpleNamespace(id=ctx.org.id, tenant_id=ctx.org.tenant_id),
         membership=SimpleNamespace(user_id=ctx.membership.user_id),
     )
-    check = _stream_authorization_check(ctx.org.tenant_id, user.id, db.get(User, user.id).token_version, revocation_key)
+    check = _stream_authorization_check(
+        ctx.org.tenant_id, user.id, claims.get("token_version", 0), revocation_key, claims.get("exp")
+    )
     return StreamingResponse(
         _activity_summary_stream(org_login, detached, days, still_authorized=check), media_type="text/event-stream"
     )

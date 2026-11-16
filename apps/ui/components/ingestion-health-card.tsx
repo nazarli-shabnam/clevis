@@ -19,16 +19,24 @@ export function ingestionProblem(h: IngestionHealth): string | null {
   if (!h.has_webhook_deliveries) {
     return "Event data is present, but no webhook delivery is on record (it may come from backfill, or old deliveries were purged). Check that the GitHub App's webhook URL and secret are configured (see docs/self-hosting.md)."
   }
+  // The backlog and a loss are independent problems, so both are reported when both exist.
+  const problems: string[] = []
   if (h.backlog > 0 && h.oldest_backlog_at && Date.now() - new Date(h.oldest_backlog_at).getTime() > BACKLOG_STALE_MS) {
-    return `${h.backlog} webhook deliver${h.backlog === 1 ? "y has" : "ies have"} been waiting for the worker since ${relativeTime(h.oldest_backlog_at)}. Check that the worker and Redis are running.`
+    problems.push(
+      `${h.backlog} webhook deliver${h.backlog === 1 ? "y has" : "ies have"} been waiting for the worker since ${relativeTime(h.oldest_backlog_at)}. Check that the worker and Redis are running.`,
+    )
   }
   const lost = h.queue_failed + h.queue_abandoned + h.dropped
   if (lost > 0) {
-    return `${lost} webhook deliver${lost === 1 ? "y was" : "ies were"} lost in the last ${h.window_hours} hours, so some activity and alert data may be missing.`
+    problems.push(
+      `${lost} webhook deliver${lost === 1 ? "y was" : "ies were"} lost in the last ${h.window_hours} hours, so some activity and alert data may be missing.`,
+    )
+  } else if (h.lost_recent > 0) {
+    problems.push(
+      `${h.lost_recent} webhook deliver${h.lost_recent === 1 ? "y was" : "ies were"} permanently lost in the last ${h.loss_lookback_days} days, so some activity and alert data may be missing.`,
+    )
   }
-  if (h.lost_recent > 0) {
-    return `${h.lost_recent} webhook deliver${h.lost_recent === 1 ? "y was" : "ies were"} permanently lost in the last ${h.loss_lookback_days} days, so some activity and alert data may be missing.`
-  }
+  if (problems.length > 0) return problems.join(" ")
   return null
 }
 

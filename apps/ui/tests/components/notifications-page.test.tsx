@@ -58,6 +58,18 @@ describe("NotificationsPage", () => {
     expect(feedMock).not.toHaveBeenCalled();
   });
 
+  it("shows loading, not an empty feed, while the membership lookup is still pending", async () => {
+    let resolveMine: (v: unknown) => void = () => {};
+    minesMock.mockReturnValue(new Promise((resolve) => { resolveMine = resolve; }));
+    feedMock.mockResolvedValue(feed([item("a", "score_drop")]));
+    renderPage();
+
+    expect(screen.queryByText(/Nothing in the last/)).not.toBeInTheDocument();
+    expect(feedMock).not.toHaveBeenCalled();
+    resolveMine([{ org_login: "acme", role: "member" }]);
+    expect(await screen.findByText("title a")).toBeInTheDocument();
+  });
+
   it("asks the API for the long window, not the bell's default one", async () => {
     feedMock.mockResolvedValue(feed([item("a", "score_drop")]));
     renderPage();
