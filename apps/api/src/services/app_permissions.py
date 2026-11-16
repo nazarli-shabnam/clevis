@@ -130,3 +130,23 @@ def blocked_features(granted: dict[str, str] | None) -> list[BlockedFeature]:
         if gap:
             out.append(BlockedFeature(feature=feature_id, label=spec.label, missing=gap))
     return out
+
+
+# Org-level Administration (GitHub's ``organization_administration``): read by the Actions-usage card. Not part of
+# the per-feature checks above, which only compare what an installation was granted.
+ORG_ADMINISTRATION_PERMISSION: dict[str, str] = {"organization_administration": "read"}
+
+
+def manifest_permissions(read_only: bool = False) -> dict[str, str]:
+    """Every permission Clevis uses, generated from the tables above so a manifest cannot drift from the code.
+
+    ``read_only`` keeps only the baseline (no write automations); otherwise the union of the baseline and every
+    optional feature, each at the highest level any of them needs."""
+    out = dict(BASELINE_PERMISSIONS)
+    out.update(ORG_ADMINISTRATION_PERMISSION)
+    if not read_only:
+        for spec in FEATURE_PERMISSIONS.values():
+            for perm, level in spec.permissions.items():
+                if _RANK.get(level, 0) > _RANK.get(out.get(perm, ""), 0):
+                    out[perm] = level
+    return out

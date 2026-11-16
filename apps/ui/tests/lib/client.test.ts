@@ -1451,6 +1451,22 @@ describe("waivers, notification preferences and evidence endpoints", () => {
     expect(revoke()[1].method).toBe("DELETE")
   })
 
+  it("the GitHub App setup routes post the manifest request and the one-time code", async () => {
+    const status = stub({ source: "none" })
+    await api.githubApp.status()
+    expect(status()[0]).toMatch(/\/github-app$/)
+
+    const manifest = stub({ post_url: "u", manifest: {}, state: "s" })
+    await api.githubApp.manifest({ ui_origin: "http://localhost:3000", read_only: true })
+    expect(manifest()[0]).toMatch(/\/github-app\/manifest$/)
+    expect(JSON.parse(String(manifest()[1].body))).toEqual({ ui_origin: "http://localhost:3000", read_only: true })
+
+    const convert = stub({ slug: "x", app_id: "1" })
+    await api.githubApp.convert({ code: "c", state: "s" })
+    expect(convert()[0]).toMatch(/\/github-app\/manifest\/convert$/)
+    expect(JSON.parse(String(convert()[1].body))).toEqual({ code: "c", state: "s" })
+  })
+
   it("notification preferences are read and replaced per org", async () => {
     const get = stub({ muted_kinds: [] });
     await api.notifications.preferences("acme");

@@ -15,6 +15,7 @@ const patchMeMock = vi.fn();
 const revokeSessionsMock = vi.fn();
 const sessionsMock = vi.fn();
 const configUpdateMock = vi.fn();
+const githubAppStatusMock = vi.fn();
 const routerReplace = vi.fn();
 const meMock = vi.fn();
 let searchParams = new URLSearchParams();
@@ -43,6 +44,7 @@ vi.mock("@/lib/api/client", () => ({
       upsert: (...args: unknown[]) => tokensUpsertMock(...args),
       delete: (...args: unknown[]) => tokensDeleteMock(...args),
     },
+    githubApp: { status: (...args: unknown[]) => githubAppStatusMock(...args) },
     config: {
       getAll: (...args: unknown[]) => configGetAllMock(...args),
       update: (...args: unknown[]) => configUpdateMock(...args),
@@ -121,6 +123,10 @@ describe("SettingsPage", () => {
     meMock.mockReset();
     meMock.mockResolvedValue({ id: 1, email: "admin@example.com", name: "Admin", github_login: null });
     configUpdateMock.mockReset();
+    githubAppStatusMock.mockReset();
+    githubAppStatusMock.mockResolvedValue({
+      source: "none", configured: false, app_id: null, slug: null, permissions: {}, read_only_permissions: {}, events: [],
+    });
     routerReplace.mockClear();
     searchParams = new URLSearchParams();
     localStorage.clear();

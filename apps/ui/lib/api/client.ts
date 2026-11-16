@@ -1,4 +1,6 @@
 import type {
+  GithubAppManifest,
+  GithubAppStatus,
   PendingInstallation,
   NotificationDestination,
   NotificationDestinationInput,
@@ -863,6 +865,13 @@ export const api = {
     resolve: (org: string) =>
       post<{ token: string }>("/tokens/resolve", { org }),
     delete: (org: string) => del(`/tokens/${encodeURIComponent(org)}`),
+  },
+  githubApp: {
+    status: () => get<GithubAppStatus>("/github-app"),
+    manifest: (body: { ui_origin: string; organization?: string; read_only?: boolean; name?: string; replace?: boolean }) =>
+      post<GithubAppManifest>("/github-app/manifest", body),
+    convert: (body: { code: string; state: string }) =>
+      post<{ slug: string; app_id: string }>("/github-app/manifest/convert", body),
   },
   config: {
     getAll: () => get<Record<string, string>>("/config"),

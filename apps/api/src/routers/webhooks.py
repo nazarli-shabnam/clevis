@@ -16,6 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from src.core.config import settings
+from src.services import github_app_credentials
 from src.core.db import WebhookDelivery, get_db
 from src.core.rate_limit import rate_limit
 from src.core.redis_client import get_redis_client
@@ -98,7 +99,8 @@ _failed_signature_limit = rate_limit(max_requests=120, window_seconds=60)
 
 @router.post("/webhooks/github")
 async def github_webhook(request: Request, db: Session = Depends(get_db)):
-    secret = settings.github_app_webhook_secret
+    # May read the stored App from the database (cached a few seconds): off the event loop.
+    secret = await anyio.to_thread.run_sync(github_app_credentials.webhook_secret)
     if not secret:
         raise HTTPException(status_code=503, detail="GitHub webhook secret not configured")
 
@@ -109,7 +111,7 @@ async def github_webhook(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     raw_body = await _read_bounded_body(request)
-    if not _verify_signature(raw_body, signature, secret.get_secret_value()):
+    if not _verify_signature(raw_body, signature, secret):
         _failed_signature_limit(request)
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 

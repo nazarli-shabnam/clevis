@@ -22,7 +22,7 @@ from src.core.config import settings
 from src.core.db import GitHubInstallation, SavedToken, User, session_user_id
 from src.core._crypto import decrypt_job_token
 from src.repositories import installation_repo, org_repo, tenant_repo
-from src.services import github_app
+from src.services import github_app, github_app_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ def _saved_token(db: Session, account_login: str) -> str | None:
 
 
 def _github_app_configured() -> bool:
-    return settings.github_app_id is not None and settings.github_app_private_key is not None
+    return bool(github_app_credentials.app_id() and github_app_credentials.private_key())
 
 
 def _no_token_error(account_login: str, installation_exists: bool, *, personal: bool) -> NoGitHubTokenAvailable:

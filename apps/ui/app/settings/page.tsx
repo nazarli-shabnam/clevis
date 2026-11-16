@@ -12,6 +12,7 @@ import { SectionError } from "@/components/section-error"
 import { EmptyStatePage } from "@/components/empty-state"
 import { PermissionDriftNotice } from "@/components/permission-drift-notice"
 import { PendingInstallationsCard } from "@/components/pending-installations-card"
+import { GithubAppSetupCard } from "@/components/github-app-setup-card"
 import { GithubLinkField, githubLinkErrorMessage } from "@/components/github-link-field"
 import { SessionsCard } from "@/components/sessions-card"
 import { ChangePasswordCard } from "@/components/change-password-card"
@@ -957,6 +958,7 @@ export default function SettingsPage() {
         <AppearanceSection />
         <OrgMembershipsSection />
         <PendingInstallationsCard />
+        {user?.is_workspace_admin && <GithubAppSetupCard />}
         <ConnectedOrgsSection />
         {user?.is_workspace_admin && <SavedTokensSection />}
         {user?.is_workspace_admin && <InstanceConfigSection />}
