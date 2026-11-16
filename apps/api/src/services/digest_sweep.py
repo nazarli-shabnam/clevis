@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 _SWEEP_KEY = "digest"
 # A recipient whose sends keep failing is given up on for the period after this many tries (one per tick).
 MAX_ATTEMPTS_PER_RECIPIENT = 3
+# When every recipient was given up on, nobody got this period's digest. It is not recorded as sent: the
+# sweep waits this long (a ``digest.failed`` row marks the start) and then tries each address again.
+FAILURE_BACKOFF = timedelta(hours=6)
 _CADENCE_DAYS = {"weekly": 7, "monthly": 30}
 # An org that opts in while the instance cadence is off gets the gentlest setting, as with scheduled scans.
 _OPT_IN_DEFAULT = "weekly"
@@ -76,6 +79,18 @@ def _last_sent_at(db: Session, tenant_id: int) -> datetime | None:
     return row[0] if row else None
 
 
+def _last_failed_at(db: Session, tenant_id: int, since: datetime | None) -> datetime | None:
+    """When the current period's last all-recipients-failed round was recorded (``digest.failed``)."""
+    row = db.execute(
+        text(
+            "SELECT MAX(created_at) FROM audit_logs WHERE tenant_id = :t AND action = 'digest.failed' "
+            "AND (CAST(:since AS timestamptz) IS NULL OR created_at > :since)"
+        ),
+        {"t": tenant_id, "since": since},
+    ).fetchone()
+    return row[0] if row else None
+
+
 def _is_due(last_sent: datetime | None, now: datetime, interval_days: int) -> bool:
     if last_sent is None:
         return True
@@ -86,12 +101,15 @@ def _is_due(last_sent: datetime | None, now: datetime, interval_days: int) -> bo
     return now - last_sent >= timedelta(days=interval_days, hours=-12)
 
 
-def _delivery_state(db: Session, tenant_id: int, since: datetime | None) -> tuple[set[str], dict[str, int]]:
+def _delivery_state(
+    db: Session, tenant_id: int, since: datetime | None, failures_since: datetime | None = None
+) -> tuple[set[str], dict[str, int]]:
     """Addresses already emailed in the current period, and failed attempts per address (lower-cased).
-    The period is everything after the last ``digest.sent`` row."""
+    The period is everything after the last ``digest.sent`` row; only failures after ``failures_since`` (the
+    last ``digest.failed`` round) count toward the give-up limit, so a retry round starts with a clean slate."""
     rows = db.execute(
         text(
-            "SELECT action, payload FROM audit_logs WHERE tenant_id = :t "
+            "SELECT action, payload, created_at FROM audit_logs WHERE tenant_id = :t "
             "AND action IN ('digest.recipient_sent', 'digest.recipient_failed') "
             "AND (CAST(:since AS timestamptz) IS NULL OR created_at > :since)"
         ),
@@ -99,14 +117,14 @@ def _delivery_state(db: Session, tenant_id: int, since: datetime | None) -> tupl
     ).fetchall()
     done: set[str] = set()
     failures: dict[str, int] = {}
-    for action, payload in rows:
+    for action, payload, created_at in rows:
         try:
             address = str(json.loads(payload).get("to", "")).lower()
         except (ValueError, AttributeError):
             continue
         if action == "digest.recipient_sent":
             done.add(address)
-        else:
+        elif failures_since is None or created_at > failures_since:
             failures[address] = failures.get(address, 0) + 1
     return done, failures
 
@@ -115,7 +133,8 @@ def _deliver(db, tenant_id, org_login, cadence, interval_days, recipients, conte
     """Email each recipient not yet served this period, recording every attempt as its own audit row so a
     partial SMTP failure retries only the failed addresses (up to MAX_ATTEMPTS_PER_RECIPIENT) and an audit
     failure can only repeat one address. ``digest.sent`` closes the period -- and the cadence -- once no
-    recipient is left to try.
+    recipient is left to try and at least one was reached. If none was, ``digest.failed`` marks the round and
+    the addresses are tried again after FAILURE_BACKOFF; the period stays open.
 
     Each row is committed, which releases the transaction-scoped slot, so the slot is re-taken after every
     recipient and this tenant is abandoned (a peer replica is delivering) if it can't be, with the state
@@ -128,11 +147,27 @@ def _deliver(db, tenant_id, org_login, cadence, interval_days, recipients, conte
         if not _is_due(last_sent, now, interval_days):
             db.commit()  # a peer closed the period
             return
-        done, failures = _delivery_state(db, tenant_id, last_sent)
+        last_failed = _last_failed_at(db, tenant_id, last_sent)
+        if last_failed is not None and now - last_failed < FAILURE_BACKOFF:
+            db.commit()  # every address was given up on a moment ago; wait before trying them again
+            return
+        done, failures = _delivery_state(db, tenant_id, last_sent, last_failed)
         pending = [
             a for a in recipients if a.lower() not in done and failures.get(a.lower(), 0) < MAX_ATTEMPTS_PER_RECIPIENT
         ]
         if not pending:
+            if not done:
+                # Nobody was reached: closing the period as "sent" would drop a whole cadence interval of
+                # digest and make the audit log claim a delivery. Mark the failed round and retry after a back-off.
+                audit_repo.write(
+                    db,
+                    actor="system:digest",
+                    action="digest.failed",
+                    target=org_login,
+                    payload={"cadence": cadence, "recipients": 0, "attempted": len(recipients)},
+                    tenant_id=tenant_id,
+                )
+                return
             audit_repo.write(
                 db,
                 actor="system:digest",
