@@ -12,6 +12,7 @@ from src.core.config import settings
 from src.core.db import Job, get_db
 from src.repositories import installation_repo, org_repo
 from src.routers.internal_jobs import router
+from src.services import job_refresh
 
 SECRET = "w" * 40
 
@@ -29,9 +30,14 @@ def configured(monkeypatch):
     monkeypatch.setattr(settings, "worker_api_token", SecretStr(SECRET))
 
 
-def _job(db, tenant_id, *, status="processing", job_type="github.backfill_repo_events", payload=None):
-    job = Job(job_type=job_type, payload=json.dumps(payload or {"account_login": "acme"}), status=status, tenant_id=tenant_id)
+def _job(db, tenant_id, *, status="processing", job_type="github.backfill_repo_events", payload=None, sign=True):
+    payload = payload or {"account_login": "acme"}
+    job = Job(job_type=job_type, payload=json.dumps(payload), status=status, tenant_id=tenant_id)
     db.add(job)
+    db.flush()
+    field = job_refresh.ACCOUNT_FIELD.get(job_type)
+    if sign and field and payload.get(field):
+        job.payload = json.dumps({**payload, job_refresh.SIG_FIELD: job_refresh.sign(job.id, tenant_id, payload[field])})
     db.commit()
     return job.id
 
@@ -95,3 +101,48 @@ def test_a_mint_failure_is_a_502_so_the_worker_falls_back(http, db, configured):
     job_id = _job(db, org.tenant_id)
     with patch("src.routers.internal_jobs.github_app.get_installation_token", side_effect=RuntimeError("boom")):
         assert _post(http, job_id).status_code == 502
+
+
+def test_a_job_row_the_worker_rewrote_is_refused(http, db, configured):
+    # The worker's DB role can UPDATE every jobs column; the API's signature must make that useless.
+    victim = _org_with_installation(db)
+    attacker = org_repo.get_or_create(db, github_login="attacker")
+    installation_repo.create(
+        db, account_login="attacker", account_type="Organization", auth_mode="app", installation_id=66, org_id=attacker.id
+    )
+    with patch("src.routers.internal_jobs.github_app.get_installation_token", return_value="x") as mint:
+        # 1. tenant_id rewritten to the victim's: the signature was made for the attacker's tenant
+        job_id = _job(db, attacker.tenant_id, payload={"account_login": "attacker"})
+        db.get(Job, job_id).tenant_id = victim.tenant_id
+        db.commit()
+        assert _post(http, job_id).status_code == 404
+        # 2. account rewritten in the payload (tenant untouched)
+        job_id = _job(db, victim.tenant_id, payload={"account_login": "acme"})
+        job = db.get(Job, job_id)
+        job.payload = json.dumps({**json.loads(job.payload), "account_login": "attacker"})
+        db.commit()
+        assert _post(http, job_id).status_code == 404
+        # 3. another job's signature copied onto this one
+        donor = _job(db, attacker.tenant_id, payload={"account_login": "attacker"})
+        stolen = json.loads(db.get(Job, donor).payload)[job_refresh.SIG_FIELD]
+        target = _job(db, victim.tenant_id, payload={"account_login": "acme"})
+        job = db.get(Job, target)
+        job.payload = json.dumps({**json.loads(job.payload), job_refresh.SIG_FIELD: stolen})
+        db.commit()
+        assert _post(http, target).status_code == 404
+        # 4. no signature at all (a job from before this change, or one the worker stripped)
+        assert _post(http, _job(db, victim.tenant_id, sign=False)).status_code == 404
+    mint.assert_not_called()
+
+
+def test_enqueue_signs_the_jobs_that_can_be_refreshed(db):
+    from src.repositories import job_repo
+
+    org = org_repo.get_or_create(db, github_login="acme")
+    job_id = job_repo.enqueue(db, "github.backfill_repo_events", {"account_login": "acme", "token": "t"}, org.tenant_id)
+    payload = json.loads(db.get(Job, job_id).payload)
+    assert job_refresh.verify(payload[job_refresh.SIG_FIELD], job_id, org.tenant_id, "ACME")  # login case-insensitive
+    assert payload["token"] == "t" and payload["account_login"] == "acme"
+    # No tenant, or a job type that never refreshes: no signature.
+    assert job_refresh.SIG_FIELD not in json.loads(db.get(Job, job_repo.enqueue(db, "github.backfill_repo_events", {"account_login": "acme"}, None)).payload)
+    assert job_refresh.SIG_FIELD not in json.loads(db.get(Job, job_repo.enqueue(db, "api.scan", {"actor": "a"}, org.tenant_id)).payload)
