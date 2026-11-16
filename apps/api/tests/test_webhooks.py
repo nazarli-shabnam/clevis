@@ -726,3 +726,52 @@ def test_repository_renamed_for_an_unknown_installation_changes_nothing(db, webh
     db.expire_all()
     db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
     assert sorted(waiver.repos) == ["API", "other"]
+
+
+def test_organization_renamed_without_a_usable_id_or_login_is_ignored(db, webhook_client, redis_client):
+    org = org_repo.get_or_create(db, github_login="old-name", github_org_id=321)
+
+    resp = _post(webhook_client, "organization", {"action": "renamed", "organization": {"login": "new-name"}})
+
+    assert resp.status_code == 200
+    db.refresh(org)
+    assert org.github_login == "old-name"
+
+
+def test_organization_renamed_onto_another_connected_orgs_login_is_not_applied(db, webhook_client, redis_client):
+    org_repo.get_or_create(db, github_login="taken", github_org_id=111)
+    renamed = org_repo.get_or_create(db, github_login="old-name", github_org_id=321)
+
+    resp = _post(
+        webhook_client,
+        "organization",
+        {"action": "renamed", "organization": {"id": 321, "login": "taken"}, "changes": {"login": {"from": "old-name"}}},
+    )
+
+    assert resp.status_code == 200
+    db.refresh(renamed)
+    assert renamed.github_login == "old-name"
+
+
+def test_repository_event_without_a_usable_installation_changes_nothing(db, webhook_client):
+    org, waiver = _tenant_with_repo_rows(db)
+    payload = _repo_event("renamed", name="service", old_name="api")
+    del payload["installation"]
+
+    resp = _post(webhook_client, "repository", payload)
+
+    assert resp.status_code == 200
+    db.expire_all()
+    db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
+    assert sorted(waiver.repos) == ["API", "other"]
+
+
+def test_repository_event_that_does_not_change_the_name_or_owner_changes_nothing(db, webhook_client):
+    org, waiver = _tenant_with_repo_rows(db)
+
+    resp = _post(webhook_client, "repository", _repo_event("renamed", name="api"))
+
+    assert resp.status_code == 200
+    db.expire_all()
+    db.execute(text(f"SET LOCAL app.tenant_id = {int(org.tenant_id)}"))
+    assert sorted(waiver.repos) == ["API", "other"]
