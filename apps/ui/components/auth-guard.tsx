@@ -16,8 +16,10 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
 
   const isPublic = isPublicRoute(pathname)
-  const [mineDismissed, setMineDismissed] = useState(false)
-  const myInvitations = useMyInvitations(!!user, pathname)
+  // Dismissal belongs to the account that dismissed: another account signing in sees its own banner.
+  const [mineDismissedFor, setMineDismissedFor] = useState<number | null>(null)
+  const mineDismissed = user != null && mineDismissedFor === user.id
+  const myInvitations = useMyInvitations(!!user, pathname, user?.id)
 
   useEffect(() => {
     if (isLoading) return
@@ -89,7 +91,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
             </Link>
           ))}
           <button
-            onClick={() => setMineDismissed(true)}
+            onClick={() => setMineDismissedFor(user.id)}
             className="text-primary/60 hover:text-primary"
             aria-label="Dismiss"
           >

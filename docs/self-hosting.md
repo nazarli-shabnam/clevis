@@ -271,7 +271,7 @@ Clevis has two long-lived secrets in `.env`. Neither can be recovered from the d
 4. Re-save each saved token in Settings, and re-enter the URL (and secret, for signed webhooks) or recipients of each notification destination (edit it and fill the field). A destination that cannot be decrypted keeps failing to send until you do.
 5. Re-run anything that failed while the key was changing (cache clears and backfills are enqueued again from the UI; the sweeps re-enqueue backfills on their own).
 
-If you rotate by accident or lose the new value, putting the previous `JOB_SECRET_KEY` back and restarting is enough to recover; nothing was overwritten.
+If you rotate by accident or lose the new value, putting the previous `JOB_SECRET_KEY` back and restarting recovers everything you have not re-entered yet (step 4): until then nothing was overwritten. A value re-saved under the new key is encrypted with it and replaces the old ciphertext, so the previous key can no longer read it; after re-entering, recover it from the database backup taken before the rotation, or enter it again.
 
 ### Backup and restore
 
@@ -288,7 +288,7 @@ To restore onto a fresh volume: set the same `.env` (the same `DB_*`, `API_DB_PA
 
 1. Back up the database (above) and note the current commit.
 2. `git pull`, then `docker compose up -d --build`. The UI image bakes in `NEXT_PUBLIC_*` values at build time, so rebuild it rather than only pulling.
-3. Database migrations run automatically when the API container starts (`alembic upgrade head` in `apps/api/entrypoint.sh`, as the `DB_USER` credential). The worker only starts once the API reports healthy, so it never runs against an old schema; watch the API logs (`docker compose logs -f api`) until `/healthz` is ok.
+3. Database migrations run automatically when the API container starts (`alembic upgrade head` in `apps/api/entrypoint.sh`, as the `DB_USER` credential). The worker only starts once the API reports healthy, but that ordering does not stop a worker that is already running while the API container is replaced and migrates. Stop it first with `docker compose stop worker` (before step 2), and start it again with `docker compose up -d worker` once the API reports healthy; watch the API logs (`docker compose logs -f api`) until `/healthz` is ok.
 4. Migrations only move forward. To roll back after a bad upgrade, restore the pre-upgrade backup together with the previous commit; do not run `alembic downgrade` against production data.
 5. If you use the dedicated database roles, a `permission denied for table ...` error after an upgrade means a grant is missing: re-run the provisioning script for that role (see "Enabling Row-Level Security enforcement").
 

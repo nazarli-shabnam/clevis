@@ -753,6 +753,22 @@ def test_organization_renamed_onto_another_connected_orgs_login_is_not_applied(d
     assert renamed.github_login == "old-name"
 
 
+def test_organization_renamed_onto_a_connected_org_without_a_github_id_is_not_applied(db, webhook_client, redis_client):
+    taken = org_repo.get_or_create(db, github_login="taken")  # connected by login only: no GitHub id yet
+    renamed = org_repo.get_or_create(db, github_login="old-name", github_org_id=321)
+
+    resp = _post(
+        webhook_client,
+        "organization",
+        {"action": "renamed", "organization": {"id": 321, "login": "taken"}, "changes": {"login": {"from": "old-name"}}},
+    )
+
+    assert resp.status_code == 200
+    db.refresh(renamed)
+    db.refresh(taken)
+    assert renamed.github_login == "old-name" and taken.github_org_id is None
+
+
 def test_repository_event_without_a_usable_installation_changes_nothing(db, webhook_client):
     org, waiver = _tenant_with_repo_rows(db)
     payload = _repo_event("renamed", name="service", old_name="api")

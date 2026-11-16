@@ -302,13 +302,16 @@ def _handle_organization_renamed(db: Session, payload: dict) -> None:
     if org_id is None or new_login is None:
         logger.warning("organization.renamed webhook has no usable organization id/login")
         return
-    if org_repo.get_by_org_id(db, org_id) is None:
+    org = org_repo.get_by_org_id(db, org_id)
+    if org is None:
         return
-    try:
-        org_repo.get_or_create(db, new_login, org_id)
-    except org_repo.OrgIdentityMismatch:
-        # The new login is already another connected org's row; nothing safe to rename onto.
+    holder = org_repo.get_by_login_ci(db, new_login)
+    if holder is not None and holder.id != org.id:
+        # The new login is already another connected org's row (whatever GitHub id it has, or none yet); renaming
+        # onto it would either reuse that org's tenant or trip the unique GitHub-id constraint.
         logger.warning("organization.renamed to %r conflicts with another connected org; not applied", new_login)
+        return
+    org_repo.get_or_create(db, new_login, org_id)
 
 
 def _handle_repository_moved(db: Session, payload: dict) -> None:
