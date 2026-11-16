@@ -226,6 +226,7 @@ export default function AuditPage() {
             message={error instanceof Error ? error.message : "Failed to load audit events."}
             onRetry={() => refetch()}
             retrying={isFetching}
+            error={error}
           />
         ) : logs.length === 0 ? (
           <EmptyStateInline
