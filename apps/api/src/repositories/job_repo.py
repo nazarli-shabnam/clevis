@@ -30,7 +30,12 @@ def enqueue(
     field = job_refresh.ACCOUNT_FIELD.get(job_type)
     if tenant_id is not None and field and isinstance(payload.get(field), str) and payload[field]:
         # Lets the worker fetch a fresh installation token for exactly this job, tenant and account; see job_refresh.
-        signed = {**payload, job_refresh.SIG_FIELD: job_refresh.sign(job.id, tenant_id, payload[field])}
+        expires_at = job_refresh.new_expiry()
+        signed = {
+            **payload,
+            job_refresh.EXP_FIELD: expires_at,
+            job_refresh.SIG_FIELD: job_refresh.sign(job.id, tenant_id, payload[field], expires_at),
+        }
         job.payload = json.dumps(signed)
         db.flush()
     if commit:
