@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import CheckWaiver, get_db
+from src.core.path_params import RowId
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import audit_repo, waiver_repo
 from src.schemas.waiver import WaiverIn, WaiverOut
@@ -111,7 +112,7 @@ def _get_or_404(db: Session, ctx: OrgContext, waiver_id: int) -> CheckWaiver:
 
 @router.put("/orgs/{org_login}/waivers/{waiver_id}", response_model=WaiverOut)
 def update_waiver(
-    waiver_id: int,
+    waiver_id: RowId,
     body: WaiverIn,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     user: UserOut = Depends(require_auth),
@@ -144,7 +145,7 @@ def update_waiver(
 
 @router.delete("/orgs/{org_login}/waivers/{waiver_id}", status_code=status.HTTP_204_NO_CONTENT)
 def revoke_waiver(
-    waiver_id: int,
+    waiver_id: RowId,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth, require_workspace_admin
 from src.core.db import get_db
+from src.core.path_params import RowId
 from src.repositories import job_repo
 from src.schemas.job import JobOut
 from src.services.api_job_runner import API_JOB_TYPES
@@ -22,7 +23,7 @@ def jobs(db: Session = Depends(get_db), _user: UserOut = Depends(require_workspa
 
 
 @router.get("/{job_id}", response_model=JobOut)
-def job(job_id: int, db: Session = Depends(get_db), user: UserOut = Depends(require_auth)):
+def job(job_id: RowId, db: Session = Depends(get_db), user: UserOut = Depends(require_auth)):
     # The cache-clear panel polls this to show a queued job's real terminal status. The
     # `jobs` table has no owner/tenant column, so to avoid cross-tenant id enumeration this
     # is scoped to the job's own `actor` and to job types that record one.
