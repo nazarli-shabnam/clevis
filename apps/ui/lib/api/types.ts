@@ -227,6 +227,10 @@ export interface IngestionHealth {
   queue_abandoned: number
   dropped: number
   pending: number
+  backlog: number
+  oldest_backlog_at: string | null
+  loss_lookback_days: number
+  lost_recent: number
   last_backfill_at: string | null
   last_membership_reconcile_at: string | null
 }

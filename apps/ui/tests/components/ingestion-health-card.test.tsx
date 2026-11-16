@@ -19,6 +19,10 @@ const health = (over: Record<string, unknown> = {}) => ({
   queue_abandoned: 0,
   dropped: 0,
   pending: 1,
+  backlog: 1,
+  oldest_backlog_at: ago(2 * 60_000),
+  loss_lookback_days: 30,
+  lost_recent: 0,
   last_backfill_at: ago(3 * 3_600_000),
   last_membership_reconcile_at: ago(3_600_000),
   ...over,
@@ -80,6 +84,30 @@ describe("IngestionHealthCard", () => {
     healthMock.mockResolvedValue(health({ dropped: 1 }))
     renderCard()
     expect(await screen.findByText(/1 webhook delivery was lost/)).toBeInTheDocument()
+  })
+
+  it("flags a backlog the worker has not touched for over 15 minutes, even past the 24h window", async () => {
+    healthMock.mockResolvedValue(health({ pending: 0, backlog: 4, oldest_backlog_at: ago(3 * 86_400_000) }))
+    renderCard()
+    expect(await screen.findByText(/4 webhook deliveries have been waiting for the worker since 3 days ago/)).toBeInTheDocument()
+  })
+
+  it("singular wording for a single stale delivery", async () => {
+    healthMock.mockResolvedValue(health({ backlog: 1, oldest_backlog_at: ago(3_600_000) }))
+    renderCard()
+    expect(await screen.findByText(/1 webhook delivery has been waiting/)).toBeInTheDocument()
+  })
+
+  it("keeps reporting permanent losses for the longer lookback", async () => {
+    healthMock.mockResolvedValue(health({ lost_recent: 2 }))
+    renderCard()
+    expect(await screen.findByText(/2 webhook deliveries were permanently lost in the last 30 days/)).toBeInTheDocument()
+  })
+
+  it("singular wording for one permanent loss", async () => {
+    healthMock.mockResolvedValue(health({ lost_recent: 1 }))
+    renderCard()
+    expect(await screen.findByText(/1 webhook delivery was permanently lost/)).toBeInTheDocument()
   })
 
   it("shows a load error with a retry", async () => {

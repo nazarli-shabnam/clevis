@@ -132,3 +132,19 @@ def test_admin_only(db, org, admin):
     member = _user(db, "member@example.com")
     org_membership_repo.get_or_create(db, org_id=org.id, user_id=member.id, role="member")
     assert _client(db, member).get("/orgs/acme/ingestion-health").status_code == 403
+
+
+def test_backlog_and_losses_are_not_limited_to_the_24_hour_window(db, org, admin):
+    t = org.tenant_id
+    _delivery(db, t, "queued", timedelta(days=3))
+    _delivery(db, t, "queue_failed", timedelta(days=2))
+    _delivery(db, t, "queue_abandoned", timedelta(days=10))
+    _delivery(db, t, "dropped", timedelta(days=40))  # past the 30-day loss lookback
+
+    body = _client(db, admin).get("/orgs/acme/ingestion-health").json()
+
+    assert body["received"] == 0 and body["pending"] == 0  # nothing inside the 24h window
+    assert body["backlog"] == 2
+    age = datetime.now(timezone.utc) - datetime.fromisoformat(body["oldest_backlog_at"])
+    assert timedelta(days=2, hours=23) < age < timedelta(days=3, hours=1)
+    assert body["lost_recent"] == 1 and body["loss_lookback_days"] == 30

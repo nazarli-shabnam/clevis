@@ -7,6 +7,8 @@ import { relativeTime } from "@/lib/format"
 import { SectionError } from "@/components/section-error"
 import type { IngestionHealth } from "@/lib/api/types"
 
+const BACKLOG_STALE_MS = 15 * 60_000
+
 const when = (iso: string | null) => (iso ? relativeTime(iso) : "never")
 
 /** What is wrong with ingestion, if anything, in one sentence; null when it looks healthy. */
@@ -17,9 +19,15 @@ export function ingestionProblem(h: IngestionHealth): string | null {
   if (!h.has_webhook_deliveries) {
     return "Event data is present, but no webhook delivery is on record (it may come from backfill, or old deliveries were purged). Check that the GitHub App's webhook URL and secret are configured (see docs/self-hosting.md)."
   }
+  if (h.backlog > 0 && h.oldest_backlog_at && Date.now() - new Date(h.oldest_backlog_at).getTime() > BACKLOG_STALE_MS) {
+    return `${h.backlog} webhook deliver${h.backlog === 1 ? "y has" : "ies have"} been waiting for the worker since ${relativeTime(h.oldest_backlog_at)}. Check that the worker and Redis are running.`
+  }
   const lost = h.queue_failed + h.queue_abandoned + h.dropped
   if (lost > 0) {
     return `${lost} webhook deliver${lost === 1 ? "y was" : "ies were"} lost in the last ${h.window_hours} hours, so some activity and alert data may be missing.`
+  }
+  if (h.lost_recent > 0) {
+    return `${h.lost_recent} webhook deliver${h.lost_recent === 1 ? "y was" : "ies were"} permanently lost in the last ${h.loss_lookback_days} days, so some activity and alert data may be missing.`
   }
   return null
 }
