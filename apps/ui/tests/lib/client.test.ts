@@ -1450,6 +1450,18 @@ describe("waivers, notification preferences and evidence endpoints", () => {
     expect(revoke()[1].method).toBe("DELETE")
   })
 
+  it("the api-token revoke-on-leave policy is read and written per org", async () => {
+    const read = stub({ revoke_on_creator_leave: false })
+    await api.apiTokens.policy("a/b")
+    expect(read()[0]).toMatch(/\/orgs\/a%2Fb\/api-token-policy$/)
+
+    const write = stub({ revoke_on_creator_leave: true })
+    await api.apiTokens.setPolicy("acme", true)
+    expect(write()[0]).toMatch(/\/orgs\/acme\/api-token-policy$/)
+    expect(write()[1].method).toBe("PUT")
+    expect(JSON.parse(String(write()[1].body))).toEqual({ revoke_on_creator_leave: true })
+  })
+
   it("notification preferences are read and replaced per org", async () => {
     const get = stub({ muted_kinds: [] });
     await api.notifications.preferences("acme");
