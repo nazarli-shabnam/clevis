@@ -1292,13 +1292,12 @@ def _search_items_page(
     params: dict = {"q": query, "per_page": per_page, "page": page}
     if sort_oldest:
         params.update(sort="created", order="asc")
-    try:
-        result = client.request("GET", "/search/issues", params=params)
-        if not isinstance(result, dict):
-            return [], 0
-        return result.get("items", []), result.get("total_count", 0)
-    except (httpx.HTTPStatusError, httpx.RequestError):
+    # A failed search (rate limit, 403, 5xx, network) raises: answering an empty page would tell the user
+    # their review queue is empty. The caller turns it into an HTTP error the UI shows with a retry.
+    result = client.request("GET", "/search/issues", params=params)
+    if not isinstance(result, dict):
         return [], 0
+    return result.get("items", []), result.get("total_count", 0)
 
 
 async def _my_items_list(
@@ -1329,7 +1328,12 @@ async def _my_items_list(
         return response_cls(total_count=_MAX_SEARCH_RESULTS, page=page, per_page=per_page)
 
     query = query_template.format(login=login)
-    items_raw, total_count = await anyio.to_thread.run_sync(lambda: _search_items_page(client, query, page, per_page, sort_oldest))
+    try:
+        items_raw, total_count = await anyio.to_thread.run_sync(
+            lambda: _search_items_page(client, query, page, per_page, sort_oldest)
+        )
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        raise _github_error(exc) from exc
     # Cap the reported total to what's reachable so the UI's Next button disables at the true boundary.
     return response_cls(
         items=mapper(items_raw), total_count=min(total_count, _MAX_SEARCH_RESULTS), page=page, per_page=per_page
