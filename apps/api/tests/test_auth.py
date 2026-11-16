@@ -1132,6 +1132,23 @@ def test_update_config_int_below_minimum(config_client_owner, value):
     assert resp.status_code == 422
 
 
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("dependabot_sla_critical_days", "1000000"),
+        ("dependabot_sla_high_days", "3651"),
+        ("pr_nudge_stale_days", "3651"),
+        ("gap_heal_stale_hours", "87601"),
+        ("retention_jobs_days", "3651"),
+    ],
+)
+def test_update_config_day_and_hour_settings_have_an_upper_bound(config_client_owner, key, value):
+    # A huge value would overflow `now - timedelta(...)` in the SLA sweep, notification feed and digest.
+    resp = config_client_owner.put(f"/config/{key}", json={"value": value})
+    assert resp.status_code == 422
+    assert "at most" in resp.json()["detail"]
+
+
 def test_update_config_valid_worker_poll_seconds(config_client_owner):
     with (
         patch("src.routers.config.set_config") as mock_set,
