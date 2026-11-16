@@ -1,6 +1,5 @@
 import { CircleNotch } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
-import { ApiError } from "@/lib/api/client"
 
 // Inline error with manual retry; default query behavior won't retry just from switching tabs.
 // A 4xx validation error (a rejected query parameter, not a failed request) has no point of
@@ -16,7 +15,7 @@ export function SectionError({
   retrying?: boolean
   error?: unknown
 }) {
-  const retryable = !(error instanceof ApiError && error.status === 422)
+  const retryable = (error as { status?: number } | null)?.status !== 422
   const retryContent: React.ReactNode = retrying ? <CircleNotch className="size-3 animate-spin" /> : "Retry"
 
   return (
