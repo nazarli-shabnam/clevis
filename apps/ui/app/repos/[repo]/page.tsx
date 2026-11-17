@@ -162,8 +162,18 @@ export default function RepoDetailPage() {
 
   const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({ overview: null, cache: null, security: null })
 
-  function focusTab(id: Tab) {
+  // Keeps the tab in the URL (?tab=security) so it survives a reload and can be shared; Overview is the default
+  // and stays out of it. replaceState (supported by the Next router) so tab changes don't pile up history entries.
+  function selectTab(id: Tab) {
     setTab(id)
+    const url = new URL(window.location.href)
+    if (id === "overview") url.searchParams.delete("tab")
+    else url.searchParams.set("tab", id)
+    window.history.replaceState(window.history.state, "", url)
+  }
+
+  function focusTab(id: Tab) {
+    selectTab(id)
     tabRefs.current[id]?.focus()
   }
 
@@ -283,7 +293,7 @@ export default function RepoDetailPage() {
             aria-controls={tabPanelId(t.id)}
             aria-selected={tab === t.id}
             tabIndex={tab === t.id ? 0 : -1}
-            onClick={() => setTab(t.id)}
+            onClick={() => selectTab(t.id)}
             onKeyDown={(e) => handleTabKeyDown(e, i)}
             className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors ${
               tab === t.id

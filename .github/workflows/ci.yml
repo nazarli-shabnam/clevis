@@ -81,7 +81,9 @@ jobs:
 
       - name: Build UI
         working-directory: apps/ui
-        run: bun run build
+        # next/font downloads Google Fonts at build time; a transient bad response from Google fails the build
+        # with "Cannot read properties of null (reading '1')". A rerun passes, so retry instead of failing main.
+        run: bun run build || (sleep 10 && bun run build) || (sleep 30 && bun run build)
 
       - name: Setup Python (for diff-cover)
         uses: actions/setup-python@v7

@@ -1112,3 +1112,19 @@ def test_sync_org_installation_known_admin_is_rejected_when_the_installation_rep
             json={"account_login": "acme", "account_type": "Organization", "installation_id": 7},
         )
     assert resp.status_code == 502
+
+
+@pytest.mark.parametrize("field,value", [("auth_mode", "token"), ("account_type", "Enterprise"), ("account_type", "user")])
+def test_sync_rejects_values_outside_the_known_auth_modes_and_account_types(db, acme_org, field, value):
+    # #1123: with no installation_id nothing checks these against GitHub, so a free string used to be stored as-is.
+    body = {"account_login": "acme", "account_type": "Organization", "installation_id": 7, field: value}
+    resp = _client(db, acme_org["admin"]).post("/orgs/acme/installations/sync", json=body)
+    assert resp.status_code == 422
+
+
+def test_personal_sync_without_an_installation_id_matches_the_login_case_insensitively(db):
+    user = _make_user(db, "alice@e.com", github_login="alice", github_user_id=11)
+    resp = _client(db, user).post(
+        "/me/installations/sync", json={"account_login": "Alice", "account_type": "User", "auth_mode": "pat"}
+    )
+    assert resp.status_code == 200
