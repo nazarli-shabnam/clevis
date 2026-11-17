@@ -44,6 +44,7 @@ def blockers(db: Session, user: User) -> list[str]:
         admins = len(
             db.query(Membership.id)
             .filter(Membership.tenant_id == org.tenant_id, Membership.role == "admin")
+            .order_by(Membership.id)
             .with_for_update()
             .all()
         )

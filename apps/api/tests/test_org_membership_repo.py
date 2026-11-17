@@ -360,3 +360,79 @@ def test_concurrent_get_or_create_and_delete_on_a_fresh_row_end_consistently():
         assert final is None or final.role == "member"
     finally:
         _cleanup(session_a, org_id, user_id)
+
+
+def test_two_admins_removing_each_other_queue_instead_of_deadlocking():
+    # #1112: the guard used to lock the target row and then every admin row, so admins A and B removing each
+    # other each held one row and waited for the other (DeadlockDetected -> 500). The barrier sits right after
+    # the target lock, the exact point where the old order deadlocked.
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from src.routers import org_memberships
+
+    setup = SessionLocal()
+    org = org_repo.get_or_create(setup, github_login="acme-deadlock-test")
+    a = User(email="adm-a@example.com", name=None, password_hash=None, is_workspace_admin=False)
+    b = User(email="adm-b@example.com", name=None, password_hash=None, is_workspace_admin=False)
+    setup.add_all([a, b])
+    setup.commit()
+    org_id, tenant_id, ids = org.id, org.tenant_id, [a.id, b.id]
+    for uid in ids:
+        org_membership_repo.get_or_create(setup, org_id=org_id, user_id=uid, role="admin")
+    setup.execute(text(f"SET LOCAL app.tenant_id = {tenant_id}"))
+    setup.execute(text("UPDATE memberships SET source = 'invite' WHERE tenant_id = :t"), {"t": tenant_id})
+    setup.commit()
+    setup.close()
+
+    barrier = threading.Barrier(2)
+    original = tenant_repo.get_membership
+
+    def get_then_meet(db, tenant_id, user_id, *, for_update=False):
+        row = original(db, tenant_id, user_id, for_update=for_update)
+        if for_update:
+            try:
+                barrier.wait(timeout=1.5)
+            except threading.BrokenBarrierError:
+                pass  # the other transaction is queued behind our admin locks, which is the fixed behaviour
+        return row
+
+    outcomes: dict[int, str] = {}
+
+    def remove(target_id: int):
+        session = SessionLocal()
+        try:
+            session.execute(text(f"SET LOCAL app.tenant_id = {tenant_id}"))
+            ctx = SimpleNamespace(org=SimpleNamespace(tenant_id=tenant_id))
+            try:
+                membership = org_memberships._lock_invite_membership(session, ctx, target_id)
+                org_memberships._refuse_if_last_admin(session, ctx, membership)
+                tenant_repo.delete_membership(session, tenant_id, target_id, commit=False)
+                session.commit()
+                outcomes[target_id] = "removed"
+            except HTTPException as exc:
+                session.rollback()
+                outcomes[target_id] = f"http {exc.status_code}"
+            except Exception as exc:  # a DeadlockDetected would land here
+                session.rollback()
+                outcomes[target_id] = type(exc).__name__
+        finally:
+            session.close()
+
+    cleanup = SessionLocal()
+    try:
+        with patch.object(tenant_repo, "get_membership", get_then_meet):
+            threads = [threading.Thread(target=remove, args=(uid,)) for uid in ids]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=15)
+        # Exactly one removal wins; the other is told it would leave the org without an admin.
+        assert sorted(outcomes.values()) == ["http 409", "removed"], outcomes
+    finally:
+        _cleanup(cleanup, org_id, ids[0])
+        extra = SessionLocal()
+        extra.query(User).filter(User.id == ids[1]).delete()
+        extra.commit()
+        extra.close()
