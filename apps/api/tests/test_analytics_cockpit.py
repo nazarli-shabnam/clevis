@@ -247,17 +247,19 @@ def test_cockpit_trend_ignores_a_non_members_scan_of_the_orgs_login(http, db, mo
     # Any user can scan any login with their own token, so a stranger's newer row carrying
     # owner="acme" must not become the member's "latest score" or part of their trend (#530).
     org = org_repo.get_or_create(db, github_login="acme")
-    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
     stranger = User(email="stranger-cockpit@example.com", name=None, is_workspace_admin=False)
     db.add(stranger)
     db.flush()
     scan_results_repo.insert(
-        db, owner="acme", score=70, total_checks=5, failed_checks=1, checks=[],
-        tenant_id=org.tenant_id, scanned_by_user_id=mock_user.id,
-    )
-    scan_results_repo.insert(
         db, owner="acme", score=5, total_checks=5, failed_checks=5, checks=[],
         tenant_id=tenant_repo.ensure_personal_tenant(db, stranger.id).id, scanned_by_user_id=stranger.id,
+    )
+    # Seeding as the stranger leaves the session acting as them; the member's rows come last so the request
+    # runs as the member, as a real one does.
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
+    scan_results_repo.insert(
+        db, owner="acme", score=70, total_checks=5, failed_checks=1, checks=[],
+        tenant_id=org.tenant_id, scanned_by_user_id=mock_user.id,
     )
 
     patchers = _patch_all()
