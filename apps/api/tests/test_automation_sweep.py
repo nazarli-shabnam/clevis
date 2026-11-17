@@ -163,15 +163,15 @@ def test_a_pr_level_error_marks_the_run_failed_instead_of_scheduled(db, org):
     assert "dependabot_triage.scheduled_failed" in actions and "dependabot_triage.scheduled" not in actions
 
 
-def _http_error(status):
-    request = httpx.Request("GET", "https://api.github.com/repos/acme/gone/pulls")
+def _http_error(status, method="GET", path="/repos/acme/gone/pulls"):
+    request = httpx.Request(method, f"https://api.github.com{path}")
     return httpx.HTTPStatusError(str(status), request=request, response=httpx.Response(status, request=request))
 
 
-def _fail_for_gone(status):
+def _fail_for_gone(status, method="GET", path="/repos/acme/gone/pulls"):
     def side_effect(client, owner, name, **kwargs):
         if name == "gone":
-            raise _http_error(status)
+            raise _http_error(status, method, path)
         return []
     return side_effect
 
@@ -214,6 +214,29 @@ def test_a_server_error_for_one_repo_still_fails_the_run(db, org):
     assert "pr_nudge.scheduled_failed" in actions and "pr_nudge.scheduled" not in actions
     assert "dependabot_triage.scheduled_failed" in actions and "dependabot_triage.scheduled" not in actions
     assert "dependabot_triage.error" in actions and "dependabot_triage.stale_repo" not in actions
+
+
+def test_a_404_on_a_pr_write_after_the_listing_succeeded_still_fails_the_run(db, org):
+    automation_settings_repo.upsert(db, org.tenant_id, "acme/gone", "pr_nudge", enabled=True)
+    automation_settings_repo.upsert(db, org.tenant_id, "acme/gone", "dependabot_triage", enabled=True)
+    stack, m = _sweep()
+    m["nudge"].side_effect = _fail_for_gone(404, "POST", "/repos/acme/gone/issues/7/comments")
+    m["triage"].side_effect = _fail_for_gone(404, "POST", "/repos/acme/gone/pulls/7/reviews")
+    with stack:
+        run_automation_sweep(db)
+        # the repo-level count: the PR-write 404 is a failure, not a stale repo
+        gone = [s for s in automation_settings_repo.list_for_feature(db, org.tenant_id, "pr_nudge") if s.repo == "acme/gone"]
+        with pytest.raises(RuntimeError, match="^1 of 1 repositories failed$"):
+            automation_sweep._run_pr_nudges(db, m["client"], org.tenant_id, "acme", gone, "system:pr_nudge")
+    actions = [a for a, _ in _actions(db, org)]
+    assert "pr_nudge.scheduled_failed" in actions and "pr_nudge.scheduled" not in actions
+    assert "dependabot_triage.scheduled_failed" in actions and "dependabot_triage.scheduled" not in actions
+    assert "dependabot_triage.error" in actions and "dependabot_triage.stale_repo" not in actions
+    sweeps = db.execute(
+        text("SELECT payload FROM audit_logs WHERE tenant_id = :t AND action = 'pr_nudge.sweep' AND target = 'acme/gone'"),
+        {"t": org.tenant_id},
+    ).scalars().all()
+    assert sweeps and all("stale_repo" not in json.loads(p) for p in sweeps)
 
 
 def test_more_enabled_repos_than_the_cap_are_covered_over_successive_runs(db):

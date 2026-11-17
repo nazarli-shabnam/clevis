@@ -15,8 +15,9 @@ It follows scheduled_scan_sweep.py and keeps its safety rails, because it writes
   success that would hold the rest back for a whole cadence; a missing/unmintable token is recorded the same
   way, so such orgs cannot occupy every per-tick slot;
 - when an org enables more than MAX_REPOS_PER_RUN repos, each run takes the next window of them;
-- a repo GitHub answers 404 or 301 for (deleted, removed from the installation, or renamed) is a stale opt-in:
-  it is audited and skipped, not counted as a failure, so it cannot fail every run of the org.
+- a repo whose PR listing GitHub answers 404 or 301 for (deleted, removed from the installation, or renamed) is a
+  stale opt-in: it is audited and skipped, not counted as a failure, so it cannot fail every run of the org (a 404
+  on a later PR write is still a failure).
 The nudge mode (``pr_nudge_mode``) and stale-days settings apply as for a manual nudge. Mode ``off`` runs
 nothing and records nothing, so the first run after it is turned on is not held back by a skipped one.
 """
@@ -73,8 +74,13 @@ def _repo_parts(full_repo: str) -> tuple[str, str]:
 _STALE_REPO_STATUSES = (301, 404)
 
 
-def _is_stale_repo(exc: Exception) -> bool:
-    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in _STALE_REPO_STATUSES
+def _is_stale_repo(exc: Exception, owner: str, name: str) -> bool:
+    """Only the repo's PR listing failing says the repo is gone; a 404 on a later PR write is a real failure."""
+    return (
+        isinstance(exc, httpx.HTTPStatusError)
+        and exc.response.status_code in _STALE_REPO_STATUSES
+        and exc.request.url.path.endswith(f"/repos/{owner}/{name}/pulls")
+    )
 
 
 def _run_pr_nudges(db: Session, client: GitHubClient, tenant_id: int, org_login: str, repos: list, actor: str) -> dict:
@@ -87,7 +93,7 @@ def _run_pr_nudges(db: Session, client: GitHubClient, tenant_id: int, org_login:
             results = pr_nudge.run_nudge_sweep(client, owner, name, stale_days=stale_days, mode=mode)
         except (httpx.HTTPStatusError, httpx.RequestError) as exc:
             payload = {"mode": mode, "stale_days": stale_days, "error": type(exc).__name__}
-            if _is_stale_repo(exc):
+            if _is_stale_repo(exc, owner, name):
                 stale += 1
                 payload["stale_repo"] = exc.response.status_code
             else:
@@ -127,7 +133,7 @@ def _run_dependabot_triage(
                 dry_run=False,
             )
         except (httpx.HTTPStatusError, httpx.RequestError) as exc:
-            if _is_stale_repo(exc):
+            if _is_stale_repo(exc, owner, name):
                 stale += 1
                 audit_repo.write(
                     db, actor, "dependabot_triage.stale_repo", setting.repo,
