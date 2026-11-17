@@ -547,6 +547,10 @@ class MarkKindReadBody(BaseModel):
     kind: NotificationKind
 
 
+# Bounds one read-kind request to this many feed pages (MAX_LIMIT items each), so it cannot scan without limit.
+_MAX_READ_KIND_PAGES = 10
+
+
 @router.post("/orgs/{org_login}/notifications/read-kind", status_code=204)
 def mark_kind_read(
     org_login: str,
@@ -562,7 +566,7 @@ def mark_kind_read(
     ids: list[str] = []
     before: datetime | None = None
     before_id: str | None = None
-    while True:
+    for _ in range(_MAX_READ_KIND_PAGES):
         feed = get_notifications(
             org_login=org_login, days=MAX_WINDOW_DAYS, limit=MAX_LIMIT, before=before, before_id=before_id, ctx=ctx, user=user, db=db
         )
