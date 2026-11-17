@@ -242,6 +242,8 @@ export default function SecurityPage() {
       queryClient.invalidateQueries({ queryKey: ["analytics.history", forOwner] })
       queryClient.invalidateQueries({ queryKey: ["analytics.scans", forOwner] })
       queryClient.invalidateQueries({ queryKey: scanChangesKey(forOwner) })
+      // Overview's score and the sidebar dot read the cockpit, which otherwise lags up to its 30s refetch.
+      queryClient.invalidateQueries({ queryKey: ["analytics.cockpit", forOwner] })
     },
   })
 

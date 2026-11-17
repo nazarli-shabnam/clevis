@@ -297,7 +297,7 @@ function FixThisButton({
   })
 
   if (mutation.isSuccess) {
-    return <p className="mt-2 text-xs text-accent">Applied — re-run the scan to confirm.</p>
+    return <p className="mt-2 text-xs text-accent">{onRemediated ? "Applied — re-scanning to confirm…" : "Applied — re-run the scan to confirm."}</p>
   }
 
   return (

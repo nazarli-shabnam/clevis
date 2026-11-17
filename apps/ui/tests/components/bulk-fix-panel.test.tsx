@@ -151,7 +151,7 @@ describe("BulkFixPanel", () => {
     expect(await screen.findByText("applied")).toBeInTheDocument();
     expect(bulkMock).toHaveBeenLastCalledWith("acme", { check_id: SS, repos: ["api"], dry_run: false, token: "ghp_t" });
     expect(onApplied).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("Re-run the scan to confirm the results.")).toBeInTheDocument();
+    expect(screen.getByText("Re-scanning to confirm the results…")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /apply to|confirm/i })).toBeNull();
   });
 

@@ -378,7 +378,7 @@ describe("CheckCard — fix this (#287)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /confirm — apply the fix/i }));
     await waitFor(() => expect(remediateMock).toHaveBeenCalledWith("acme", "api", remediable.id, "ghp_x"));
-    await waitFor(() => expect(screen.getByText(/Applied — re-run the scan/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Applied — re-scanning/)).toBeInTheDocument());
     expect(onRemediated).toHaveBeenCalled();
   });
 
