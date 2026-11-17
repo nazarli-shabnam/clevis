@@ -17,16 +17,22 @@ export function ClevisMembersCard({ orgLogin }: { orgLogin: string }) {
   const query = useQuery<OrgMembership[]>({ queryKey, queryFn: () => api.orgMemberships.list(orgLogin), retry: false })
   const [removing, setRemoving] = useState<OrgMembership | null>(null)
 
+  // The caller may be the member they just changed (an admin demoting or removing themselves while another admin
+  // remains), and ["my-orgs"] is where every page reads the caller's own role for admin gating; leaving it stale
+  // keeps the admin UI up until a reload, and the next admin action then 403s.
+  const refresh = () =>
+    Promise.all([queryClient.invalidateQueries({ queryKey }), queryClient.invalidateQueries({ queryKey: ["my-orgs"] })])
+
   const setRole = useMutation({
     mutationFn: ({ userId, role }: { userId: number; role: "member" | "admin" }) =>
       api.orgMemberships.setRole(orgLogin, userId, role),
-    onSettled: () => queryClient.invalidateQueries({ queryKey }),
+    onSettled: refresh,
   })
   const remove = useMutation({
     mutationFn: (userId: number) => api.orgMemberships.remove(orgLogin, userId),
     onSettled: () => {
       setRemoving(null)
-      return queryClient.invalidateQueries({ queryKey })
+      return refresh()
     },
   })
 
