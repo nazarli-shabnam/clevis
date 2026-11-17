@@ -238,6 +238,15 @@ describe("NotificationsPage", () => {
     await waitFor(() => expect(markKindMock).toHaveBeenCalledWith("acme", "score_drop"));
   });
 
+  it("shows why marking a kind read failed", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "score_drop")]));
+    markKindMock.mockRejectedValue(new Error("boom"));
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Mark Score drop read (1)" }));
+    expect(await screen.findByText(/Couldn't mark them as read: boom/)).toBeInTheDocument();
+  });
+
   it("makes no request for a personal scope and explains why", async () => {
     scope = { kind: "personal", login: "octocat" };
     renderPage();
