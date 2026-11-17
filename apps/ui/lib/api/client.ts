@@ -80,6 +80,7 @@ import type {
   WorkflowLintResponse,
   WorkflowsResponse,
 } from "./types"
+import { safeStorage } from "@/lib/safe-storage"
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
 
@@ -88,7 +89,7 @@ const _TOKEN_KEY = "clevis:token"
 
 function getAuthHeaders(): Record<string, string> {
   if (typeof window === "undefined") return {}
-  const token = localStorage.getItem(_TOKEN_KEY)
+  const token = safeStorage.getItem(_TOKEN_KEY)
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
@@ -194,7 +195,7 @@ class ApiError extends Error {
 /** Clears the stale token and lets the auth guard redirect to /login. */
 function notifyUnauthorized() {
   if (typeof window === "undefined") return
-  localStorage.removeItem(_TOKEN_KEY)
+  safeStorage.removeItem(_TOKEN_KEY)
   window.dispatchEvent(new Event("clevis:unauthorized"))
 }
 
