@@ -25,4 +25,22 @@ describe("downloadTextFile", () => {
     vi.runAllTimers();
     expect(revokeUrl).toHaveBeenCalledWith("blob:fake");
   });
+
+  async function savedBlobText(mimeType: string) {
+    let blob: Blob | undefined;
+    vi.stubGlobal("URL", { ...URL, createObjectURL: (b: Blob) => ((blob = b), "blob:fake"), revokeObjectURL: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    downloadTextFile("f", "Zoë", mimeType);
+    return new Uint8Array(await blob!.arrayBuffer());
+  }
+
+  it("prepends a UTF-8 BOM to CSV so Excel reads non-ASCII names", async () => {
+    const bytes = await savedBlobText("text/csv");
+    expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+  });
+
+  it("leaves other text types without a BOM", async () => {
+    const bytes = await savedBlobText("text/plain");
+    expect(bytes[0]).toBe("Z".charCodeAt(0));
+  });
 });

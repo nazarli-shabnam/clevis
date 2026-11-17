@@ -2,12 +2,15 @@
 
 import Link from "next/link"
 import { useState } from "react"
+import { DownloadSimple } from "@phosphor-icons/react"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { SectionError } from "@/components/section-error"
 import { EmptyStateNoAccount } from "@/components/empty-state"
 import { useActiveScope } from "@/lib/active-scope"
+import { toCsv } from "@/lib/csv"
+import { downloadTextFile } from "@/lib/download"
 import { relativeTime } from "@/lib/format"
 import { KIND_LABEL, KIND_ORDER } from "@/lib/notification-kinds"
 import { PreferencesPanel } from "@/components/notification-bell"
@@ -36,6 +39,18 @@ export default function NotificationsPage() {
 
   const visible = items.filter((n) => shown.has(n.kind) && (!unreadOnly || !n.read))
   const present = new Set(items.map((n) => n.kind))
+
+  function exportCsv() {
+    const csv = toCsv(visible, [
+      { header: "Time", value: (n) => n.at },
+      { header: "Kind", value: (n) => KIND_LABEL[n.kind] },
+      { header: "Title", value: (n) => n.title },
+      { header: "Detail", value: (n) => n.detail },
+      { header: "Link", value: (n) => n.href },
+      { header: "Read", value: (n) => (n.read ? "yes" : "no") },
+    ])
+    downloadTextFile(`clevis-notifications-${org}-${new Date().toISOString().slice(0, 10)}.csv`, csv, "text/csv")
+  }
 
   return (
     <>
@@ -67,6 +82,9 @@ export default function NotificationsPage() {
                 Preferences
               </Button>
             )}
+            <Button size="sm" variant="outline" disabled={visible.length === 0} onClick={exportCsv}>
+              <DownloadSimple className="size-3.5" /> {hasMore ? `Export CSV (${visible.length} loaded)` : "Export CSV"}
+            </Button>
             <Button size="sm" variant="outline" disabled={unread === 0 || items.length === 0 || markRead.isPending} onClick={() => markRead.mutate()}>
               Mark all read
             </Button>
