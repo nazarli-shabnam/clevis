@@ -244,6 +244,18 @@ describe("OverviewPage cockpit", () => {
     expect(screen.getByText(/Numbers refreshed just now\./)).toBeInTheDocument();
   });
 
+  it("still says when the numbers were refreshed when the org has no scan yet (#1094)", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockRejectedValue(new Error("No saved token for this org"));
+    cockpitMock.mockResolvedValue({ ...EMPTY_COCKPIT });
+    latestScanMock.mockRejectedValue(new Error("No scans yet"));
+
+    renderPage();
+
+    expect(await screen.findByText(/Numbers refreshed just now\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Security score from a scan/)).not.toBeInTheDocument();
+  });
+
   it("labels commit activity as estimated when the cockpit source is an aggregate", async () => {
     localStorage.setItem("default_org", "acme");
     tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
