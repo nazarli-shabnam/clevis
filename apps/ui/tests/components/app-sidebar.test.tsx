@@ -773,6 +773,28 @@ describe("AppSidebar scope switcher", () => {
     expect(localStorage.getItem("active_scope")).toBe(JSON.stringify({ kind: "org", login: "legacy" }));
   });
 
+  it("leaves out the org-only pages for someone with only a personal account (#1025)", async () => {
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "personal", login: "bob" }));
+    orgMemberships = [];
+    installations = [{ id: 1, account_login: "bob", account_type: "User", installation_id: 5, created_at: "2026-01-01T00:00:00Z" }];
+    renderSidebar();
+
+    await waitFor(() => expect(screen.queryByRole("link", { name: "Pull Requests" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("link", { name: "Collaborators" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Releases" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Overview" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Repositories" })).toBeInTheDocument();
+  });
+
+  it("keeps the org-only pages for a personal scope when the user also belongs to an org (#1025)", async () => {
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "personal", login: "bob" }));
+    orgMemberships = [{ org_login: "acme", role: "member" }];
+    installations = [{ id: 1, account_login: "bob", account_type: "User", installation_id: 5, created_at: "2026-01-01T00:00:00Z" }];
+    renderSidebar();
+
+    expect(await screen.findByRole("link", { name: "Pull Requests" })).toBeInTheDocument();
+  });
+
   it("refetches memberships before replacing a scope another tab just joined (#903)", async () => {
     localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "newco" }));
     let orgCalls = 0;

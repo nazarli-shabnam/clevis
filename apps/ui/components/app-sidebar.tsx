@@ -25,6 +25,7 @@ import type { InstallationMeta, MyOrgMembership, SavedTokenMeta } from "@/lib/ap
 import { githubWebUrl } from "@/lib/github-web"
 import { useGithubAppSlug } from "@/lib/use-github-app-slug"
 import { NAV_GROUPS } from "@/lib/nav-items"
+import { ORG_ONLY_ROUTES, usePersonalOnly } from "@/lib/use-personal-only"
 
 
 function healthDotColor(score: number | null | undefined): string | null {
@@ -188,6 +189,7 @@ export function AppSidebar() {
   const menuId = useId()
 
   const { scope, setScope } = useActiveScope()
+  const personalOnly = usePersonalOnly()
   const scopeLogin = scope?.login ?? ""
 
   // ["my-orgs"] is shared with the Overview page; TanStack Query dedupes the request.
@@ -431,8 +433,17 @@ export function AppSidebar() {
             <SidebarGroup className="py-1">
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {items.filter((item) => item.href !== "/audit" || user?.is_workspace_admin).map((item) => {
-                    // /audit is workspace-admin only (the API 403s everyone else).
+                  {items
+                    .filter((item) => item.href !== "/audit" || user?.is_workspace_admin)
+                    // Someone with only a personal account has no org for these pages: they would show an
+                    // "install the App on an organization" empty state, and Collaborators would fall back to
+                    // /settings with no explanation. Settings has the install link.
+                    .filter((item) => !personalOnly || !ORG_ONLY_ROUTES.has(item.href))
+                    .map((item) => {
+                    // Someone with only a personal account has no org for the org-only pages (they would show a "install the App on an
+  // organization" empty state), and Collaborators would fall back to /settings with no explanation: leave them out
+  // until an org is connected (Settings has the install link).
+  // /audit is workspace-admin only (the API 403s everyone else).
                     const isCollaborators = item.href === "/collaborators"
                     const href = isCollaborators ? membersNavHref : item.href
                     // Match any org's members route, but not sibling /settings/org/<login>/* routes.
