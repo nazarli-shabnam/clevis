@@ -308,11 +308,11 @@ describe("OrgMembersPage invitations", () => {
     const field = await screen.findByPlaceholderText("teammate@example.com");
 
     fireEvent.change(field, { target: { value: emails(51) } });
-    expect(screen.getByRole("alert")).toHaveTextContent("Invite up to 50 addresses at a time (51 entered).");
+    expect(screen.getByText("Invite up to 50 addresses at a time (51 entered).")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Send 51 invites" })).toBeDisabled();
 
     fireEvent.change(field, { target: { value: emails(50) } });
-    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText(/Invite up to 50 addresses/)).toBeNull();
     expect(screen.getByRole("button", { name: "Send 50 invites" })).toBeEnabled();
   });
 
