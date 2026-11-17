@@ -44,6 +44,7 @@ vi.mock("@/lib/api/client", () => ({
       inactiveMembers: vi.fn(),
       membership: vi.fn(),
     },
+    waivers: { list: vi.fn().mockResolvedValue([]), checks: vi.fn().mockResolvedValue([]) },
     tokens: { resolve: vi.fn().mockRejectedValue(new Error("no saved token")) },
     orgs: {
       mine: vi.fn().mockResolvedValue([{ org_login: "acme", role: "admin" }]),
