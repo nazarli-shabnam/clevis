@@ -289,22 +289,46 @@ def _chat_safe(value: object, limit: int = 80) -> str:
     the length. The raw value still travels, untouched, in the structured ``data`` of generic webhooks."""
     cleaned = str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     cleaned = re.sub(r"[\[\]*`]", "", cleaned)
-    cleaned = " ".join(cleaned.split())
+    return _plain_safe(cleaned, limit)
+
+
+def _plain_safe(value: object, limit: int = 80) -> str:
+    """The plain-text counterpart of _chat_safe, for email bodies and the ``text`` of generic webhooks:
+    whitespace flattened and length capped, but nothing escaped (those readers don't parse chat markup)."""
+    cleaned = " ".join(str(value).split())
     return cleaned[: limit - 1] + "…" if len(cleaned) > limit else cleaned
 
 
+_CHAT_KINDS = ("slack", "teams")
+
+
 def _notify_event(
-    db: Session, tenant_id: int, org_login: str, event: str, text: str, data: dict, *, actor: str
+    db: Session,
+    tenant_id: int,
+    org_login: str,
+    event: str,
+    text: str,
+    data: dict,
+    *,
+    actor: str,
+    plain_text: str | None = None,
 ) -> None:
     """Message every enabled destination subscribed to ``event`` and audit each delivery. Best-effort,
     like notify_score_drop: a delivery problem is audit-logged and swallowed, never raised to the caller.
-    No cooldown claim: callers only announce each occurrence once."""
+    No cooldown claim: callers only announce each occurrence once.
+
+    ``text`` goes to Slack/Teams; ``plain_text`` (when given) to email and generic webhooks instead, so a
+    message built with _chat_safe names doesn't reach them with chat escaping such as ``&amp;``."""
     targets = [d for d in notification_repo.list_for_tenant(db, tenant_id) if d.enabled and event in d.events]
     if not targets:
         return
     allowed = allowed_emails_for(db, tenant_id, targets)
+
+    def text_for(d: NotificationDestination) -> str:
+        return text if plain_text is None or d.kind in _CHAT_KINDS else plain_text
+
     with ThreadPoolExecutor(max_workers=_MAX_PARALLEL_SENDS) as pool:
-        results = list(pool.map(lambda d: send(d, event, text, data, email_allowed=allowed), targets))
+        results = list(pool.map(lambda d: send(d, event, text_for(d), data, email_allowed=allowed), targets))
     for dest, (ok, detail) in zip(targets, results):
         notification_repo.record_delivery(db, dest.id, ok, detail)
         audit_repo.write(
@@ -364,10 +388,15 @@ def notify_new_critical_alerts(
     critical/high alerts (secret-scanning alerts carry no severity and always count)."""
     if not alerts:
         return
-    shown = "; ".join(f"{_chat_safe(a['repo'])} ({_chat_safe(a['kind'].replace('_', ' '))} #{int(a['number'])})" for a in alerts[:5])
-    more = f" and {len(alerts) - 5} more" if len(alerts) > 5 else ""
-    text = f"Clevis: {len(alerts)} new critical/high security alert{'s' if len(alerts) != 1 else ''} in {org_login}: {shown}{more}."
-    _notify_event(db, tenant_id, org_login, EVENT_NEW_CRITICAL_ALERT, text, {"org": org_login, "alerts": alerts}, actor=actor)
+    def render(safe) -> str:
+        shown = "; ".join(f"{safe(a['repo'])} ({safe(a['kind'].replace('_', ' '))} #{int(a['number'])})" for a in alerts[:5])
+        more = f" and {len(alerts) - 5} more" if len(alerts) > 5 else ""
+        return f"Clevis: {len(alerts)} new critical/high security alert{'s' if len(alerts) != 1 else ''} in {org_login}: {shown}{more}."
+
+    _notify_event(
+        db, tenant_id, org_login, EVENT_NEW_CRITICAL_ALERT, render(_chat_safe), {"org": org_login, "alerts": alerts},
+        actor=actor, plain_text=render(_plain_safe),
+    )
 
 
 def notify_sla_breaches(
@@ -377,15 +406,20 @@ def notify_sla_breaches(
     alerts that have just passed their SLA window."""
     if not breaches:
         return
-    shown = "; ".join(
-        f"{_chat_safe(b['repo'])} #{int(b['number'])} ({_chat_safe(str(b['severity']))}, SLA {b['sla_days']}d)" for b in breaches[:5]
+    def render(safe) -> str:
+        shown = "; ".join(
+            f"{safe(b['repo'])} #{int(b['number'])} ({safe(str(b['severity']))}, SLA {b['sla_days']}d)" for b in breaches[:5]
+        )
+        more = f" and {len(breaches) - 5} more" if len(breaches) > 5 else ""
+        return (
+            f"Clevis: {len(breaches)} Dependabot alert{'s' if len(breaches) != 1 else ''} in {org_login} "
+            f"{'have' if len(breaches) != 1 else 'has'} passed the remediation SLA: {shown}{more}."
+        )
+
+    _notify_event(
+        db, tenant_id, org_login, EVENT_SLA_BREACH, render(_chat_safe), {"org": org_login, "breaches": breaches},
+        actor=actor, plain_text=render(_plain_safe),
     )
-    more = f" and {len(breaches) - 5} more" if len(breaches) > 5 else ""
-    text = (
-        f"Clevis: {len(breaches)} Dependabot alert{'s' if len(breaches) != 1 else ''} in {org_login} "
-        f"{'have' if len(breaches) != 1 else 'has'} passed the remediation SLA: {shown}{more}."
-    )
-    _notify_event(db, tenant_id, org_login, EVENT_SLA_BREACH, text, {"org": org_login, "breaches": breaches}, actor=actor)
 
 
 def notify_stale_prs(
@@ -395,11 +429,16 @@ def notify_stale_prs(
     sweep just acted on."""
     if not prs:
         return
-    text = (
-        f"Clevis: {len(prs)} stale pull request{'s' if len(prs) != 1 else ''} in {_chat_safe(org_login)}/{_chat_safe(repo)} "
-        f"{'were' if len(prs) != 1 else 'was'} nudged: " + ", ".join(f"#{int(p['number'])}" for p in prs[:10]) + "."
+    def render(safe) -> str:
+        return (
+            f"Clevis: {len(prs)} stale pull request{'s' if len(prs) != 1 else ''} in {safe(org_login)}/{safe(repo)} "
+            f"{'were' if len(prs) != 1 else 'was'} nudged: " + ", ".join(f"#{int(p['number'])}" for p in prs[:10]) + "."
+        )
+
+    _notify_event(
+        db, tenant_id, org_login, EVENT_STALE_PR_SUMMARY, render(_chat_safe), {"org": org_login, "repo": repo, "prs": prs},
+        actor=actor, plain_text=render(_plain_safe),
     )
-    _notify_event(db, tenant_id, org_login, EVENT_STALE_PR_SUMMARY, text, {"org": org_login, "repo": repo, "prs": prs}, actor=actor)
 
 
 def notify_automation_failed(
@@ -408,8 +447,13 @@ def notify_automation_failed(
     """``failures`` is a list of ``{"workflow", "message"}`` dicts for workflow dispatches GitHub rejected."""
     if not failures:
         return
-    text = (
-        f"Clevis: {len(failures)} workflow dispatch{'es' if len(failures) != 1 else ''} failed in "
-        f"{_chat_safe(org_login)}/{_chat_safe(repo)}: " + ", ".join(_chat_safe(f["workflow"]) for f in failures[:5]) + "."
+    def render(safe) -> str:
+        return (
+            f"Clevis: {len(failures)} workflow dispatch{'es' if len(failures) != 1 else ''} failed in "
+            f"{safe(org_login)}/{safe(repo)}: " + ", ".join(safe(f["workflow"]) for f in failures[:5]) + "."
+        )
+
+    _notify_event(
+        db, tenant_id, org_login, EVENT_AUTOMATION_FAILED, render(_chat_safe),
+        {"org": org_login, "repo": repo, "failures": failures}, actor=actor, plain_text=render(_plain_safe),
     )
-    _notify_event(db, tenant_id, org_login, EVENT_AUTOMATION_FAILED, text, {"org": org_login, "repo": repo, "failures": failures}, actor=actor)

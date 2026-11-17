@@ -795,6 +795,21 @@ describe("AppSidebar scope switcher", () => {
     expect(await screen.findByRole("link", { name: "Pull Requests" })).toBeInTheDocument();
   });
 
+  it("offers only the pages that work for an org held through a saved token alone (#1038)", async () => {
+    localStorage.setItem(TOKEN_KEY, makeJwt(true));
+    meIsAdmin = true;
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "legacy" }));
+    orgMemberships = [{ org_login: "acme", role: "admin" }];
+    savedTokens = [{ org: "legacy", label: null, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }];
+    renderSidebar();
+
+    await waitFor(() => expect(screen.queryByRole("link", { name: "Pull Requests" })).not.toBeInTheDocument());
+    expect(screen.getByRole("link", { name: "Overview" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Health & Security/ })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Collaborators" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Notifications" })).not.toBeInTheDocument();
+  });
+
   it("refetches memberships before replacing a scope another tab just joined (#903)", async () => {
     localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "newco" }));
     let orgCalls = 0;
