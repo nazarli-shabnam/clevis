@@ -48,7 +48,12 @@ def _out(membership: Membership, user: User) -> OrgMembershipOut:
 
 
 def _lock_invite_membership(db: Session, ctx: OrgContext, user_id: int) -> Membership:
-    """The invite-sourced membership to change, row-locked (404 if none; 409 if GitHub-managed)."""
+    """The invite-sourced membership to change, row-locked (404 if none; 409 if GitHub-managed).
+
+    The admin set is locked first (id order), then the target. Locking the target first and the admins after
+    let two admins demoting or removing each other each hold one row and wait for the other: a deadlock that
+    surfaced as a 500."""
+    tenant_repo.count_admins_locked(db, ctx.org.tenant_id)
     membership = tenant_repo.get_membership(db, ctx.org.tenant_id, user_id, for_update=True)
     if membership is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found")
