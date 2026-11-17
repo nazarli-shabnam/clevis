@@ -131,7 +131,7 @@ def test_refuses_to_auto_link_an_existing_email_registered_account(db):
     # Self-registration has no email verification, so silently linking a GitHub identity
     # onto an existing account by email match alone would let an attacker who
     # pre-registered a victim's email inherit their real GitHub identity.
-    existing = User(email="owner@example.com", name="Owner", password_hash="x", is_workspace_admin=True)
+    existing = User(email="owner@example.com", name="Owner", password_hash="x", is_workspace_admin=True, email_verified=True)
     db.add(existing)
     db.commit()
     db.refresh(existing)
@@ -144,10 +144,57 @@ def test_refuses_to_auto_link_an_existing_email_registered_account(db):
     assert db.query(User).count() == 1
 
 
+def test_unverified_self_registration_is_claimed_by_the_github_identity(db):
+    # #1104: an unverified, GitHub-less registration proved nothing about the address, so the real owner
+    # (GitHub-verified) takes the row over instead of being locked out by a squatter.
+    squatter = User(
+        email="victim@example.com", password_hash="attacker-hash", email_verified=False,
+        email_verify_token="tok", token_version=3,
+    )
+    db.add(squatter)
+    db.commit()
+    db.refresh(squatter)
+
+    user = find_or_create_user(db, _identity(github_user_id=777, email="Victim@Example.com", login="victim"))
+
+    assert user.id == squatter.id
+    assert user.github_user_id == 777 and user.github_login == "victim"
+    assert user.email_verified is True
+    assert user.password_hash is None
+    assert user.email_verify_token is None
+    assert user.token_version == 4  # the squatter's sessions are revoked
+    assert db.query(User).count() == 1
+
+
+def test_unverified_claim_drops_the_squatters_listed_sessions(db):
+    from datetime import datetime, timedelta, timezone
+
+    from src.core.db import UserSession
+
+    squatter = User(email="victim@example.com", password_hash="x", email_verified=False)
+    db.add(squatter)
+    db.commit()
+    db.add(UserSession(jti="j1", user_id=squatter.id, expires_at=datetime.now(timezone.utc) + timedelta(days=1)))
+    db.commit()
+
+    find_or_create_user(db, _identity(github_user_id=778, email="victim@example.com"))
+
+    assert db.query(UserSession).filter(UserSession.user_id == squatter.id).count() == 0
+
+
+def test_unverified_account_already_linked_to_another_github_id_is_not_claimed(db):
+    existing = User(email="owner@example.com", password_hash=None, email_verified=False, github_user_id=1)
+    db.add(existing)
+    db.commit()
+
+    with pytest.raises(EmailAlreadyRegistered):
+        find_or_create_user(db, _identity(github_user_id=2, email="owner@example.com"))
+
+
 def test_refuses_to_auto_link_when_existing_email_differs_only_by_case(db):
     # The email-collision check must be case-insensitive, same as the users.email
     # uniqueness constraint itself.
-    existing = User(email="owner@example.com", name="Owner", password_hash="x", is_workspace_admin=True)
+    existing = User(email="owner@example.com", name="Owner", password_hash="x", is_workspace_admin=True, email_verified=True)
     db.add(existing)
     db.commit()
 
@@ -264,7 +311,7 @@ def test_callback_rejects_bad_state(gh_client):
 
 
 def test_callback_redirects_with_error_when_email_already_registered(gh_client, db):
-    existing = User(email="octo@example.com", name="Owner", password_hash="x", is_workspace_admin=True)
+    existing = User(email="octo@example.com", name="Owner", password_hash="x", is_workspace_admin=True, email_verified=True)
     db.add(existing)
     db.commit()
 
