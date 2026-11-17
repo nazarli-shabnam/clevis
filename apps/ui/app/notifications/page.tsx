@@ -130,6 +130,10 @@ export default function NotificationsPage() {
                     // Opening an item counts as having seen it.
                     if (!n.read) dismiss.mutate(n.id)
                   }}
+                  // A middle click opens the link in a new tab through auxclick, not click.
+                  onAuxClick={(e) => {
+                    if (e.button === 1 && !n.read) dismiss.mutate(n.id)
+                  }}
                   className={`flex min-w-0 flex-1 flex-col gap-0.5 text-xs ${n.read ? "text-muted-foreground" : "text-foreground"}`}>
                   <span className="flex items-center gap-2">
                     {!n.read && (

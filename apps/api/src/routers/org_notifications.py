@@ -556,13 +556,20 @@ def mark_kind_read(
     db: Session = Depends(get_db),
 ):
     """Mark every unread notification of one kind read for the caller only, by dismissing each (the read-up-to
-    marker is untouched). Covers what the caller's own feed lists (widest window, newest MAX_LIMIT items), so
-    a kind the caller cannot see (admin-only ones, muted ones) is a no-op."""
-    # ponytail: bounded by the feed's own cap; older unread items of the kind beyond it stay unread.
-    feed = get_notifications(
-        org_login=org_login, days=MAX_WINDOW_DAYS, limit=MAX_LIMIT, before=None, before_id=None, ctx=ctx, user=user, db=db
-    )
-    ids = [i.id for i in feed.items if i.kind == body.kind and not i.read]
+    marker is untouched). Covers what the caller's own feed lists (widest window), paged newest first, so
+    already-read items of other kinds never crowd it out; a kind the caller cannot see (admin-only ones,
+    muted ones) is a no-op."""
+    ids: list[str] = []
+    before: datetime | None = None
+    before_id: str | None = None
+    while True:
+        feed = get_notifications(
+            org_login=org_login, days=MAX_WINDOW_DAYS, limit=MAX_LIMIT, before=before, before_id=before_id, ctx=ctx, user=user, db=db
+        )
+        ids += [i.id for i in feed.items if i.kind == body.kind and not i.read]
+        if len(feed.items) < MAX_LIMIT:
+            break
+        before, before_id = feed.items[-1].at, feed.items[-1].id
     notification_dismissal_repo.dismiss_many(db, user.id, ctx.org.tenant_id, ids)
 
 

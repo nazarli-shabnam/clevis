@@ -364,6 +364,22 @@ def test_marking_a_kind_read_dismisses_only_that_kinds_unread_items_for_the_call
     assert admin.post("/orgs/acme/notifications/read-kind", json={"kind": "score_drop"}).status_code == 204
 
 
+def test_marking_a_kind_read_covers_more_items_than_one_feed_page(db, world):
+    from unittest.mock import patch
+
+    from src.routers import org_notifications
+
+    t = world["acme"].tenant_id
+    for n in range(5):
+        _alert(db, t, number=n, when=NOW - timedelta(minutes=n + 1))
+    admin = _client(db, world["users"]["admin"])
+
+    with patch.object(org_notifications, "MAX_LIMIT", 2):
+        assert admin.post("/orgs/acme/notifications/read-kind", json={"kind": "critical_alert"}).status_code == 204
+
+    assert admin.get("/orgs/acme/notifications").json()["unread_count"] == 0
+
+
 def test_marking_a_kind_read_rejects_an_unknown_kind_and_non_members(db, world):
     assert _client(db, world["users"]["admin"]).post("/orgs/acme/notifications/read-kind", json={"kind": "nope"}).status_code == 422
     other = _client(db, world["users"]["other_admin"])

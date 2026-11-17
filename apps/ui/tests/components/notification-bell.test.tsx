@@ -88,6 +88,19 @@ describe("NotificationBell", () => {
     await waitFor(() => expect(dismissMock).toHaveBeenCalledWith("acme", "a"));
   });
 
+  it("marks an unread item read on a middle click, but not on a right click or for a read item", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "critical_alert"), item("b", "score_drop", true)]));
+    wrap(<NotificationBell />);
+    fireEvent.click(await screen.findByRole("button", { name: "Notifications, 1 unread" }));
+
+    fireEvent(await screen.findByRole("link", { name: /title a/ }), new MouseEvent("auxclick", { bubbles: true, button: 2 }));
+    fireEvent(screen.getByRole("link", { name: /title b/ }), new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    expect(dismissMock).not.toHaveBeenCalled();
+
+    fireEvent(screen.getByRole("link", { name: /title a/ }), new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    await waitFor(() => expect(dismissMock).toHaveBeenCalledWith("acme", "a"));
+  });
+
   it("closes the popover when the View all notifications link is followed", async () => {
     feedMock.mockResolvedValue(feed([item("a", "critical_alert")]));
     wrap(<NotificationBell />);

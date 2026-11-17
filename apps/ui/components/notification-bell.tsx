@@ -114,6 +114,10 @@ export function NotificationBell() {
                         if (!n.read) dismiss.mutate(n.id)
                         setOpen(false)
                       }}
+                      // A middle click opens the link in a new tab through auxclick, not click.
+                      onAuxClick={(e) => {
+                        if (e.button === 1 && !n.read) dismiss.mutate(n.id)
+                      }}
                       className={`flex flex-col gap-0.5 px-3 py-2 text-xs hover:bg-elevated ${n.read ? "text-muted-foreground" : "text-foreground"}`}
                     >
                       <span className="flex items-center gap-2">

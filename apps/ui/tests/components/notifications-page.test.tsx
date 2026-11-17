@@ -121,6 +121,18 @@ describe("NotificationsPage", () => {
     expect(screen.getByText(/No notifications match these filters/)).toBeInTheDocument();
   });
 
+  it("marks an unread item read when it is middle-clicked open, and ignores other buttons", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "critical_alert")]));
+    renderPage();
+    const link = await screen.findByRole("link", { name: /title a/ });
+
+    fireEvent(link, new MouseEvent("auxclick", { bubbles: true, button: 2 }));
+    expect(dismissMock).not.toHaveBeenCalled();
+
+    fireEvent(link, new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    await waitFor(() => expect(dismissMock).toHaveBeenCalledWith("acme", "a"));
+  });
+
   it("marks one item read without marking the others, and refetches", async () => {
     feedMock.mockResolvedValueOnce(feed([item("a", "critical_alert"), item("b", "score_drop")]));
     feedMock.mockResolvedValue(feed([item("a", "critical_alert", true), item("b", "score_drop")]));
