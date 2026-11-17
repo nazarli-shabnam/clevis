@@ -13,6 +13,7 @@ from sqlalchemy.orm import Query
 from src.core.config import settings
 from src.core.db import User, get_db
 from src.core.rate_limit import _buckets as _rate_limit_buckets
+from src.repositories import tenant_repo
 from src.routers.github_auth import EmailAlreadyRegistered, RegistrationDisabled, find_or_create_user
 from src.routers.github_auth import router as gh_router
 from src.services import github_oauth
@@ -144,42 +145,29 @@ def test_refuses_to_auto_link_an_existing_email_registered_account(db):
     assert db.query(User).count() == 1
 
 
-def test_unverified_self_registration_is_claimed_by_the_github_identity(db):
+def test_unverified_self_registration_is_replaced_by_the_github_identity(db):
     # #1104: an unverified, GitHub-less registration proved nothing about the address, so the real owner
-    # (GitHub-verified) takes the row over instead of being locked out by a squatter.
-    squatter = User(
-        email="victim@example.com", password_hash="attacker-hash", email_verified=False,
-        email_verify_token="tok", token_version=3,
-    )
+    # (GitHub-verified) gets a fresh account instead of being locked out by a squatter.
+    from datetime import datetime, timedelta, timezone
+
+    from src.core.db import Tenant, UserSession
+
+    squatter = User(email="victim@example.com", password_hash="attacker-hash", email_verified=False, email_verify_token="tok")
     db.add(squatter)
     db.commit()
-    db.refresh(squatter)
+    squatter_id = squatter.id
+    tenant_repo.ensure_personal_tenant(db, squatter_id)
+    db.add(UserSession(jti="j1", user_id=squatter_id, expires_at=datetime.now(timezone.utc) + timedelta(days=1)))
+    db.commit()
 
     user = find_or_create_user(db, _identity(github_user_id=777, email="Victim@Example.com", login="victim"))
 
-    assert user.id == squatter.id
-    assert user.github_user_id == 777 and user.github_login == "victim"
-    assert user.email_verified is True
-    assert user.password_hash is None
-    assert user.email_verify_token is None
-    assert user.token_version == 4  # the squatter's sessions are revoked
-    assert db.query(User).count() == 1
-
-
-def test_unverified_claim_drops_the_squatters_listed_sessions(db):
-    from datetime import datetime, timedelta, timezone
-
-    from src.core.db import UserSession
-
-    squatter = User(email="victim@example.com", password_hash="x", email_verified=False)
-    db.add(squatter)
-    db.commit()
-    db.add(UserSession(jti="j1", user_id=squatter.id, expires_at=datetime.now(timezone.utc) + timedelta(days=1)))
-    db.commit()
-
-    find_or_create_user(db, _identity(github_user_id=778, email="victim@example.com"))
-
-    assert db.query(UserSession).filter(UserSession.user_id == squatter.id).count() == 0
+    assert user.id != squatter_id
+    assert user.github_user_id == 777 and user.email_verified is True and user.password_hash is None
+    assert db.query(User).filter(User.id == squatter_id).count() == 0  # the squatter's row, sessions and tenant are gone
+    assert db.query(UserSession).filter(UserSession.user_id == squatter_id).count() == 0
+    assert db.query(Tenant).filter(Tenant.personal_user_id == squatter_id).count() == 0
+    assert db.query(Tenant).filter(Tenant.personal_user_id == user.id).count() == 1
 
 
 def test_unverified_account_already_linked_to_another_github_id_is_not_claimed(db):
