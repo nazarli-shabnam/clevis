@@ -246,6 +246,7 @@ export interface IngestionHealth {
   loss_lookback_days: number
   lost_recent: number
   last_backfill_at: string | null
+  backfill_incomplete_reason?: string | null
   last_membership_reconcile_at: string | null
 }
 
@@ -764,6 +765,7 @@ export interface CockpitResponse {
   commit_activity_source: "github" | "aggregate"
   recent_events_source: "github" | "aggregate"
   recent_events_stale: boolean
+  activity_history_incomplete?: string | null
   degraded: boolean
 }
 

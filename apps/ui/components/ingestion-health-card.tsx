@@ -84,7 +84,14 @@ export function IngestionHealthCard({ orgLogin }: { orgLogin: string }) {
               {h.received} received · {h.pending} waiting · {h.queue_failed} failed to queue · {h.queue_abandoned} abandoned · {h.dropped} dropped
             </dd>
             <dt className="text-muted-foreground">Last event backfill</dt>
-            <dd>{when(h.last_backfill_at)}</dd>
+            <dd>
+              {when(h.last_backfill_at)}
+              {h.backfill_incomplete_reason && (
+                <span className="block text-warning">
+                  History may be incomplete: {h.backfill_incomplete_reason}.
+                </span>
+              )}
+            </dd>
             <dt className="text-muted-foreground">Last membership reconcile</dt>
             <dd>{when(h.last_membership_reconcile_at)}</dd>
           </dl>

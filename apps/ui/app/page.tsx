@@ -372,6 +372,14 @@ export default function OverviewPage() {
                 (stale)
               </span>
             )}
+            {cockpit?.activity_history_incomplete && (
+              <span
+                className="text-[0.6875rem] text-warning"
+                title={`Activity history may be incomplete: ${cockpit.activity_history_incomplete}.`}
+              >
+                (history may be incomplete)
+              </span>
+            )}
           </div>
           <EventActivityList
             events={cockpit?.recent_events ?? []}
