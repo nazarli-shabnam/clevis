@@ -64,6 +64,7 @@ describe("AuditPage", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    window.history.replaceState(null, "", "/"); // the page mirrors its filters into the URL
   });
 
   it("builds the action filter from the actions the API reports, not a hard-coded list (#664)", async () => {
@@ -79,6 +80,32 @@ describe("AuditPage", () => {
 
     fireEvent.change(screen.getByLabelText("Filter by action"), { target: { value: "token.save" } });
     await waitFor(() => expect(auditListMock).toHaveBeenLastCalledWith(expect.objectContaining({ action: "token.save", limit: 100 })));
+  });
+
+  it("writes the applied filters to the query string, keeping unrelated params (#1128)", async () => {
+    auditListMock.mockResolvedValue([]);
+    window.history.replaceState(null, "", "/?job_id=42");
+    renderPage();
+
+    fireEvent.change(screen.getByLabelText("Actor"), { target: { value: "u@e.com" } });
+    expect(window.location.search).toBe("?job_id=42"); // typing alone applies nothing
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+
+    await waitFor(() => expect(window.location.search).toBe("?job_id=42&actor=u%40e.com"));
+  });
+
+  it("restores the actor, action and date filters from the query string (#1128)", async () => {
+    auditListMock.mockResolvedValue([]);
+    window.history.replaceState(null, "", "/?actor=u%40e.com&action=token.save&from=2026-01-01");
+    mockSearchParams = new URLSearchParams(window.location.search);
+    renderPage();
+
+    await waitFor(() =>
+      expect(auditListMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ actor: "u@e.com", action: "token.save", since: "2026-01-01T00:00:00Z" }),
+      ),
+    );
+    expect(screen.getByLabelText("Actor")).toHaveValue("u@e.com");
   });
 
   it("still offers only the all-actions option when the actions request fails (#664)", async () => {
