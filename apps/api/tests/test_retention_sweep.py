@@ -286,3 +286,27 @@ def test_a_requested_shutdown_stops_further_delete_batches(db):
         retention_sweep.stop_requested.clear()
 
     assert len(_left(db, WebhookDelivery, WebhookDelivery.delivery_id, [f"stop-{i}" for i in range(3)])) == 3
+
+
+def test_one_tenants_failing_purge_does_not_starve_the_tenants_after_it(db, caplog):
+    # #1114: the per-tenant loop used to unwind on the first error (e.g. a lock timeout), skipping every later tenant.
+    tenant_a, tenant_b = _tenant(db, "ret-fail-a@example.com"), _tenant(db, "ret-fail-b@example.com")
+    first, second = sorted((tenant_a, tenant_b))
+    for tenant_id in (first, second):
+        _event(db, tenant_id=tenant_id, age_days=400, name=f"ev-{tenant_id}-old")
+
+    real = retention_sweep._delete_in_batches
+
+    def flaky(db_, sql, params):
+        if params.get("tenant_id") == first:
+            raise RuntimeError("lock timeout")
+        return real(db_, sql, params)
+
+    with caplog.at_level(logging.ERROR), patch.object(retention_sweep, "_delete_in_batches", flaky):
+        _run(db)
+
+    assert f"failed for tenant {first}" in caplog.text
+    set_session_tenant(db, second)
+    assert _left(db, RepoEvent, RepoEvent.delivery_id, [f"ev-{second}-old"]) == set()
+    set_session_tenant(db, first)
+    assert _left(db, RepoEvent, RepoEvent.delivery_id, [f"ev-{first}-old"]) == {f"ev-{first}-old"}
