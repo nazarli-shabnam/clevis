@@ -8,7 +8,13 @@ import time
 
 import httpx
 
-from _rate_limit import MAX_RETRY_AFTER_SECONDS, has_rate_limit_headers, is_secondary_rate_limit, retry_delay_seconds
+from _rate_limit import (
+    MAX_RETRY_AFTER_SECONDS,
+    has_rate_limit_headers,
+    is_secondary_rate_limit,
+    primary_limit_wait_seconds,
+    retry_delay_seconds,
+)
 
 _PER_PAGE = 100
 _MAX_RETRY_AFTER_SECONDS = MAX_RETRY_AFTER_SECONDS
@@ -70,6 +76,8 @@ def _get_with_retry(client: httpx.Client, url: str, headers: dict, params: dict 
                 time.sleep(2**attempt)
                 continue
             raise
+        if primary_limit_wait_seconds(resp) is not None:
+            return resp  # a spent hourly quota: sleeping cannot help, the job waits out the reset instead
         if (resp.status_code == 429 or _has_rate_limit_headers(resp) or resp.status_code >= 500) and attempt < 2:
             time.sleep(_retry_delay_seconds(resp, attempt))
             continue
