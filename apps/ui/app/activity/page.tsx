@@ -151,7 +151,7 @@ function ActivityView() {
             <EmptyStateNoAccount bare />
           ) : !isOrg ? (
             <p className="p-4 text-sm text-muted-foreground">The activity feed is available for organizations.</p>
-          ) : eventsQuery.isError ? (
+          ) : eventsQuery.isError && !eventsQuery.data ? (
             <SectionError
               message={queryErrorMessage(eventsQuery.error, "Failed to load events.")}
               onRetry={() => eventsQuery.refetch()}
@@ -188,7 +188,7 @@ function ActivityView() {
               )}
             </div>
             <div className="p-4">
-              {cockpitQuery.isError ? (
+              {cockpitQuery.isError && !cockpitQuery.data ? (
                 <SectionError
                   message={queryErrorMessage(cockpitQuery.error, "Failed to load commit activity.")}
                   onRetry={() => cockpitQuery.refetch()}
@@ -226,7 +226,7 @@ function ActivityView() {
             <div className="px-4 py-3 border-b border-border">
               <span className="section-label">CI Failure Log</span>
             </div>
-            {failedRunsQuery.isError ? (
+            {failedRunsQuery.isError && !failedRunsQuery.data ? (
               <SectionError
                 message={queryErrorMessage(failedRunsQuery.error, "Failed to load CI failures.")}
                 onRetry={() => failedRunsQuery.refetch()}
@@ -261,7 +261,7 @@ function ActivityView() {
             <div className="px-4 py-3 border-b border-border">
               <span className="section-label">Release Timeline</span>
             </div>
-            {releaseTimelineQuery.isError ? (
+            {releaseTimelineQuery.isError && !releaseTimelineQuery.data ? (
               <SectionError
                 message={queryErrorMessage(releaseTimelineQuery.error, "Failed to load releases.")}
                 onRetry={() => releaseTimelineQuery.refetch()}

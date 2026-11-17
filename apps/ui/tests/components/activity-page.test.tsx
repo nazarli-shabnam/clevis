@@ -53,11 +53,14 @@ function renderPage() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <ActivityPage />
-    </QueryClientProvider>,
-  );
+  return {
+    queryClient,
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <ActivityPage />
+      </QueryClientProvider>,
+    ),
+  };
 }
 
 describe("ActivityPage", () => {
@@ -189,6 +192,27 @@ describe("ActivityPage", () => {
 
     await waitFor(() => expect(githubEventsMock).toHaveBeenCalledTimes(2));
     expect(await screen.findByText(/no events yet/)).toBeInTheDocument();
+  });
+
+  it("keeps the event feed on screen when a background refresh fails (#1107)", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+    githubEventsMock.mockResolvedValueOnce({
+      org: "acme",
+      events: [
+        { id: "1", type: "PushEvent", actor: "alice", actor_avatar: "", repo: "acme/api", summary: "pushed 3 commits to main", created_at: new Date().toISOString() },
+      ],
+    });
+
+    const { queryClient } = renderPage();
+    expect(await screen.findByText(/pushed 3 commits to main/)).toBeInTheDocument();
+
+    githubEventsMock.mockRejectedValue(new Error("502 Bad Gateway"));
+    await queryClient.refetchQueries({ queryKey: ["github.events", "acme"] });
+
+    await waitFor(() => expect(queryClient.getQueryState(["github.events", "acme"])?.status).toBe("error"));
+    expect(screen.getByText(/pushed 3 commits to main/)).toBeInTheDocument();
+    expect(screen.queryByText("502 Bad Gateway")).not.toBeInTheDocument();
   });
 
   it("shows retryable errors, not empty states, when the CI, release and heatmap queries fail", async () => {

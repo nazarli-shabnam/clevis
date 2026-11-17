@@ -109,9 +109,11 @@ export default function OverviewPage() {
     refetchInterval: 30_000,
   })
   const cockpit = cockpitQuery.data
-  // "Configure →" means there is no data source. The cockpit loading or succeeding proves there is one
+  // "Configure →" means there is no data source. The cockpit loading or having loaded proves there is one
   // (App installation or saved PAT); only a failed (or never-started) cockpit leaves the cards unconfigured.
-  const configured = cockpitQuery.isLoading || cockpitQuery.isSuccess
+  // Keyed on the data, not isSuccess: a failed background refetch keeps the previous data but flips the status
+  // to "error", and one blip on the 30 s poll must not turn every card into "Configure →".
+  const configured = cockpitQuery.isLoading || cockpit !== undefined
 
   // Best-effort: needs an App permission not requested by default, so retry: false and the card
   // renders only on success. Keyed by user because the QueryClient outlives logout/login, so keying
@@ -161,7 +163,9 @@ export default function OverviewPage() {
     myViewTab === "prs" ? myView?.my_open_prs ?? [] : myViewTab === "reviews" ? myView?.review_requests ?? [] : myView?.assigned_issues ?? []
 
   const orgQueryError = cockpitQuery.error ?? myViewQuery.error
-  const orgQueryIsError = cockpitQuery.isError || myViewQuery.isError
+  // A query that failed with data already on screen is a failed refresh: keep the data, show only a hint.
+  const orgQueryIsError = (cockpitQuery.isError && cockpit === undefined) || (myViewQuery.isError && myView === undefined)
+  const refreshFailed = !orgQueryIsError && (cockpitQuery.isError || myViewQuery.isError)
   const orgQueryIsFetching = cockpitQuery.isFetching || myViewQuery.isFetching
   const orgQueryErrorMessage =
     orgQueryError instanceof Error ? orgQueryError.message : "Failed to load data for this organization."
@@ -184,6 +188,12 @@ export default function OverviewPage() {
         </div>
       )}
 
+      {org && refreshFailed && (
+        <p className="mb-4 text-xs text-muted-foreground" role="status">
+          Couldn&apos;t refresh just now; showing the last data loaded. It retries automatically.
+        </p>
+      )}
+
       {org && !orgQueryIsError && cockpit?.degraded && (
         <div className="card mb-6 px-4 py-3 flex items-center gap-2 text-sm text-warning">
           <Warning size={16} weight="fill" />
@@ -196,8 +206,8 @@ export default function OverviewPage() {
         <FirstRunChecklist
           scope={scope}
           userId={user?.id ?? null}
-          hasScan={cockpitQuery.isSuccess ? cockpit?.latest_score != null : null}
-          scanFailed={cockpitQuery.isError}
+          hasScan={cockpit !== undefined ? cockpit.latest_score != null : null}
+          scanFailed={cockpitQuery.isError && cockpit === undefined}
           // Unknown (null) until the lookup succeeds: a failed one must not offer "Connect an organization".
           hasOrg={membershipsLoaded ? memberships.length > 0 : null}
           hasAutomationRun={cockpit?.has_automation_run ?? null}
