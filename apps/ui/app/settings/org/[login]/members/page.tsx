@@ -288,7 +288,7 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
               <input
                 type="checkbox"
                 checked={twoFaOff}
-                disabled={membersQuery.data?.two_factor_overlay_available === false}
+                disabled={membersQuery.data?.two_factor_overlay_available === false && !twoFaOff}
                 onChange={(e) => setTwoFaOff(e.target.checked)}
               />
               2FA off

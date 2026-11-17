@@ -54,6 +54,13 @@ export interface AuditView {
   action: string
 }
 
+/** A real yyyy-mm-dd date, else "": an impossible one (2026-13-01) would throw later in toISOString(). */
+function validDate(value: string | null): string {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return ""
+  const d = new Date(`${value}T00:00:00Z`)
+  return !Number.isNaN(d.getTime()) && d.toISOString().startsWith(value) ? value : ""
+}
+
 export const auditViewCodec: UrlViewCodec<AuditView> = {
   keys: ["actor", "prefix", "target", "from", "to", "action"],
   toParams: ({ applied: f, action }) => {
@@ -72,8 +79,8 @@ export const auditViewCodec: UrlViewCodec<AuditView> = {
       actor: p.get("actor") ?? "",
       actionPrefix: p.get("prefix") ?? "",
       target: p.get("target") ?? "",
-      from: p.get("from") ?? "",
-      to: p.get("to") ?? "",
+      from: validDate(p.get("from")),
+      to: validDate(p.get("to")),
     },
     action: p.get("action") ?? "",
   }),

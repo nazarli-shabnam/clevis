@@ -21,6 +21,13 @@ describe("list view URL codecs (#1128)", () => {
     expect(auditViewCodec.fromParams(auditViewCodec.toParams(audit))).toEqual(audit);
   });
 
+  it("drops an impossible or malformed audit date instead of keeping it", () => {
+    const view = auditViewCodec.fromParams(new URLSearchParams("from=2026-13-01&to=2026-02-30"));
+    expect(view.applied.from).toBe("");
+    expect(view.applied.to).toBe("");
+    expect(auditViewCodec.fromParams(new URLSearchParams("from=2026-02-28&to=soon")).applied).toMatchObject({ from: "2026-02-28", to: "" });
+  });
+
   it("falls back to the defaults for an unknown value", () => {
     expect(pullViewCodec.fromParams(new URLSearchParams("status=bogus&sort=nope&group=x"))).toEqual(DEFAULT_PULL_VIEW);
     expect(membersViewCodec.fromParams(new URLSearchParams("role=owner&no2fa=yes"))).toEqual(DEFAULT_MEMBERS_VIEW);

@@ -326,7 +326,9 @@ function PullRequestsView() {
           (authorFilter === "" || (p.user ?? "unknown") === authorFilter) &&
           (statusFilter === "all" || pullStatus(p, staleDays).toLowerCase() === statusFilter),
       ),
-    [loadedRows, sort, authorFilter, statusFilter, staleDays],
+    // The status filter reads the clock, so a PR can turn stale while the page stays open: the minute re-runs it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [loadedRows, sort, authorFilter, statusFilter, staleDays, Math.floor(Date.now() / 60_000)],
   )
   const failedRepos = pullsQuery.data?.failedRepos ?? []
   const isLoading = reposQuery.isLoading || (reposQuery.isSuccess && pullsQuery.isLoading)

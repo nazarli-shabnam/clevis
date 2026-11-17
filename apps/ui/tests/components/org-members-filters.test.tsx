@@ -78,6 +78,18 @@ describe("org members roster filters (#1128)", () => {
     await waitFor(() => expect(membersMock).toHaveBeenCalledWith("acme", "admin", undefined));
   });
 
+  it("keeps an active 2FA filter from the URL clearable when the overlay has not run", async () => {
+    overlay = false;
+    window.history.replaceState(null, "", "/?no2fa=1");
+    renderPage();
+    await screen.findByLabelText("2FA off");
+    const box = screen.getByLabelText("2FA off");
+    await waitFor(() => expect(box).toBeChecked());
+    expect(box).toBeEnabled();
+    fireEvent.click(box);
+    await waitFor(() => expect(window.location.search).toBe(""));
+  });
+
   it("disables the 2FA filter when the 2FA overlay has not run", async () => {
     overlay = false;
     renderPage();
