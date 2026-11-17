@@ -319,3 +319,19 @@ describe("NotificationDestinationsCard", () => {
     })
   })
 })
+
+describe("NotificationDestinationsCard bulk delete (#1126)", () => {
+  it("deletes the selected destinations after one confirm", async () => {
+    listMock.mockResolvedValue([dest({ id: 1, name: "#a" }), dest({ id: 2, name: "#b" }), dest({ id: 3, name: "#c" })])
+    removeMock.mockResolvedValue(undefined)
+    renderCard()
+    fireEvent.click(await screen.findByLabelText("Select destination #a"))
+    fireEvent.click(screen.getByLabelText("Select destination #c"))
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected (2)" }))
+    expect(removeMock).not.toHaveBeenCalled()
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Delete" }))
+
+    await waitFor(() => expect(removeMock).toHaveBeenCalledTimes(2))
+    expect(removeMock.mock.calls.map((c) => c[1]).sort()).toEqual([1, 3])
+  })
+})

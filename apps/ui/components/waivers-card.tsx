@@ -12,6 +12,8 @@ import { EmptyStateAction } from "@/components/empty-state-action"
 import { SectionError } from "@/components/section-error"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { BulkActionBar } from "@/components/bulk-action-bar"
+import { useRowSelection } from "@/lib/bulk"
 import { MAX_WAIVER_DAYS, WAIVABLE_CHECKS, WaiverForm, daysRemaining } from "@/components/waiver-form"
 import type { CheckWaiver } from "@/lib/api/types"
 
@@ -65,6 +67,19 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
   })
 
   const visible = (query.data ?? []).filter((w) => matchesFilter(w, filter))
+  const selection = useRowSelection(visible.map((w) => w.id))
+  const expiredIds = (query.data ?? []).filter((w) => !w.active).map((w) => w.id)
+  // Bulk revokes run per waiver (each is audited on its own).
+  const bulkRevoke = (id: number) => api.waivers.revoke(orgLogin, id)
+  const afterBulk = (failed: number[]) => {
+    selection.keepOnly(failed)
+    return queryClient.invalidateQueries({ queryKey })
+  }
+  // A waiver revoked while its form is open (one at a time or in bulk) can't be saved any more.
+  const loadedIds = query.data?.map((w) => w.id)
+  useEffect(() => {
+    if (loadedIds && editing && !loadedIds.includes(editing.id)) setEditing(null)
+  }, [loadedIds, editing])
   const linkedVisible = linkedWaiver !== null && visible.some((w) => w.id === linkedWaiver)
   useEffect(() => {
     if (linkedVisible) document.getElementById(`waiver-${linkedWaiver}`)?.scrollIntoView?.({ block: "center" })
@@ -127,6 +142,28 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
             </select>
           </label>
           <span className="text-muted-foreground">{visible.length} of {query.data.length}</span>
+          <label className="flex items-center gap-1.5 text-muted-foreground">
+            <input type="checkbox" aria-label="Select all shown waivers" checked={selection.allSelected} disabled={visible.length === 0} onChange={selection.toggleAll} />
+            Select all
+          </label>
+          <BulkActionBar
+            ids={selection.chosen}
+            label="Revoke selected"
+            confirmTitle={`Revoke ${selection.chosen.length} waiver${selection.chosen.length === 1 ? "" : "s"}?`}
+            confirmDescription="The checks count toward the score again from the next scan. This can't be undone."
+            confirmLabel="Revoke"
+            run={bulkRevoke}
+            onDone={afterBulk}
+          />
+          <BulkActionBar
+            ids={expiredIds}
+            label="Revoke all expired"
+            confirmTitle={`Revoke ${expiredIds.length} expired waiver${expiredIds.length === 1 ? "" : "s"}?`}
+            confirmDescription="Expired waivers no longer affect the score; this removes them from the register. This can't be undone."
+            confirmLabel="Revoke"
+            run={bulkRevoke}
+            onDone={afterBulk}
+          />
           <Button
             size="sm"
             variant="outline"
@@ -149,7 +186,14 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
                 aria-current={w.id === linkedWaiver ? "true" : undefined}
                 className={`px-4 py-2 flex items-start justify-between gap-3 text-xs ${w.id === linkedWaiver ? "bg-elevated outline outline-1 outline-primary" : ""}`}
               >
-                <div className="min-w-0">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 shrink-0"
+                  aria-label={`Select waiver for ${title}`}
+                  checked={selection.isSelected(w.id)}
+                  onChange={() => selection.toggle(w.id)}
+                />
+                <div className="min-w-0 flex-1">
                   <p className="font-medium text-foreground">
                     {title}
                     <span className="ml-2 text-muted-foreground font-normal">{w.repos ? w.repos.join(", ") : "whole organization"}</span>

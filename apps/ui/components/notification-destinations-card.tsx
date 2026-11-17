@@ -8,6 +8,8 @@ import { EmptyStateAction } from "@/components/empty-state-action"
 import { SectionError } from "@/components/section-error"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { BulkActionBar } from "@/components/bulk-action-bar"
+import { useRowSelection } from "@/lib/bulk"
 import { Input } from "@/components/ui/input"
 import type {
   AlertEvent,
@@ -147,7 +149,7 @@ function EditForm({
 }
 
 /** One row owns its mutations, so a slow or failing action on one destination never disables or flags another. */
-function DestinationRow({ orgLogin, dest }: { orgLogin: string; dest: NotificationDestination }) {
+function DestinationRow({ orgLogin, dest, selected, onToggle }: { orgLogin: string; dest: NotificationDestination; selected: boolean; onToggle: () => void }) {
   const queryClient = useQueryClient()
   const queryKey = ["notification-destinations", orgLogin]
   const [confirming, setConfirming] = useState(false)
@@ -185,7 +187,8 @@ function DestinationRow({ orgLogin, dest }: { orgLogin: string; dest: Notificati
   return (
     <li className="px-4 py-3 flex flex-col gap-2 text-xs">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
+        <input type="checkbox" className="mt-0.5 shrink-0" aria-label={`Select destination ${dest.name}`} checked={selected} onChange={onToggle} />
+        <div className="min-w-0 flex-1">
           <p className="font-medium text-foreground">
             {dest.name}
             <span className="ml-2 text-muted-foreground font-normal">
@@ -277,6 +280,7 @@ export function NotificationDestinationsCard({ orgLogin }: { orgLogin: string })
     queryFn: () => api.notificationDestinations.list(orgLogin),
     retry: false,
   })
+  const selection = useRowSelection((query.data ?? []).map((d) => d.id))
 
   const [kind, setKind] = useState<DestinationKind>("slack")
   const [name, setName] = useState("")
@@ -341,11 +345,31 @@ export function NotificationDestinationsCard({ orgLogin }: { orgLogin: string })
           focusId="dest-name"
         />
       ) : (
+        <>
+        <div className="px-4 py-2 flex flex-wrap items-center gap-2 text-xs">
+          <label className="flex items-center gap-1.5 text-muted-foreground">
+            <input type="checkbox" aria-label="Select all destinations" checked={selection.allSelected} onChange={selection.toggleAll} />
+            Select all
+          </label>
+          <BulkActionBar
+            ids={selection.chosen}
+            label="Delete selected"
+            confirmTitle={`Delete ${selection.chosen.length} destination${selection.chosen.length === 1 ? "" : "s"}?`}
+            confirmDescription="Alerts stop going to these destinations. This can't be undone."
+            confirmLabel="Delete"
+            run={(id) => api.notificationDestinations.remove(orgLogin, id)}
+            onDone={(failed) => {
+              selection.keepOnly(failed)
+              return queryClient.invalidateQueries({ queryKey })
+            }}
+          />
+        </div>
         <ul className="divide-y divide-border">
           {query.data.map((d) => (
-            <DestinationRow key={d.id} orgLogin={orgLogin} dest={d} />
+            <DestinationRow key={d.id} orgLogin={orgLogin} dest={d} selected={selection.isSelected(d.id)} onToggle={() => selection.toggle(d.id)} />
           ))}
         </ul>
+        </>
       )}
 
       <form

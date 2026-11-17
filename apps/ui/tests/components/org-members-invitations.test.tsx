@@ -183,6 +183,33 @@ describe("OrgMembersPage invitations", () => {
     await waitFor(() => expect(within(row).queryByText(/old one no longer works/i)).toBeNull());
   });
 
+  it("filters invitations by expiry and revokes the selected pending ones after one confirm (#1126)", async () => {
+    listMock.mockResolvedValue([
+      invitation(1, "soon@example.com", "pending", inFuture(2 * DAY)),
+      invitation(2, "later@example.com", "pending", inFuture(20 * DAY)),
+      invitation(3, "lapsed@example.com", "pending", inFuture(-2 * DAY)),
+      invitation(4, "done@example.com", "accepted", inFuture(5 * DAY)),
+    ]);
+    revokeMock.mockResolvedValue(invitation(1, "soon@example.com", "revoked", inFuture(2 * DAY)));
+    renderPage();
+    await screen.findByText("soon@example.com");
+    // Only a pending invitation can be revoked, so only it is selectable.
+    expect(screen.queryByLabelText("Select invitation for lapsed@example.com")).toBeNull();
+    expect(screen.queryByLabelText("Select invitation for done@example.com")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Filter invitations by expiry"), { target: { value: "7" } });
+    expect(screen.queryByText("later@example.com")).toBeNull();
+    expect(screen.queryByText("lapsed@example.com")).toBeNull();
+
+    fireEvent.click(screen.getByLabelText("Select all shown pending invitations"));
+    fireEvent.click(screen.getByRole("button", { name: "Revoke selected (1)" }));
+    expect(revokeMock).not.toHaveBeenCalled();
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Revoke" }));
+
+    await waitFor(() => expect(revokeMock).toHaveBeenCalledWith("acme", 1));
+    expect(revokeMock).toHaveBeenCalledTimes(1);
+  });
+
   it("offers regenerate and resend on an expired invitation, but not revoke", async () => {
     listMock.mockResolvedValue([invitation(2, "late@example.com", "expired", inFuture(-DAY))]);
     renderPage();
