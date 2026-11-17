@@ -1,7 +1,7 @@
 "use client"
 
-import { relativeTime } from "@/lib/format"
 import type { OrgEvent } from "@/lib/api/types"
+import { Time } from "@/components/time"
 
 interface EventActivityListProps {
   events: OrgEvent[]
@@ -55,7 +55,7 @@ export function EventActivityList({ events, isLoading, limit }: EventActivityLis
             </p>
           </div>
           <span className="text-[0.6875rem] text-muted-foreground whitespace-nowrap shrink-0 mt-0.5">
-            {relativeTime(event.created_at)}
+            <Time iso={event.created_at} />
           </span>
         </div>
       ))}

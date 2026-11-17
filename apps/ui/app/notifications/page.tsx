@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import { Time } from "@/components/time"
 import { useState } from "react"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -8,7 +9,6 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { SectionError } from "@/components/section-error"
 import { EmptyStateNoAccount } from "@/components/empty-state"
 import { useActiveScope } from "@/lib/active-scope"
-import { relativeTime } from "@/lib/format"
 import { KIND_LABEL, KIND_ORDER } from "@/lib/notification-kinds"
 import { PreferencesPanel } from "@/components/notification-bell"
 import { useNotifications } from "@/lib/use-notifications"
@@ -120,7 +120,7 @@ export default function NotificationsPage() {
                   </span>
                   {n.detail && <span className="truncate text-muted-foreground">{n.detail}</span>}
                   <span className="text-[0.6875rem] text-muted-foreground">
-                    {KIND_LABEL[n.kind]} · {relativeTime(n.at)}
+                    {KIND_LABEL[n.kind]} · <Time iso={n.at} />
                   </span>
                 </Link>
                 {!n.read && (

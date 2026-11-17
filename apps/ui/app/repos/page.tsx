@@ -1,6 +1,7 @@
 "use client"
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react"
+import { Time } from "@/components/time"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
@@ -18,7 +19,6 @@ import { invalidateTokens } from "@/lib/query-invalidation"
 import { toCsv } from "@/lib/csv"
 import { downloadTextFile } from "@/lib/download"
 import { MiniSparkline } from "@/components/charts/mini-sparkline"
-import { relativeTime } from "@/lib/format"
 import { useInView } from "@/lib/use-in-view"
 import { useLookupOwner } from "@/lib/use-lookup-owner"
 import {
@@ -115,7 +115,7 @@ function RepoReleaseCell({ org, repo, token }: { org: string; repo: string; toke
       ) : (
         <span className="text-[0.6875rem] text-muted-foreground whitespace-nowrap">
           {release.tag_name}
-          {release.published_at && <> · {relativeTime(release.published_at)}</>}
+          {release.published_at && <> · <Time iso={release.published_at} /></>}
         </span>
       )}
     </div>
@@ -208,7 +208,7 @@ function RepoRow({
         <RepoReleaseCell org={org} repo={repo.name} token={token} />
       </td>
       <td className="px-4 py-2.5 text-right text-muted-foreground whitespace-nowrap">
-        {repo.pushed_at ? relativeTime(repo.pushed_at) : "—"}
+        {repo.pushed_at ? <Time iso={repo.pushed_at} /> : "—"}
       </td>
       <td className="px-4 py-2.5 text-right whitespace-nowrap">
         <Link

@@ -86,7 +86,7 @@ describe("DeveloperInbox", () => {
 
     await waitFor(() => expect(screen.getByText("Older PR")).toBeInTheDocument())
     expect(screen.getAllByText(/PR$/).map((el) => el.textContent)).toEqual(["Older PR", "Newer PR"])
-    expect(screen.getAllByText(/^PR opened /)).toHaveLength(2)
+    expect(screen.getAllByText(/^PR opened/)).toHaveLength(2)
   })
 
   it("shows GitHub's real total, not the number of listed rows, with a view-all link", async () => {
@@ -162,6 +162,6 @@ describe("DeveloperInbox", () => {
     renderInbox()
 
     expect(await screen.findByText("No created_at")).toBeInTheDocument()
-    expect(screen.getByText(/^PR opened /)).toBeInTheDocument()
+    expect(screen.getByText(/^PR opened/)).toBeInTheDocument()
   })
 })

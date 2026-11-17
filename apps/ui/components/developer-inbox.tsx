@@ -1,9 +1,9 @@
 "use client"
 
 import Link from "next/link"
+import { Time } from "@/components/time"
 import { useQuery } from "@tanstack/react-query"
 import { api } from "@/lib/api/client"
-import { relativeTime } from "@/lib/format"
 import { SectionError } from "@/components/section-error"
 import type { MyViewPRSummary, MyViewResponse } from "@/lib/api/types"
 
@@ -122,7 +122,7 @@ export function DeveloperInbox({ org, token }: { org: string; token?: string }) 
                   className="text-[0.6875rem] text-warning whitespace-nowrap shrink-0"
                   title="When the pull request was opened. GitHub doesn't expose when your review was requested."
                 >
-                  PR opened {relativeTime(pr.created_at ?? pr.updated_at)}
+                  PR opened <Time iso={pr.created_at ?? pr.updated_at} />
                 </span>
               }
             />
@@ -147,7 +147,7 @@ export function DeveloperInbox({ org, token }: { org: string; token?: string }) 
                 <span className="text-foreground/90 truncate">{issue.title}</span>
                 <span className="text-[0.6875rem] text-muted-foreground font-mono">{issue.repository} #{issue.number}</span>
               </span>
-              <span className="text-[0.6875rem] text-muted-foreground whitespace-nowrap shrink-0">{relativeTime(issue.updated_at)}</span>
+              <span className="text-[0.6875rem] text-muted-foreground whitespace-nowrap shrink-0"><Time iso={issue.updated_at} /></span>
             </a>
           ))}
         </InboxSection>

@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { Time } from "@/components/time"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
@@ -20,7 +21,6 @@ import { DependabotTriageCard } from "@/components/automation/dependabot-triage-
 import { CHART_COLORS } from "@/lib/charts/theme"
 import { WorkflowLintCard } from "@/components/automation/workflow-lint-card"
 import { PermissionDriftNotice } from "@/components/permission-drift-notice"
-import { relativeTime } from "@/lib/format"
 import { useLookupOwner } from "@/lib/use-lookup-owner"
 import { orgRoleFor } from "@/lib/members-href"
 
@@ -551,7 +551,7 @@ export default function AutomationPage() {
                               <span className="inline-flex items-center gap-1.5">
                                 <StatusIcon status={w.last_run_status} conclusion={w.last_run_conclusion} />
                                 <span className="text-muted-foreground">
-                                  {w.last_run_at ? relativeTime(w.last_run_at) : w.last_run_status}
+                                  {w.last_run_at ? <Time iso={w.last_run_at} /> : w.last_run_status}
                                 </span>
                               </span>
                             ) : (
@@ -662,7 +662,7 @@ export default function AutomationPage() {
                             </span>
                           </td>
                           <td className="px-4 py-2.5 text-right text-muted-foreground whitespace-nowrap">
-                            {relativeTime(r.created_at)}
+                            <Time iso={r.created_at} />
                           </td>
                         </tr>
                       ))}

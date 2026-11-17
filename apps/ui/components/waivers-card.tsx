@@ -1,13 +1,13 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { Time } from "@/components/time"
 import { useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { CircleNotch, DownloadSimple } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { toCsv } from "@/lib/csv"
 import { downloadTextFile } from "@/lib/download"
-import { dueTime } from "@/lib/format"
 import { EmptyStateAction } from "@/components/empty-state-action"
 import { SectionError } from "@/components/section-error"
 import { Button } from "@/components/ui/button"
@@ -158,11 +158,11 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
                     {w.reason} · owner {w.owner} ·{" "}
                     {w.active ? (
                       <>
-                        expires {dueTime(w.expires_at)} · {days} {days === 1 ? "day" : "days"} left
+                        expires <Time iso={w.expires_at} due /> · {days} {days === 1 ? "day" : "days"} left
                         {days <= LAST_WEEK_DAYS && <span className="ml-2 text-warning font-medium">ending this week</span>}
                       </>
                     ) : (
-                      <span className="text-destructive">expired {dueTime(w.expires_at)}</span>
+                      <span className="text-destructive">expired <Time iso={w.expires_at} due /></span>
                     )}
                   </p>
                 </div>

@@ -1,6 +1,7 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Time } from "@/components/time"
 import { ArrowClockwise, ArrowSquareOut, CheckCircle, Warning, XCircle } from "@phosphor-icons/react"
 import { PageHeader } from "@/components/page-header"
 import { SectionError } from "@/components/section-error"
@@ -8,7 +9,6 @@ import { Button } from "@/components/ui/button"
 import { approvalUrl } from "@/components/permission-drift-notice"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
-import { relativeTime } from "@/lib/format"
 import { invalidateInstallations } from "@/lib/query-invalidation"
 import type { InstallationMeta } from "@/lib/api/types"
 
@@ -66,7 +66,7 @@ export default function PermissionsPage() {
                 <div className="flex flex-col gap-0.5">
                   <span className="section-label">{install.account_login}</span>
                   <span className="text-[0.6875rem] text-muted-foreground">
-                    {syncedAt ? `Permissions synced ${relativeTime(syncedAt)}` : "Permissions not yet checked"}
+                    {syncedAt ? <>Permissions synced <Time iso={syncedAt} /></> : "Permissions not yet checked"}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">

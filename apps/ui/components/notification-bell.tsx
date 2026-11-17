@@ -1,10 +1,10 @@
 "use client"
 
 import Link from "next/link"
+import { Time } from "@/components/time"
 import { useState } from "react"
 import { Popover } from "@base-ui/react/popover"
 import { Bell, GearSix } from "@phosphor-icons/react"
-import { relativeTime } from "@/lib/format"
 import type { NotificationKind } from "@/lib/api/types"
 import { useNotificationPreferences, useNotifications } from "@/lib/use-notifications"
 import { KIND_HINT, KIND_LABEL, KIND_ORDER } from "@/lib/notification-kinds"
@@ -123,7 +123,7 @@ export function NotificationBell() {
                       </span>
                       {n.detail && <span className="truncate text-muted-foreground">{n.detail}</span>}
                       <span className="text-[0.6875rem] text-muted-foreground">
-                        {KIND_LABEL[n.kind]} · {relativeTime(n.at)}
+                        {KIND_LABEL[n.kind]} · <Time iso={n.at} />
                       </span>
                     </Link>
                   </li>

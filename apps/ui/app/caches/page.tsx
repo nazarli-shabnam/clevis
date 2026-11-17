@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { Time } from "@/components/time"
 import Link from "next/link"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { Eye, Trash } from "@phosphor-icons/react"
@@ -15,7 +16,7 @@ import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
 import { useAuth } from "@/lib/auth-context"
 import { isOrgMemberOnly } from "@/lib/members-href"
-import { formatBytes, relativeTime } from "@/lib/format"
+import { formatBytes } from "@/lib/format"
 import { rankByCacheSize, summarizeCaches, type RepoCacheStats } from "@/lib/cache-rank"
 import type { JobOut, MyOrgMembership } from "@/lib/api/types"
 
@@ -302,7 +303,7 @@ export default function CachesPage() {
                     <td className="px-4 py-2.5 text-right tabular-nums">{formatBytes(r.totalBytes)}</td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">{formatBytes(r.staleBytes)}</td>
                     <td className="px-4 py-2.5 text-right text-muted-foreground whitespace-nowrap">
-                      {r.lastAccessed ? relativeTime(r.lastAccessed) : "—"}
+                      {r.lastAccessed ? <Time iso={r.lastAccessed} /> : "—"}
                     </td>
                   </tr>
                 ))}

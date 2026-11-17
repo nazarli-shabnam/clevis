@@ -1,6 +1,7 @@
 "use client"
 
 import { useQuery } from "@tanstack/react-query"
+import { Time } from "@/components/time"
 import { CircleNotch } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { relativeTime } from "@/lib/format"
@@ -9,7 +10,7 @@ import type { IngestionHealth } from "@/lib/api/types"
 
 const BACKLOG_STALE_MS = 15 * 60_000
 
-const when = (iso: string | null) => (iso ? relativeTime(iso) : "never")
+const when = (iso: string | null) => (iso ? <Time iso={iso} /> : "never")
 
 /** What is wrong with ingestion, if anything, in one sentence; null when it looks healthy. */
 export function ingestionProblem(h: IngestionHealth): string | null {

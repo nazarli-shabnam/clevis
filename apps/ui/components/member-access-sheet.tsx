@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { Time } from "@/components/time"
 import { useQuery } from "@tanstack/react-query"
 import { CircleNotch, DownloadSimple } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
@@ -9,7 +10,6 @@ import { SectionError } from "@/components/section-error"
 import { api } from "@/lib/api/client"
 import { toCsv } from "@/lib/csv"
 import { downloadTextFile } from "@/lib/download"
-import { relativeTime } from "@/lib/format"
 import type { MemberAccess } from "@/lib/api/types"
 
 const CSV_NOTE = "Direct grants only; access via teams or the org base permission is not included"
@@ -102,11 +102,11 @@ export function MemberAccessSheet({
                   {!a.activity_synced
                     ? "Not available yet"
                     : a.last_push_at
-                      ? `${relativeTime(a.last_push_at)} in ${a.last_push_repo}`
+                      ? <><Time iso={a.last_push_at} /> in {a.last_push_repo}</>
                       : "None recorded"}
                 </dd>
                 <dt className="text-muted-foreground">Last activity</dt>
-                <dd>{!a.activity_synced ? "Not available yet" : a.last_event_at ? relativeTime(a.last_event_at) : "None recorded"}</dd>
+                <dd>{!a.activity_synced ? "Not available yet" : a.last_event_at ? <Time iso={a.last_event_at} /> : "None recorded"}</dd>
               </dl>
 
               <div>

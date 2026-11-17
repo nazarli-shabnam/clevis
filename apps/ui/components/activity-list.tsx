@@ -1,7 +1,8 @@
 "use client"
 
 import Link from "next/link"
-import { relativeTime, jobTypeLabel } from "@/lib/format"
+import { Time } from "@/components/time"
+import { jobTypeLabel } from "@/lib/format"
 import type { JobOut } from "@/lib/api/types"
 
 const statusStyle: Record<JobOut["status"], string> = {
@@ -66,7 +67,7 @@ export function ActivityList({ jobs, isLoading, limit }: ActivityListProps) {
             </p>
           </div>
           <span className="text-[0.6875rem] text-muted-foreground whitespace-nowrap shrink-0 mt-0.5">
-            {relativeTime(job.created_at)}
+            <Time iso={job.created_at} />
           </span>
         </div>
       ))}

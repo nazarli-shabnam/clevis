@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { Time } from "@/components/time"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import Link from "next/link"
 import { Input } from "@/components/ui/input"
@@ -15,7 +16,7 @@ import { useAuth } from "@/lib/auth-context"
 import { shouldApplyResolvedToken } from "@/lib/token-resolve"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
 import { CHART_COLORS } from "@/lib/charts/theme"
-import { formatBytes, relativeTime, classifyStaleness, stalenessColor } from "@/lib/format"
+import { formatBytes, classifyStaleness, stalenessColor } from "@/lib/format"
 import { isOrgMemberOnly } from "@/lib/members-href"
 import type { CacheEntry, InstallationMeta, JobOut, MyOrgMembership } from "@/lib/api/types"
 
@@ -385,12 +386,12 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
                         {formatBytes(c.size_in_bytes)}
                       </td>
                       <td className="px-4 py-2.5 text-right text-muted-foreground whitespace-nowrap">
-                        {relativeTime(c.created_at)}
+                        <Time iso={c.created_at} />
                       </td>
                       <td className="px-4 py-2.5 text-right whitespace-nowrap">
                         <span className={`inline-flex items-center gap-1 font-mono text-[0.6875rem] ${staleText}`}>
                           <span className={`inline-block size-1.5 rounded-full ${staleDot}`} />
-                          {relativeTime(c.last_accessed_at)}
+                          <Time iso={c.last_accessed_at} />
                         </span>
                       </td>
                       <td className="px-4 py-2.5 text-right">
