@@ -7,6 +7,7 @@ import { Breadcrumb } from "@/components/breadcrumb"
 import { NotificationBell } from "@/components/notification-bell"
 import { CommandPalette } from "@/components/command-palette"
 import { EmailVerificationBanner } from "@/components/email-verification-banner"
+import { RunningJobsBanner } from "@/components/running-jobs-banner"
 import { isPublicRoute } from "@/lib/public-routes"
 
 export function ShellRouter({ children }: { children: React.ReactNode }) {
@@ -33,6 +34,7 @@ export function ShellRouter({ children }: { children: React.ReactNode }) {
         {/* SidebarInset already renders the page's <main>; a second one would nest landmarks. */}
         <div className="flex-1 p-5">
           <EmailVerificationBanner />
+          <RunningJobsBanner />
           {children}
         </div>
       </SidebarInset>

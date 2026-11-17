@@ -18,6 +18,9 @@ vi.mock("@/components/command-palette", () => ({ CommandPalette: () => <button d
 // The banner needs the query client and auth; its own test covers it.
 vi.mock("@/components/email-verification-banner", () => ({ EmailVerificationBanner: () => <div data-testid="verify-banner" /> }))
 
+// It needs the query client; its own test covers it.
+vi.mock("@/components/running-jobs-banner", () => ({ RunningJobsBanner: () => null }))
+
 import { ShellRouter } from "@/components/shell-router"
 import { isPublicRoute } from "@/lib/public-routes"
 
