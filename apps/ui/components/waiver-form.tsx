@@ -51,7 +51,7 @@ interface WaiverFormProps {
 /** Add a waiver, or renew/edit one: a failing check is kept out of the score until it expires. */
 export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, compact, onSaved, onCancel }: WaiverFormProps) {
   const queryClient = useQueryClient()
-  const { checks, loaded, isOrgWideOnly } = useWaivableChecks(orgLogin)
+  const { checks, loaded, isError, isOrgWideOnly } = useWaivableChecks(orgLogin)
   // The admin's pick, else the waiver being edited / the fixed check, else the first check that can be
   // scoped to repositories (the common case), else the first one the API offers.
   const [picked, setPicked] = useState<string>()
@@ -144,6 +144,11 @@ export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, comp
           </Button>
         )}
       </div>
+      {isError && (
+        <p role="alert" className={compact ? "text-xs text-destructive" : "sm:col-span-2 text-xs text-destructive"}>
+          Couldn&apos;t load the list of checks that can be waived. Reload the page to try again.
+        </p>
+      )}
       {save.isError && (
         <p role="alert" className={compact ? "text-xs text-destructive" : "sm:col-span-2 text-xs text-destructive"}>
           Couldn&apos;t {editing ? "save" : "add"} the waiver: {save.error.message}

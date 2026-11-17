@@ -6,6 +6,7 @@ const listMock = vi.fn()
 const createMock = vi.fn()
 const revokeMock = vi.fn()
 const updateMock = vi.fn()
+const checksMock = vi.fn()
 const catalog = [
   { id: "organization_members_mfa_required", title: "Organization requires 2FA/MFA", org_wide_only: true },
   { id: "repository_default_branch_protection_enabled", title: "Default branch has protection rules", org_wide_only: false },
@@ -21,7 +22,7 @@ vi.mock("next/navigation", () => ({ useSearchParams: () => searchParams }));
 vi.mock("@/lib/api/client", () => ({
   api: {
     waivers: {
-      checks: () => Promise.resolve(catalog),
+      checks: (...a: unknown[]) => checksMock(...a),
       list: (...a: unknown[]) => listMock(...a),
       create: (...a: unknown[]) => createMock(...a),
       revoke: (...a: unknown[]) => revokeMock(...a),
@@ -65,6 +66,8 @@ beforeEach(() => {
   createMock.mockReset()
   revokeMock.mockReset()
   updateMock.mockReset()
+  checksMock.mockReset()
+  checksMock.mockResolvedValue(catalog)
 })
 afterEach(() => {
   cleanup()
@@ -190,6 +193,14 @@ describe("WaiversCard", () => {
     })
     expect(new Date(body.expires_at).getTime()).toBeGreaterThan(Date.now())
     await waitFor(() => expect(listMock.mock.calls.length).toBeGreaterThan(1)) // refreshed
+  })
+
+  it("says so, and keeps the form disabled, when the waivable-check list can't be loaded", async () => {
+    checksMock.mockRejectedValue(new Error("boom"))
+    listMock.mockResolvedValue([])
+    renderCard()
+    expect(await screen.findByText(/Couldn't load the list of checks/)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Add waiver" })).toBeDisabled()
   })
 
   it("shows a load error with a retry that refetches", async () => {
