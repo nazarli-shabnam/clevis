@@ -2,7 +2,7 @@
 
 export function downloadTextFile(filename: string, content: string, mimeType = "text/plain"): void {
   // Excel only reads a CSV as UTF-8 when it starts with a BOM; without it non-ASCII names turn to mojibake.
-  const body = mimeType === "text/csv" ? `﻿${content}` : content
+  const body = mimeType === "text/csv" ? `\uFEFF${content}` : content
   downloadBlob(filename, new Blob([body], { type: `${mimeType};charset=utf-8` }))
 }
 
