@@ -71,6 +71,13 @@ describe("NotificationBell", () => {
      expect(screen.getByRole("link", { name: "View all notifications" })).toHaveAttribute("href", "/notifications");
   });
 
+  it("says how fresh the feed is when opened (#1094)", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "critical_alert")]));
+    wrap(<NotificationBell />);
+    fireEvent.click(await screen.findByRole("button", { name: /Notifications, 1 unread/ }));
+    expect(await screen.findByText(/Updated just now/)).toBeInTheDocument();
+  });
+
   it("closes the popover when the View all notifications link is followed", async () => {
     feedMock.mockResolvedValue(feed([item("a", "critical_alert")]));
     wrap(<NotificationBell />);

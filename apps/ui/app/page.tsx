@@ -109,6 +109,15 @@ export default function OverviewPage() {
     refetchInterval: 30_000,
   })
   const cockpit = cockpitQuery.data
+  // When the score was produced (org scopes only: the stored-scan route is org-gated). The same key and fetch as
+  // the Security page, so the two share one cache entry and a finished scan refreshes both.
+  const latestScanQuery = useQuery({
+    queryKey: ["analytics.latest-scan", org],
+    queryFn: () => api.analytics.latestScan(org),
+    enabled: scope?.kind === "org" && org.trim().length > 0,
+    retry: false,
+  })
+  const scannedAt = latestScanQuery.data?.scanned_at
   // "Configure →" means there is no data source. The cockpit loading or succeeding proves there is one
   // (App installation or saved PAT); only a failed (or never-started) cockpit leaves the cards unconfigured.
   const configured = cockpitQuery.isLoading || cockpitQuery.isSuccess
@@ -238,6 +247,13 @@ export default function OverviewPage() {
           value={cockpit?.member_count ?? undefined}
         />
       </div>
+
+      {org && (scannedAt || cockpitQuery.dataUpdatedAt > 0) && (
+        <p className="-mt-4 mb-6 text-xs text-muted-foreground">
+          {scannedAt ? `Security score from a scan ${relativeTime(scannedAt)}. ` : ""}
+          {cockpitQuery.dataUpdatedAt > 0 ? `Numbers refreshed ${relativeTime(new Date(cockpitQuery.dataUpdatedAt).toISOString())}.` : ""}
+        </p>
+      )}
 
       {(cockpitQuery.isLoading || cockpit) && (
         // auto-fit collapses the empty track when the success-rate card is hidden, so one card fills the row.
