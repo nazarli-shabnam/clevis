@@ -203,9 +203,14 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
   // A notification links here with ?token=<id>: that row is marked and scrolled into view.
   const linkedToken = Number(useSearchParams()?.get("token")) || null
   const linkedLoaded = linkedToken !== null && !!query.data?.some((t) => t.id === linkedToken)
+  // A filter that hides the linked row would swallow the scroll and the highlight: show everything for it.
   useEffect(() => {
-    if (linkedLoaded) document.getElementById(`api-token-${linkedToken}`)?.scrollIntoView?.({ block: "center" })
+    if (linkedLoaded) setExpiryFilter("any")
   }, [linkedToken, linkedLoaded])
+  const linkedVisible = linkedToken !== null && visibleTokens.some((t) => t.id === linkedToken)
+  useEffect(() => {
+    if (linkedVisible) document.getElementById(`api-token-${linkedToken}`)?.scrollIntoView?.({ block: "center" })
+  }, [linkedToken, linkedVisible])
 
   const create = useMutation({
     mutationFn: () => api.apiTokens.create(orgLogin, name.trim(), EXPIRY_OPTIONS[expiry].days),

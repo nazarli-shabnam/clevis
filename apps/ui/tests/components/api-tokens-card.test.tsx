@@ -335,5 +335,22 @@ describe("ApiTokensCard", () => {
       expect(row).toHaveAttribute("aria-current", "true")
       expect(screen.getByText("ci").closest("li")).not.toHaveAttribute("aria-current")
     })
+
+    it("clears an expiry filter that would hide the token a notification links to", async () => {
+      listMock.mockResolvedValue([token({ id: 1, name: "soon", expires_at: new Date(Date.now() + 3 * 86_400_000).toISOString() }), token({ id: 2, name: "never" })])
+      const view = renderCard()
+      await screen.findByText("never")
+      fireEvent.change(screen.getByLabelText("Filter tokens by expiry"), { target: { value: "7" } })
+      expect(screen.queryByText("never")).not.toBeInTheDocument()
+
+      searchParams = new URLSearchParams("token=2")
+      view.rerender(
+        <QueryClientProvider client={new QueryClient()}>
+          <ApiTokensCard orgLogin="acme" />
+        </QueryClientProvider>,
+      )
+
+      expect((await screen.findByText("never")).closest("li")).toHaveAttribute("aria-current", "true")
+    })
   })
 })
