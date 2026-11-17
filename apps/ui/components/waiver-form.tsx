@@ -5,36 +5,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { api } from "@/lib/api/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { useWaivableChecks } from "@/lib/use-waivable-checks"
 import type { CheckWaiver } from "@/lib/api/types"
-
-/** Checks an admin can waive: id -> title. Mirrors the API's known checks; an unknown id is refused there. */
-export const WAIVABLE_CHECKS: Record<string, string> = {
-  organization_members_mfa_required: "Organization requires 2FA/MFA",
-  repository_default_branch_protection_enabled: "Default branch has protection rules",
-  repository_secret_scanning_enabled: "Secret scanning enabled",
-  repository_dependabot_alerts_clear: "No open critical/high Dependabot alerts",
-  repository_code_scanning_alerts_clear: "No open code scanning alerts",
-  repository_default_branch_no_force_push: "Default branch disallows force pushes",
-  repository_codeowners_present: "CODEOWNERS present",
-  repository_security_policy_present: "SECURITY.md present",
-  repository_license_present: "License present",
-  repository_no_stale_branches: "No stale branches",
-  repository_actions_pinned_to_sha: "Actions pinned to a commit SHA",
-  organization_members_2fa_enabled: "All organization members have 2FA enabled",
-  repository_no_outside_collaborator_admins: "No outside collaborators have admin access",
-}
-
-/** Checks that never report which repos fail, so the API only accepts an org-wide waiver for them. */
-export const ORG_WIDE_ONLY_CHECKS = new Set([
-  "organization_members_mfa_required",
-  "repository_codeowners_present",
-  "repository_security_policy_present",
-  "repository_license_present",
-  "repository_no_stale_branches",
-  "repository_actions_pinned_to_sha",
-  "organization_members_2fa_enabled",
-  "repository_no_outside_collaborator_admins",
-])
 
 export const MAX_WAIVER_DAYS = 90
 
@@ -79,13 +51,17 @@ interface WaiverFormProps {
 /** Add a waiver, or renew/edit one: a failing check is kept out of the score until it expires. */
 export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, compact, onSaved, onCancel }: WaiverFormProps) {
   const queryClient = useQueryClient()
-  const [checkId, setCheckId] = useState(editing?.check_id ?? fixedCheckId ?? Object.keys(WAIVABLE_CHECKS)[1])
+  const { checks, loaded, isOrgWideOnly } = useWaivableChecks(orgLogin)
+  // The admin's pick, else the waiver being edited / the fixed check, else the first check that can be
+  // scoped to repositories (the common case), else the first one the API offers.
+  const [picked, setPicked] = useState<string>()
+  const checkId = picked ?? editing?.check_id ?? fixedCheckId ?? (checks.find((c) => !c.org_wide_only) ?? checks[0])?.id ?? ""
   const [repos, setRepos] = useState(editing ? (editing.repos?.join(", ") ?? "") : (initialRepos?.join(", ") ?? ""))
   const [reason, setReason] = useState(editing?.reason ?? "")
   const [owner, setOwner] = useState(editing?.owner ?? "")
   const [until, setUntil] = useState(editing ? renewalDay(editing) : dayInput(30))
 
-  const orgWideOnly = ORG_WIDE_ONLY_CHECKS.has(checkId)
+  const orgWideOnly = isOrgWideOnly(checkId)
 
   const save = useMutation({
     mutationFn: () => {
@@ -107,7 +83,7 @@ export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, comp
     },
   })
 
-  const canSubmit = reason.trim() !== "" && owner.trim() !== "" && until !== "" && !save.isPending
+  const canSubmit = loaded && checkId !== "" && reason.trim() !== "" && owner.trim() !== "" && until !== "" && !save.isPending
   const idPrefix = `waiver-${editing?.id ?? fixedCheckId ?? "new"}`
 
   return (
@@ -129,10 +105,10 @@ export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, comp
           <select
             id={`${idPrefix}-check`}
             value={checkId}
-            onChange={(e) => setCheckId(e.target.value)}
+            onChange={(e) => setPicked(e.target.value)}
             className="text-xs card text-foreground px-2 py-1.5 w-full focus:outline-none focus:ring-1 focus:ring-ring"
           >
-            {Object.entries(WAIVABLE_CHECKS).map(([id, title]) => (
+            {checks.map(({ id, title }) => (
               <option key={id} value={id}>{title}</option>
             ))}
           </select>

@@ -1,4 +1,5 @@
 import type {
+  WaivableCheck,
   GithubAppManifest,
   GithubAppStatus,
   MyInvitation,
@@ -798,6 +799,8 @@ export const api = {
     },
   },
   waivers: {
+    // The checks the API accepts a waiver for (and which are org-wide only); the form reads this, not a copy.
+    checks: (orgLogin: string) => get<WaivableCheck[]>(`/orgs/${encodeURIComponent(orgLogin)}/waivable-checks`),
     list: (orgLogin: string) => get<CheckWaiver[]>(`/orgs/${encodeURIComponent(orgLogin)}/waivers`),
     create: (orgLogin: string, body: CheckWaiverInput) =>
       post<CheckWaiver>(`/orgs/${encodeURIComponent(orgLogin)}/waivers`, body),

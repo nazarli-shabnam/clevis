@@ -14,7 +14,7 @@ from src.core.db import CheckWaiver, get_db
 from src.core.path_params import RowId
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import audit_repo, waiver_repo
-from src.schemas.waiver import WaiverIn, WaiverOut
+from src.schemas.waiver import WaivableCheckOut, WaiverIn, WaiverOut
 from src.services import waivers as waiver_service
 
 router = APIRouter()
@@ -56,6 +56,11 @@ def _payload(w: CheckWaiver) -> dict:
         "owner": w.owner,
         "expires_at": _aware(w.expires_at).isoformat(),
     }
+
+
+@router.get("/orgs/{org_login}/waivable-checks", response_model=list[WaivableCheckOut])
+def list_waivable_checks(ctx: OrgContext = Depends(require_org_role(min_role="member"))):
+    return waiver_service.waivable_checks()
 
 
 @router.get("/orgs/{org_login}/waivers", response_model=list[WaiverOut])

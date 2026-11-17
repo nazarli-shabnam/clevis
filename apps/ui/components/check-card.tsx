@@ -7,7 +7,8 @@ import { CheckCircle, MinusCircle, WarningCircle, XCircle, ArrowSquareOut, Wrenc
 import { api } from "@/lib/api/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { ORG_WIDE_ONLY_CHECKS, WAIVABLE_CHECKS, WaiverForm } from "@/components/waiver-form"
+import { WaiverForm } from "@/components/waiver-form"
+import { useWaivableChecks } from "@/lib/use-waivable-checks"
 import type { CheckResult, CheckValue } from "@/lib/api/types"
 
 // check_ids the API can auto-fix. Keep in sync with check_remediation.supported_check_ids().
@@ -244,10 +245,14 @@ function FileAsIssue({ check, owner, token }: { check: CheckResult; owner: strin
 }
 
 function WaiveThis({ check, orgLogin }: { check: CheckResult; orgLogin: string }) {
+  const { isWaivable, isOrgWideOnly } = useWaivableChecks(orgLogin)
   // Prefill the repos the card names, but only for checks where a repo-scoped waiver means something.
-  const repos = ORG_WIDE_ONLY_CHECKS.has(check.id) ? [] : affectedRepos(check)
+  const repos = isOrgWideOnly(check.id) ? [] : affectedRepos(check)
   const [open, setOpen] = useState(false)
   const [saved, setSaved] = useState(false)
+
+  // Offer a waiver only for a check the API accepts one for (nothing until the catalog has loaded).
+  if (!isWaivable(check.id)) return null
 
   if (saved) {
     return <p className="mt-2 text-xs text-accent">Waiver added. It applies from the next scan.</p>
@@ -399,7 +404,7 @@ export function CheckCard({ check, owner, token, onRemediated, waiveOrg }: Check
           <FixThisButton check={check} owner={owner} token={token} onRemediated={onRemediated} />
         )}
         {fail && owner && <FileAsIssue check={check} owner={owner} token={token} />}
-        {fail && waiveOrg && check.id in WAIVABLE_CHECKS && <WaiveThis check={check} orgLogin={waiveOrg} />}
+        {fail && waiveOrg && <WaiveThis check={check} orgLogin={waiveOrg} />}
       </div>
     </div>
   )
