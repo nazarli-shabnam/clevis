@@ -14,7 +14,13 @@ from datetime import datetime
 
 import httpx
 
-from _rate_limit import MAX_RETRY_AFTER_SECONDS, has_rate_limit_headers, is_secondary_rate_limit, retry_delay_seconds
+from _rate_limit import (
+    MAX_RETRY_AFTER_SECONDS,
+    has_rate_limit_headers,
+    is_secondary_rate_limit,
+    primary_limit_wait_seconds,
+    retry_delay_seconds,
+)
 
 # Bound on top of GitHub's own ~300-event cap, so a looping Link header can't run forever.
 _MAX_PAGES = 3
@@ -36,6 +42,8 @@ def _get_with_retry(client: httpx.Client, url: str, headers: dict, params: dict 
                 time.sleep(2**attempt)
                 continue
             raise
+        if primary_limit_wait_seconds(resp) is not None:
+            return resp  # a spent hourly quota: sleeping cannot help, the job waits out the reset instead
         if (resp.status_code == 429 or has_rate_limit_headers(resp) or resp.status_code >= 500) and attempt < 2:
             time.sleep(_retry_delay_seconds(resp, attempt))
             continue

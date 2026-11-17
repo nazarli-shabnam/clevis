@@ -10,6 +10,8 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, SecretStr
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core._crypto import decrypt_job_token, encrypt_job_token
@@ -53,6 +55,15 @@ def list_tokens(
     return [TokenMeta.model_validate(r) for r in rows]
 
 
+def _find_saved_token(db: Session, org: str) -> SavedToken | None:
+    """The saved token for ``org``: the exact-case row first, else a case-insensitive match -- the same order
+    ``token_resolution`` reads it in, so a token saved as ``Acme`` is replaced (not duplicated) by a save for
+    ``acme``."""
+    return db.query(SavedToken).filter(SavedToken.org == org).first() or (
+        db.query(SavedToken).filter(func.lower(SavedToken.org) == org.lower()).first()
+    )
+
+
 @router.put("/{org}", response_model=TokenMeta)
 def upsert_token(
     org: str,
@@ -65,6 +76,16 @@ def upsert_token(
     Also best-effort connects the org to Clevis using the pasted PAT so the org-scoped
     dashboard pages work afterwards, not just Overview.
     """
+    try:
+        return _save_token(db, org, body, user)
+    except IntegrityError:
+        # Two saves for an org with no row both missed the lookup and both inserted; the loser hits the unique
+        # constraint at commit. Start over: the winner's row now exists, so this pass takes the update path.
+        db.rollback()
+        return _save_token(db, org, body, user)
+
+
+def _save_token(db: Session, org: str, body: UpsertTokenRequest, user: UserOut) -> TokenMeta:
     encrypted = encrypt_job_token(
         body.token.get_secret_value(),
         settings.job_secret_key.get_secret_value(),
@@ -106,7 +127,7 @@ def upsert_token(
     verified = nothing_to_do or connected_org is not None
     tenant_id = existing_org.tenant_id if existing_org is not None and verified else None
 
-    row = db.query(SavedToken).filter_by(org=org).first()
+    row = _find_saved_token(db, org)
     if row:
         row.encrypted_token = encrypted
         row.label = body.label
@@ -134,7 +155,7 @@ def resolve_token(
     user: UserOut = Depends(require_workspace_admin),
 ) -> VerifyTokenResponse:
     """Decrypt and return the saved token for an org. Returns raw secret — workspace admin only."""
-    row = db.query(SavedToken).filter_by(org=body.org).first()
+    row = _find_saved_token(db, body.org)
     if not row:
         raise HTTPException(status_code=404, detail="No saved token for this org")
     raw = decrypt_job_token(
@@ -155,7 +176,7 @@ def delete_token(
     user: UserOut = Depends(require_workspace_admin),
 ) -> None:
     """Remove a saved token. Workspace admin only."""
-    row = db.query(SavedToken).filter_by(org=org).first()
+    row = _find_saved_token(db, org)
     if not row:
         raise HTTPException(status_code=404, detail="No saved token for this org")
     tenant_id = row.tenant_id or tenant_repo.ensure_personal_tenant(db, user.id, commit=False).id

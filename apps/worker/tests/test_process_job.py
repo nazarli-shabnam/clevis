@@ -657,3 +657,29 @@ def test_a_job_with_a_live_or_unknown_token_expiry_still_runs():
         process_job(_FakeConn(), 1, "github.clear_actions_cache", _global_payload(token_expires_at=time.time() + 3000))
         process_job(_FakeConn(), 2, "github.clear_actions_cache", _global_payload())  # a PAT: no expiry recorded
     assert handler.call_count == 2
+
+
+def test_process_job_holds_a_job_until_a_spent_primary_quota_resets():
+    """#1111: the hourly quota resets ~30 min out. Requeueing on the usual 60-480 s backoff burned every retry
+    before then; the job is instead held until the reset, costing one retry."""
+    conn = _FakeConn()
+    mock_response = MagicMock()
+    mock_response.status_code = 403
+    mock_response.text = ""
+    mock_response.headers = {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(int(time.time()) + 1800)}
+
+    with patch("worker.httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.delete = MagicMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        process_job(conn, 7, "github.clear_actions_cache", _payload(), retry_count=0)
+
+    sql, params = conn._cursor.calls[0]
+    assert "status='queued'" in sql and "make_interval" in sql
+    new_retry_count, held_for, job_id, expected_retry_count = params[0], params[2], params[3], params[4]
+    assert (new_retry_count, job_id, expected_retry_count) == (1, 7, 0)
+    # ~1800 s to the reset + slack, less the 60 s the claim query adds back for retry 1.
+    assert 1700 < held_for < 1800

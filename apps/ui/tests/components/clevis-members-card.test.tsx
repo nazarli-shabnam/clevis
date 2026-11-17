@@ -33,11 +33,14 @@ const contractor = (over: Record<string, unknown> = {}) =>
 
 function renderCard() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <ClevisMembersCard orgLogin="acme" />
-    </QueryClientProvider>,
-  )
+  return {
+    queryClient,
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <ClevisMembersCard orgLogin="acme" />
+      </QueryClientProvider>,
+    ),
+  }
 }
 
 beforeEach(() => {
@@ -72,6 +75,23 @@ describe("ClevisMembersCard", () => {
 
     await waitFor(() => expect(setRoleMock).toHaveBeenCalledWith("acme", 2, "admin"))
     await waitFor(() => expect(listMock.mock.calls.length).toBeGreaterThan(1)) // refreshed
+  })
+
+  it("refreshes the caller's own org role after a role change or removal (#1120)", async () => {
+    listMock.mockResolvedValue([contractor()])
+    setRoleMock.mockResolvedValue(contractor({ role: "admin" }))
+    removeMock.mockResolvedValue(undefined)
+    const { queryClient } = renderCard()
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+
+    fireEvent.change(await screen.findByLabelText("Role of contractor@example.com"), { target: { value: "admin" } })
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["my-orgs"] }))
+
+    invalidate.mockClear()
+    fireEvent.click(await screen.findByRole("button", { name: "Remove contractor@example.com" }))
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove" }))
+    await waitFor(() => expect(removeMock).toHaveBeenCalled())
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["my-orgs"] }))
   })
 
   it("shows why a role change was refused, e.g. the last admin", async () => {

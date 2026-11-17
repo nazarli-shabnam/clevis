@@ -148,3 +148,17 @@ def test_limit_still_applies_to_a_key_while_other_keys_expire():
         with pytest.raises(HTTPException) as exc_info:
             check_account_rate_limit("acct-victim", max_requests=1)
     assert exc_info.value.status_code == 429
+
+
+def test_rate_limit_is_keyed_by_the_route_template_not_the_concrete_path():
+    # #1106: a path parameter the caller chooses (an invitation id) must not mint a fresh bucket per value.
+    app = FastAPI()
+
+    @app.post("/limited-param/{item_id}", dependencies=[Depends(rate_limit(max_requests=2))])
+    def limited(item_id: str):
+        return {"ok": True}
+
+    client = TestClient(app)
+    assert client.post("/limited-param/a").status_code == 200
+    assert client.post("/limited-param/b").status_code == 200
+    assert client.post("/limited-param/c").status_code == 429

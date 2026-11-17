@@ -148,11 +148,13 @@ describe("RepoDetailPage", () => {
   });
 
   afterEach(() => {
+    window.history.replaceState(null, "", "/");
     cleanup();
     vi.restoreAllMocks();
   });
 
   it("shows an error for an invalid repo route", () => {
+    window.history.replaceState(null, "", "/");
     currentRepoParam = "not-a-valid-segment";
     renderPage();
     expect(screen.getByText(/invalid repository route/i)).toBeInTheDocument();
@@ -288,6 +290,20 @@ describe("RepoDetailPage", () => {
       renderPage();
       await waitFor(() => expect(reposSecurityMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
       expect(screen.getByRole("tab", { name: /security/i })).toHaveAttribute("aria-selected", "true");
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
+  it("writes the selected tab to ?tab= so it survives a reload, and drops it for Overview (#1093)", async () => {
+    window.history.replaceState(null, "", "/repos/acme~demo");
+    try {
+      renderPage();
+      fireEvent.click(screen.getByRole("tab", { name: /security/i }));
+      expect(new URLSearchParams(window.location.search).get("tab")).toBe("security");
+
+      fireEvent.click(screen.getByRole("tab", { name: /overview/i }));
+      expect(window.location.search).toBe("");
     } finally {
       window.history.replaceState(null, "", "/");
     }
@@ -487,6 +503,7 @@ describe("RepoDetailPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Load metrics" }));
     await waitFor(() => expect(reposFlowMetricsMock).toHaveBeenCalledTimes(1));
 
+    window.history.replaceState(null, "", "/"); // a real navigation lands on a URL without ?tab=
     currentRepoParam = "acme~other";
     rerenderSamePage();
 
@@ -750,6 +767,7 @@ describe("RepoDetailPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: /actions cache/i }));
     expect(screen.getByRole("tab", { name: /actions cache/i })).toHaveAttribute("aria-selected", "true");
 
+    window.history.replaceState(null, "", "/"); // a real navigation lands on a URL without ?tab=
     currentRepoParam = "acme~other";
     rerenderSamePage();
 
@@ -768,6 +786,7 @@ describe("RepoDetailPage", () => {
       target: { value: "ghp_still_valid_for_acme_1234567890" },
     });
 
+    window.history.replaceState(null, "", "/"); // a real navigation lands on a URL without ?tab=
     currentRepoParam = "acme~other";
     rerenderSamePage();
 
@@ -786,6 +805,7 @@ describe("RepoDetailPage", () => {
       target: { value: "ghp_only_valid_for_acme_1234567890" },
     });
 
+    window.history.replaceState(null, "", "/");
     currentRepoParam = "other-org~demo";
     rerenderSamePage();
 

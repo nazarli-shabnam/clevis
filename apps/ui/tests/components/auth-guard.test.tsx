@@ -95,7 +95,7 @@ describe("AuthGuard clevis:unauthorized handling", () => {
       expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
     });
 
-    expect(replace).toHaveBeenCalledWith("/login");
+    expect(replace).toHaveBeenCalledWith("/login?reason=expired");
   });
 
   it("does not log out or redirect on a clevis:unauthorized event while on a public route", async () => {
@@ -215,7 +215,7 @@ describe("AuthGuard keeps the destination when it sends someone to sign in (#661
       window.dispatchEvent(new Event("clevis:unauthorized"));
     });
 
-    await waitFor(() => expect(replace).toHaveBeenCalledWith(`/login?next=${CALLBACK_NEXT}`));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(`/login?next=${CALLBACK_NEXT}&reason=expired`));
   });
 });
 

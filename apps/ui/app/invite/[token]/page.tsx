@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Warning, CheckCircle, CircleNotch } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { useAuth } from "@/lib/auth-context"
+import { matchesMaskedEmail } from "@/lib/masked-email"
 import type { InvitationPreview } from "@/lib/api/types"
 
 const INACTIVE_COPY: Record<Exclude<InvitationPreview["status"], "pending">, string> = {
@@ -41,6 +42,9 @@ export default function InviteAcceptPage() {
       router.push("/")
     },
   })
+
+  // Known before accepting, so someone signed in with another address is told now rather than by a 403.
+  const wrongAccount = !!user && !!preview?.email && !matchesMaskedEmail(preview.email, user.email)
 
   // The backend 403s with this specific message for an unverified email -- distinct from an
   // email mismatch (also 403, different wording), so only this case gets a resend affordance.
@@ -94,6 +98,11 @@ export default function InviteAcceptPage() {
                 You&rsquo;ve been invited to join <span className="font-semibold">{preview.org_login}</span> as a
                 member.
               </p>
+              {preview.email && (
+                <p className="text-xs text-muted-foreground">
+                  Invitation for <span className="font-medium text-foreground">{preview.email}</span>
+                </p>
+              )}
               {!user ? (
                 <p className="text-xs text-muted-foreground">
                   Sign in with the account this invite was sent to, and you&rsquo;ll be brought back here to accept.
@@ -116,7 +125,8 @@ export default function InviteAcceptPage() {
                 </Button>
               )}
               {user && !accept.isSuccess && (
-                <p className="text-xs text-muted-foreground">
+                <p className={wrongAccount ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>
+                  {wrongAccount && "This invitation isn’t for the account you’re signed in with. "}
                   Signed in as <span className="font-medium text-foreground">{user.email}</span>.{" "}
                   <button
                     type="button"
