@@ -839,3 +839,20 @@ def test_fetch_all_events_merges_public_and_private_without_duplicates():
     events = backfill.fetch_all_events(client, "https://api.github.com", {}, "acme", "Organization")
 
     assert sorted(e["id"] for e in events) == ["dup", "priv1", "pub1"]
+
+
+def test_fetch_events_does_not_sleep_through_a_spent_primary_quota():
+    # #1111: a 403 with X-RateLimit-Remaining: 0 whose reset is far off is the *hourly* quota, not a secondary
+    # limit. Sleeping ~60 s twice cannot help, so it is returned at once for the job to wait out the reset.
+    import time as _time
+
+    spent = _FakeResponse(
+        {}, status_code=403, headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(int(_time.time()) + 1800)}
+    )
+    client = _FakeClient([spent])
+
+    with patch("backfill.time.sleep") as mock_sleep, pytest.raises(httpx.HTTPStatusError):
+        backfill.fetch_events(client, "https://api.github.com", {}, "acme", "Organization")
+
+    mock_sleep.assert_not_called()
+    assert len(client.calls) == 1
