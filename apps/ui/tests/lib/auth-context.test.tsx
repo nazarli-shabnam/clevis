@@ -839,3 +839,64 @@ describe("AuthProvider per-user browser state", () => {
     expectPerUserStateCleared();
   });
 });
+
+describe("AuthProvider cross-tab session sync (#1116)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        String(input).endsWith("/auth/me")
+          ? Promise.resolve(jsonResponse(cookieUser))
+          : Promise.reject(new Error(`Unexpected fetch: ${String(input)}`)),
+      ),
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  // What another tab does: write the shared token, which the browser reports to this tab as a `storage` event.
+  function otherTabSets(token: string | null) {
+    if (token === null) localStorage.removeItem(TOKEN_KEY);
+    else localStorage.setItem(TOKEN_KEY, token);
+    act(() => {
+      window.dispatchEvent(new StorageEvent("storage", { key: TOKEN_KEY, newValue: token }));
+    });
+  }
+
+  it("switches to the user another tab signed in as", async () => {
+    localStorage.setItem(TOKEN_KEY, makeJwtForUser(cookieUser));
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    await waitFor(() => expect(result.current.user?.id).toBe(cookieUser.id));
+
+    otherTabSets(makeJwtForUser(passwordUser));
+
+    expect(result.current.user?.id).toBe(passwordUser.id);
+    expect(result.current.user?.email).toBe(passwordUser.email);
+  });
+
+  it("signs this tab out when another tab logs out", async () => {
+    localStorage.setItem(TOKEN_KEY, makeJwtForUser(cookieUser));
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    await waitFor(() => expect(result.current.user?.id).toBe(cookieUser.id));
+
+    otherTabSets(null);
+
+    expect(result.current.user).toBeNull();
+    expect(result.current.token).toBeNull();
+  });
+
+  it("ignores storage changes to other keys", async () => {
+    localStorage.setItem(TOKEN_KEY, makeJwtForUser(cookieUser));
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    await waitFor(() => expect(result.current.user?.id).toBe(cookieUser.id));
+
+    act(() => {
+      window.dispatchEvent(new StorageEvent("storage", { key: "default_org", newValue: "acme" }));
+    });
+
+    expect(result.current.user?.id).toBe(cookieUser.id);
+  });
+});

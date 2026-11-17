@@ -8,7 +8,7 @@ import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
 import { useMyInvitations } from "@/lib/use-my-invitations"
 import { isPublicRoute } from "@/lib/public-routes"
-import { currentLocationNext, withNext } from "@/lib/safe-next"
+import { currentLocationNext, expiredLoginUrl, withNext } from "@/lib/safe-next"
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, isLoading, logout, authUnconfirmed, pendingInvitations, dismissPendingInvitations } = useAuth()
@@ -51,7 +51,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       // an invite preview); that must not force-log-out someone who was never logged in here.
       if (isPublicRef.current) return
       // Read the location before logout() can re-render: the user returns to where the session died.
-      const loginUrl = withNext("/login", currentLocationNext())
+      const loginUrl = expiredLoginUrl(currentLocationNext())
       logout()
       router.replace(loginUrl)
     }

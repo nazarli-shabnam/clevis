@@ -296,11 +296,11 @@ def test_send_revalidates_the_url_at_delivery_time(db, acme):
 
 # --- score drop ---
 
-def _dest(db, org, *, events=("score_drop",), min_drop=10, enabled=True):
+def _dest(db, org, *, events=("score_drop",), min_drop=10, enabled=True, kind="slack"):
     return notification_repo.create(
         db,
         tenant_id=org.tenant_id,
-        kind="slack",
+        kind=kind,
         name="n",
         encrypted_url="v2:x",
         events=list(events),
@@ -375,6 +375,34 @@ def test_score_drop_failure_is_recorded_on_the_destination(db, acme):
         notifications.notify_score_drop(db, org.tenant_id, "acme", previous=90, current=70)
     db.refresh(dest)
     assert (dest.last_status, dest.last_error, dest.consecutive_failures) == ("failed", "request failed", 1)
+
+
+@pytest.mark.parametrize(
+    ("func", "event", "args", "item"),
+    [
+        ("notify_automation_failed", "automation_failed", ("api",), {"workflow": "Build & <Test>", "message": "m"}),
+        ("notify_stale_prs", "stale_pr_summary", ("Build & <Test>",), {"number": 4, "title": "t", "action": "commented"}),
+        ("notify_new_critical_alerts", "new_critical_alert", (), {"repo": "Build & <Test>", "kind": "dependabot", "number": 3, "severity": "critical"}),
+        ("notify_sla_breaches", "sla_breach", (), {"repo": "Build & <Test>", "number": 3, "severity": "high", "sla_days": 7}),
+    ],
+)
+def test_only_chat_destinations_get_chat_escaped_names(db, acme, func, event, args, item):
+    org = acme["org"]
+    for kind in notifications.KINDS:
+        _dest(db, org, events=(event,), kind=kind)
+    with patch("src.services.notifications.send", return_value=(True, "HTTP 200")) as send:
+        getattr(notifications, func)(db, org.tenant_id, "acme", *args, [item])
+    sent = {c.args[0].kind: c.args[2] for c in send.call_args_list}
+    assert sent.keys() == set(notifications.KINDS)
+    for kind in ("slack", "teams"):
+        assert "Build &amp; &lt;Test&gt;" in sent[kind]
+    for kind in ("email", "generic"):
+        assert "Build & <Test>" in sent[kind] and "&amp;" not in sent[kind] and "&lt;" not in sent[kind]
+
+
+def test_plain_safe_flattens_and_caps_without_escaping():
+    assert notifications._plain_safe("Build & <Test>\n  *x*") == "Build & <Test> *x*"
+    assert notifications._plain_safe("a" * 100, limit=10) == "a" * 9 + "…"
 
 
 def test_best_effort_wrapper_swallows_errors(db, acme):

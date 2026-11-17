@@ -21,6 +21,9 @@ vi.mock("@/components/email-verification-banner", () => ({ EmailVerificationBann
 // It needs the query client; its own test covers it.
 vi.mock("@/components/running-jobs-banner", () => ({ RunningJobsBanner: () => null }))
 
+// It reads the membership list; its own test covers it.
+vi.mock("@/components/non-member-notice", () => ({ NonMemberNotice: () => null }))
+
 import { ShellRouter } from "@/components/shell-router"
 import { isPublicRoute } from "@/lib/public-routes"
 

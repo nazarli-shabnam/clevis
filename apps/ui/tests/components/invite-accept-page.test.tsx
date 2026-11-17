@@ -148,6 +148,25 @@ describe("InviteAcceptPage", () => {
     await waitFor(() => expect(localStorage.getItem(TOKEN_KEY)).toBeNull());
   });
 
+  it("shows the masked invited address and warns when the signed-in account isn't it", async () => {
+    previewMock.mockResolvedValue({ org_login: "acme", status: "pending", email: "j***@acme.com" });
+    renderPage();
+
+    expect(await screen.findByText("j***@acme.com")).toBeInTheDocument();
+    expect(screen.getByText(/invitation for/i)).toBeInTheDocument();
+    expect(await screen.findByText(/isn.t for the account you.re signed in with/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use another account" })).toBeInTheDocument();
+  });
+
+  it("shows the masked invited address without a warning when it matches the signed-in account", async () => {
+    previewMock.mockResolvedValue({ org_login: "acme", status: "pending", email: "u***@example.com" });
+    renderPage();
+
+    expect(await screen.findByText("u***@example.com")).toBeInTheDocument();
+    expect(await screen.findByText("user@example.com")).toBeInTheDocument();
+    expect(screen.queryByText(/isn.t for the account you.re signed in with/i)).not.toBeInTheDocument();
+  });
+
   it("sends a signed-out visitor with an already-accepted invitation to sign in, and a signed-in one to the app (#906)", async () => {
     previewMock.mockResolvedValue({ org_login: "acme", status: "accepted" });
     renderPage();

@@ -220,6 +220,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("online", handleOnline)
   }, [authUnconfirmed, logout])
 
+  // Another tab signing in, out or switching accounts rewrites the shared token. This tab's requests already
+  // carry that token, so without this it would keep showing the old user's name, role gating and cached data
+  // over the new user's responses until its next 401. Adopt whatever the token now says; the user-id change
+  // remounts the app tree and QueryAuthSync clears the query cache. The other tab already cleared the shared
+  // per-user localStorage state and (for a logout) revoked the session server-side.
+  useEffect(() => {
+    function onStorage(e: StorageEvent) {
+      if (e.key !== null && e.key !== _TOKEN_KEY) return
+      const next = localStorage.getItem(_TOKEN_KEY)
+      const parsed = next ? parseJwtPayload(next) : null
+      bumpSessionEpoch()
+      setToken(parsed ? next : null)
+      setUser(parsed)
+      setAuthUnconfirmed(false)
+      setPendingInvitations([])
+      setIsLoading(false)
+    }
+    window.addEventListener("storage", onStorage)
+    return () => window.removeEventListener("storage", onStorage)
+  }, [bumpSessionEpoch])
+
   const login = useCallback(async (email: string, password: string) => {
     // Bounded like every other API call, and tolerant of a non-JSON body (a proxy's 502 HTML page):
     // either would otherwise leave the button on "Signing in…" or surface a SyntaxError.
