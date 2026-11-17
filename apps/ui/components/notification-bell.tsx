@@ -49,7 +49,7 @@ export function PreferencesPanel({ org }: { org: string }) {
 
 /** Header bell for the active org's notifications, with an unread badge and a mark-all-read action. */
 export function NotificationBell() {
-  const { org, notMember, query, markRead, items, unread } = useNotifications()
+  const { org, notMember, query, markRead, dismiss, items, unread } = useNotifications()
   const [open, setOpen] = useState(false)
   const [customizing, setCustomizing] = useState(false)
 
@@ -109,7 +109,15 @@ export function NotificationBell() {
                   <li key={n.id}>
                     <Link
                       href={n.href}
-                      onClick={() => setOpen(false)}
+                      onClick={() => {
+                        // Opening an item counts as having seen it, so it stops adding to the badge.
+                        if (!n.read) dismiss.mutate(n.id)
+                        setOpen(false)
+                      }}
+                      // A middle click opens the link in a new tab through auxclick, not click.
+                      onAuxClick={(e) => {
+                        if (e.button === 1 && !n.read) dismiss.mutate(n.id)
+                      }}
                       className={`flex flex-col gap-0.5 px-3 py-2 text-xs hover:bg-elevated ${n.read ? "text-muted-foreground" : "text-foreground"}`}
                     >
                       <span className="flex items-center gap-2">
