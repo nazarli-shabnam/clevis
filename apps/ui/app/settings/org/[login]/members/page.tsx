@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useParams, useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useMemo, useState } from "react"
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
@@ -16,19 +17,8 @@ import { CopyButton } from "@/components/copy-button"
 import { orgRoleFor } from "@/lib/members-href"
 import { EmptyStateAction } from "@/components/empty-state-action"
 import { SectionError } from "@/components/section-error"
-import { HygieneScoringCard } from "@/components/hygiene-scoring-card"
-import { ScheduledScansCard } from "@/components/scheduled-scans-card"
-import { DigestCard } from "@/components/digest-card"
 import { SmtpVerifyNotice } from "@/components/smtp-verify-notice"
-import { AutomationSchedulesCard } from "@/components/automation-schedules-card"
-import { WaiversCard } from "@/components/waivers-card"
-import { ClevisMembersCard } from "@/components/clevis-members-card"
-import { IngestionHealthCard } from "@/components/ingestion-health-card"
-import { EvidenceExportCard } from "@/components/evidence-export-card"
 import { MemberAccessSheet } from "@/components/member-access-sheet"
-import { NotificationDestinationsCard } from "@/components/notification-destinations-card"
-import { BadgeSettingsCard } from "@/components/badge-settings-card"
-import { ApiTokensCard } from "@/components/api-tokens-card"
 import { useDigestSettings } from "@/lib/use-digest-settings"
 import type {
   GithubOrgMember,
@@ -541,6 +531,14 @@ export default function OrgMembersPage() {
   const params = useParams<{ login: string }>()
   const orgLogin = params.login
   const queryClient = useQueryClient()
+  const router = useRouter()
+  const pageSearchParams = useSearchParams()
+  // Waivers and API tokens moved to the org Settings page; notification links and emails that still point here
+  // with ?waiver= / ?token= are forwarded there, query intact.
+  const movedParams = pageSearchParams.has("waiver") || pageSearchParams.has("token")
+  useEffect(() => {
+    if (movedParams) router.replace(`/settings/org/${encodeURIComponent(orgLogin)}/settings?${pageSearchParams.toString()}`)
+  }, [movedParams, orgLogin, pageSearchParams, router])
   const [email, setEmail] = useState("")
   const [lastLink, setLastLink] = useState<{ id: number; link: string; emailed?: InvitationEmailStatus | null } | null>(null)
   // Emailing the link is the default whenever the server can send mail; the admin can untick it per invite.
@@ -666,6 +664,13 @@ export default function OrgMembersPage() {
   return (
     <>
       <PageHeader title="Members" description={`Manage who can access ${orgLogin} in Clevis.`} />
+      <p className="mb-4 text-xs text-muted-foreground">
+        Scanning, alerts, automation, waivers and API tokens are in{" "}
+        <Link href={`/settings/org/${encodeURIComponent(orgLogin)}/settings`} className="text-primary hover:underline">
+          Organization settings
+        </Link>
+        .
+      </p>
 
       {rolePending ? (
         <div className="card px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
@@ -682,15 +687,7 @@ export default function OrgMembersPage() {
         </div>
       ) : (
         <>
-        <HygieneScoringCard orgLogin={orgLogin} />
-        <ScheduledScansCard orgLogin={orgLogin} />
-        <DigestCard orgLogin={orgLogin} />
         <SmtpVerifyNotice orgLogin={orgLogin} />
-        <AutomationSchedulesCard orgLogin={orgLogin} />
-        <ClevisMembersCard orgLogin={orgLogin} />
-        <WaiversCard orgLogin={orgLogin} />
-        <IngestionHealthCard orgLogin={orgLogin} />
-        <EvidenceExportCard orgLogin={orgLogin} />
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="card">
             <div className="px-4 py-3 border-b border-border">
@@ -877,9 +874,6 @@ export default function OrgMembersPage() {
         </>
       )}
 
-      {!rolePending && !notAdmin && <NotificationDestinationsCard orgLogin={orgLogin} />}
-      {!rolePending && !notAdmin && <BadgeSettingsCard orgLogin={orgLogin} />}
-      {!rolePending && !notAdmin && <ApiTokensCard orgLogin={orgLogin} />}
 
       <div className="mt-4">
         <GithubRoster orgLogin={orgLogin} canReview={role === "admin"} />
