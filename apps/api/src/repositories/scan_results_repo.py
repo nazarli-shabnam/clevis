@@ -45,10 +45,20 @@ def _owner_is(owner: str):
     return func.lower(ScanResult.owner) == owner.lower()
 
 
-def exists_for_user(db: Session, owner: str, user_id: int) -> bool:
+def own_scans_filter(user_id: int, personal_tenant_id: int):
+    """A user's own BYO-token scans: run by them and stored in their personal tenant (or, for rows from
+    before scans carried a tenant, none). A scan they ran as a member of an org lives in that org's tenant
+    and belongs to the org, so it must not outlive their membership."""
+    return and_(
+        ScanResult.scanned_by_user_id == user_id,
+        or_(ScanResult.tenant_id == personal_tenant_id, ScanResult.tenant_id.is_(None)),
+    )
+
+
+def exists_for_user(db: Session, owner: str, user_id: int, personal_tenant_id: int) -> bool:
     return (
         db.query(ScanResult.id)
-        .filter(_owner_is(owner), ScanResult.scanned_by_user_id == user_id)
+        .filter(_owner_is(owner), own_scans_filter(user_id, personal_tenant_id))
         .first()
         is not None
     )
@@ -78,6 +88,7 @@ def list_recent(
     scanned_by_user_id: int | None = None,
     tenant_id: int | None = None,
     org_tenant_id: int | None = None,
+    personal_tenant_id: int | None = None,
 ) -> list[dict]:
     """Newest-first scan summaries for ``owner``.
 
@@ -89,7 +100,11 @@ def list_recent(
     else:
         query = db.query(ScanResult).filter(_owner_is(owner))
     if scanned_by_user_id is not None:
-        query = query.filter(ScanResult.scanned_by_user_id == scanned_by_user_id)
+        query = query.filter(
+            ScanResult.scanned_by_user_id == scanned_by_user_id
+            if personal_tenant_id is None
+            else own_scans_filter(scanned_by_user_id, personal_tenant_id)
+        )
     if tenant_id is not None:
         # Explicit, not left to RLS: scan_results reads are USING (true), and with RLS inert (default
         # superuser deployment) another tenant's scan of the same owner login would otherwise count
@@ -194,6 +209,7 @@ def list_for_export(
     limit: int = 500,
     scanned_by_user_id: int | None = None,
     org_tenant_id: int | None = None,
+    personal_tenant_id: int | None = None,
 ) -> list[dict]:
     """Scan history with full per-check breakdown for a compliance export, newest first.
 
@@ -210,7 +226,11 @@ def list_for_export(
     if until is not None:
         query = query.filter(ScanResult.created_at <= until)
     if scanned_by_user_id is not None:
-        query = query.filter(ScanResult.scanned_by_user_id == scanned_by_user_id)
+        query = query.filter(
+            ScanResult.scanned_by_user_id == scanned_by_user_id
+            if personal_tenant_id is None
+            else own_scans_filter(scanned_by_user_id, personal_tenant_id)
+        )
     rows = query.order_by(ScanResult.created_at.desc(), ScanResult.id.desc()).limit(limit + 1).all()
     return [
         {

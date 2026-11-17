@@ -176,6 +176,7 @@ class HistoryScope(NamedTuple):
     kind: Literal["org", "own"]
     org_tenant_id: int | None = None
     org_login: str | None = None
+    personal_tenant_id: int | None = None
 
 
 def _user_history_scope(db: Session, user: UserOut, owner: str) -> HistoryScope | None:
@@ -194,11 +195,14 @@ def _user_history_scope(db: Session, user: UserOut, owner: str) -> HistoryScope 
             # with the tenant context set (membership is already confirmed above).
             set_tenant_session_context(db, org.tenant_id, user.id)
             return HistoryScope("org", org.tenant_id, org.github_login)
+    # Only scans in the user's personal tenant: one they ran as an org member is stored under the org's
+    # tenant and stops being theirs to read once they leave it.
+    personal_tenant_id = tenant_repo.ensure_personal_tenant(db, user.id).id
     if (
         installation_repo.get_for_user(db, owner_user_id=user.id, account_login=owner) is not None
-        or scan_results_repo.exists_for_user(db, owner=owner, user_id=user.id)
+        or scan_results_repo.exists_for_user(db, owner=owner, user_id=user.id, personal_tenant_id=personal_tenant_id)
     ):
-        return HistoryScope("own")
+        return HistoryScope("own", personal_tenant_id=personal_tenant_id)
     return None
 
 
@@ -206,7 +210,7 @@ def _scope_filters(scope: HistoryScope, owner: str, user: UserOut) -> dict:
     """Keyword arguments for ``scan_results_repo.list_recent`` / ``list_for_export``."""
     if scope.kind == "org":
         return {"owner": scope.org_login, "org_tenant_id": scope.org_tenant_id}
-    return {"owner": owner, "scanned_by_user_id": user.id}
+    return {"owner": owner, "scanned_by_user_id": user.id, "personal_tenant_id": scope.personal_tenant_id}
 
 
 def _persist_personal_scan(db: Session, user: UserOut, result: dict) -> None:

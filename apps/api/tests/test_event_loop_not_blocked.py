@@ -18,7 +18,7 @@ from sqlalchemy import text
 from src.core.auth import UserOut, require_auth
 from src.core.config import settings
 from src.core.db import User, get_db
-from src.repositories import org_membership_repo, org_repo, scan_results_repo
+from src.repositories import org_membership_repo, org_repo, scan_results_repo, tenant_repo
 from src.routers import webhooks as webhooks_module
 from src.routers.analytics import router as analytics_router
 from src.routers.api_tokens import router as tokens_router
@@ -147,7 +147,7 @@ def test_cockpit_reads_scan_history_and_job_rate_off_the_event_loop(db):
     # An owner the caller has scanned, so the history read actually happens.
     scan_results_repo.insert(
         db, owner="acme", score=70, total_checks=1, failed_checks=0, checks=[],
-        tenant_id=org_repo.get_or_create(db, github_login="acme").tenant_id, scanned_by_user_id=user.id,
+        tenant_id=tenant_repo.ensure_personal_tenant(db, user.id).id, scanned_by_user_id=user.id,
     )
     with (
         patch("src.routers.analytics.resolve_owner_token", return_value="ghp"),

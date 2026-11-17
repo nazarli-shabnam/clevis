@@ -221,7 +221,7 @@ def test_cockpit_shows_own_byo_pat_scans_when_caller_has_no_org_membership(http,
     db.flush()
     scan_results_repo.insert(
         db, owner="acme", score=60, total_checks=5, failed_checks=2, checks=[],
-        tenant_id=org.tenant_id, scanned_by_user_id=mock_user.id,
+        tenant_id=tenant_repo.ensure_personal_tenant(db, mock_user.id).id, scanned_by_user_id=mock_user.id,
     )
     scan_results_repo.insert(
         db, owner="acme", score=90, total_checks=5, failed_checks=0, checks=[],
@@ -1072,7 +1072,7 @@ def test_cockpit_cache_rate_for_an_own_scope_caller_counts_only_their_jobs(http,
     org = org_repo.get_or_create(db, github_login="acme")
     scan_results_repo.insert(
         db, owner="acme", score=60, total_checks=5, failed_checks=2, checks=[],
-        tenant_id=org.tenant_id, scanned_by_user_id=mock_user.id,
+        tenant_id=tenant_repo.ensure_personal_tenant(db, mock_user.id).id, scanned_by_user_id=mock_user.id,
     )
     _cache_job(db, "acme", "failed", actor="someone-else@example.com")
     _cache_job(db, "acme", "done", actor=mock_user.email)
