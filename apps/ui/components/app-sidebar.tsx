@@ -25,6 +25,7 @@ import type { InstallationMeta, MyOrgMembership, SavedTokenMeta } from "@/lib/ap
 import { githubWebUrl } from "@/lib/github-web"
 import { useGithubAppSlug } from "@/lib/use-github-app-slug"
 import { NAV_GROUPS } from "@/lib/nav-items"
+import { MEMBERSHIP_FREE_ROUTES, useNonMemberOrg } from "@/lib/use-scope-membership"
 
 
 function healthDotColor(score: number | null | undefined): string | null {
@@ -188,6 +189,15 @@ export function AppSidebar() {
   const menuId = useId()
 
   const { scope, setScope } = useActiveScope()
+  const nonMemberOrg = useNonMemberOrg()
+  // /audit is workspace-admin only (the API 403s everyone else). A scope held only through a saved token has no
+  // membership, so its org pages would all 403: offer only the routes that still work, and no empty groups.
+  const visibleNavGroups = NAV_GROUPS.map((items) =>
+    items.filter(
+      (item) =>
+        (item.href !== "/audit" || user?.is_workspace_admin) && (!nonMemberOrg || MEMBERSHIP_FREE_ROUTES.has(item.href)),
+    ),
+  ).filter((items) => items.length > 0)
   const scopeLogin = scope?.login ?? ""
 
   // ["my-orgs"] is shared with the Overview page; TanStack Query dedupes the request.
@@ -425,13 +435,13 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        {NAV_GROUPS.map((items, groupIndex) => (
+        {visibleNavGroups.map((items, groupIndex) => (
           <div key={groupIndex}>
             {groupIndex > 0 && <SidebarSeparator className="my-1 bg-sidebar-border/60" />}
             <SidebarGroup className="py-1">
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {items.filter((item) => item.href !== "/audit" || user?.is_workspace_admin).map((item) => {
+                  {items.map((item) => {
                     // /audit is workspace-admin only (the API 403s everyone else).
                     const isCollaborators = item.href === "/collaborators"
                     const href = isCollaborators ? membersNavHref : item.href
