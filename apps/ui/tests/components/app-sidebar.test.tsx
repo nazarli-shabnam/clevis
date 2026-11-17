@@ -10,6 +10,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { AppSidebar } from "@/components/app-sidebar";
+import { invalidateTokens } from "@/lib/query-invalidation";
 import { AuthProvider } from "@/lib/auth-context";
 import { SidebarProvider } from "@/components/ui/sidebar";
 
@@ -45,15 +46,18 @@ function renderSidebar() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <SidebarProvider>
-          <AppSidebar />
-        </SidebarProvider>
-      </AuthProvider>
-    </QueryClientProvider>,
-  );
+  return {
+    queryClient,
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <SidebarProvider>
+            <AppSidebar />
+          </SidebarProvider>
+        </AuthProvider>
+      </QueryClientProvider>,
+    ),
+  };
 }
 
 // Mutable per-test fixture for the /me/orgs response; reset in beforeEach.
@@ -771,6 +775,24 @@ describe("AppSidebar scope switcher", () => {
     fireEvent.click(await screen.findByRole("button", { name: /user|legacy/i }));
     await screen.findByText("Organization · saved token, not a member");
     expect(localStorage.getItem("active_scope")).toBe(JSON.stringify({ kind: "org", login: "legacy" }));
+  });
+
+  it("shows a newly saved token's org in the scope list without a reload (#1109)", async () => {
+    localStorage.setItem(TOKEN_KEY, makeJwt(true));
+    meIsAdmin = true;
+    orgMemberships = [{ org_login: "acme", role: "admin" }];
+    savedTokens = [];
+    const { queryClient } = renderSidebar();
+
+    fireEvent.click(await screen.findByRole("button", { name: /user/i }));
+    await screen.findByText("Switch account");
+    expect(screen.queryByText("Organization · saved token, not a member")).not.toBeInTheDocument();
+
+    // What Settings does after PUT /tokens/legacy succeeds.
+    savedTokens = [{ org: "legacy", label: null, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }];
+    invalidateTokens(queryClient);
+
+    await screen.findByText("Organization · saved token, not a member");
   });
 
   it("refetches memberships before replacing a scope another tab just joined (#903)", async () => {

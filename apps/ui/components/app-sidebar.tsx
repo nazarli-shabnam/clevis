@@ -217,7 +217,8 @@ export function AppSidebar() {
     isSuccess: savedTokensSuccess,
     refetch: refetchSavedTokens,
   } = useQuery<SavedTokenMeta[]>({
-    queryKey: ["saved-tokens"],
+    // Same key as Settings' list (same request), so saving or deleting a token there refreshes this scope list.
+    queryKey: ["tokens"],
     queryFn: () => api.tokens.list(),
     enabled: isWorkspaceAdmin,
     retry: false,
