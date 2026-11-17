@@ -308,7 +308,9 @@ describe("OverviewPage cockpit", () => {
 
     renderPage();
 
-    expect(await screen.findByText("(history may be incomplete)")).toBeInTheDocument();
+    expect(
+      await screen.findByText("(history may be incomplete: private repositories beyond the 50 most recently pushed were not read)"),
+    ).toBeInTheDocument();
   });
 
   it("does not label recent activity as stale when the cockpit says it's current", async () => {

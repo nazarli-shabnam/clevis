@@ -116,7 +116,7 @@ def test_cockpit_success_all_sources(http, db, mock_user):
     scan_results_repo.insert(db, owner="acme", score=70, total_checks=5, failed_checks=1, checks=[], tenant_id=org.tenant_id)
     scan_results_repo.insert(db, owner="acme", score=85, total_checks=5, failed_checks=0, checks=[], tenant_id=org.tenant_id)
     for status in ("done", "done", "done", "failed"):
-        job = Job(job_type="github.clear_actions_cache", payload=json.dumps({"owner": "acme"}), status=status)
+        job = Job(job_type="github.clear_actions_cache", payload=json.dumps({"owner": "acme"}), status=status, tenant_id=org.tenant_id)
         db.add(job)
     db.commit()
 
@@ -1006,8 +1006,8 @@ def test_safe_total_cache_bytes_one_bad_repo_sums_the_rest_but_flags_not_ok():
     assert ok is False
 
 
-def _cache_job(db, owner, status, actor="someone@example.com"):
-    db.add(Job(job_type="github.clear_actions_cache", payload=json.dumps({"owner": owner, "actor": actor}), status=status))
+def _cache_job(db, owner, status, actor="someone@example.com", tenant_id=None):
+    db.add(Job(job_type="github.clear_actions_cache", payload=json.dumps({"owner": owner, "actor": actor}), status=status, tenant_id=tenant_id))
     db.commit()
 
 
@@ -1050,6 +1050,41 @@ def test_cache_job_success_rate_can_be_limited_to_one_actor(db):
     _cache_job(db, "acme", "done", actor="b@example.com")
     assert _cache_job_success_rate(db, "acme", actor="b@example.com") == 1.0
     assert _cache_job_success_rate(db, "acme") == 0.5
+
+
+def test_cache_job_success_rate_ignores_jobs_from_another_tenant(db):
+    from src.routers.analytics import _cache_job_success_rate
+
+    org = org_repo.get_or_create(db, github_login="acme")
+    stranger = _make_user(db, "stranger@example.com")
+    other_tenant = tenant_repo.ensure_personal_tenant(db, stranger.id)
+
+    # An outsider queues a failing clear for the same owner string under their own tenant.
+    _cache_job(db, "acme", "failed", actor="stranger@example.com", tenant_id=other_tenant.id)
+    _cache_job(db, "acme", "done", tenant_id=org.tenant_id)
+    assert _cache_job_success_rate(db, "acme", tenant_id=org.tenant_id) == 1.0
+    assert _cache_job_success_rate(db, "acme", tenant_id=other_tenant.id) == 0.0
+
+
+def test_cockpit_cache_rate_ignores_an_outsiders_jobs_for_the_same_owner(http, db, mock_user):
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
+    stranger = _make_user(db, "stranger@example.com")
+    other_tenant = tenant_repo.ensure_personal_tenant(db, stranger.id)
+
+    _cache_job(db, "acme", "done", tenant_id=org.tenant_id)
+    _cache_job(db, "acme", "failed", actor="stranger@example.com", tenant_id=other_tenant.id)
+
+    patchers = _patch_all()
+    _start_all(patchers)
+    try:
+        with patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"):
+            resp = http.get("/me/analytics/cockpit/acme")
+    finally:
+        _stop_all(patchers)
+
+    assert resp.status_code == 200
+    assert resp.json()["cache_job_success_rate"] == 1.0
 
 
 def test_cockpit_hides_the_cache_rate_from_a_caller_with_no_claim_on_the_owner(http, db, mock_user):

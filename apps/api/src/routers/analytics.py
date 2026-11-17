@@ -1015,9 +1015,9 @@ def _has_automation_run(db: Session, user: UserOut, owner: str) -> bool | None:
         return None
 
 
-def _cache_job_success_rate(db: Session, owner: str, actor: str | None = None) -> float | None:
+def _cache_job_success_rate(db: Session, owner: str, actor: str | None = None, tenant_id: int | None = None) -> float | None:
     """None (not 0.0) when the owner has no finished cache-clear jobs: "no data" is not a 0% rate."""
-    jobs = job_repo.list_recent_by_type(db, job_type=_CACHE_JOB_TYPE, owner=owner, actor=actor, limit=20)
+    jobs = job_repo.list_recent_by_type(db, job_type=_CACHE_JOB_TYPE, owner=owner, actor=actor, tenant_id=tenant_id, limit=20)
     done = sum(1 for j in jobs if j["status"] == "done")
     failed = sum(1 for j in jobs if j["status"] == "failed")
     return done / (done + failed) if (done + failed) else None
@@ -1071,7 +1071,11 @@ async def _build_cockpit(owner: str, user: UserOut, db: Session, token: str) -> 
         cache_rate = (
             None
             if history_scope is None
-            else _cache_job_success_rate(db, owner, actor=user.email if history_scope.kind == "own" else None)
+            else _cache_job_success_rate(
+                db, owner,
+                actor=user.email if history_scope.kind == "own" else None,
+                tenant_id=history_scope.org_tenant_id if history_scope.kind == "org" else None,
+            )
         )
         return scans, cache_rate
 

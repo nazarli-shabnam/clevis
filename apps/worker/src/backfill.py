@@ -14,7 +14,13 @@ from datetime import datetime
 
 import httpx
 
-from _rate_limit import MAX_RETRY_AFTER_SECONDS, has_rate_limit_headers, is_secondary_rate_limit, retry_delay_seconds
+from _rate_limit import (
+    MAX_RETRY_AFTER_SECONDS,
+    has_rate_limit_headers,
+    is_secondary_rate_limit,
+    primary_limit_wait_seconds,
+    retry_delay_seconds,
+)
 
 # Bound on top of GitHub's own ~300-event cap, so a looping Link header can't run forever.
 _MAX_PAGES = 3
@@ -36,6 +42,8 @@ def _get_with_retry(client: httpx.Client, url: str, headers: dict, params: dict 
                 time.sleep(2**attempt)
                 continue
             raise
+        if primary_limit_wait_seconds(resp) is not None:
+            return resp  # a spent hourly quota: sleeping cannot help, the job waits out the reset instead
         if (resp.status_code == 429 or has_rate_limit_headers(resp) or resp.status_code >= 500) and attempt < 2:
             time.sleep(_retry_delay_seconds(resp, attempt))
             continue
@@ -83,22 +91,25 @@ def fetch_events(
     events: list[dict] = []
     url = f"{base}{_events_path(account_login, account_type)}"
     params: dict | None = {"per_page": _PER_PAGE}
+    capped = True
     for _ in range(_MAX_PAGES):
         resp = _get_with_retry(client, url, headers, params)
         resp.raise_for_status()
         page = resp.json()
         if not isinstance(page, list):
+            capped = False
             break
         events.extend(page)
         next_link = resp.links.get("next")
         if not next_link:
+            # GitHub serves at most 300 events and the last page has no next link, so a full window
+            # means the cap was reached, not that the history ended.
+            capped = len(events) >= _MAX_PAGES * _PER_PAGE
             break
         url = next_link["url"]
         params = None  # already encoded in the next link's URL
-    else:
-        # The loop ran out of pages while GitHub still offered a next one.
-        if coverage is not None:
-            coverage.note(f"the public events feed was read only to its first {_MAX_PAGES} pages")
+    if capped and coverage is not None:
+        coverage.note(f"the public events feed was read only to its first {_MAX_PAGES} pages")
     return events
 
 

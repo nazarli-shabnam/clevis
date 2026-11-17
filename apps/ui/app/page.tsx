@@ -373,11 +373,8 @@ export default function OverviewPage() {
               </span>
             )}
             {cockpit?.activity_history_incomplete && (
-              <span
-                className="text-[0.6875rem] text-warning"
-                title={`Activity history may be incomplete: ${cockpit.activity_history_incomplete}.`}
-              >
-                (history may be incomplete)
+              <span className="text-[0.6875rem] text-warning">
+                (history may be incomplete: {cockpit.activity_history_incomplete})
               </span>
             )}
           </div>

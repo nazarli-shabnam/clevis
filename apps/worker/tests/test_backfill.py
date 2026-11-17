@@ -865,6 +865,29 @@ def test_hitting_the_public_page_cap_is_recorded():
     assert "first 3 pages" in cov.reason
 
 
+def test_a_full_final_page_without_a_next_link_is_recorded_as_capped():
+    cov = backfill.Coverage()
+    pages = [_FakeResponse([_raw_event(id=f"{p}-{i}") for i in range(backfill._PER_PAGE)], links=(
+        {"next": {"url": f"https://api.github.com/orgs/acme/events?page={p + 2}"}} if p < backfill._MAX_PAGES - 1 else {}
+    )) for p in range(backfill._MAX_PAGES)]
+
+    backfill.fetch_events(_FakeClient(pages), "https://api.github.com", {}, "acme", "Organization", cov)
+
+    assert "first 3 pages" in cov.reason
+
+
+def test_a_short_final_page_is_not_recorded_as_capped():
+    cov = backfill.Coverage()
+    backfill.fetch_events(_FakeClient([_FakeResponse([_raw_event(id="1")])]), "https://api.github.com", {}, "acme", "Organization", cov)
+    assert cov.reason is None
+
+
+def test_a_non_list_page_is_not_recorded_as_capped():
+    cov = backfill.Coverage()
+    backfill.fetch_events(_FakeClient([_FakeResponse({"message": "odd"})]), "https://api.github.com", {}, "acme", "Organization", cov)
+    assert cov.reason is None
+
+
 def test_more_private_repos_than_the_cap_is_recorded():
     cov = backfill.Coverage()
     repos = [_repo(f"acme/r{i}", pushed_at=f"2026-08-{i % 28 + 1:02d}T00:00:00Z") for i in range(backfill._MAX_PRIVATE_REPOS + 10)]
@@ -912,3 +935,20 @@ def test_handler_records_why_a_capped_run_is_incomplete_and_clears_it_on_a_full_
     with patch("worker.httpx.Client", return_value=_mock_github_client([])):
         worker._handle_backfill_repo_events(pg_conn, 121, _payload_for(tenant_id), 0)
     assert reason() is None  # a later complete run clears it
+
+
+def test_fetch_events_does_not_sleep_through_a_spent_primary_quota():
+    # #1111: a 403 with X-RateLimit-Remaining: 0 whose reset is far off is the *hourly* quota, not a secondary
+    # limit. Sleeping ~60 s twice cannot help, so it is returned at once for the job to wait out the reset.
+    import time as _time
+
+    spent = _FakeResponse(
+        {}, status_code=403, headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(int(_time.time()) + 1800)}
+    )
+    client = _FakeClient([spent])
+
+    with patch("backfill.time.sleep") as mock_sleep, pytest.raises(httpx.HTTPStatusError):
+        backfill.fetch_events(client, "https://api.github.com", {}, "acme", "Organization")
+
+    mock_sleep.assert_not_called()
+    assert len(client.calls) == 1

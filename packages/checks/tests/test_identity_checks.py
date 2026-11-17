@@ -29,9 +29,10 @@ def test_passes_when_every_member_has_2fa():
     assert result["status"] == "pass" and result["value"]["unknown"] == 0
 
 
-def test_unknown_members_do_not_fail_it_but_are_reported():
-    result = _run(MembersWithout2FA([_member("a", True), _member("b", None)]))
-    assert result == {"status": "pass", "value": {"enabled": 1, "total": 2, "unknown": 1}}
+def test_unknown_members_with_no_known_violation_are_a_partial_result_not_a_pass():
+    # #1113: 1 known + 9 NULL used to be "pass"; NULL is unknown, so the result is partial.
+    result = _run(MembersWithout2FA([_member("a", True)] + [_member(f"u{i}", None) for i in range(9)]))
+    assert result == {"status": "error", "value": {"enabled": 1, "total": 10, "unknown": 9}}
 
 
 def test_a_known_failure_still_fails_alongside_unknown_members():
@@ -64,9 +65,21 @@ def test_members_only_data_has_no_outside_collaborators_to_flag():
     assert result["status"] == "pass"
 
 
-def test_collaborators_not_yet_classified_are_not_counted():
-    # is_outside_collaborator is NULL until the reconcile fills it in
-    assert _run(OutsideCollaboratorsWithAdmin([_collab("acme/api", "c", "admin", outside=None)]))["status"] == "pass"
+def test_an_unclassified_admin_collaborator_is_a_partial_result_not_a_pass():
+    # is_outside_collaborator is NULL until the reconcile fills it in; an admin among them could be a violation.
+    result = _run(OutsideCollaboratorsWithAdmin([_collab("acme/api", "c", "admin", outside=None)]))
+    assert result["status"] == "error" and result["value"]["unclassified_admins"] == 1
+
+
+def test_an_unclassified_collaborator_below_admin_cannot_matter():
+    assert _run(OutsideCollaboratorsWithAdmin([_collab("acme/api", "c", "write", outside=None)]))["status"] == "pass"
+
+
+def test_a_known_violation_still_fails_alongside_unclassified_admins():
+    result = _run(OutsideCollaboratorsWithAdmin([
+        _collab("acme/api", "c", "admin", outside=None), _collab("acme/api", "d", "admin"),
+    ]))
+    assert result["status"] == "fail"
 
 
 def test_not_applicable_when_no_collaborator_data_has_been_recorded():
