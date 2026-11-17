@@ -219,23 +219,96 @@ async function post<T>(
   return handleResponse<T>(res)
 }
 
-// Starts a long server-side operation as a job and resolves with the same body the synchronous endpoint
-// returns. Validation and permission errors still reject immediately (they answer before the job exists);
-// a job that fails rejects with its message.
-async function postJob<T>(path: string, body: unknown): Promise<T> {
-  const { job_id } = await post<{ job_id: number }>(`${path}?async=1`, body)
+/**
+ * The job was started but the client stopped waiting for it (the polls kept failing, or it ran past the give-up
+ * time). The server may still be working, so a caller must not simply start the operation again: it carries the
+ * job id so the job can be re-attached with `awaitJob`.
+ */
+export class JobStillRunningError extends Error {
+  constructor(
+    message: string,
+    readonly jobId: number,
+  ) {
+    super(message)
+    this.name = "JobStillRunningError"
+  }
+}
+
+// Consecutive failed polls tolerated before giving up. The job id is known and the job keeps running
+// server-side, so a network blip or a 503 on one poll must not abandon it.
+const JOB_MAX_POLL_FAILURES = 5
+
+// A poll failure worth retrying: no response at all (network error, timeout) or a server-side/throttling status.
+// A 4xx (the job is gone, the session ended) will not fix itself.
+function isTransientPollError(err: unknown): boolean {
+  if (err instanceof ApiError) return err.status >= 500 || err.status === 429 || err.status === 408
+  return true
+}
+
+function abortError(): DOMException {
+  return new DOMException("The wait for the job was cancelled", "AbortError")
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(abortError())
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(abortError())
+    }
+    signal?.addEventListener("abort", onAbort, { once: true })
+  })
+}
+
+/**
+ * Polls job `jobId` until it ends and resolves with its parsed result (rejects with its message when it failed).
+ * Survives a few consecutive failed polls, stops when `signal` aborts (rejecting with an `AbortError`), and
+ * throws `JobStillRunningError` when it gives up while the job may still be running.
+ */
+export async function awaitJob<T>(jobId: number, opts: { signal?: AbortSignal } = {}): Promise<T> {
+  const { signal } = opts
   const deadline = Date.now() + JOB_GIVE_UP_MS
+  let failures = 0
   for (;;) {
-    await new Promise((resolve) => setTimeout(resolve, JOB_POLL_MS))
-    const job = await get<JobOut>(`/jobs/${job_id}`)
-    if (job.status === "done") return JSON.parse(job.result ?? "null") as T
-    if (job.status === "failed") throw new Error(job.result || "The operation failed")
+    await sleep(JOB_POLL_MS, signal)
+    let job: JobOut | undefined
+    try {
+      job = await get<JobOut>(`/jobs/${jobId}`)
+      failures = 0
+    } catch (err) {
+      if (signal?.aborted) throw abortError()
+      if (!isTransientPollError(err)) throw err
+      failures += 1
+      if (failures >= JOB_MAX_POLL_FAILURES) {
+        throw new JobStillRunningError(
+          "Lost contact with the server while this was running. It may still be working, so check the result before trying again.",
+          jobId,
+        )
+      }
+    }
+    if (job) {
+      if (job.status === "done") return JSON.parse(job.result ?? "null") as T
+      if (job.status === "failed") throw new Error(job.result || "The operation failed")
+    }
     if (Date.now() > deadline) {
-      throw new Error(
+      throw new JobStillRunningError(
         "This is taking longer than expected. The server may still be working on it, so check the result before trying again.",
+        jobId,
       )
     }
   }
+}
+
+// Starts a long server-side operation as a job and resolves with the same body the synchronous endpoint
+// returns. Validation and permission errors still reject immediately (they answer before the job exists);
+// a job that fails rejects with its message.
+async function postJob<T>(path: string, body: unknown, opts: { signal?: AbortSignal } = {}): Promise<T> {
+  const { job_id } = await post<{ job_id: number }>(`${path}?async=1`, body)
+  return awaitJob<T>(job_id, opts)
 }
 
 // Carries an optional client-supplied PAT to GET endpoints via a header (never

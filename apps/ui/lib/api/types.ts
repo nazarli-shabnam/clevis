@@ -600,6 +600,8 @@ export interface InvitationBulkResponse {
 export interface InvitationPreview {
   org_login: string
   status: "pending" | "accepted" | "revoked" | "expired"
+  /** The invited address, masked ("j***@acme.com"). */
+  email?: string
 }
 
 export interface GithubOrgMember {

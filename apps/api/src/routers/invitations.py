@@ -434,7 +434,7 @@ def preview_invitation(token: str, db: Session = Depends(get_db)):
     if _is_expired(invitation):
         _expire(db, invitation)
     org = db.query(Org).filter(Org.id == invitation.org_id).first()
-    return {"org_login": org.github_login, "status": invitation.status}
+    return {"org_login": org.github_login, "status": invitation.status, "email": _masked_email(invitation.email)}
 
 
 @router.post("/invitations/{token}/accept", response_model=InvitationAcceptResponse)

@@ -5,9 +5,11 @@ from pydantic import BaseModel, ConfigDict
 
 
 class SyncInstallationsInput(BaseModel):
-    auth_mode: str = "app"
+    # Closed sets: with no installation_id nothing verifies these against GitHub, so a free string would be
+    # stored and echoed back to the UI as-is.
+    auth_mode: Literal["app", "pat"] = "app"
     account_login: str
-    account_type: str = "Organization"
+    account_type: Literal["Organization", "User"] = "Organization"
     installation_id: int | None = None
 
 

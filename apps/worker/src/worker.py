@@ -16,6 +16,7 @@ import repo_events_store
 import security_alerts_backfill
 import security_alerts_store
 from _crypto import decrypt_job_token
+from _rate_limit import primary_limit_wait_seconds
 from _sanitize import sanitize_error
 from config import plain_db_url, settings
 
@@ -43,6 +44,10 @@ MAX_RETRIES = 5
 # the installation token a job payload carries.
 _RETRY_BACKOFF_BASE_SECONDS = 30
 _RETRY_BACKOFF_CAP_SECONDS = 480
+# Extra seconds past GitHub's stated quota reset before the job is tried again, and the longest such hold (the
+# primary quota is hourly).
+_QUOTA_RESET_SLACK_SECONDS = 5
+_MAX_QUOTA_WAIT_SECONDS = 3600
 # The token a job carries may lapse while the job waits in the queue or between retries, and the worker (which has
 # no GitHub App key) cannot mint another. When the payload carries ``token_expires_at``, process_job refuses to
 # start an attempt within this many seconds of it. Keep the message's prefix in step with api/services/sweep_lock.py.
@@ -210,7 +215,11 @@ def _hand_back_unstarted(conn: psycopg.Connection, job_id: int, retry_count: int
     )
 
 
-def _requeue_for_retry(conn: psycopg.Connection, job_id: int, retry_count: int, error_text: str) -> bool:
+def _requeue_for_retry(
+    conn: psycopg.Connection, job_id: int, retry_count: int, error_text: str, wait_seconds: float | None = None
+) -> bool:
+    """Put the job back for another attempt, consuming one retry. ``wait_seconds`` holds it back that long
+    (a spent GitHub quota resetting later) instead of just the usual backoff."""
     # Fence on the retry_count observed at claim time, same as _mark_done/_mark_failed.
     new_count = retry_count + 1
     if new_count > MAX_RETRIES:
@@ -220,6 +229,18 @@ def _requeue_for_retry(conn: psycopg.Connection, job_id: int, retry_count: int, 
             "UPDATE jobs SET status='failed', retry_count=%s, result=%s, payload=jobs_scrub_token(payload), updated_at=NOW() "
             "WHERE id=%s AND status='processing' AND retry_count=%s",
             (new_count, f"exceeded max retry attempts ({MAX_RETRIES}): {error_text}", job_id, retry_count),
+        )
+    if wait_seconds is not None:
+        # The claim query only takes a job once updated_at <= NOW() - backoff(retry_count), so stamp updated_at
+        # ahead by the wait *minus* that backoff and the job becomes claimable exactly when the wait ends.
+        backoff = min(_RETRY_BACKOFF_BASE_SECONDS * 2**new_count, _RETRY_BACKOFF_CAP_SECONDS)
+        return _fenced_update(
+            conn,
+            job_id,
+            "UPDATE jobs SET status='queued', retry_count=%s, result=%s, "
+            "updated_at=NOW() + make_interval(secs => %s) "
+            "WHERE id=%s AND status='processing' AND retry_count=%s",
+            (new_count, error_text, wait_seconds - backoff, job_id, retry_count),
         )
     return _fenced_update(
         conn,
@@ -285,8 +306,16 @@ def _github_response_is_error(conn: psycopg.Connection, job_id: int, retry_count
     Returns True (after requeueing or failing the job) on an error, False otherwise."""
     if _is_transient_github_error(resp):
         # 5xx, 429, and secondary-rate-limit 403 are transient: back off and retry.
+        wait = primary_limit_wait_seconds(resp)
         log.warning("job %d got a %d from GitHub (attempt %d)", job_id, resp.status_code, retry_count + 1)
-        _requeue_for_retry(conn, job_id, retry_count, sanitize_error(_github_error_message(resp)))
+        if wait is not None:
+            # The hourly quota is spent: retrying on the usual 60/120/240 s backoff would burn every attempt
+            # before it resets, so hold the job until then (one retry used, not five).
+            log.warning("job %d: GitHub quota spent, holding the job %.0f s until it resets", job_id, wait)
+        _requeue_for_retry(
+            conn, job_id, retry_count, sanitize_error(_github_error_message(resp)),
+            wait_seconds=None if wait is None else min(wait + _QUOTA_RESET_SLACK_SECONDS, _MAX_QUOTA_WAIT_SECONDS),
+        )
         return True
     if resp.status_code >= 300:
         log.error("job %d failed: GitHub API error %d", job_id, resp.status_code)
