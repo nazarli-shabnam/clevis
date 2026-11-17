@@ -1745,3 +1745,64 @@ describe("api.auth account and password endpoints", () => {
     if (body !== undefined) expect(JSON.parse(init.body)).toEqual(body);
   });
 });
+
+describe("postJob resilience (#1110)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  // POST answers a job id; each poll then consumes the next scripted outcome.
+  function stubPolls(outcomes: Array<"network" | 503 | 404 | { status: "running" | "done"; result?: string }>) {
+    let i = 0;
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      if (init?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ job_id: 7 }), { status: 202 }));
+      const next = outcomes[Math.min(i++, outcomes.length - 1)];
+      if (next === "network") return Promise.reject(new TypeError("Failed to fetch"));
+      if (next === 503 || next === 404) return Promise.resolve(new Response(JSON.stringify({ detail: "x" }), { status: next }));
+      return Promise.resolve(new Response(JSON.stringify({ id: 7, job_type: "api.x", result: null, ...next }), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("keeps polling through a few failed polls instead of reporting a failure for a job that is still running", async () => {
+    vi.useFakeTimers();
+    stubPolls(["network", 503, { status: "done", result: JSON.stringify({ ok: 1 }) }]);
+    const pending = api.dependabotTriage.run("acme", { dry_run: false });
+    await vi.advanceTimersByTimeAsync(3 * 2000 + 100);
+    await expect(pending).resolves.toEqual({ ok: 1 });
+  });
+
+  it("gives up with a re-attachable 'still running' error after repeated failed polls", async () => {
+    vi.useFakeTimers();
+    stubPolls(["network"]);
+    const pending = api.dependabotTriage.run("acme", { dry_run: false });
+    const assertion = expect(pending).rejects.toMatchObject({ name: "JobStillRunningError", jobId: 7 });
+    await vi.advanceTimersByTimeAsync(6 * 2000);
+    await assertion;
+  });
+
+  it("does not retry a poll the server refused for good (the job is gone)", async () => {
+    vi.useFakeTimers();
+    const fetchMock = stubPolls([404]);
+    const pending = expect(api.dependabotTriage.run("acme", { dry_run: false })).rejects.toThrow("x");
+    await vi.advanceTimersByTimeAsync(2100);
+    await pending;
+    expect(fetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method !== "POST")).toHaveLength(1);
+  });
+
+  it("stops polling when the signal aborts", async () => {
+    vi.useFakeTimers();
+    const fetchMock = stubPolls([{ status: "running" }]);
+    const { awaitJob } = await import("@/lib/api/client");
+    const controller = new AbortController();
+    const pending = expect(awaitJob(7, { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+    await vi.advanceTimersByTimeAsync(2100);
+    controller.abort();
+    await pending;
+    const pollsBefore = fetchMock.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchMock.mock.calls.length).toBe(pollsBefore);
+  });
+});
