@@ -1,17 +1,18 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const replace = vi.fn();
 
+let mockPathname = "/";
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace }),
-  usePathname: () => "/",
+  usePathname: () => mockPathname,
 }));
 
 import { AppSidebar } from "@/components/app-sidebar";
 import { AuthProvider } from "@/lib/auth-context";
-import { SidebarProvider } from "@/components/ui/sidebar";
+import { SidebarProvider, useSidebar } from "@/components/ui/sidebar";
 
 const TOKEN_KEY = "clevis:token";
 
@@ -72,6 +73,7 @@ let cockpitResponse: {
 describe("AppSidebar Invite members button", () => {
   beforeEach(() => {
     localStorage.clear();
+    mockPathname = "/";
     replace.mockClear();
     localStorage.setItem(TOKEN_KEY, makeJwt());
     orgMemberships = [];
@@ -844,5 +846,60 @@ describe("AppSidebar scope switcher", () => {
     renderSidebar();
     const link = await screen.findByRole("link", { name: /Notifications/ });
     expect(link).toHaveAttribute("href", "/notifications");
+  });
+});
+
+
+describe("AppSidebar mobile sheet", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    mockPathname = "/";
+    localStorage.setItem(TOKEN_KEY, makeJwt());
+    orgMemberships = [];
+    installations = [];
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockImplementation((query: string) => ({
+        matches: false, media: query, onchange: null, addListener: vi.fn(), removeListener: vi.fn(),
+        addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: vi.fn(),
+      })),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(jsonResponse([]))),
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("closes the mobile nav sheet when the route changes (#1108)", async () => {
+    let sidebar!: ReturnType<typeof useSidebar>;
+    function Probe() {
+      sidebar = useSidebar();
+      return <span data-testid="mobile-open">{String(sidebar.openMobile)}</span>;
+    }
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = (
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <SidebarProvider>
+            <AppSidebar />
+            <Probe />
+          </SidebarProvider>
+        </AuthProvider>
+      </QueryClientProvider>
+    );
+    const { rerender } = render(tree);
+
+    act(() => sidebar.setOpenMobile(true));
+    expect(screen.getByTestId("mobile-open")).toHaveTextContent("true");
+
+    mockPathname = "/repos";
+    rerender(tree);
+
+    await waitFor(() => expect(screen.getByTestId("mobile-open")).toHaveTextContent("false"));
   });
 });
