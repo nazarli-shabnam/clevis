@@ -1069,7 +1069,7 @@ def test_cockpit_hides_the_cache_rate_from_a_caller_with_no_claim_on_the_owner(h
 
 
 def test_cockpit_cache_rate_for_an_own_scope_caller_counts_only_their_jobs(http, db, mock_user):
-    org = org_repo.get_or_create(db, github_login="acme")
+    org_repo.get_or_create(db, github_login="acme")
     scan_results_repo.insert(
         db, owner="acme", score=60, total_checks=5, failed_checks=2, checks=[],
         tenant_id=tenant_repo.ensure_personal_tenant(db, mock_user.id).id, scanned_by_user_id=mock_user.id,
