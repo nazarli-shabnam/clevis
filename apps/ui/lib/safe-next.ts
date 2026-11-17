@@ -12,6 +12,13 @@ export function withNext(path: string, next: string): string {
   return next !== "/" ? `${path}?next=${encodeURIComponent(next)}` : path
 }
 
+// The login URL for a session that just died (a 401): the same `?next=` as withNext plus `reason=expired`, which
+// the login page turns into an explanation instead of leaving the user guessing why they were sent there.
+export function expiredLoginUrl(next: string): string {
+  const base = withNext("/login", next)
+  return `${base}${base.includes("?") ? "&" : "?"}reason=expired`
+}
+
 // The page the user is on right now, as a sanitised "?next=" target for the login page.
 export function currentLocationNext(): string {
   return safeNextPath(`${window.location.pathname}${window.location.search}`)
