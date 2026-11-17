@@ -15,7 +15,8 @@ ENV NEXT_PUBLIC_API_BASE=$NEXT_PUBLIC_API_BASE
 ENV NEXT_PUBLIC_GITHUB_APP_SLUG=$NEXT_PUBLIC_GITHUB_APP_SLUG
 ENV NEXT_PUBLIC_GITHUB_WEB_BASE=$NEXT_PUBLIC_GITHUB_WEB_BASE
 
-RUN bun run build
+# next/font fetches Google Fonts here; Google occasionally answers with something the loader cannot parse (a rerun passes), so retry.
+RUN bun run build || (sleep 10 && bun run build) || (sleep 30 && bun run build)
 
 FROM node:22-alpine AS runner
 WORKDIR /app
