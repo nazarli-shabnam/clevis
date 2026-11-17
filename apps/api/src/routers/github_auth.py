@@ -39,7 +39,7 @@ from src.core.auth import (
     start_session,
 )
 from src.core.config import settings
-from src.core.db import RevokedToken, User, UserSession, get_db, set_session_user
+from src.core.db import RevokedToken, User, get_db, set_session_user
 from src.core.rate_limit import rate_limit
 from src.repositories import invitation_repo, tenant_repo
 from src.services import account_deletion, auth_audit, github_oauth, org_provisioning
@@ -116,6 +116,11 @@ def find_or_create_user(db: Session, identity: github_oauth.GitHubIdentity) -> U
     user = db.query(User).filter(User.github_user_id == identity.github_user_id).first()
     if user is not None:
         _refresh_profile(user, identity)
+        # The deletion above is committed here too, so it needs its audit row on this path as well.
+        if replaced_user_id is not None:
+            auth_audit.record(
+                db, user, "auth.unverified_registration_replaced", extra={"replaced_user_id": replaced_user_id}, commit=False
+            )
         db.commit()
         db.refresh(user)
         return user
