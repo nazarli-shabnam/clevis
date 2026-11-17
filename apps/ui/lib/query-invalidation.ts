@@ -15,3 +15,18 @@ export function invalidateInstallations(queryClient: QueryClient) {
     queryClient.invalidateQueries({ queryKey: [key] })
   }
 }
+
+// Everything a finished scan makes stale for an org: the stored scan, its history, the "what changed" diff, the
+// scan list and the cockpit (Overview's score card and the sidebar health dot read the cockpit's latest score,
+// which otherwise lags by its 30 s refetch interval). One list for every place that runs a scan.
+export function invalidateScanData(queryClient: QueryClient, owner: string) {
+  for (const key of [
+    "analytics.latest-scan",
+    "analytics.history",
+    "analytics.changes",
+    "analytics.scans",
+    "analytics.cockpit",
+  ]) {
+    queryClient.invalidateQueries({ queryKey: [key, owner] })
+  }
+}

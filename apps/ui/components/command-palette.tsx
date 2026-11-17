@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { invalidateScanData } from "@/lib/query-invalidation"
 import { Dialog } from "@base-ui/react/dialog"
 import { MagnifyingGlass } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
@@ -69,9 +70,7 @@ export function CommandPalette() {
   const scanMutation = useMutation({
     mutationFn: (target: string) => api.analytics.overview(target, ""),
     onSuccess: (data, target) => {
-      for (const key of ["analytics.latest-scan", "analytics.history", "analytics.changes", "analytics.scans"]) {
-        queryClient.invalidateQueries({ queryKey: [key, target] })
-      }
+      invalidateScanData(queryClient, target)
       toast.success(`Scan of ${target} finished${data.score != null ? `: score ${data.score}` : ""}.`)
     },
     onError: (e, target) => toast.error(e instanceof Error ? e.message : `Scan of ${target} failed.`),
@@ -156,6 +155,11 @@ export function CommandPalette() {
     changeOpen(false)
     if (cmd.scope) setScope(cmd.scope)
     else if (cmd.action === "scan") {
+      // The palette closes at once, so nothing else would stop a second full scan being started on top of this one.
+      if (scanMutation.isPending) {
+        toast.info(`A scan of ${scanMutation.variables} is already running.`)
+        return
+      }
       toast.info(`Scanning ${org}…`)
       scanMutation.mutate(org)
     } else if (cmd.action === "mark-notifications-read") markReadMutation.mutate(org)
