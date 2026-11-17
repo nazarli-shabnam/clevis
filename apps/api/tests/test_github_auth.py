@@ -200,6 +200,20 @@ def test_replacement_is_audited_when_a_concurrent_callback_won_the_identity(db):
     assert len(rows) == 1 and json.loads(rows[0].payload)["replaced_user_id"] == squatter_id
 
 
+def test_a_squatter_whose_account_cannot_be_deleted_is_not_replaced(db):
+    from src.services import account_deletion
+
+    squatter = User(email="victim@example.com", password_hash="x", email_verified=False)
+    db.add(squatter)
+    db.commit()
+
+    with patch.object(account_deletion, "delete_account", side_effect=account_deletion.AccountDeletionRefused(["sole admin"])):
+        with pytest.raises(EmailAlreadyRegistered):
+            find_or_create_user(db, _identity(github_user_id=778, email="victim@example.com"))
+
+    assert db.query(User).filter(User.id == squatter.id).count() == 1
+
+
 def test_unverified_account_already_linked_to_another_github_id_is_not_claimed(db):
     existing = User(email="owner@example.com", password_hash=None, email_verified=False, github_user_id=1)
     db.add(existing)
