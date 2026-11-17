@@ -17,6 +17,7 @@ import type {
   CheckWaiver,
   CheckWaiverInput,
   NotificationFeed,
+  NotificationKind,
   NotificationPreferences,
   ActionsUsageResponse,
   AnalyticsHistoryResponse,
@@ -428,6 +429,9 @@ export const api = {
     // `upTo` = the newest item shown, so an item that arrived after the feed loaded stays unread.
     markRead: (org: string, upTo?: string) =>
       post<null>(`/orgs/${encodeURIComponent(org)}/notifications/read`, upTo ? { up_to: upTo } : {}),
+    // 204: marks every unread item of one kind read for the caller (per-item marks, read-up-to marker untouched).
+    markKindRead: (org: string, kind: NotificationKind) =>
+      post<null>(`/orgs/${encodeURIComponent(org)}/notifications/read-kind`, { kind }),
     // The caller's own muted kinds for this org; the server drops them from the feed and unread count.
     preferences: (org: string) =>
       get<NotificationPreferences>(`/orgs/${encodeURIComponent(org)}/notifications/preferences`),

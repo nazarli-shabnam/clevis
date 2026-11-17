@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const feedMock = vi.fn();
 const markReadMock = vi.fn();
 const dismissMock = vi.fn();
+const markKindMock = vi.fn();
 const prefsMock = vi.fn();
 const minesMock = vi.fn();
 let scope: { kind: "org" | "personal"; login: string } | null = { kind: "org", login: "acme" };
@@ -17,6 +18,7 @@ vi.mock("@/lib/api/client", () => ({
       feed: (...a: unknown[]) => feedMock(...a),
       markRead: (...a: unknown[]) => markReadMock(...a),
       dismiss: (...a: unknown[]) => dismissMock(...a),
+      markKindRead: (...a: unknown[]) => markKindMock(...a),
       preferences: (...a: unknown[]) => prefsMock(...a),
     },
   },
@@ -42,9 +44,10 @@ function renderPage() {
 
 describe("NotificationsPage", () => {
   beforeEach(() => {
-    [feedMock, markReadMock, dismissMock, prefsMock, minesMock].forEach((m) => m.mockReset());
+    [feedMock, markReadMock, dismissMock, markKindMock, prefsMock, minesMock].forEach((m) => m.mockReset());
     markReadMock.mockResolvedValue(null);
     dismissMock.mockResolvedValue(null);
+    markKindMock.mockResolvedValue(null);
     minesMock.mockResolvedValue([{ org_login: "acme", role: "member" }]);
     scope = { kind: "org", login: "acme" };
   });
@@ -213,6 +216,26 @@ describe("NotificationsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Preferences" }));
     expect(await screen.findByText("Show these in your notifications:")).toBeInTheDocument();
     await waitFor(() => expect(prefsMock).toHaveBeenCalledWith("acme"));
+  });
+
+  it("marks an unread item read when it is opened", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "score_drop"), item("b", "score_drop", true)]));
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("link", { name: /title b/ }));
+    expect(dismissMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("link", { name: /title a/ }));
+    await waitFor(() => expect(dismissMock).toHaveBeenCalledWith("acme", "a"));
+  });
+
+  it("marks every unread item of one kind read, offering the button only for kinds with unread items", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "score_drop"), item("b", "score_drop"), item("c", "job_failed", true)]));
+    renderPage();
+
+    await screen.findByText("title a");
+    expect(screen.queryByRole("button", { name: /Mark Failed jobs? read|Mark Job failed read/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Mark Score drop read (2)" }));
+    await waitFor(() => expect(markKindMock).toHaveBeenCalledWith("acme", "score_drop"));
   });
 
   it("makes no request for a personal scope and explains why", async () => {

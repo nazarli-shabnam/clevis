@@ -345,6 +345,31 @@ def test_dismissing_one_item_marks_only_it_read_and_leaves_the_cursor_alone(db, 
     assert member.get("/orgs/acme/notifications").json()["unread_count"] == 2
 
 
+def test_marking_a_kind_read_dismisses_only_that_kinds_unread_items_for_the_caller(db, world):
+    t = world["acme"].tenant_id
+    _alert(db, t, number=1, when=NOW - timedelta(minutes=5))
+    _alert(db, t, number=2, when=NOW - timedelta(minutes=4))
+    _failed_job(db, t)
+    admin, member = _client(db, world["users"]["admin"]), _client(db, world["users"]["member"])
+
+    assert admin.post("/orgs/acme/notifications/read-kind", json={"kind": "critical_alert"}).status_code == 204
+
+    feed = admin.get("/orgs/acme/notifications").json()
+    assert {i["kind"]: i["read"] for i in feed["items"]} == {"critical_alert": True, "job_failed": False}
+    assert feed["unread_count"] == 1
+    assert feed["last_read_at"] is None  # the read-up-to marker is a different action
+    assert member.get("/orgs/acme/notifications").json()["unread_count"] == 2  # this user's mark only
+    # Repeating it, or naming a kind with nothing unread, is harmless.
+    assert admin.post("/orgs/acme/notifications/read-kind", json={"kind": "critical_alert"}).status_code == 204
+    assert admin.post("/orgs/acme/notifications/read-kind", json={"kind": "score_drop"}).status_code == 204
+
+
+def test_marking_a_kind_read_rejects_an_unknown_kind_and_non_members(db, world):
+    assert _client(db, world["users"]["admin"]).post("/orgs/acme/notifications/read-kind", json={"kind": "nope"}).status_code == 422
+    other = _client(db, world["users"]["other_admin"])
+    assert other.post("/orgs/acme/notifications/read-kind", json={"kind": "critical_alert"}).status_code in (403, 404)
+
+
 def test_dismissing_is_idempotent_and_does_not_hide_the_item(db, world):
     t = world["acme"].tenant_id
     _alert(db, t, number=1, when=NOW - timedelta(minutes=5))
