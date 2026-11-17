@@ -170,3 +170,36 @@ def test_pat_that_cannot_prove_org_admin_does_not_link_a_login_matched_org(db, a
     assert resp.status_code == 200
     assert db.query(SavedToken).filter_by(org="acme").one().tenant_id is None
     assert tenant_repo.get_membership(db, org.tenant_id, admin.id) is None
+
+
+def test_a_save_that_loses_the_insert_race_updates_the_winners_row_instead_of_500ing(db, admin):
+    # #1115: two PUTs for an org with no row both miss the lookup; the loser's INSERT violates the unique
+    # constraint at commit. Simulated by hiding the existing row from the first lookup only.
+    from src.routers import tokens as tokens_module
+
+    db.add(SavedToken(org="racy", label="winner", encrypted_token="x"))
+    db.commit()
+    real = tokens_module._find_saved_token
+    calls = {"n": 0}
+
+    def blind_once(db_, org):
+        calls["n"] += 1
+        return None if calls["n"] == 1 else real(db_, org)
+
+    client = _admin_client(db, admin)
+    with patch(_PATCH_TARGET, return_value=[]), patch.object(tokens_module, "_find_saved_token", blind_once):
+        resp = client.put("/tokens/racy", json={"token": "ghp_loser", "label": "loser"})
+
+    assert resp.status_code == 200
+    assert resp.json()["label"] == "loser"
+    assert db.query(SavedToken).filter(SavedToken.org == "racy").count() == 1
+
+
+def test_saving_under_a_different_casing_replaces_the_existing_token_instead_of_adding_a_second(db, admin):
+    client = _admin_client(db, admin)
+    with patch(_PATCH_TARGET, return_value=[]):
+        assert client.put("/tokens/Acme", json={"token": "ghp_one"}).status_code == 200
+        assert client.put("/tokens/acme", json={"token": "ghp_two", "label": "second"}).status_code == 200
+
+    rows = db.query(SavedToken).filter(SavedToken.org.in_(["Acme", "acme"])).all()
+    assert len(rows) == 1 and rows[0].label == "second"

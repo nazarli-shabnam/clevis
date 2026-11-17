@@ -192,8 +192,9 @@ def test_preview_invitation_unauthenticated(db, acme_org):
     app.dependency_overrides[get_db] = lambda: db
     resp = TestClient(app).get(f"/invitations/{token}")
     assert resp.status_code == 200
-    # The invitee's email is intentionally not disclosed on this unauthenticated endpoint.
-    assert resp.json() == {"org_login": "acme", "status": "pending"}
+    # Only the masked address is disclosed on this unauthenticated endpoint, never the raw one.
+    assert resp.json() == {"org_login": "acme", "status": "pending", "email": "b***@acme.com"}
+    assert "bob@acme.com" not in resp.text
 
 
 def test_accept_invitation_wrong_email_forbidden(db, acme_org):
@@ -395,7 +396,7 @@ def test_preview_expired_invitation_shows_expired_status(db, acme_org):
     app.dependency_overrides[get_db] = lambda: db
     resp = TestClient(app).get(f"/invitations/{token}")
     assert resp.status_code == 200
-    assert resp.json() == {"org_login": "acme", "status": "expired"}
+    assert resp.json() == {"org_login": "acme", "status": "expired", "email": "b***@acme.com"}
 
 
 def test_list_invitations_reflects_expired_status(db, acme_org):

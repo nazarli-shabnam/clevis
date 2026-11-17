@@ -18,7 +18,9 @@ class MembersWithout2FA(Check):
 
     An org can require 2FA (``OrgMFARequired``) while individual members have not enabled it yet, for example
     members added before the requirement, or an owner exempted. ``two_factor_enabled`` is NULL when the 2FA
-    overlay was unavailable (the token lacks org-owner scope), which is unknown, not a pass."""
+    overlay was unavailable (the token lacks org-owner scope) or the member arrived by webhook and was not yet
+    reconciled: that is unknown, not a pass, so a roster with unknown members and no known violation is an
+    ``error`` (partial result), like every other check that could only assess part of its subject."""
 
     metadata = CheckMetadata(
         check_id="organization_members_2fa_enabled",
@@ -42,7 +44,9 @@ class MembersWithout2FA(Check):
         if total == 0 or unknown == total:
             # No roster yet, or 2FA status was never available: nothing was assessed.
             return {"status": "not_applicable", "value": value}
-        return {"status": "fail" if disabled else "pass", "value": value}
+        if disabled:
+            return {"status": "fail", "value": value}
+        return {"status": "error" if unknown else "pass", "value": value}
 
 
 class OutsideCollaboratorsWithAdmin(Check):
@@ -50,7 +54,9 @@ class OutsideCollaboratorsWithAdmin(Check):
 
     Based on the ``repo_collaborators`` rows Clevis has recorded, which come from ``member`` webhooks and the
     reconcile that classifies them as outside collaborators, so it covers the collaborators Clevis has learned
-    about, not necessarily every one on GitHub."""
+    about, not necessarily every one on GitHub. A collaborator not yet classified (``is_outside_collaborator`` is
+    NULL) who holds admin could be a violation, so with no known one the result is an ``error`` (partial), not a
+    pass; an unclassified collaborator below admin cannot matter and is ignored."""
 
     metadata = CheckMetadata(
         check_id="repository_no_outside_collaborator_admins",
@@ -69,11 +75,20 @@ class OutsideCollaboratorsWithAdmin(Check):
         if not self._collaborators:
             return {"status": "not_applicable", "value": "No collaborator data has been recorded yet."}
         outside = [c for c in self._collaborators if c.get("is_outside_collaborator") is True]
+        admins = [c for c in outside if c.get("permission") == "admin"]
+        unclassified_admins = [
+            c for c in self._collaborators if c.get("is_outside_collaborator") is None and c.get("permission") == "admin"
+        ]
+        if admins:
+            return {"status": "fail", "value": {"checked": len(outside), "missing": len(admins)}}
+        if unclassified_admins:
+            return {
+                "status": "error",
+                "value": {"checked": len(outside), "missing": 0, "unclassified_admins": len(unclassified_admins)},
+            }
         if not outside:
             return {"status": "pass", "value": "No outside collaborators have been recorded."}
-        admins = [c for c in outside if c.get("permission") == "admin"]
-        value = {"checked": len(outside), "missing": len(admins)}
-        return {"status": "fail" if admins else "pass", "value": value}
+        return {"status": "pass", "value": {"checked": len(outside), "missing": 0}}
 
 
 def identity_checks(stored: dict) -> list[Check]:

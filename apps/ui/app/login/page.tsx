@@ -45,17 +45,20 @@ export default function LoginPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState(() => githubErrorMessage(searchParams.get("error")))
+  // Set by the 401 handler: the session died (expired, or signed out elsewhere / revoked), so say so.
+  const [sessionEnded] = useState(() => searchParams.get("reason") === "expired")
   const [isSubmitting, setIsSubmitting] = useState(false)
   // Unknown until the server answers; both options show meanwhile, as before. A server that predates
   // these fields (undefined) keeps showing them too.
   const [registrationEnabled, setRegistrationEnabled] = useState(true)
   const [githubEnabled, setGithubEnabled] = useState(true)
 
-  // Strip ?error= from the URL once read, so a refresh doesn't re-show a stale message.
+  // Strip ?error= and ?reason= from the URL once read, so a refresh doesn't re-show a stale message.
   useEffect(() => {
-    if (!searchParams.get("error")) return
+    if (!searchParams.get("error") && !searchParams.get("reason")) return
     const params = new URLSearchParams(searchParams)
     params.delete("error")
+    params.delete("reason")
     const qs = params.toString()
     router.replace(qs ? `/login?${qs}` : "/login")
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -102,6 +105,12 @@ export default function LoginPage() {
           </p>
           <h1 className="text-2xl font-semibold text-foreground">Sign in</h1>
         </div>
+
+        {sessionEnded && (
+          <p role="status" className="mb-4 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            Your session expired or was signed out elsewhere. Sign in again to continue.
+          </p>
+        )}
 
         {logoutWarning && (
           <div
