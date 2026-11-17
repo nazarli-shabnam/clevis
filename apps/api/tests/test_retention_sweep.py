@@ -310,3 +310,22 @@ def test_one_tenants_failing_purge_does_not_starve_the_tenants_after_it(db, capl
     assert _left(db, RepoEvent, RepoEvent.delivery_id, [f"ev-{second}-old"]) == set()
     set_session_tenant(db, first)
     assert _left(db, RepoEvent, RepoEvent.delivery_id, [f"ev-{first}-old"]) == {f"ev-{first}-old"}
+
+
+def test_a_missing_grant_on_repo_events_is_reported_once_instead_of_once_per_tenant(db, caplog):
+    from psycopg.errors import InsufficientPrivilege
+    from sqlalchemy.exc import ProgrammingError
+
+    _tenant(db, "ret-grant-a@example.com"), _tenant(db, "ret-grant-b@example.com")
+    denied = ProgrammingError("DELETE ...", {}, InsufficientPrivilege("permission denied for table repo_events"))
+    calls = []
+
+    def deny(db_, sql, params):
+        calls.append(params.get("tenant_id"))
+        raise denied
+
+    with caplog.at_level(logging.ERROR), patch.object(retention_sweep, "_delete_in_batches", deny):
+        with pytest.raises(ProgrammingError):
+            retention_sweep._purge_repo_events(db, _NOW)
+
+    assert len(calls) == 1  # the first tenant's denial stops the loop; it would hit every tenant alike
