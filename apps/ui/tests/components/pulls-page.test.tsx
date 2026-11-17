@@ -40,6 +40,9 @@ function renderPage() {
   );
 }
 
+// The author filter lists every author too; these are the occurrences outside that dropdown.
+const inPage = (text: string) => screen.getAllByText(text).filter((e) => e.tagName !== "OPTION");
+
 function pull(overrides: Partial<{ number: number; title: string; user: string | null; created_at: string; updated_at: string | null; draft: boolean; html_url: string }> = {}) {
   return {
     number: 1,
@@ -68,6 +71,7 @@ describe("PullRequestsPage", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    window.history.replaceState(null, "", "/"); // the page mirrors its filters into the URL
   });
 
   it("shows a configure prompt when no org is set", async () => {
@@ -284,8 +288,8 @@ describe("PullRequestsPage", () => {
     await waitFor(() => expect(screen.queryByRole("table")).not.toBeInTheDocument());
     // Author-grouped card headings: the author login is its own text node ("alice",
     // "bob"), with the per-author count in a sibling span.
-    expect(screen.getByText("alice")).toBeInTheDocument();
-    expect(screen.getByText("bob")).toBeInTheDocument();
+    expect(inPage("alice")).toHaveLength(1);
+    expect(inPage("bob")).toHaveLength(1);
     expect(screen.getByText(/#1 alice one/)).toBeInTheDocument();
     expect(screen.getByText(/#2 bob one/)).toBeInTheDocument();
   });
@@ -301,7 +305,8 @@ describe("PullRequestsPage", () => {
 
     renderPage();
 
-    expect(await screen.findByText("unknown")).toBeInTheDocument();
+    await screen.findByText(/Fix the thing|#1/);
+    expect(inPage("unknown")).toHaveLength(1);
   });
 
   it("nudges stale PRs across every repo and reports the count (issue #289)", async () => {
@@ -671,5 +676,46 @@ describe("PullRequestsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "by author" }));
     expect(screen.getByText("Draft")).toBeInTheDocument();
     expect(screen.getByText(/month ago/)).toBeInTheDocument();
+  });
+
+  describe("filters in the URL (#1128)", () => {
+    const triage = () =>
+      mockTriageRepo(
+        [
+          pull({ number: 1, title: "Quiet", user: "alice", created_at: daysAgo(10), updated_at: daysAgo(9) }),
+          pull({ number: 2, title: "Draft one", user: "bob", created_at: daysAgo(30), updated_at: daysAgo(30), draft: true }),
+          pull({ number: 3, title: "Active", user: "bob", created_at: daysAgo(30), updated_at: daysAgo(1) }),
+        ],
+        7,
+      );
+    afterEach(() => window.history.replaceState(null, "", "/"));
+
+    it("filters by status and author, and writes the choice to the query string", async () => {
+      triage();
+      renderPage();
+      await screen.findByText(/Quiet/);
+
+      fireEvent.change(screen.getByLabelText("Filter by status"), { target: { value: "draft" } });
+      expect(screen.queryByText(/Quiet/)).not.toBeInTheDocument();
+      expect(screen.getByText(/Draft one/)).toBeInTheDocument();
+      await waitFor(() => expect(window.location.search).toBe("?status=draft"));
+
+      fireEvent.change(screen.getByLabelText("Filter by status"), { target: { value: "all" } });
+      fireEvent.change(screen.getByLabelText("Filter by author"), { target: { value: "bob" } });
+      expect(screen.queryByText(/Quiet/)).not.toBeInTheDocument();
+      expect(screen.getByText(/Active/)).toBeInTheDocument();
+      await waitFor(() => expect(window.location.search).toBe("?author=bob"));
+    });
+
+    it("restores the view from the query string, and says when nothing matches", async () => {
+      window.history.replaceState(null, "", "/?status=stale&author=bob&sort=oldest");
+      triage();
+      renderPage();
+
+      expect(await screen.findByText("No pull requests match these filters")).toBeInTheDocument();
+      expect(screen.getByLabelText("Filter by status")).toHaveValue("stale");
+      expect(screen.getByLabelText("Filter by author")).toHaveValue("bob");
+      expect(screen.getByLabelText("Sort pull requests")).toHaveValue("oldest");
+    });
   });
 });

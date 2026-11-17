@@ -30,6 +30,8 @@ import { NotificationDestinationsCard } from "@/components/notification-destinat
 import { BadgeSettingsCard } from "@/components/badge-settings-card"
 import { ApiTokensCard } from "@/components/api-tokens-card"
 import { useDigestSettings } from "@/lib/use-digest-settings"
+import { membersViewCodec, type MemberRoleFilter } from "@/lib/list-views"
+import { useUrlView } from "@/lib/use-url-view"
 import type {
   GithubOrgMember,
   GithubOutsideCollaborator,
@@ -156,7 +158,14 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
   const tabs = canReview ? ROSTER_TABS : ROSTER_TABS.filter((t) => t.id === "members")
   const tab = (tabs.some((t) => t.id === rawTab) ? rawTab : "members") as RosterTabId
   const [search, setSearch] = useState("")
-  const [roleFilter, setRoleFilter] = useState<"all" | "member" | "admin">("all")
+  const [roleFilter, setRoleFilter] = useState<MemberRoleFilter>("all")
+  const [twoFaOff, setTwoFaOff] = useState(false)
+  // The roster filters live in the query string so a view can be linked and survives a reload.
+  useUrlView({ search, role: roleFilter, twoFaOff }, membersViewCodec, (v) => {
+    setSearch(v.search)
+    setRoleFilter(v.role)
+    setTwoFaOff(v.twoFaOff)
+  })
 
   function setTab(id: RosterTabId) {
     const params = new URLSearchParams(searchParams.toString())
@@ -218,8 +227,11 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
   // every render (the parent's 60 s clock tick, an opened invite form) would kick the admin off the
   // page they were reviewing.
   const filteredMembers = useMemo(
-    () => (membersQuery.data?.members ?? []).filter((m) => m.login.toLowerCase().includes(search.toLowerCase())),
-    [membersQuery.data, search],
+    () =>
+      (membersQuery.data?.members ?? []).filter(
+        (m) => m.login.toLowerCase().includes(search.toLowerCase()) && (!twoFaOff || m.two_factor_enabled === false),
+      ),
+    [membersQuery.data, search, twoFaOff],
   )
   // Derived from filteredMembers so the count matches the visible table -- a stale org-wide
   // total next to a filtered table reads as a data-integrity bug for a 2FA-compliance number.
@@ -265,13 +277,22 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
             <select
               aria-label="Filter by role"
               value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value as "all" | "member" | "admin")}
+              onChange={(e) => setRoleFilter(e.target.value as MemberRoleFilter)}
               className="text-xs card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
             >
               <option value="all">All roles</option>
               <option value="member">Member</option>
               <option value="admin">Admin</option>
             </select>
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={twoFaOff}
+                disabled={membersQuery.data?.two_factor_overlay_available === false}
+                onChange={(e) => setTwoFaOff(e.target.checked)}
+              />
+              2FA off
+            </label>
             {isRefetchingByRole && (
               <span className="text-xs text-muted-foreground flex items-center gap-1">
                 <CircleNotch className="size-3 animate-spin" /> Updating…

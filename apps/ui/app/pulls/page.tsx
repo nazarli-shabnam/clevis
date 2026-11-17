@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { Suspense, useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -16,6 +16,8 @@ import { relativeTime } from "@/lib/format"
 import { FlowRankingCard } from "@/components/flow-ranking-card"
 import { githubWebUrl } from "@/lib/github-web"
 import { PULL_SORT_LABELS, ageDays, isStale, sortPulls, type PullSort } from "@/lib/pull-triage"
+import { pullViewCodec, type PullGroupBy, type PullStatusFilter } from "@/lib/list-views"
+import { useUrlView } from "@/lib/use-url-view"
 import type { MyOrgMembership, PullSummary } from "@/lib/api/types"
 
 // No repo-count cap here; requests are fanned out in batches so large orgs don't fire
@@ -27,8 +29,6 @@ const REPO_PULLS_STALE_MS = 30_000
 interface PullRow extends PullSummary {
   repo: string
 }
-
-type GroupBy = "repo" | "author"
 
 // Mirrors the server's default (services/pr_nudge.py), used until a response reports the real one.
 const DEFAULT_STALE_DAYS = 3
@@ -228,15 +228,24 @@ function NudgePanel({
   )
 }
 
-export default function PullRequestsPage() {
+function PullRequestsView() {
   const queryClient = useQueryClient()
   const { scope } = useActiveScope()
   // Pulls are listed via /orgs/{org}/repos; a personal scope has no org to list.
   const org = scope?.kind === "org" ? scope.login : ""
   const hasOrg = org.trim().length > 0
 
-  const [groupBy, setGroupBy] = useState<GroupBy>("repo")
+  const [groupBy, setGroupBy] = useState<PullGroupBy>("repo")
   const [sort, setSort] = useState<PullSort>("newest")
+  const [statusFilter, setStatusFilter] = useState<PullStatusFilter>("all")
+  const [authorFilter, setAuthorFilter] = useState("")
+  // The filters live in the query string so a view can be linked and survives a reload.
+  useUrlView({ status: statusFilter, author: authorFilter, sort, group: groupBy }, pullViewCodec, (v) => {
+    setStatusFilter(v.status)
+    setAuthorFilter(v.author)
+    setSort(v.sort)
+    setGroupBy(v.group)
+  })
 
   // Nudging posts on GitHub and needs org admin; plain members would just get a 403.
   const { data: memberships = [] } = useQuery<MyOrgMembership[]>({
@@ -309,7 +318,16 @@ export default function PullRequestsPage() {
   const staleDays = pullsQuery.data?.staleDays ?? DEFAULT_STALE_DAYS
   const columns = useMemo(() => pullColumns(staleDays), [staleDays])
   const loadedRows = pullsQuery.data?.rows
-  const pulls = useMemo(() => sortPulls(loadedRows ?? [], sort), [loadedRows, sort])
+  const authors = useMemo(() => [...new Set((loadedRows ?? []).map((p) => p.user ?? "unknown"))].sort((a, b) => a.localeCompare(b)), [loadedRows])
+  const pulls = useMemo(
+    () =>
+      sortPulls(loadedRows ?? [], sort).filter(
+        (p) =>
+          (authorFilter === "" || (p.user ?? "unknown") === authorFilter) &&
+          (statusFilter === "all" || pullStatus(p, staleDays).toLowerCase() === statusFilter),
+      ),
+    [loadedRows, sort, authorFilter, statusFilter, staleDays],
+  )
   const failedRepos = pullsQuery.data?.failedRepos ?? []
   const isLoading = reposQuery.isLoading || (reposQuery.isSuccess && pullsQuery.isLoading)
 
@@ -420,7 +438,7 @@ export default function PullRequestsPage() {
             {canNudge && <Button
               size="sm"
               variant="outline"
-              disabled={pulls.length === 0 || preview.isPending || nudge.isPending}
+              disabled={!loadedRows?.length || preview.isPending || nudge.isPending}
               onClick={() => {
                 setNudgeMsg(null)
                 setPanel(null)
@@ -429,6 +447,29 @@ export default function PullRequestsPage() {
             >
               {preview.isPending ? "Checking…" : nudge.isPending ? "Nudging…" : "Nudge stale PRs"}
             </Button>}
+            <select
+              aria-label="Filter by status"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as PullStatusFilter)}
+              className="bg-elevated border border-border rounded-md text-xs text-muted-foreground px-2 py-1 focus:outline-none focus:border-primary"
+            >
+              <option value="all">All statuses</option>
+              <option value="stale">Stale only</option>
+              <option value="draft">Drafts only</option>
+              <option value="open">Open, not stale</option>
+            </select>
+            <select
+              aria-label="Filter by author"
+              value={authorFilter}
+              onChange={(e) => setAuthorFilter(e.target.value)}
+              className="bg-elevated border border-border rounded-md text-xs text-muted-foreground px-2 py-1 focus:outline-none focus:border-primary"
+            >
+              <option value="">All authors</option>
+              {/* A linked author who has no open PR right now stays selectable instead of silently resetting. */}
+              {[...new Set([...authors, ...(authorFilter ? [authorFilter] : [])])].map((a) => (
+                <option key={a} value={a}>{a}</option>
+              ))}
+            </select>
             <select
               aria-label="Sort pull requests"
               value={sort}
@@ -507,7 +548,9 @@ export default function PullRequestsPage() {
           </div>
         ) : pulls.length === 0 ? (
           <p className="px-4 py-8 text-sm text-muted-foreground">
-            {failedRepos.length > 0 ? "No open pull requests in the repositories that loaded" : "No open pull requests"}
+            {loadedRows?.length
+              ? "No pull requests match these filters"
+              : failedRepos.length > 0 ? "No open pull requests in the repositories that loaded" : "No open pull requests"}
           </p>
         ) : groupBy === "author" ? (
           <div className="p-4 grid gap-3 sm:grid-cols-2">
@@ -551,5 +594,14 @@ export default function PullRequestsPage() {
       </div>
       {hasOrg && repoNames.length > 0 && <FlowRankingCard key={org} org={org} repos={recentlyPushedRepos} token={token} />}
     </>
+  )
+}
+
+// useSearchParams (via useUrlView) must sit under a Suspense boundary or static prerendering bails out.
+export default function PullRequestsPage() {
+  return (
+    <Suspense fallback={null}>
+      <PullRequestsView />
+    </Suspense>
   )
 }

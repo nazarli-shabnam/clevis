@@ -89,6 +89,7 @@ describe("GithubRoster (Collaborators page)", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    window.history.replaceState(null, "", "/"); // the roster mirrors its filters into the URL
   });
 
   it("offers a plain member only the Members tab, and never calls the admin-only reads (#899)", async () => {

@@ -13,6 +13,8 @@ import { DataTable, type DataTableColumn } from "@/components/ui/data-table"
 import { api } from "@/lib/api/client"
 import { useAuth } from "@/lib/auth-context"
 import { EMPTY_FORM, toAuditFilters, type FilterForm } from "@/lib/audit-filters"
+import { auditViewCodec } from "@/lib/list-views"
+import { useUrlView } from "@/lib/use-url-view"
 import { payloadEntries, payloadSummary } from "@/lib/audit-payload"
 import type { AdminAuditFilters, AuditLogOut, JobOut } from "@/lib/api/types"
 
@@ -45,18 +47,18 @@ export default function AuditPage() {
   const { user } = useAuth()
   const isAdmin = !!user?.is_workspace_admin
   const searchParams = useSearchParams()
+  // The applied filters live in the query string (so a view can be linked and survives a reload);
   // ?actor=<email> opens the log already filtered (the command palette's "filtered to me").
-  const actorParam = searchParams.get("actor") ?? ""
-  const initialForm: FilterForm = { ...EMPTY_FORM, actor: actorParam }
-  const [actionFilter, setActionFilter] = useState("")
-  const [form, setForm] = useState<FilterForm>(initialForm)
+  const [initial] = useState(() => auditViewCodec.fromParams(new URLSearchParams(searchParams.toString())))
+  const [actionFilter, setActionFilter] = useState(initial.action)
+  const [form, setForm] = useState<FilterForm>(initial.applied)
   // Filters apply on submit, not per keystroke: each change is a server query.
-  const [applied, setApplied] = useState<FilterForm>(initialForm)
-  // The palette only changes the query string, so the page stays mounted: follow the param.
-  useEffect(() => {
-    setForm((prev) => ({ ...prev, actor: actorParam }))
-    setApplied((prev) => ({ ...prev, actor: actorParam }))
-  }, [actorParam])
+  const [applied, setApplied] = useState<FilterForm>(initial.applied)
+  useUrlView({ applied, action: actionFilter }, auditViewCodec, (v) => {
+    setForm(v.applied)
+    setApplied(v.applied)
+    setActionFilter(v.action)
+  })
   const highlightJobId = Number(searchParams.get("job_id")) || null
 
   const query = useInfiniteQuery({
