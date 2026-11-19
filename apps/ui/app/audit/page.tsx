@@ -75,7 +75,8 @@ export default function AuditPage() {
     initialPageParam: undefined as number | undefined,
     // A full page means there may be older rows; the next page starts below the last id seen.
     getNextPageParam: (last) => (last.length === PAGE_SIZE ? last[last.length - 1].id : undefined),
-    refetchInterval: 30_000,
+    // No refetchInterval: an infinite query re-requests every loaded page on each tick, so after a few "Load more"
+    // clicks one poll was N requests. It still refreshes on window focus and on the retry/refresh controls.
     enabled: isAdmin,
   })
   const { isLoading, isFetching, refetch } = query
@@ -277,9 +278,14 @@ export default function AuditPage() {
                 </Button>
               </div>
             )}
-            {query.isError && (
+            {query.isFetchNextPageError && (
               <p role="alert" className="px-4 pb-3 text-xs text-destructive">
-                Couldn&apos;t load more: {query.error.message}
+                Couldn&apos;t load more: {query.error?.message}
+              </p>
+            )}
+            {query.isError && !query.isFetchNextPageError && (
+              <p role="status" className="px-4 pb-3 text-xs text-muted-foreground">
+                Couldn&apos;t refresh just now; showing the entries already loaded.
               </p>
             )}
           </>
