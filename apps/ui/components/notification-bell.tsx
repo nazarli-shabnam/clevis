@@ -95,8 +95,8 @@ export function NotificationBell() {
               </button>
             </div>
             {query.dataUpdatedAt > 0 && (
-              <p className="px-3 pt-2 text-[0.6875rem] text-muted-foreground" aria-live="off">
-                {refreshFailed ? "Couldn't refresh; last updated " : "Updated "}
+              <p className="px-3 pt-2 text-[0.6875rem] text-muted-foreground" aria-live="polite">
+                {refreshFailed || query.isError ? "Couldn't refresh; last updated " : "Updated "}
                 {relativeTime(new Date(query.dataUpdatedAt).toISOString())}
               </p>
             )}

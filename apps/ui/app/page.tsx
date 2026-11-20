@@ -116,6 +116,7 @@ export default function OverviewPage() {
     queryFn: () => api.analytics.latestScan(org),
     enabled: scope?.kind === "org" && org.trim().length > 0,
     retry: false,
+    refetchInterval: 30_000,
   })
   const scannedAt = latestScanQuery.data?.scanned_at
   // "Configure →" means there is no data source. The cockpit loading or succeeding proves there is one
