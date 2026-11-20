@@ -47,20 +47,28 @@ ORG_WIDE_ONLY_CHECK_IDS = frozenset(
     cls.metadata.check_id for cls in (OrgMFARequired, *HYGIENE_CHECKS, MembersWithout2FA, OutsideCollaboratorsWithAdmin)
 )
 
-KNOWN_CHECK_IDS = frozenset(
-    cls.metadata.check_id
-    for cls in (
-        OrgMFARequired,
-        BranchProtectionEnabled,
-        SecretScanningEnabled,
-        DependabotAlertsCheck,
-        CodeScanningCheck,
-        DefaultBranchNoForcePushCheck,
-        *HYGIENE_CHECKS,
-        MembersWithout2FA,
-        OutsideCollaboratorsWithAdmin,
-    )
+# Every check an admin can waive, in the order the UI offers them.
+WAIVABLE_CHECKS = (
+    OrgMFARequired,
+    BranchProtectionEnabled,
+    SecretScanningEnabled,
+    DependabotAlertsCheck,
+    CodeScanningCheck,
+    DefaultBranchNoForcePushCheck,
+    *HYGIENE_CHECKS,
+    MembersWithout2FA,
+    OutsideCollaboratorsWithAdmin,
 )
+
+KNOWN_CHECK_IDS = frozenset(cls.metadata.check_id for cls in WAIVABLE_CHECKS)
+
+
+def waivable_checks() -> list[dict]:
+    """The catalog the waiver form offers; the same sets ``_validate`` enforces, so they cannot drift."""
+    return [
+        {"id": cls.metadata.check_id, "title": cls.metadata.title, "org_wide_only": cls.metadata.check_id in ORG_WIDE_ONLY_CHECK_IDS}
+        for cls in WAIVABLE_CHECKS
+    ]
 
 
 def _aware(value: datetime) -> datetime:

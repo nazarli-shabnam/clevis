@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useParams, useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useMemo, useState } from "react"
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
@@ -16,24 +17,15 @@ import { CopyButton } from "@/components/copy-button"
 import { orgRoleFor } from "@/lib/members-href"
 import { EmptyStateAction } from "@/components/empty-state-action"
 import { SectionError } from "@/components/section-error"
-import { HygieneScoringCard } from "@/components/hygiene-scoring-card"
-import { ScheduledScansCard } from "@/components/scheduled-scans-card"
-import { DigestCard } from "@/components/digest-card"
 import { SmtpVerifyNotice } from "@/components/smtp-verify-notice"
-import { AutomationSchedulesCard } from "@/components/automation-schedules-card"
-import { WaiversCard } from "@/components/waivers-card"
-import { ClevisMembersCard } from "@/components/clevis-members-card"
-import { IngestionHealthCard } from "@/components/ingestion-health-card"
-import { EvidenceExportCard } from "@/components/evidence-export-card"
 import { MemberAccessSheet } from "@/components/member-access-sheet"
-import { NotificationDestinationsCard } from "@/components/notification-destinations-card"
-import { BadgeSettingsCard } from "@/components/badge-settings-card"
-import { ApiTokensCard } from "@/components/api-tokens-card"
 import { useDigestSettings } from "@/lib/use-digest-settings"
 import { BulkActionBar } from "@/components/bulk-action-bar"
 import { ExpiryFilterSelect } from "@/components/expiry-filter-select"
 import { useRowSelection } from "@/lib/bulk"
 import { matchesExpiry, type ExpiryFilter } from "@/lib/expiry-filter"
+import { membersViewCodec, type MemberRoleFilter } from "@/lib/list-views"
+import { useUrlView } from "@/lib/use-url-view"
 import type {
   GithubOrgMember,
   GithubOutsideCollaborator,
@@ -160,7 +152,14 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
   const tabs = canReview ? ROSTER_TABS : ROSTER_TABS.filter((t) => t.id === "members")
   const tab = (tabs.some((t) => t.id === rawTab) ? rawTab : "members") as RosterTabId
   const [search, setSearch] = useState("")
-  const [roleFilter, setRoleFilter] = useState<"all" | "member" | "admin">("all")
+  const [roleFilter, setRoleFilter] = useState<MemberRoleFilter>("all")
+  const [twoFaOff, setTwoFaOff] = useState(false)
+  // The roster filters live in the query string so a view can be linked and survives a reload.
+  useUrlView({ search, role: roleFilter, twoFaOff }, membersViewCodec, (v) => {
+    setSearch(v.search)
+    setRoleFilter(v.role)
+    setTwoFaOff(v.twoFaOff)
+  })
 
   function setTab(id: RosterTabId) {
     const params = new URLSearchParams(searchParams.toString())
@@ -222,8 +221,11 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
   // every render (the parent's 60 s clock tick, an opened invite form) would kick the admin off the
   // page they were reviewing.
   const filteredMembers = useMemo(
-    () => (membersQuery.data?.members ?? []).filter((m) => m.login.toLowerCase().includes(search.toLowerCase())),
-    [membersQuery.data, search],
+    () =>
+      (membersQuery.data?.members ?? []).filter(
+        (m) => m.login.toLowerCase().includes(search.toLowerCase()) && (!twoFaOff || m.two_factor_enabled === false),
+      ),
+    [membersQuery.data, search, twoFaOff],
   )
   // Derived from filteredMembers so the count matches the visible table -- a stale org-wide
   // total next to a filtered table reads as a data-integrity bug for a 2FA-compliance number.
@@ -269,13 +271,22 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
             <select
               aria-label="Filter by role"
               value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value as "all" | "member" | "admin")}
+              onChange={(e) => setRoleFilter(e.target.value as MemberRoleFilter)}
               className="text-xs card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
             >
               <option value="all">All roles</option>
               <option value="member">Member</option>
               <option value="admin">Admin</option>
             </select>
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={twoFaOff}
+                disabled={membersQuery.data?.two_factor_overlay_available === false && !twoFaOff}
+                onChange={(e) => setTwoFaOff(e.target.checked)}
+              />
+              2FA off
+            </label>
             {isRefetchingByRole && (
               <span className="text-xs text-muted-foreground flex items-center gap-1">
                 <CircleNotch className="size-3 animate-spin" /> Updating…
@@ -545,6 +556,14 @@ export default function OrgMembersPage() {
   const params = useParams<{ login: string }>()
   const orgLogin = params.login
   const queryClient = useQueryClient()
+  const router = useRouter()
+  const pageSearchParams = useSearchParams()
+  // Waivers and API tokens moved to the org Settings page; notification links and emails that still point here
+  // with ?waiver= / ?token= are forwarded there, query intact.
+  const movedParams = pageSearchParams.has("waiver") || pageSearchParams.has("token")
+  useEffect(() => {
+    if (movedParams) router.replace(`/settings/org/${encodeURIComponent(orgLogin)}/settings?${pageSearchParams.toString()}`)
+  }, [movedParams, orgLogin, pageSearchParams, router])
   const [email, setEmail] = useState("")
   const [lastLink, setLastLink] = useState<{ id: number; link: string; emailed?: InvitationEmailStatus | null } | null>(null)
   // Emailing the link is the default whenever the server can send mail; the admin can untick it per invite.
@@ -681,6 +700,13 @@ export default function OrgMembersPage() {
   return (
     <>
       <PageHeader title="Members" description={`Manage who can access ${orgLogin} in Clevis.`} />
+      <p className="mb-4 text-xs text-muted-foreground">
+        Scanning, alerts, automation, waivers and API tokens are in{" "}
+        <Link href={`/settings/org/${encodeURIComponent(orgLogin)}/settings`} className="text-primary hover:underline">
+          Organization settings
+        </Link>
+        .
+      </p>
 
       {rolePending ? (
         <div className="card px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
@@ -697,15 +723,7 @@ export default function OrgMembersPage() {
         </div>
       ) : (
         <>
-        <HygieneScoringCard orgLogin={orgLogin} />
-        <ScheduledScansCard orgLogin={orgLogin} />
-        <DigestCard orgLogin={orgLogin} />
         <SmtpVerifyNotice orgLogin={orgLogin} />
-        <AutomationSchedulesCard orgLogin={orgLogin} />
-        <ClevisMembersCard orgLogin={orgLogin} />
-        <WaiversCard orgLogin={orgLogin} />
-        <IngestionHealthCard orgLogin={orgLogin} />
-        <EvidenceExportCard orgLogin={orgLogin} />
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="card">
             <div className="px-4 py-3 border-b border-border">
@@ -930,9 +948,6 @@ export default function OrgMembersPage() {
         </>
       )}
 
-      {!rolePending && !notAdmin && <NotificationDestinationsCard orgLogin={orgLogin} />}
-      {!rolePending && !notAdmin && <BadgeSettingsCard orgLogin={orgLogin} />}
-      {!rolePending && !notAdmin && <ApiTokensCard orgLogin={orgLogin} />}
 
       <div className="mt-4">
         <GithubRoster orgLogin={orgLogin} canReview={role === "admin"} />

@@ -841,6 +841,102 @@ def test_fetch_all_events_merges_public_and_private_without_duplicates():
     assert sorted(e["id"] for e in events) == ["dup", "priv1", "pub1"]
 
 
+# --- coverage: a bounded run says what it could not read (#1092) ---
+
+
+def test_a_complete_run_reports_no_coverage_gap():
+    cov = backfill.Coverage()
+    client = _FakeClient([_FakeResponse([_raw_event(id="1")]), _FakeResponse([_repo("acme/a")]), _FakeResponse([_raw_event(id="a1")])])
+
+    backfill.fetch_all_events(client, "https://api.github.com", {}, "acme", "Organization", cov)
+
+    assert cov.reason is None
+
+
+def test_hitting_the_public_page_cap_is_recorded():
+    cov = backfill.Coverage()
+    pages = [
+        _FakeResponse([_raw_event(id=str(i))], links={"next": {"url": f"https://api.github.com/orgs/acme/events?page={i + 1}"}})
+        for i in range(5)
+    ]
+
+    backfill.fetch_events(_FakeClient(pages), "https://api.github.com", {}, "acme", "Organization", cov)
+
+    assert "first 3 pages" in cov.reason
+
+
+def test_a_full_final_page_without_a_next_link_is_recorded_as_capped():
+    cov = backfill.Coverage()
+    pages = [_FakeResponse([_raw_event(id=f"{p}-{i}") for i in range(backfill._PER_PAGE)], links=(
+        {"next": {"url": f"https://api.github.com/orgs/acme/events?page={p + 2}"}} if p < backfill._MAX_PAGES - 1 else {}
+    )) for p in range(backfill._MAX_PAGES)]
+
+    backfill.fetch_events(_FakeClient(pages), "https://api.github.com", {}, "acme", "Organization", cov)
+
+    assert "first 3 pages" in cov.reason
+
+
+def test_a_short_final_page_is_not_recorded_as_capped():
+    cov = backfill.Coverage()
+    backfill.fetch_events(_FakeClient([_FakeResponse([_raw_event(id="1")])]), "https://api.github.com", {}, "acme", "Organization", cov)
+    assert cov.reason is None
+
+
+def test_a_non_list_page_is_not_recorded_as_capped():
+    cov = backfill.Coverage()
+    backfill.fetch_events(_FakeClient([_FakeResponse({"message": "odd"})]), "https://api.github.com", {}, "acme", "Organization", cov)
+    assert cov.reason is None
+
+
+def test_more_private_repos_than_the_cap_is_recorded():
+    cov = backfill.Coverage()
+    repos = [_repo(f"acme/r{i}", pushed_at=f"2026-08-{i % 28 + 1:02d}T00:00:00Z") for i in range(backfill._MAX_PRIVATE_REPOS + 10)]
+    client = _FakeClient([_FakeResponse(repos)] + [_FakeResponse([]) for _ in repos])
+
+    backfill.fetch_private_repo_events(client, "https://api.github.com", {}, "acme", "Organization", cov)
+
+    assert "beyond the 50 most recently pushed" in cov.reason
+
+
+def test_a_skipped_private_repo_and_a_forbidden_listing_are_recorded():
+    skipped = backfill.Coverage()
+    client = _FakeClient([_FakeResponse([_repo("acme/a")]), _FakeResponse({}, status_code=404)])
+    backfill.fetch_private_repo_events(client, "https://api.github.com", {}, "acme", "Organization", skipped)
+    assert "could not be read" in skipped.reason
+
+    forbidden = backfill.Coverage()
+    backfill.fetch_private_repo_events(_FakeClient([_FakeResponse({}, status_code=403)]), "https://api.github.com", {}, "acme", "Organization", forbidden)
+    assert "could not be listed" in forbidden.reason
+
+
+def test_coverage_joins_distinct_reasons_once():
+    cov = backfill.Coverage()
+    cov.note("x")
+    cov.note("x")
+    cov.note("y")
+    assert cov.reason == "x; y"
+
+
+def test_handler_records_why_a_capped_run_is_incomplete_and_clears_it_on_a_full_run(pg_conn, tenant_id):
+    def reason():
+        with pg_conn.cursor() as cur:
+            cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+            cur.execute("SELECT incomplete_reason FROM activity_sync_cursors WHERE tenant_id = %s", (tenant_id,))
+            return cur.fetchone()[0]
+
+    def capped(client, base, headers, login, account_type, coverage=None):
+        coverage.note("the public events feed was read only to its first 3 pages")
+        return []
+
+    with patch("worker.httpx.Client", return_value=_mock_github_client([])), patch("worker.backfill.fetch_all_events", capped):
+        worker._handle_backfill_repo_events(pg_conn, 120, _payload_for(tenant_id), 0)
+    assert "first 3 pages" in reason()
+
+    with patch("worker.httpx.Client", return_value=_mock_github_client([])):
+        worker._handle_backfill_repo_events(pg_conn, 121, _payload_for(tenant_id), 0)
+    assert reason() is None  # a later complete run clears it
+
+
 def test_fetch_events_does_not_sleep_through_a_spent_primary_quota():
     # #1111: a 403 with X-RateLimit-Remaining: 0 whose reset is far off is the *hourly* quota, not a secondary
     # limit. Sleeping ~60 s twice cannot help, so it is returned at once for the job to wait out the reset.

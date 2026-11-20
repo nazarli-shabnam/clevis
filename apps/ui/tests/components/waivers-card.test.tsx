@@ -6,6 +6,15 @@ const listMock = vi.fn()
 const createMock = vi.fn()
 const revokeMock = vi.fn()
 const updateMock = vi.fn()
+const checksMock = vi.fn()
+const catalog = [
+  { id: "organization_members_mfa_required", title: "Organization requires 2FA/MFA", org_wide_only: true },
+  { id: "repository_default_branch_protection_enabled", title: "Default branch has protection rules", org_wide_only: false },
+  { id: "repository_license_present", title: "License present", org_wide_only: true },
+  { id: "repository_secret_scanning_enabled", title: "Secret scanning enabled", org_wide_only: false },
+  { id: "organization_members_2fa_enabled", title: "All organization members have 2FA enabled", org_wide_only: true },
+  { id: "repository_no_outside_collaborator_admins", title: "No outside collaborators have admin access", org_wide_only: true },
+]
 
 let searchParams = new URLSearchParams();
 vi.mock("next/navigation", () => ({ useSearchParams: () => searchParams }));
@@ -13,6 +22,7 @@ vi.mock("next/navigation", () => ({ useSearchParams: () => searchParams }));
 vi.mock("@/lib/api/client", () => ({
   api: {
     waivers: {
+      checks: (...a: unknown[]) => checksMock(...a),
       list: (...a: unknown[]) => listMock(...a),
       create: (...a: unknown[]) => createMock(...a),
       revoke: (...a: unknown[]) => revokeMock(...a),
@@ -56,6 +66,8 @@ beforeEach(() => {
   createMock.mockReset()
   revokeMock.mockReset()
   updateMock.mockReset()
+  checksMock.mockReset()
+  checksMock.mockResolvedValue(catalog)
 })
 afterEach(() => {
   cleanup()
@@ -142,6 +154,7 @@ describe("WaiversCard", () => {
     createMock.mockResolvedValue(waiver())
     renderCard()
     await screen.findByText(/No waivers/)
+    await screen.findByRole("option", { name: "License present" }) // the catalog has loaded
     expect(screen.getByLabelText(/Repositories/)).toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText("Check"), { target: { value: "repository_license_present" } })
@@ -160,6 +173,7 @@ describe("WaiversCard", () => {
     createMock.mockResolvedValue(waiver())
     renderCard()
     await screen.findByText(/No waivers/)
+    await screen.findByRole("option", { name: "License present" }) // the catalog has loaded
     const add = screen.getByRole("button", { name: "Add waiver" })
     expect(add).toBeDisabled() // reason and owner are required
 
@@ -179,6 +193,14 @@ describe("WaiversCard", () => {
     })
     expect(new Date(body.expires_at).getTime()).toBeGreaterThan(Date.now())
     await waitFor(() => expect(listMock.mock.calls.length).toBeGreaterThan(1)) // refreshed
+  })
+
+  it("says so, and keeps the form disabled, when the waivable-check list can't be loaded", async () => {
+    checksMock.mockRejectedValue(new Error("boom"))
+    listMock.mockResolvedValue([])
+    renderCard()
+    expect(await screen.findByText(/Couldn't load the list of checks/)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Add waiver" })).toBeDisabled()
   })
 
   it("shows a load error with a retry that refetches", async () => {
@@ -215,6 +237,7 @@ describe("WaiversCard", () => {
     createMock.mockReturnValue(new Promise((resolve) => { finish = resolve }))
     renderCard()
     await screen.findByText(/No waivers/)
+    await screen.findByRole("option", { name: "License present" }) // the catalog has loaded
     fireEvent.change(screen.getByLabelText("Check"), { target: { value: "repository_license_present" } })
     fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "r" } })
     fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "o" } })
@@ -419,7 +442,7 @@ describe("CheckCard waived badge", () => {
       </QueryClientProvider>,
     )
 
-    fireEvent.click(screen.getByRole("button", { name: "Waive…" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Waive…" }))
     expect(screen.queryByLabelText("Check")).not.toBeInTheDocument() // the check is fixed
     expect(screen.queryByLabelText(/Repositories/)).not.toBeInTheDocument() // org-wide-only check
     fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "no license needed" } })
@@ -434,7 +457,7 @@ describe("CheckCard waived badge", () => {
 
   it.each(["organization_members_2fa_enabled", "repository_no_outside_collaborator_admins"])(
     "offers Waive for the identity check %s, which only takes an org-wide waiver",
-    (id) => {
+    async (id) => {
       const queryClient = new QueryClient()
       render(
         <QueryClientProvider client={queryClient}>
@@ -444,7 +467,7 @@ describe("CheckCard waived badge", () => {
           />
         </QueryClientProvider>,
       )
-      fireEvent.click(screen.getByRole("button", { name: "Waive…" }))
+      fireEvent.click(await screen.findByRole("button", { name: "Waive…" }))
       expect(screen.queryByLabelText(/Repositories/)).not.toBeInTheDocument()
     },
   )

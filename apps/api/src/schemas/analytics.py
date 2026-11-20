@@ -195,6 +195,8 @@ class CockpitResponse(BaseModel):
     # recent_events_source == "aggregate"; the live "github" path has no ingestion cursor to be
     # stale against (whatever GitHub returns synchronously is definitionally current).
     recent_events_stale: bool = False
+    # Why the stored activity history may be incomplete (the last backfill hit a cap or skipped a repo), else None.
+    activity_history_incomplete: str | None = None
     # True if any best-effort live GitHub call underlying this response failed and fell back to a
     # zero/empty/partial value (see the _safe_* helpers below) -- lets the UI distinguish "this org
     # genuinely has none" from "we couldn't fully fetch this," which previously rendered identically.
