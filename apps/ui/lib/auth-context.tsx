@@ -7,6 +7,7 @@ import { clearActivityLastSeen } from "@/lib/activity-last-seen"
 import { clearDismissals } from "@/lib/first-run-dismissal"
 import { errorDetail, fetchWithTimeout } from "@/lib/api/client"
 import { clearTrackedJobs } from "@/lib/running-jobs"
+import { safeStorage } from "@/lib/safe-storage"
 
 export interface AuthUser {
   id: number
@@ -101,7 +102,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     bumpSessionEpoch()
     // Present the bearer token so the server can revoke this session's JWT (the cookie, if any,
     // is sent by credentials: "include"). Read before it's removed from storage below.
-    const stored = localStorage.getItem(_TOKEN_KEY)
+    const stored = safeStorage.getItem(_TOKEN_KEY)
     fetch(`${BASE}/auth/logout`, {
       method: "POST",
       credentials: "include",
@@ -111,7 +112,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!res.ok) setLogoutWarning(_LOGOUT_WARNING)
       })
       .catch(() => setLogoutWarning(_LOGOUT_WARNING))
-    localStorage.removeItem(_TOKEN_KEY)
+    safeStorage.removeItem(_TOKEN_KEY)
     // The React Query cache is cleared separately by QueryAuthSync on the user-id change.
     clearPerUserBrowserState()
     setToken(null)
@@ -122,7 +123,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const epochAtStart = sessionEpochRef.current
-    const stored = localStorage.getItem(_TOKEN_KEY)
+    const stored = safeStorage.getItem(_TOKEN_KEY)
     let retryTimer: ReturnType<typeof setTimeout> | undefined
     // Stops a fetch in flight at cleanup (unmount, StrictMode remount) from retrying or setting state;
     // clearing retryTimer alone can't, since it's only assigned in the catch handler.
@@ -195,7 +196,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!authUnconfirmed) return
     function handleOnline() {
       const epochAtStart = sessionEpochRef.current
-      const stored = localStorage.getItem(_TOKEN_KEY)
+      const stored = safeStorage.getItem(_TOKEN_KEY)
       fetch(`${BASE}/auth/me`, {
         headers: stored ? { Authorization: `Bearer ${stored}` } : {},
         credentials: "include",
@@ -228,7 +229,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     function onStorage(e: StorageEvent) {
       if (e.key !== null && e.key !== _TOKEN_KEY) return
-      const next = localStorage.getItem(_TOKEN_KEY)
+      const next = safeStorage.getItem(_TOKEN_KEY)
       const parsed = next ? parseJwtPayload(next) : null
       bumpSessionEpoch()
       setToken(parsed ? next : null)
@@ -260,7 +261,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     bumpSessionEpoch()
     clearLogoutWarning()
     clearPerUserBrowserState()
-    localStorage.setItem(_TOKEN_KEY, access_token)
+    safeStorage.setItem(_TOKEN_KEY, access_token)
     setToken(access_token)
     setUser(u)
     setPendingInvitations(pending_invitations ?? [])
@@ -277,7 +278,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       bumpSessionEpoch()
       clearLogoutWarning()
       clearPerUserBrowserState()
-      localStorage.setItem(_TOKEN_KEY, jwtToken)
+      safeStorage.setItem(_TOKEN_KEY, jwtToken)
       setToken(jwtToken)
       setUser(authUser)
       setPendingInvitations(invitations)

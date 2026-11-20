@@ -46,6 +46,7 @@ vi.mock("@/lib/api/client", () => ({
       repoRow: (...args: unknown[]) => securityRepoRowMock(...args),
     },
     waivers: {
+      checks: () => Promise.resolve([]),
       list: (...args: unknown[]) => waiversListMock(...args),
     },
     orgs: {

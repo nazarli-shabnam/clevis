@@ -1,27 +1,4 @@
-// Storage can be blocked (private modes); then nothing is remembered and a reload simply cannot re-attach.
-const safeStorage = {
-  getItem(key: string): string | null {
-    try {
-      return localStorage.getItem(key)
-    } catch {
-      return null
-    }
-  },
-  setItem(key: string, value: string): void {
-    try {
-      localStorage.setItem(key, value)
-    } catch {
-      // not remembered
-    }
-  },
-  removeItem(key: string): void {
-    try {
-      localStorage.removeItem(key)
-    } catch {
-      // nothing to remove
-    }
-  },
-}
+import { safeStorage } from "@/lib/safe-storage"
 
 // Long operations (a scan, bulk remediation, bulk branch protection, Dependabot triage) run as server-side jobs
 // that `postJob` polls. The poller only lives as long as the page, so the job's id is kept here: after a reload,
