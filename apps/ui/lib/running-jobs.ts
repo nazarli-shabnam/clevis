@@ -17,10 +17,20 @@ export interface TrackedJob {
   startedAt: number
 }
 
+function isTrackedJob(j: unknown): j is TrackedJob {
+  const t = j as Partial<TrackedJob> | null
+  return (
+    typeof t?.jobId === "number" &&
+    typeof t.label === "string" &&
+    (t.org === null || typeof t.org === "string") &&
+    typeof t.startedAt === "number"
+  )
+}
+
 function read(): TrackedJob[] {
   try {
     const parsed = JSON.parse(safeStorage.getItem(KEY) ?? "[]")
-    return Array.isArray(parsed) ? parsed.filter((j): j is TrackedJob => typeof j?.jobId === "number") : []
+    return Array.isArray(parsed) ? parsed.filter(isTrackedJob) : []
   } catch {
     return []
   }
@@ -39,7 +49,13 @@ export function forgetJob(jobId: number): void {
   write(read().filter((j) => j.jobId !== jobId))
 }
 
+// Bumped whenever the stored jobs are cleared (sign-out), so a start that was in flight across the clear can tell
+// it belongs to the previous identity and must not be written back.
+let generation = 0
+export const jobGeneration = () => generation
+
 export function clearTrackedJobs(): void {
+  generation++
   safeStorage.removeItem(KEY)
 }
 

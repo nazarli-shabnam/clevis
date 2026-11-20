@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -79,5 +80,18 @@ describe("RunningJobsBanner (#1124)", () => {
     } finally {
       unmarkLive(5);
     }
+  });
+
+  it("still attaches the job under Strict Mode's setup, cleanup, setup (#1124)", async () => {
+    stubJob("done", "{}");
+    trackJob({ jobId: 5, label: "security scan", org: "acme", startedAt: Date.now() });
+    render(
+      <StrictMode>
+        <QueryClientProvider client={new QueryClient()}>
+          <RunningJobsBanner />
+        </QueryClientProvider>
+      </StrictMode>,
+    );
+    expect(await screen.findByText(/security scan for acme is still running/)).toBeInTheDocument();
   });
 });

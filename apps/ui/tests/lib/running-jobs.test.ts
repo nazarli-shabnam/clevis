@@ -24,6 +24,12 @@ describe("running job tracking (#1124)", () => {
     expect(listTrackedJobs()).toEqual([]);
   });
 
+  it("drops records whose fields are malformed and keeps the valid ones", () => {
+    const ok = { jobId: 1, label: "bulk fix", org: null, startedAt: Date.now() };
+    localStorage.setItem("clevis:running-jobs", JSON.stringify([ok, { ...ok, jobId: 2, label: {} }, { ...ok, jobId: 3, startedAt: "x" }]));
+    expect(listTrackedJobs().map((j) => j.jobId)).toEqual([1]);
+  });
+
   it("survives corrupt storage", () => {
     localStorage.setItem("clevis:running-jobs", "{not json");
     expect(listTrackedJobs()).toEqual([]);

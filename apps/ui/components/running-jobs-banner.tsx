@@ -38,11 +38,17 @@ export function RunningJobsBanner() {
           }
         })
         .finally(() => {
+          // After cleanup the marker is already released (and a remount may own it now): leave it alone.
+          if (controller.signal.aborted) return
           unmarkLive(job.jobId)
           setRunning((prev) => prev.filter((j) => j.jobId !== job.jobId))
         })
     }
-    return () => controller.abort()
+    return () => {
+      controller.abort()
+      // Released synchronously so a Strict Mode remount can attach these jobs again.
+      for (const job of attached) unmarkLive(job.jobId)
+    }
     // Once per mount: the list is read from storage, not from props.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

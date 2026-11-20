@@ -82,7 +82,7 @@ import type {
   WorkflowLintResponse,
   WorkflowsResponse,
 } from "./types"
-import { describeJob, forgetJob, markLive, trackJob, unmarkLive } from "@/lib/running-jobs"
+import { describeJob, forgetJob, jobGeneration, markLive, trackJob, unmarkLive } from "@/lib/running-jobs"
 import { safeStorage } from "@/lib/safe-storage"
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
@@ -310,9 +310,11 @@ export async function awaitJob<T>(jobId: number, opts: { signal?: AbortSignal } 
 // returns. Validation and permission errors still reject immediately (they answer before the job exists);
 // a job that fails rejects with its message.
 async function postJob<T>(path: string, body: unknown, opts: { signal?: AbortSignal } = {}): Promise<T> {
+  const generation = jobGeneration()
   const { job_id } = await post<{ job_id: number }>(`${path}?async=1`, body)
-  // Remember the job so it can be found again after a reload or navigation (see lib/running-jobs.ts).
-  trackJob({ jobId: job_id, ...describeJob(path, body), startedAt: Date.now() })
+  // Remember the job so it can be found again after a reload or navigation (see lib/running-jobs.ts), unless
+  // the identity was reset (sign-out) while the request was in flight.
+  if (generation === jobGeneration()) trackJob({ jobId: job_id, ...describeJob(path, body), startedAt: Date.now() })
   markLive(job_id)
   try {
     const result = await awaitJob<T>(job_id, opts)
