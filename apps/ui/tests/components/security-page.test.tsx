@@ -103,10 +103,9 @@ vi.mock("@/components/bulk-fix-panel", async (importOriginal) => {
 
 import SecurityPage from "@/app/security/page";
 
-function renderPage() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+function renderPage(queryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+})) {
   return render(
     <QueryClientProvider client={queryClient}>
       <SecurityPage />
@@ -414,6 +413,26 @@ describe("SecurityPage", () => {
 
     await waitFor(() => expect(analyticsOverviewMock).toHaveBeenCalledTimes(2));
     expect(securityMatrixMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes the cockpit (Overview score, sidebar dot) when a scan finishes", async () => {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [],
+    });
+    securityMatrixMock.mockResolvedValue({
+      owner: "acme", repos: [],
+      summary: { fully_compliant_count: 0, critical_risk_count: 0, secret_hits_count: 0, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } },
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+
+    renderPage(queryClient);
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["analytics.cockpit", "acme"] }));
   });
 
   it("says when the matrix covers only some of the org's repositories (#897)", async () => {

@@ -19,7 +19,7 @@ const FULL_FEED_DAYS = 90
 
 export default function NotificationsPage() {
   const { scope } = useActiveScope()
-  const { org, notMember, query, markRead, dismiss, items, unread, hasMore, loadingMore, loadMoreFailed, refreshFailed, loadMore } = useNotifications({ full: true })
+  const { org, notMember, query, markRead, dismiss, markKindRead, items, unread, hasMore, loadingMore, loadMoreFailed, refreshFailed, loadMore } = useNotifications({ full: true })
   const [customizing, setCustomizing] = useState(false)
   // Kinds shown; all by default. Client-side: the feed is already one bounded request, and the per-user
   // mute preferences (in the bell) are what hide a kind server-side.
@@ -36,6 +36,8 @@ export default function NotificationsPage() {
 
   const visible = items.filter((n) => shown.has(n.kind) && (!unreadOnly || !n.read))
   const present = new Set(items.map((n) => n.kind))
+  // Unread loaded items per shown kind, for the "mark this kind read" buttons.
+  const unreadByKind = KIND_ORDER.filter((k) => shown.has(k)).map((kind) => ({ kind, count: items.filter((n) => n.kind === kind && !n.read).length })).filter((k) => k.count > 0)
 
   return (
     <>
@@ -72,6 +74,20 @@ export default function NotificationsPage() {
             </Button>
           </div>
         </div>
+        {unreadByKind.length > 0 && (
+          <div className="px-4 py-2 border-b border-border flex items-center gap-2 flex-wrap" role="group" aria-label="Mark a kind read">
+            {unreadByKind.map(({ kind, count }) => (
+              <Button key={kind} size="sm" variant="ghost" disabled={markKindRead.isPending} onClick={() => markKindRead.mutate(kind)}>
+                Mark {KIND_LABEL[kind]} read ({count})
+              </Button>
+            ))}
+          </div>
+        )}
+        {markKindRead.isError && (
+          <p role="alert" className="px-4 py-2 text-xs text-destructive border-b border-border">
+            Couldn&apos;t mark them as read: {markKindRead.error.message}
+          </p>
+        )}
         {customizing && org && <PreferencesPanel org={org} />}
         {markRead.isError && (
           <p role="alert" className="px-4 py-2 text-xs text-destructive border-b border-border">
@@ -108,7 +124,17 @@ export default function NotificationsPage() {
           <ul className="divide-y divide-border">
             {visible.map((n) => (
               <li key={n.id} className="flex items-start gap-3 px-4 py-2.5">
-                <Link href={n.href} className={`flex min-w-0 flex-1 flex-col gap-0.5 text-xs ${n.read ? "text-muted-foreground" : "text-foreground"}`}>
+                <Link
+                  href={n.href}
+                  onClick={() => {
+                    // Opening an item counts as having seen it.
+                    if (!n.read) dismiss.mutate(n.id)
+                  }}
+                  // A middle click opens the link in a new tab through auxclick, not click.
+                  onAuxClick={(e) => {
+                    if (e.button === 1 && !n.read) dismiss.mutate(n.id)
+                  }}
+                  className={`flex min-w-0 flex-1 flex-col gap-0.5 text-xs ${n.read ? "text-muted-foreground" : "text-foreground"}`}>
                   <span className="flex items-center gap-2">
                     {!n.read && (
                       <>

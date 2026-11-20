@@ -231,6 +231,16 @@ def test_creating_waivers_takes_the_per_tenant_lock_before_counting(db, world):
     assert lock < count
 
 
+def test_the_waivable_check_catalog_matches_what_validation_accepts(db, world):
+    resp = _client(db, world["users"]["member"]).get("/orgs/acme-w/waivable-checks")
+    assert resp.status_code == 200
+    catalog = resp.json()
+    assert {c["id"] for c in catalog} == waiver_service.KNOWN_CHECK_IDS
+    assert {c["id"] for c in catalog if c["org_wide_only"]} == waiver_service.ORG_WIDE_ONLY_CHECK_IDS
+    assert all(c["title"] for c in catalog)
+    assert _client(db, world["users"]["outsider"]).get("/orgs/acme-w/waivable-checks").status_code in (403, 404)
+
+
 def test_waiver_validation(db, world):
     admin = _client(db, world["users"]["admin"])
     assert admin.post("/orgs/acme-w/waivers", json=_body(repos=["acme-w/legacy"])).status_code == 422
