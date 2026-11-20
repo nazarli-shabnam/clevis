@@ -413,9 +413,12 @@ def _handle_backfill_repo_events(conn: psycopg.Connection, job_id: int, payload_
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
+    coverage = backfill.Coverage()
     try:
         with httpx.Client(timeout=20) as client:
-            raw_events = backfill.fetch_all_events(client, base, headers, payload.account_login, payload.account_type)
+            raw_events = backfill.fetch_all_events(
+                client, base, headers, payload.account_login, payload.account_type, coverage
+            )
     except httpx.HTTPStatusError as error:
         # Still failing after fetch_events' own retries: a 5xx or a rate limit is requeued with the job
         # backoff, a genuine 4xx fails the job.
@@ -461,15 +464,16 @@ def _handle_backfill_repo_events(conn: psycopg.Connection, job_id: int, payload_
             # Upserted in the same transaction so a rollback doesn't advance the cursor.
             cur.execute(
                 """
-                INSERT INTO activity_sync_cursors (tenant_id, account_login, account_type, last_synced_at)
-                VALUES (%s, %s, %s, NOW())
+                INSERT INTO activity_sync_cursors (tenant_id, account_login, account_type, last_synced_at, incomplete_reason)
+                VALUES (%s, %s, %s, NOW(), %s)
                 ON CONFLICT (tenant_id) DO UPDATE SET
                     account_login = EXCLUDED.account_login,
                     account_type = EXCLUDED.account_type,
                     last_synced_at = EXCLUDED.last_synced_at,
+                    incomplete_reason = EXCLUDED.incomplete_reason,
                     updated_at = NOW()
                 """,
-                (payload.tenant_id, payload.account_login, payload.account_type),
+                (payload.tenant_id, payload.account_login, payload.account_type, coverage.reason),
             )
         conn.commit()
     except psycopg.Error as error:

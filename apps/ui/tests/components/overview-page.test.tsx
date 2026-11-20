@@ -298,6 +298,21 @@ describe("OverviewPage cockpit", () => {
     });
   });
 
+  it("warns that activity history may be incomplete when the last backfill hit a cap (#1092)", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+    cockpitMock.mockResolvedValue({
+      ...EMPTY_COCKPIT,
+      activity_history_incomplete: "private repositories beyond the 50 most recently pushed were not read",
+    });
+
+    renderPage();
+
+    expect(
+      await screen.findByText("(history may be incomplete: private repositories beyond the 50 most recently pushed were not read)"),
+    ).toBeInTheDocument();
+  });
+
   it("does not label recent activity as stale when the cockpit says it's current", async () => {
     localStorage.setItem("default_org", "acme");
     tokensResolveMock.mockResolvedValue({ token: "ghp_test" });

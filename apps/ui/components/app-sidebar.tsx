@@ -15,6 +15,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarSeparator,
+  useSidebar,
 } from "@/components/ui/sidebar"
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api/client"
@@ -182,6 +183,12 @@ function ProfileDropdown({
 
 export function AppSidebar() {
   const pathname = usePathname()
+  const { setOpenMobile } = useSidebar()
+  // On a phone the nav lives in a sheet. Its links only change the route, so the sheet would stay open over the
+  // new page; close it whenever the route changes.
+  useEffect(() => {
+    setOpenMobile(false)
+  }, [pathname, setOpenMobile])
   const router = useRouter()
   const { user, logout, isLoading: authLoading } = useAuth()
   const [open, setOpen] = useState(false)
@@ -232,7 +239,8 @@ export function AppSidebar() {
     isSuccess: savedTokensSuccess,
     refetch: refetchSavedTokens,
   } = useQuery<SavedTokenMeta[]>({
-    queryKey: ["saved-tokens"],
+    // Same key as Settings' list (same request), so saving or deleting a token there refreshes this scope list.
+    queryKey: ["tokens"],
     queryFn: () => api.tokens.list(),
     enabled: isWorkspaceAdmin,
     retry: false,
