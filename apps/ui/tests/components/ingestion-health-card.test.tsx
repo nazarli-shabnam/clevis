@@ -52,6 +52,13 @@ describe("IngestionHealthCard", () => {
     expect(screen.getByText("3 hours ago")).toBeInTheDocument()
   })
 
+  it("says history may be incomplete when the last backfill was capped (#1092)", async () => {
+    healthMock.mockResolvedValue(health({ backfill_incomplete_reason: "private repositories beyond the 50 most recently pushed were not read" }));
+    renderCard();
+
+    expect(await screen.findByText(/History may be incomplete: private repositories beyond the 50/)).toBeInTheDocument();
+  });
+
   it("hints that the webhook may not be configured when nothing has ever arrived", async () => {
     healthMock.mockResolvedValue(
       health({ has_deliveries: false, has_webhook_deliveries: false, last_received_at: null, last_processed_at: null, received: 0, pending: 0, last_backfill_at: null, last_membership_reconcile_at: null }),

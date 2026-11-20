@@ -20,7 +20,7 @@ export function SectionError({
 
   return (
     <div className="px-4 py-6 flex items-center justify-between gap-3">
-      <p className="text-sm text-destructive">{message}</p>
+      <p role="alert" className="text-sm text-destructive">{message}</p>
       {retryable && (
         <Button size="sm" variant="outline" onClick={onRetry} disabled={retrying}>
           {retryContent}
