@@ -8,7 +8,7 @@ from sqlalchemy import text
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import User, get_db
-from src.repositories import org_membership_repo, org_repo, scan_results_repo
+from src.repositories import org_membership_repo, org_repo, scan_results_repo, tenant_repo
 from src.routers.analytics import router
 
 CHECKS = [
@@ -101,7 +101,7 @@ def test_personal_export_own_scope_excludes_other_users_scans(http, db, mock_use
     # must not see a scan another user ran against the same login.
     org = org_repo.get_or_create(db, github_login="acme")
     other = _make_user(db, "other@example.com")
-    _seed(db, "acme", org.tenant_id, user_id=mock_user.id, score=11)
+    _seed(db, "acme", tenant_repo.ensure_personal_tenant(db, mock_user.id).id, user_id=mock_user.id, score=11)
     _seed(db, "acme", org.tenant_id, user_id=other.id, score=99)
 
     resp = http.get("/me/analytics/export?owner=acme")
