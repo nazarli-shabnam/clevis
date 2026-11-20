@@ -52,6 +52,9 @@ class IngestionHealth(BaseModel):
     lost_recent: int
     # Last successful event backfill / gap-heal, and membership reconcile.
     last_backfill_at: datetime | None
+    # Why that backfill could not read all of the history (a page/repo cap was hit, a repo was skipped), or None.
+    # repo_events and the weekly counts may under-report until a later run reads more.
+    backfill_incomplete_reason: str | None = None
     last_membership_reconcile_at: datetime | None
 
 
@@ -94,7 +97,12 @@ def ingestion_health(
         )
         .scalar()
     )
-    backfill = db.query(ActivitySyncCursor.last_synced_at).filter(ActivitySyncCursor.tenant_id == tenant_id).scalar()
+    backfill, backfill_incomplete = (
+        db.query(ActivitySyncCursor.last_synced_at, ActivitySyncCursor.incomplete_reason)
+        .filter(ActivitySyncCursor.tenant_id == tenant_id)
+        .one_or_none()
+        or (None, None)
+    )
     reconcile = (
         db.query(OrgMembershipSyncCursor.last_synced_at).filter(OrgMembershipSyncCursor.tenant_id == tenant_id).scalar()
     )
@@ -114,5 +122,6 @@ def ingestion_health(
         loss_lookback_days=_LOSS_LOOKBACK.days,
         lost_recent=lost_recent,
         last_backfill_at=backfill,
+        backfill_incomplete_reason=backfill_incomplete,
         last_membership_reconcile_at=reconcile,
     )
