@@ -4,8 +4,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const createIssueMock = vi.fn();
 const remediateMock = vi.fn();
+const catalog = [
+  { id: "organization_members_mfa_required", title: "Organization requires 2FA/MFA", org_wide_only: true },
+  { id: "repository_default_branch_protection_enabled", title: "Default branch has protection rules", org_wide_only: false },
+  { id: "repository_secret_scanning_enabled", title: "Secret scanning enabled", org_wide_only: false },
+  { id: "organization_members_2fa_enabled", title: "All organization members have 2FA enabled", org_wide_only: true },
+  { id: "repository_no_outside_collaborator_admins", title: "No outside collaborators have admin access", org_wide_only: true },
+];
 vi.mock("@/lib/api/client", () => ({
   api: {
+    waivers: { checks: () => Promise.resolve(catalog) },
     issues: { create: (...a: unknown[]) => createIssueMock(...a) },
     security: { remediate: (...a: unknown[]) => remediateMock(...a) },
   },
@@ -78,11 +86,18 @@ describe("CheckCard", () => {
     expect(screen.queryByText(/affected/)).not.toBeInTheDocument();
   });
 
-  it("prefills the waiver form with the listed repos (#832)", () => {
+  it("prefills the waiver form with the listed repos (#832)", async () => {
     renderWithClient(<CheckCard check={failingWithRepos(["api", "web"])} waiveOrg="acme" />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Waive…" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Waive…" }));
     expect(screen.getByLabelText(/Repositories/)).toHaveValue("api, web");
+  });
+
+  it("offers no waiver for a check the API does not list as waivable", async () => {
+    renderWithClient(<CheckCard check={{ ...failingWithRepos(["api"]), id: "not_in_catalog" }} waiveOrg="acme" />);
+
+    await waitFor(() => expect(screen.getByText("Branch protection")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Waive…" })).not.toBeInTheDocument();
   });
 
   it("renders a severity the UI doesn't know about, as plain text", () => {

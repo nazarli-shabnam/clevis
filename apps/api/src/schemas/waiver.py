@@ -49,3 +49,10 @@ class WaiverOut(BaseModel):
     created_at: datetime
     # Derived: an expired waiver is kept (for the record and to renew) but no longer excludes its check.
     active: bool = True
+
+
+class WaivableCheckOut(BaseModel):
+    id: str
+    title: str
+    # True when the check never names failing repos, so only an org-wide waiver is accepted for it.
+    org_wide_only: bool

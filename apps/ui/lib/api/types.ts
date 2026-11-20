@@ -148,6 +148,14 @@ export interface ApiTokenCreated extends ApiToken {
   token: string
 }
 
+/** A check an admin may waive, as the API's validation sees it. */
+export interface WaivableCheck {
+  id: string
+  title: string
+  /** The check never names failing repos, so only an org-wide waiver is accepted. */
+  org_wide_only: boolean
+}
+
 export interface CheckWaiverInput {
   check_id: string
   repos: string[] | null
