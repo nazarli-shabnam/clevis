@@ -5,11 +5,11 @@ import { invalidateInstallations, invalidateTokens } from "@/lib/query-invalidat
 import { hasOrgLogin } from "@/lib/token-resolve";
 
 describe("query invalidation helpers", () => {
-  it("invalidateTokens hits both the token list and every resolved-token lookup", () => {
+  it("invalidateTokens refreshes the shared token list (Settings + sidebar scopes) and the org memberships a save can create", () => {
     const qc = new QueryClient();
     const spy = vi.spyOn(qc, "invalidateQueries");
     invalidateTokens(qc);
-    expect(spy.mock.calls.map(([f]) => f?.queryKey)).toEqual([["tokens"], ["tokens.resolve"]]);
+    expect(spy.mock.calls.map(([f]) => f?.queryKey)).toEqual([["tokens"], ["my-orgs"]]);
   });
 
   it("invalidateInstallations hits the personal, per-org and permissions families", () => {

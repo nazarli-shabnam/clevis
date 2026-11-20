@@ -685,6 +685,17 @@ def _recent_events_staleness(db: Session, tenant_id: int) -> bool:
     return last_synced_at < cutoff
 
 
+def _activity_incomplete_reason(db: Session, tenant_id: int | None) -> str | None:
+    """Why this tenant's last event backfill could not read all the history, or None. Tenant context is already
+    set by _cockpit_connected_tenant."""
+    if tenant_id is None:
+        return None
+    return db.execute(
+        text("SELECT incomplete_reason FROM activity_sync_cursors WHERE tenant_id = :tenant_id"),
+        {"tenant_id": tenant_id},
+    ).scalar()
+
+
 def _cockpit_events_and_commit_activity(
     db: Session, owner: str, token: str, tenant_id: int | None, repo_names: list[str]
 ) -> tuple[list[OrgEventSummary], bool, bool, tuple[list[int], list[int], bool]]:
@@ -1078,6 +1089,7 @@ async def _build_cockpit(owner: str, user: UserOut, db: Session, token: str) -> 
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise _github_error(exc) from exc
     repo_names = [r["name"] for r in repos]
+    activity_incomplete = await anyio.to_thread.run_sync(lambda: _activity_incomplete_reason(db, connected_tenant_id))
 
     (
         (member_count, member_count_ok),
@@ -1131,6 +1143,7 @@ async def _build_cockpit(owner: str, user: UserOut, db: Session, token: str) -> 
         commit_activity_source="aggregate" if connected_tenant_id is not None else "github",
         recent_events_source="aggregate" if connected_tenant_id is not None else "github",
         recent_events_stale=recent_events_stale,
+        activity_history_incomplete=activity_incomplete,
         degraded=degraded,
         has_automation_run=has_automation_run,
     )

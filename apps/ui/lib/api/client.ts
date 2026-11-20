@@ -1,4 +1,5 @@
 import type {
+  WaivableCheck,
   GithubAppManifest,
   GithubAppStatus,
   MyInvitation,
@@ -17,6 +18,7 @@ import type {
   CheckWaiver,
   CheckWaiverInput,
   NotificationFeed,
+  NotificationKind,
   NotificationPreferences,
   ActionsUsageResponse,
   AnalyticsHistoryResponse,
@@ -80,6 +82,7 @@ import type {
   WorkflowLintResponse,
   WorkflowsResponse,
 } from "./types"
+import { safeStorage } from "@/lib/safe-storage"
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
 
@@ -88,7 +91,7 @@ const _TOKEN_KEY = "clevis:token"
 
 function getAuthHeaders(): Record<string, string> {
   if (typeof window === "undefined") return {}
-  const token = localStorage.getItem(_TOKEN_KEY)
+  const token = safeStorage.getItem(_TOKEN_KEY)
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
@@ -194,7 +197,7 @@ class ApiError extends Error {
 /** Clears the stale token and lets the auth guard redirect to /login. */
 function notifyUnauthorized() {
   if (typeof window === "undefined") return
-  localStorage.removeItem(_TOKEN_KEY)
+  safeStorage.removeItem(_TOKEN_KEY)
   window.dispatchEvent(new Event("clevis:unauthorized"))
 }
 
@@ -428,6 +431,9 @@ export const api = {
     // `upTo` = the newest item shown, so an item that arrived after the feed loaded stays unread.
     markRead: (org: string, upTo?: string) =>
       post<null>(`/orgs/${encodeURIComponent(org)}/notifications/read`, upTo ? { up_to: upTo } : {}),
+    // 204: marks every unread item of one kind read for the caller (per-item marks, read-up-to marker untouched).
+    markKindRead: (org: string, kind: NotificationKind) =>
+      post<null>(`/orgs/${encodeURIComponent(org)}/notifications/read-kind`, { kind }),
     // The caller's own muted kinds for this org; the server drops them from the feed and unread count.
     preferences: (org: string) =>
       get<NotificationPreferences>(`/orgs/${encodeURIComponent(org)}/notifications/preferences`),
@@ -798,6 +804,8 @@ export const api = {
     },
   },
   waivers: {
+    // The checks the API accepts a waiver for (and which are org-wide only); the form reads this, not a copy.
+    checks: (orgLogin: string) => get<WaivableCheck[]>(`/orgs/${encodeURIComponent(orgLogin)}/waivable-checks`),
     list: (orgLogin: string) => get<CheckWaiver[]>(`/orgs/${encodeURIComponent(orgLogin)}/waivers`),
     create: (orgLogin: string, body: CheckWaiverInput) =>
       post<CheckWaiver>(`/orgs/${encodeURIComponent(orgLogin)}/waivers`, body),
