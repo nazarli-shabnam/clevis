@@ -5,7 +5,9 @@ the local user (first-ever user becomes workspace admin).
 Deliberately does NOT link by email match: self-registration has no email-ownership
 verification, so auto-linking by email alone would let an attacker who pre-registers a
 victim's email silently inherit that victim's GitHub identity. A matching email on a
-different account redirects with an error instead of linking.
+different *verified* account redirects with an error instead of linking. An unverified, GitHub-less
+self-registration proved nothing about the address, so GitHub's verified identity claims that row
+instead (the row is replaced by a fresh account); otherwise the squatter would lock the real owner out.
 
 A password account that wants a GitHub identity links it explicitly while signed in
 (``POST /link`` starts it, the same ``/callback`` finishes it): GitHub proves who controls
@@ -40,7 +42,7 @@ from src.core.config import settings
 from src.core.db import RevokedToken, User, get_db, set_session_user
 from src.core.rate_limit import rate_limit
 from src.repositories import invitation_repo, tenant_repo
-from src.services import auth_audit, github_oauth, org_provisioning
+from src.services import account_deletion, auth_audit, github_oauth, org_provisioning
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -78,6 +80,11 @@ def _refresh_profile(user: User, identity: github_oauth.GitHubIdentity) -> None:
         user.name = identity.name
 
 
+def _is_unclaimed_registration(user: User) -> bool:
+    """A self-registered row nobody has proven they own: unverified, no GitHub identity, not an admin."""
+    return not user.email_verified and user.github_user_id is None and not user.is_workspace_admin
+
+
 def find_or_create_user(db: Session, identity: github_oauth.GitHubIdentity) -> User:
     user = db.query(User).filter(User.github_user_id == identity.github_user_id).first()
     if user is not None:
@@ -86,8 +93,21 @@ def find_or_create_user(db: Session, identity: github_oauth.GitHubIdentity) -> U
         db.refresh(user)
         return user
 
-    if db.query(User).filter(func.lower(User.email) == identity.email.lower()).first() is not None:
-        raise EmailAlreadyRegistered(identity.email)
+    squatter = db.query(User).filter(func.lower(User.email) == identity.email.lower()).with_for_update().first()
+    replaced_user_id: int | None = None
+    if squatter is not None:
+        if not _is_unclaimed_registration(squatter):
+            raise EmailAlreadyRegistered(identity.email)
+        # GitHub vouches for this address (fetch_identity only returns a verified one) and the registrant never
+        # proved it, so the row is replaced, not taken over: deleting it removes its sessions and everything the
+        # registrant stored in their personal tenant, and the real owner starts from a fresh account below.
+        replaced_user_id = squatter.id
+        set_session_user(db, squatter.id)
+        try:
+            account_deletion.delete_account(db, squatter)
+        except account_deletion.AccountDeletionRefused:
+            db.rollback()
+            raise EmailAlreadyRegistered(identity.email) from None
 
     # Same lock as /auth/setup: serialize the first-user check-then-insert.
     db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": SETUP_LOCK_KEY})
@@ -96,6 +116,11 @@ def find_or_create_user(db: Session, identity: github_oauth.GitHubIdentity) -> U
     user = db.query(User).filter(User.github_user_id == identity.github_user_id).first()
     if user is not None:
         _refresh_profile(user, identity)
+        # The deletion above is committed here too, so it needs its audit row on this path as well.
+        if replaced_user_id is not None:
+            auth_audit.record(
+                db, user, "auth.unverified_registration_replaced", extra={"replaced_user_id": replaced_user_id}, commit=False
+            )
         db.commit()
         db.refresh(user)
         return user
@@ -142,6 +167,10 @@ def find_or_create_user(db: Session, identity: github_oauth.GitHubIdentity) -> U
         raise
     set_session_user(db, user.id)
     tenant_repo.ensure_personal_tenant(db, user.id, commit=False)
+    if replaced_user_id is not None:
+        auth_audit.record(
+            db, user, "auth.unverified_registration_replaced", extra={"replaced_user_id": replaced_user_id}, commit=False
+        )
     db.commit()
     db.refresh(user)
     return user
