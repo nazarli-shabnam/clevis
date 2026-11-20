@@ -76,8 +76,13 @@ export function useNotifications({ full = false }: { full?: boolean } = {}) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: notificationsKey(org) }),
   })
 
+  const markKindRead = useMutation({
+    mutationFn: (kind: NotificationKind) => api.notifications.markKindRead(org, kind),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: notificationsKey(org) }),
+  })
+
   const more = { hasMore: !!long.hasNextPage, loadingMore: long.isFetchingNextPage, loadMoreFailed, refreshFailed, loadMore: () => long.fetchNextPage() }
-  return { org, notMember, query, markRead, dismiss, items, unread, ...more }
+  return { org, notMember, query, markRead, dismiss, markKindRead, items, unread, ...more }
 }
 
 /** The caller's muted notification kinds for `org`. Loaded only while `enabled` (the settings panel is

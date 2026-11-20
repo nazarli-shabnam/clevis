@@ -151,8 +151,21 @@ describe("BulkFixPanel", () => {
     expect(await screen.findByText("applied")).toBeInTheDocument();
     expect(bulkMock).toHaveBeenLastCalledWith("acme", { check_id: SS, repos: ["api"], dry_run: false, token: "ghp_t" });
     expect(onApplied).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("Re-run the scan to confirm the results.")).toBeInTheDocument();
+    expect(screen.getByText("Re-scanning to confirm the results…")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /apply to|confirm/i })).toBeNull();
+  });
+
+  it("tells the user to re-run the scan when the host does not re-scan for them", async () => {
+    bulkMock
+      .mockResolvedValueOnce({ check_id: SS, dry_run: true, items: [{ repo: "api", status: "would_change", detail: "d" }] })
+      .mockResolvedValueOnce({ check_id: SS, dry_run: false, items: [{ repo: "api", status: "applied", detail: "d" }] });
+    renderPanel({ onApplied: undefined });
+    fireEvent.click(screen.getByLabelText("Select all (2)"));
+    fireEvent.click(screen.getByRole("button", { name: "Preview changes (2)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Apply to 1 repo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm — change 1 repo" }));
+
+    expect(await screen.findByText("Re-run the scan to confirm the results.")).toBeInTheDocument();
   });
 
   it("can cancel the confirmation without applying", async () => {

@@ -30,7 +30,7 @@ from src.repositories import (
     scan_results_repo,
     waiver_repo,
 )
-from src.schemas.notification_feed import NotificationFeed, NotificationItem, NotificationPreferences
+from src.schemas.notification_feed import NotificationFeed, NotificationItem, NotificationKind, NotificationPreferences
 from src.services import app_permissions, dependabot_burndown
 from src.services import waivers as waiver_service
 from src.services.scan_service import comparable_scans
@@ -541,6 +541,40 @@ def dismiss_notification(
     if not _item_exists(db, ctx, org_login, kind, int(raw_id)):
         raise HTTPException(status_code=404, detail="No such notification")
     notification_dismissal_repo.dismiss(db, user.id, ctx.org.tenant_id, item_id)
+
+
+class MarkKindReadBody(BaseModel):
+    kind: NotificationKind
+
+
+# Bounds one read-kind request to this many feed pages (MAX_LIMIT items each), so it cannot scan without limit.
+_MAX_READ_KIND_PAGES = 10
+
+
+@router.post("/orgs/{org_login}/notifications/read-kind", status_code=204)
+def mark_kind_read(
+    org_login: str,
+    body: MarkKindReadBody,
+    ctx: OrgContext = Depends(require_org_role(min_role="member")),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Mark every unread notification of one kind read for the caller only, by dismissing each (the read-up-to
+    marker is untouched). Covers what the caller's own feed lists (widest window), paged newest first, so
+    already-read items of other kinds never crowd it out; a kind the caller cannot see (admin-only ones,
+    muted ones) is a no-op."""
+    ids: list[str] = []
+    before: datetime | None = None
+    before_id: str | None = None
+    for _ in range(_MAX_READ_KIND_PAGES):
+        feed = get_notifications(
+            org_login=org_login, days=MAX_WINDOW_DAYS, limit=MAX_LIMIT, before=before, before_id=before_id, ctx=ctx, user=user, db=db
+        )
+        ids += [i.id for i in feed.items if i.kind == body.kind and not i.read]
+        if len(feed.items) < MAX_LIMIT:
+            break
+        before, before_id = feed.items[-1].at, feed.items[-1].id
+    notification_dismissal_repo.dismiss_many(db, user.id, ctx.org.tenant_id, ids)
 
 
 class MarkReadBody(BaseModel):

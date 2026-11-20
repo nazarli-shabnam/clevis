@@ -12,7 +12,8 @@ import { EmptyStateAction } from "@/components/empty-state-action"
 import { SectionError } from "@/components/section-error"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { MAX_WAIVER_DAYS, WAIVABLE_CHECKS, WaiverForm, daysRemaining } from "@/components/waiver-form"
+import { useWaivableChecks } from "@/lib/use-waivable-checks"
+import { MAX_WAIVER_DAYS, WaiverForm, daysRemaining } from "@/components/waiver-form"
 import type { CheckWaiver } from "@/lib/api/types"
 
 const EXPIRING_SOON_DAYS = 14
@@ -37,6 +38,7 @@ function matchesFilter(w: CheckWaiver, filter: WaiverFilter): boolean {
 /** Org admins record accepted risks: a failing check is kept out of the score until the waiver expires. */
 export function WaiversCard({ orgLogin }: { orgLogin: string }) {
   const queryClient = useQueryClient()
+  const { titleOf } = useWaivableChecks(orgLogin)
   const queryKey = ["waivers", orgLogin]
   const query = useQuery<CheckWaiver[]>({ queryKey, queryFn: () => api.waivers.list(orgLogin), retry: false })
   // The waiver being renewed or edited; the form below switches from "add" to "save" for it.
@@ -140,7 +142,7 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
         {visible.length === 0 && <p className="px-4 pb-3 text-xs text-muted-foreground">No waivers match this filter.</p>}
         <ul className="divide-y divide-border">
           {visible.map((w) => {
-            const title = WAIVABLE_CHECKS[w.check_id] ?? w.check_id
+            const title = titleOf(w.check_id)
             const days = daysRemaining(w.expires_at)
             return (
               <li
@@ -194,7 +196,7 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
       <ConfirmDialog
         open={confirming !== null}
         onOpenChange={(open) => !open && setConfirming(null)}
-        title={`Revoke the waiver for ${confirming ? (WAIVABLE_CHECKS[confirming.check_id] ?? confirming.check_id) : ""}?`}
+        title={`Revoke the waiver for ${confirming ? titleOf(confirming.check_id) : ""}?`}
         description="The check counts toward the score again from the next scan. This can't be undone."
         confirmLabel="Revoke"
         pending={revoke.isPending}

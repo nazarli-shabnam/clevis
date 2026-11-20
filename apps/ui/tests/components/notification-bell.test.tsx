@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const feedMock = vi.fn();
 const markReadMock = vi.fn();
+const dismissMock = vi.fn();
 const prefsMock = vi.fn();
 const setPrefsMock = vi.fn();
 const minesMock = vi.fn();
@@ -16,6 +17,7 @@ vi.mock("@/lib/api/client", () => ({
     notifications: {
       feed: (...a: unknown[]) => feedMock(...a),
       markRead: (...a: unknown[]) => markReadMock(...a),
+      dismiss: (...a: unknown[]) => dismissMock(...a),
       preferences: (...a: unknown[]) => prefsMock(...a),
       setPreferences: (...a: unknown[]) => setPrefsMock(...a),
     },
@@ -41,6 +43,8 @@ describe("NotificationBell", () => {
   beforeEach(() => {
     feedMock.mockReset();
     markReadMock.mockReset();
+    dismissMock.mockReset();
+    dismissMock.mockResolvedValue(null);
     markReadMock.mockResolvedValue(null);
     prefsMock.mockReset();
     setPrefsMock.mockReset();
@@ -94,6 +98,32 @@ describe("NotificationBell", () => {
 
     expect(await screen.findByText(/Couldn't refresh; last updated/)).toBeInTheDocument();
     expect(screen.getByText("title a")).toBeInTheDocument();
+  });
+
+  it("marks an unread item read when it is opened, and leaves a read one alone", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "critical_alert"), item("b", "score_drop", true)]));
+    wrap(<NotificationBell />);
+    fireEvent.click(await screen.findByRole("button", { name: "Notifications, 1 unread" }));
+
+    fireEvent.click(await screen.findByRole("link", { name: /title b/ }));
+    expect(dismissMock).not.toHaveBeenCalled();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Notifications, 1 unread" }));
+    fireEvent.click(await screen.findByRole("link", { name: /title a/ }));
+    await waitFor(() => expect(dismissMock).toHaveBeenCalledWith("acme", "a"));
+  });
+
+  it("marks an unread item read on a middle click, but not on a right click or for a read item", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "critical_alert"), item("b", "score_drop", true)]));
+    wrap(<NotificationBell />);
+    fireEvent.click(await screen.findByRole("button", { name: "Notifications, 1 unread" }));
+
+    fireEvent(await screen.findByRole("link", { name: /title a/ }), new MouseEvent("auxclick", { bubbles: true, button: 2 }));
+    fireEvent(screen.getByRole("link", { name: /title b/ }), new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    expect(dismissMock).not.toHaveBeenCalled();
+
+    fireEvent(screen.getByRole("link", { name: /title a/ }), new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    await waitFor(() => expect(dismissMock).toHaveBeenCalledWith("acme", "a"));
   });
 
   it("closes the popover when the View all notifications link is followed", async () => {

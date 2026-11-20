@@ -187,6 +187,13 @@ describe("org-scoped endpoints", () => {
     await api.notifications.markRead("acme");
     expect(JSON.parse(String(without()[1].body))).toEqual({});
   });
+
+  it("notifications.markKindRead posts the kind to read-kind", async () => {
+    const call = stub(null, 204);
+    await api.notifications.markKindRead("acme", "score_drop");
+    expect(call()[0]).toMatch(/\/orgs\/acme\/notifications\/read-kind$/);
+    expect(JSON.parse(String(call()[1].body))).toEqual({ kind: "score_drop" });
+  });
 });
 
 describe("optional token coercion (GitHub App installation fallback)", () => {
