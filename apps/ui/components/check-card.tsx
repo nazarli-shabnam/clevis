@@ -248,14 +248,22 @@ function WaiveThis({ check, orgLogin }: { check: CheckResult; orgLogin: string }
   const { isWaivable, isOrgWideOnly } = useWaivableChecks(orgLogin)
   // Prefill the repos the card names, but only for checks where a repo-scoped waiver means something.
   const repos = isOrgWideOnly(check.id) ? [] : affectedRepos(check)
+  const failing = { names: repos, truncated: repos.length >= MAX_AFFECTED_REPOS }
   const [open, setOpen] = useState(false)
-  const [saved, setSaved] = useState(false)
+  const [saved, setSaved] = useState<boolean | undefined | null>(null) // null = not saved yet
 
   // Offer a waiver only for a check the API accepts one for (nothing until the catalog has loaded).
   if (!isWaivable(check.id)) return null
 
-  if (saved) {
-    return <p className="mt-2 text-xs text-accent">Waiver added. It applies from the next scan.</p>
+  if (saved !== null) {
+    return saved === false ? (
+      <p className="mt-2 text-xs text-yellow-400">
+        Waiver added, but it does not cover every repository this check fails on, so the check still counts against
+        the score. Edit it on the Waivers card to cover them, or waive the whole organization.
+      </p>
+    ) : (
+      <p className="mt-2 text-xs text-accent">Waiver added. It applies from the next scan.</p>
+    )
   }
   if (!open) {
     return (
@@ -273,9 +281,11 @@ function WaiveThis({ check, orgLogin }: { check: CheckResult; orgLogin: string }
       <WaiverForm
         orgLogin={orgLogin}
         fixedCheckId={check.id}
-        initialRepos={repos}
+        // A truncated list is not prefilled: a repository list never takes effect then, a blank one does.
+        initialRepos={failing.truncated ? [] : repos}
+        failing={failing}
         compact
-        onSaved={() => setSaved(true)}
+        onSaved={(covered) => setSaved(covered)}
         onCancel={() => setOpen(false)}
       />
     </div>

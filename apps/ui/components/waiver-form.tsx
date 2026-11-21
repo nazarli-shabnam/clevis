@@ -34,6 +34,23 @@ function renewalDay(w: CheckWaiver): string {
   return w.active && current >= dayInput(1) && current <= latestExpiryDay() ? current : dayInput(30)
 }
 
+/** The repositories a check currently fails on, from the latest scan. `truncated` means the scan's list hit the
+ * cap, so more repositories may fail than are named. */
+export interface FailingRepos {
+  names: string[]
+  truncated: boolean
+}
+
+/** Whether a waiver for `entered` repos takes effect on the check's current failure. Mirrors the API's
+ * `_waiver_for`: a blank list is org-wide (always applies); a repo list applies only when it names every failing
+ * repo and the failing list is complete. `missing` is what the list still has to name. */
+export function waiverCoverage(entered: string[], failing: FailingRepos): { covers: boolean; missing: string[] } {
+  if (entered.length === 0) return { covers: true, missing: [] }
+  const have = new Set(entered.map((r) => r.toLowerCase()))
+  const missing = failing.names.filter((r) => !have.has(r.toLowerCase()))
+  return { covers: !failing.truncated && missing.length === 0, missing }
+}
+
 interface WaiverFormProps {
   orgLogin: string
   /** An existing waiver to renew or edit (saved with PUT); omit to add one. */
@@ -44,12 +61,16 @@ interface WaiverFormProps {
   initialRepos?: string[]
   /** One column, for narrow containers such as a check card. */
   compact?: boolean
-  onSaved?: () => void
+  /** `covered` is whether the saved waiver takes effect on the failure in `failing`; undefined without it. */
+  onSaved?: (covered?: boolean) => void
+  /** What the check fails on right now (a failing check's card passes it), so the form can say when a
+   * repo-scoped waiver would not take effect. */
+  failing?: FailingRepos
   onCancel?: () => void
 }
 
 /** Add a waiver, or renew/edit one: a failing check is kept out of the score until it expires. */
-export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, compact, onSaved, onCancel }: WaiverFormProps) {
+export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, compact, onSaved, failing, onCancel }: WaiverFormProps) {
   const queryClient = useQueryClient()
   const { checks, loaded, isError, isOrgWideOnly } = useWaivableChecks(orgLogin)
   // The admin's pick, else the waiver being edited / the fixed check, else the first check that can be
@@ -62,12 +83,14 @@ export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, comp
   const [until, setUntil] = useState(editing ? renewalDay(editing) : dayInput(30))
 
   const orgWideOnly = isOrgWideOnly(checkId)
+  const enteredRepos = orgWideOnly ? [] : repos.split(",").map((r) => r.trim()).filter(Boolean)
+  const coverage = failing && !editing ? waiverCoverage(enteredRepos, failing) : undefined
 
   const save = useMutation({
     mutationFn: () => {
       const body = {
         check_id: checkId,
-        repos: orgWideOnly ? [] : repos.split(",").map((r) => r.trim()).filter(Boolean),
+        repos: enteredRepos,
         reason,
         owner,
         // End of the chosen day, local time.
@@ -79,7 +102,7 @@ export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, comp
       setReason("")
       setRepos("")
       await queryClient.invalidateQueries({ queryKey: ["waivers", orgLogin] })
-      onSaved?.()
+      onSaved?.(coverage?.covers)
     },
   })
 
@@ -121,6 +144,13 @@ export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, comp
           <label htmlFor={`${idPrefix}-repos`} className="text-xs font-medium block mb-1.5">Repositories (optional)</label>
           <Input id={`${idPrefix}-repos`} placeholder="legacy-api, old-site — blank = whole organization" value={repos} onChange={(e) => setRepos(e.target.value)} />
         </div>
+      )}
+      {coverage && !coverage.covers && (
+        <p role="status" className={compact ? "text-xs text-yellow-400" : "sm:col-span-2 text-xs text-yellow-400"}>
+          {failing?.truncated
+            ? "This check fails on at least as many repositories as a scan lists, so a repository list will not take effect. Leave the list blank to waive it for the whole organization."
+            : `This waiver will not take effect until it also names: ${coverage.missing.join(", ")}.`}
+        </p>
       )}
       <div>
         <label htmlFor={`${idPrefix}-reason`} className="text-xs font-medium block mb-1.5">Reason</label>
