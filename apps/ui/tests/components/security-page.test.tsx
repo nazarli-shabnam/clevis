@@ -414,6 +414,32 @@ describe("SecurityPage", () => {
     expect(securityMatrixMock).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps the bulk fixer mounted while the re-scan after an apply is pending (#1156)", async () => {
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 1, checks: [],
+    });
+    const matrix = {
+      owner: "acme",
+      repos: [{
+        repo: "acme-repo", branch_protection: false, secret_scanning: true, dependabot_enabled: true,
+        dependabot_critical_count: 0, dependabot_high_count: 0, code_scanning: true, force_push_allowed: false,
+        score: 80, unknown_dimensions: [], alerts_source: "github",
+      }],
+      summary: { fully_compliant_count: 0, critical_risk_count: 0, secret_hits_count: 0, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } },
+    };
+    securityMatrixMock.mockResolvedValueOnce(matrix).mockReturnValueOnce(new Promise(() => {})); // the re-scan never settles
+
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+    fireEvent.click(await screen.findByRole("button", { name: "bulk-applied" }));
+
+    await waitFor(() => expect(securityMatrixMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Fix many repos at once")).toBeInTheDocument();
+  });
+
   it("refreshes the cockpit (Overview score, sidebar dot) when a scan finishes", async () => {
     analyticsOverviewMock.mockResolvedValue({
       owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [],

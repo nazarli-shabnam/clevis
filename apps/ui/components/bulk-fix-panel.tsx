@@ -104,6 +104,7 @@ export function BulkFixPanel({
     if (!preselected || preselected.length === 0) return
     handoff.current = new Set(preselected)
     applyHandoff()
+    apply.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preselected])
   useEffect(() => {
@@ -125,16 +126,23 @@ export function BulkFixPanel({
   // Anything that changes what would be sent invalidates the preview and the confirmation.
   useEffect(() => {
     preview.reset()
-    apply.reset()
     setArmed(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checkId, owner, chosen.join("\n")])
+  // The applied results are the record of a write, so they outlive the re-scan that follows it (which
+  // reshuffles the candidates: fixed repos stop failing). Only a different check or owner, or the user
+  // picking repos again, clears them.
+  useEffect(() => {
+    apply.reset()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkId, owner])
 
   const toApply = (preview.data?.items ?? []).filter((i) => i.status === "would_change").map((i) => i.repo)
   const busy = preview.isPending || apply.isPending
 
   function toggle(name: string) {
     handoff.current = null
+    apply.reset()
     setSelected((prev) => {
       const next = new Set(prev)
       if (next.has(name)) next.delete(name)
@@ -184,6 +192,7 @@ export function BulkFixPanel({
                 checked={allSelected}
                 onChange={() => {
                   handoff.current = null
+                  apply.reset()
                   setSelected(allSelected ? new Set() : new Set(selectAllTarget))
                 }}
               />
