@@ -26,7 +26,7 @@ jobs:
       issues: write # labels/milestone on issues (assignee on PRs only)
       pull-requests: write # ...and the same on PRs (pull_request_target)
     steps:
-      - uses: actions/github-script@v9
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             // fix -> bug, feat -> enhancement, everything else -> chore/documentation
