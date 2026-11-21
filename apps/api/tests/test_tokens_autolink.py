@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import func, text
 
 from src.core.auth import UserOut, require_auth, require_workspace_admin
 from src.core.db import AuditLog, SavedToken, User, get_db
@@ -203,3 +203,30 @@ def test_saving_under_a_different_casing_replaces_the_existing_token_instead_of_
 
     rows = db.query(SavedToken).filter(SavedToken.org.in_(["Acme", "acme"])).all()
     assert len(rows) == 1 and rows[0].label == "second"
+
+
+def test_a_resave_and_a_delete_clear_casing_duplicates_left_from_before(db, admin):
+    """Rows saved when lookups were case-sensitive can sit side by side; neither may keep an old credential."""
+    db.add_all([
+        SavedToken(org="Acme", label="old", encrypted_token="x"),
+        SavedToken(org="acme", label="newer", encrypted_token="y"),
+    ])
+    db.commit()
+    client = _admin_client(db, admin)
+    with patch(_PATCH_TARGET, return_value=[]):
+        assert client.put("/tokens/ACME", json={"token": "ghp_rotated", "label": "rotated"}).status_code == 200
+    rows = db.query(SavedToken).filter(func.lower(SavedToken.org) == "acme").all()
+    assert len(rows) == 1 and rows[0].label == "rotated"
+
+    db.add(SavedToken(org="aCme", label="dup", encrypted_token="z"))
+    db.commit()
+    assert client.delete("/tokens/acme").status_code == 204
+    assert db.query(SavedToken).filter(func.lower(SavedToken.org) == "acme").count() == 0
+
+
+def test_the_org_name_must_look_like_a_github_login(db, admin):
+    client = _admin_client(db, admin)
+    for bad in ("a b", "x" * 40, "-lead", "a.b"):
+        assert client.put(f"/tokens/{bad}", json={"token": "ghp_x"}).status_code == 422
+        assert client.delete(f"/tokens/{bad}").status_code == 422
+    assert client.post("/tokens/resolve", json={"org": "../x"}).status_code == 422

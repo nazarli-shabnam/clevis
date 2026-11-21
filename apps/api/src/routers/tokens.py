@@ -18,6 +18,7 @@ from src.core._crypto import decrypt_job_token, encrypt_job_token
 from src.core.auth import UserOut, require_workspace_admin
 from src.core.config import settings
 from src.core.db import SavedToken, get_db
+from src.core.path_params import Owner
 from src.repositories import audit_repo, org_repo, tenant_repo
 from src.services import org_provisioning
 
@@ -38,7 +39,7 @@ class UpsertTokenRequest(BaseModel):
 
 
 class VerifyTokenRequest(BaseModel):
-    org: str
+    org: Owner
 
 
 class VerifyTokenResponse(BaseModel):
@@ -55,18 +56,22 @@ def list_tokens(
     return [TokenMeta.model_validate(r) for r in rows]
 
 
+def _saved_token_variants(db: Session, org: str) -> list[SavedToken]:
+    """Every saved-token row for ``org`` whatever its casing, the exact-case row first -- the order
+    ``token_resolution`` reads it in. Rows saved before saves matched case-insensitively can exist side by side."""
+    rows = db.query(SavedToken).filter(func.lower(SavedToken.org) == org.lower()).order_by(SavedToken.id).all()
+    return sorted(rows, key=lambda r: r.org != org)
+
+
 def _find_saved_token(db: Session, org: str) -> SavedToken | None:
-    """The saved token for ``org``: the exact-case row first, else a case-insensitive match -- the same order
-    ``token_resolution`` reads it in, so a token saved as ``Acme`` is replaced (not duplicated) by a save for
-    ``acme``."""
-    return db.query(SavedToken).filter(SavedToken.org == org).first() or (
-        db.query(SavedToken).filter(func.lower(SavedToken.org) == org.lower()).first()
-    )
+    """The saved token for ``org``: the exact-case row first, else a case-insensitive match, so a token saved
+    as ``Acme`` is replaced (not duplicated) by a save for ``acme``."""
+    return next(iter(_saved_token_variants(db, org)), None)
 
 
 @router.put("/{org}", response_model=TokenMeta)
 def upsert_token(
-    org: str,
+    org: Owner,
     body: UpsertTokenRequest,
     db: Session = Depends(get_db),
     user: UserOut = Depends(require_workspace_admin),
@@ -138,6 +143,11 @@ def _save_token(db: Session, org: str, body: UpsertTokenRequest, user: UserOut) 
     else:
         row = SavedToken(org=org, label=body.label, encrypted_token=encrypted, tenant_id=tenant_id)
         db.add(row)
+    # A re-save is a rotation: casing duplicates left over from before saves matched case-insensitively would
+    # keep the old credential stored (and, if exact-case, preferred), so they go with it.
+    for stale in _saved_token_variants(db, org):
+        if stale is not row:
+            db.delete(stale)
     audit_repo.write(
         db, user.email, "token.save", org, {"label": body.label},
         tenant_id=row.tenant_id or tenant_repo.ensure_personal_tenant(db, user.id, commit=False).id,
@@ -171,15 +181,17 @@ def resolve_token(
 
 @router.delete("/{org}", status_code=204)
 def delete_token(
-    org: str,
+    org: Owner,
     db: Session = Depends(get_db),
     user: UserOut = Depends(require_workspace_admin),
 ) -> None:
     """Remove a saved token. Workspace admin only."""
-    row = _find_saved_token(db, org)
-    if not row:
+    rows = _saved_token_variants(db, org)
+    if not rows:
         raise HTTPException(status_code=404, detail="No saved token for this org")
+    row = rows[0]
     tenant_id = row.tenant_id or tenant_repo.ensure_personal_tenant(db, user.id, commit=False).id
-    db.delete(row)
+    for r in rows:  # every casing variant: a leftover duplicate would keep a deleted credential resolvable
+        db.delete(r)
     audit_repo.write(db, user.email, "token.delete", org, {}, tenant_id=tenant_id, commit=False)
     db.commit()
