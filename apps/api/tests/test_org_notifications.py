@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from src.core.auth import UserOut, require_auth
-from src.core.db import Job, ScanResult, User, get_db
+from src.core.db import Job, ScanResult, SecurityAlert, User, get_db
 from src.repositories import installation_repo, job_repo, org_membership_repo, org_repo, scan_results_repo
 from src.routers.org_notifications import router
 
@@ -472,6 +472,24 @@ def test_dismiss_rejects_items_that_do_not_exist_or_the_caller_cannot_see(db, wo
     assert admin.post("/orgs/acme/notifications/critical_alert:99999999999/dismiss").status_code == 404
     assert member.post(f"/orgs/acme/notifications/job_failed:{job}/dismiss").status_code == 404  # admin-only kind
     assert admin.post(f"/orgs/acme/notifications/job_failed:{job}/dismiss").status_code == 204
+
+
+def test_sla_breach_can_be_dismissed_by_members_but_only_for_real_dependabot_alerts(db, world):
+    t = world["acme"].tenant_id
+    _alert(db, t, number=1, when=NOW - timedelta(days=10))  # critical, past the 7-day SLA
+    _alert(db, t, number=2, kind="code_scanning", when=NOW - timedelta(days=10))
+    member = _client(db, world["users"]["member"])
+    admin = _client(db, world["users"]["admin"])
+    sla = [i["id"] for i in member.get("/orgs/acme/notifications").json()["items"] if i["kind"] == "sla_breach"]
+    assert len(sla) == 1
+
+    assert member.post(f"/orgs/acme/notifications/{sla[0]}/dismiss").status_code == 204
+    assert admin.post(f"/orgs/acme/notifications/{sla[0]}/dismiss").status_code == 204
+    assert admin.post("/orgs/acme/notifications/sla_breach:999999/dismiss").status_code == 404
+    # No waiver row shares the id, and a code-scanning alert is not an SLA item.
+    other = db.query(SecurityAlert.id).filter(SecurityAlert.kind == "code_scanning").scalar()
+    assert admin.post(f"/orgs/acme/notifications/sla_breach:{other}/dismiss").status_code == 404
+    assert member.post("/orgs/acme/notifications/waiver_expired:1/dismiss").status_code == 404
 
 
 def test_dismissing_a_drift_again_after_it_changed_marks_it_read_again(db, world):

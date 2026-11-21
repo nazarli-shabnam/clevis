@@ -347,14 +347,25 @@ def _sla_unread_beyond_limit(db: Session, tenant_id: int, since: datetime, last_
             SecurityAlert.created_at <= now - window,
         )
         if dismissed_ids:
-            q = q.filter(SecurityAlert.id.notin_(dismissed_ids))
+            # A dismissal made before the breach does not count as reading it (same rule as the list's `read`).
+            read_ids = [
+                row_id
+                for row_id, created_at in db.query(SecurityAlert.id, SecurityAlert.created_at).filter(
+                    SecurityAlert.id.in_(dismissed_ids), SecurityAlert.severity == severity
+                )
+                if _aware(dismissed[f"sla_breach:{row_id}"]) >= _aware(created_at) + window
+            ]
+            if read_ids:
+                q = q.filter(SecurityAlert.id.notin_(read_ids))
         if last_read is not None:
             q = q.filter(SecurityAlert.created_at + window > last_read)
         total += q.scalar() or 0
     listed = sum(
         1
         for i in items
-        if i.kind == "sla_breach" and i.id not in dismissed and (last_read is None or _aware(i.at) > _aware(last_read))
+        if i.kind == "sla_breach"
+        and not (i.id in dismissed and _aware(dismissed[i.id]) >= _aware(i.at))
+        and (last_read is None or _aware(i.at) > _aware(last_read))
     )
     return max(0, total - listed)
 
@@ -507,6 +518,10 @@ def _item_exists(db: Session, ctx: OrgContext, org_login: str, kind: str, row_id
         model = SecurityAlert
     elif kind == "score_drop":
         model = ScanResult
+    elif kind == "sla_breach":  # shown to every member; the feed only builds these from Dependabot alerts
+        return db.query(SecurityAlert.id).filter(
+            SecurityAlert.id == row_id, SecurityAlert.tenant_id == tenant_id, SecurityAlert.kind == "dependabot"
+        ).first() is not None
     elif not is_admin:
         return False
     elif kind == "job_failed":
@@ -516,7 +531,7 @@ def _item_exists(db: Session, ctx: OrgContext, org_login: str, kind: str, row_id
         return install is not None and install.id == row_id
     elif kind == "api_token_expiring":
         model = ApiToken
-    else:
+    else:  # waiver_expired, waiver_expiring: the only kinds left, both admin-only
         model = CheckWaiver
     return db.query(model.id).filter(model.id == row_id, model.tenant_id == tenant_id).first() is not None
 
