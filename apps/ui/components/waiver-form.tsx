@@ -95,8 +95,10 @@ export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, comp
   const enteredRepos = orgWideOnly ? [] : repos.split(",").map((r) => r.trim()).filter(Boolean)
   const coverage = failing && !editing ? waiverCoverage(enteredRepos, failing) : undefined
 
+  // The variable is the coverage at submit time: the repo box stays editable while the save is pending, so
+  // reading `coverage` when it settles could report on repos that were never submitted.
   const save = useMutation({
-    mutationFn: () => {
+    mutationFn: (_covers: boolean | undefined) => {
       const body = {
         check_id: checkId,
         repos: enteredRepos,
@@ -107,11 +109,11 @@ export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, comp
       }
       return editing ? api.waivers.update(orgLogin, editing.id, body) : api.waivers.create(orgLogin, body)
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, covers) => {
       setReason("")
       setRepos("")
       await invalidateWaivers(queryClient, orgLogin)
-      onSaved?.(coverage?.covers)
+      onSaved?.(covers)
     },
   })
 
@@ -123,7 +125,7 @@ export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, comp
       className={compact ? "grid gap-3" : "border-t border-border p-4 grid gap-3 sm:grid-cols-2"}
       onSubmit={(e) => {
         e.preventDefault()
-        if (canSubmit) save.mutate()
+        if (canSubmit) save.mutate(coverage?.covers)
       }}
     >
       {editing && (

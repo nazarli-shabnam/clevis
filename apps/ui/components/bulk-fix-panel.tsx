@@ -221,7 +221,10 @@ export function BulkFixPanel({
         )}
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="outline" disabled={busy || chosen.length === 0} onClick={() => preview.mutate()}>
+          <Button size="sm" variant="outline" disabled={busy || chosen.length === 0} onClick={() => {
+              apply.reset()
+              preview.mutate()
+            }}>
             {preview.isPending ? (
               <><CircleNotch className="size-3.5 animate-spin" /> Checking…</>
             ) : (

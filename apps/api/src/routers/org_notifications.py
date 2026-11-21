@@ -332,7 +332,13 @@ def _sla_breach_items(
 def _sla_unread_beyond_limit(db: Session, tenant_id: int, since: datetime, last_read, items: list, dismissed) -> int:
     """Unread SLA breaches the per-source LIMIT kept out of ``items``, with the same windows and dismissal rule."""
     now = datetime.now(timezone.utc)
-    dismissed_ids = [int(d[len("sla_breach:"):]) for d in dismissed if d.startswith("sla_breach:")]
+    # Keyed by the integer id: a stored key may be zero-padded ("sla_breach:00042"), which the list path also matches.
+    dismissed_at: dict[int, datetime] = {}
+    for key, at in dismissed.items():
+        if key.startswith("sla_breach:"):
+            row_id = int(key[len("sla_breach:"):])
+            dismissed_at[row_id] = max(at, dismissed_at.get(row_id, at))
+    dismissed_ids = list(dismissed_at)
     total = 0
     for severity, days in dependabot_burndown.sla_days().items():
         if days is None:
@@ -353,7 +359,7 @@ def _sla_unread_beyond_limit(db: Session, tenant_id: int, since: datetime, last_
                 for row_id, created_at in db.query(SecurityAlert.id, SecurityAlert.created_at).filter(
                     SecurityAlert.id.in_(dismissed_ids), SecurityAlert.severity == severity
                 )
-                if _aware(dismissed[f"sla_breach:{row_id}"]) >= _aware(created_at) + window
+                if _aware(dismissed_at[row_id]) >= _aware(created_at) + window
             ]
             if read_ids:
                 q = q.filter(SecurityAlert.id.notin_(read_ids))

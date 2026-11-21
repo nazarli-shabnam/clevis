@@ -22,7 +22,7 @@ _DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg:/
 # Upper-case keywords only: the worker's SQL is written that way, and prose in comments is not.
 _VERBS = {
     "insert": re.compile(r"\bINSERT\s+INTO\s+([a-z_][a-z0-9_]*)"),
-    "update": re.compile(r"\bUPDATE\s+([a-z_][a-z0-9_]*)\s+SET\b"),
+    "update": re.compile(r"\bUPDATE\s+([a-z_][a-z0-9_]*)(?:\s+(?:AS\s+)?[a-z_][a-z0-9_]*)?\s+SET\b"),
     "delete": re.compile(r"\bDELETE\s+FROM\s+([a-z_][a-z0-9_]*)"),
     "select": re.compile(r"\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)"),
 }
@@ -89,3 +89,10 @@ def test_the_worker_role_may_use_the_sequence_of_every_table_it_inserts_into(con
             if seq and not conn.execute("SELECT has_sequence_privilege(%s, 'USAGE')", (seq,)).fetchone()[0]:
                 missing.append(f"USAGE on {seq} ({src})")
     assert not missing, "clevis_worker cannot draw ids for: " + "; ".join(sorted(missing))
+
+
+def test_the_scanner_sees_an_aliased_update_target():
+    """``UPDATE api_tokens t SET ...`` (the creator-leave revocation) must count as UPDATE on api_tokens."""
+    assert _VERBS["update"].findall("UPDATE api_tokens t SET revoked_at = now()") == ["api_tokens"]
+    assert _VERBS["update"].findall("UPDATE api_tokens AS t SET revoked_at = now()") == ["api_tokens"]
+    assert _VERBS["update"].findall("UPDATE jobs SET status = 'done'") == ["jobs"]

@@ -228,5 +228,15 @@ def test_the_org_name_must_look_like_a_github_login(db, admin):
     client = _admin_client(db, admin)
     for bad in ("a b", "x" * 40, "-lead", "a.b"):
         assert client.put(f"/tokens/{bad}", json={"token": "ghp_x"}).status_code == 422
-        assert client.delete(f"/tokens/{bad}").status_code == 422
     assert client.post("/tokens/resolve", json={"org": "../x"}).status_code == 422
+
+
+def test_a_legacy_token_with_an_invalid_name_can_still_be_deleted(db, admin):
+    """Saves validate the name, but a row saved before that must stay removable."""
+    db.add(SavedToken(org="a.b", label="legacy", encrypted_token="x"))
+    db.commit()
+    client = _admin_client(db, admin)
+
+    assert client.delete("/tokens/a.b").status_code == 204
+    assert db.query(SavedToken).filter(SavedToken.org == "a.b").count() == 0
+    assert client.delete("/tokens/a.b").status_code == 404

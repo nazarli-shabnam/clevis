@@ -272,9 +272,14 @@ export default function SecurityPage() {
   // mutate() clears a mutation's data while it runs, so the bulk fixer reads the last finished matrix: its
   // per-repo results must stay up while the re-scan that follows an apply is pending.
   const [lastMatrix, setLastMatrix] = useState<SecurityMatrixResponse | undefined>()
+  // A scan for the previous owner can still finish after the box changed; its result must not be stored
+  // (the bulk fixer would then act on that owner's repos under the new name). Same-owner rescans still land.
+  const currentOwner = useRef(owner)
+  currentOwner.current = owner
   const matrixMutation = useMutation({
     mutationFn: (forOwner: string) => api.security.matrix(forOwner, token),
-    onSuccess: (data) => {
+    onSuccess: (data, forOwner) => {
+      if (forOwner !== currentOwner.current) return
       setSelectedRepo(data.repos[0]?.repo ?? "")
       setLastMatrix(data)
     },

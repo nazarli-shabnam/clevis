@@ -651,12 +651,14 @@ def test_an_sla_alert_dismissed_before_it_breached_still_counts_as_unread(db, wo
     ids = {n: i for i, n in db.query(SecurityAlert.id, SecurityAlert.number).filter(SecurityAlert.tenant_id == t)}
     db.add(NotificationDismissal(user_id=member_user.id, tenant_id=t, item_id=f"sla_breach:{ids[0]}", dismissed_at=NOW))
     db.add(NotificationDismissal(user_id=member_user.id, tenant_id=t, item_id=f"sla_breach:{ids[1]}", dismissed_at=NOW - timedelta(days=5)))
+    # A zero-padded id passes validation and is stored as sent; it must neither crash the count nor be ignored.
+    db.add(NotificationDismissal(user_id=member_user.id, tenant_id=t, item_id=f"sla_breach:000{ids[2]}", dismissed_at=NOW))
     db.commit()
 
     feed = _client(db, member_user).get("/orgs/acme/notifications").json()
 
-    # Only the dismissal made after the breach counts as reading it; the early one stays unread.
-    assert feed["unread_count"] == 59
+    # Only dismissals made after the breach count as reading it; the early one stays unread.
+    assert feed["unread_count"] == 58
 
 
 def _token(db, tenant_id, name, *, expires_in=None, revoked=False):
