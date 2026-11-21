@@ -16,6 +16,23 @@ def has_rate_limit_headers(resp: httpx.Response) -> bool:
     return resp.status_code == 403 and ("Retry-After" in resp.headers or resp.headers.get("X-RateLimit-Remaining") == "0")
 
 
+def primary_limit_wait_seconds(resp: httpx.Response) -> float | None:
+    """Seconds until a spent *primary* (hourly) quota resets, when that is beyond one retry cap; else None.
+
+    Sleeping in-line cannot help there (the reset can be tens of minutes away), so the caller must stop retrying
+    at once and let the job wait out the reset instead of burning attempts. Secondary limits send Retry-After
+    and are excluded. Same rule as ``checks.github_checks._primary_limit_out_of_reach``."""
+    if resp.status_code not in (403, 429) or "Retry-After" in resp.headers:
+        return None
+    if resp.headers.get("X-RateLimit-Remaining") != "0":
+        return None
+    try:
+        wait = float(resp.headers["X-RateLimit-Reset"]) - time.time()
+    except (KeyError, ValueError):
+        return None
+    return wait if wait > MAX_RETRY_AFTER_SECONDS else None
+
+
 def is_secondary_rate_limit(resp: httpx.Response) -> bool:
     """A secondary rate limit, even the variant GitHub sends as a 403 with neither header, which only its
     message tells from a permission refusal. That variant has no wait hint, so it is not slept on in-line:

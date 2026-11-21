@@ -1,11 +1,12 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { Time } from "@/components/time"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
-import { ScanChangesCard, scanChangesKey } from "@/components/scan-changes-card"
+import { ScanChangesCard } from "@/components/scan-changes-card"
 import { ScanExplorer } from "@/components/scan-explorer"
 import { EmptyStateNoAccount } from "@/components/empty-state"
 import { CheckCard } from "@/components/check-card"
@@ -22,12 +23,11 @@ import { downloadTextFile } from "@/lib/download"
 import { useActiveScope } from "@/lib/active-scope"
 import { useAuth } from "@/lib/auth-context"
 import { hasOrgLogin, shouldApplyResolvedToken } from "@/lib/token-resolve"
-import { invalidateTokens } from "@/lib/query-invalidation"
+import { invalidateScanData, invalidateTokens } from "@/lib/query-invalidation"
 import { DonutChart } from "@/components/charts/donut-chart"
 import { AreaTimeChart } from "@/components/charts/area-time-chart"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
 import { CHART_COLORS } from "@/lib/charts/theme"
-import { relativeTime } from "@/lib/format"
 import { isOrgMemberOnly } from "@/lib/members-href"
 import { useLookupOwner } from "@/lib/use-lookup-owner"
 import type { CheckResult, InstallationMeta, MyOrgMembership } from "@/lib/api/types"
@@ -238,10 +238,7 @@ export default function SecurityPage() {
   const scan = useMutation({
     mutationFn: (forOwner: string) => api.analytics.overview(forOwner, token),
     onSuccess: (_data, forOwner) => {
-      queryClient.invalidateQueries({ queryKey: ["analytics.latest-scan", forOwner] })
-      queryClient.invalidateQueries({ queryKey: ["analytics.history", forOwner] })
-      queryClient.invalidateQueries({ queryKey: ["analytics.scans", forOwner] })
-      queryClient.invalidateQueries({ queryKey: scanChangesKey(forOwner) })
+      invalidateScanData(queryClient, forOwner)
     },
   })
 
@@ -532,7 +529,7 @@ export default function SecurityPage() {
                 <span className="section-title">Results — {shown.owner}</span>
                 {shownScannedAt && (
                   <span className="text-xs text-muted-foreground" title={new Date(shownScannedAt).toLocaleString()}>
-                    {scan.isPending ? "Rescanning… " : ""}Last scanned {relativeTime(shownScannedAt)}
+                    {scan.isPending ? "Rescanning… " : ""}Last scanned <Time iso={shownScannedAt} />
                   </span>
                 )}
               </div>

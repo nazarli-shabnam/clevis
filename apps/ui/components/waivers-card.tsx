@@ -1,18 +1,21 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { Time } from "@/components/time"
 import { useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { CircleNotch, DownloadSimple } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { toCsv } from "@/lib/csv"
 import { downloadTextFile } from "@/lib/download"
-import { dueTime } from "@/lib/format"
 import { EmptyStateAction } from "@/components/empty-state-action"
 import { SectionError } from "@/components/section-error"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
-import { MAX_WAIVER_DAYS, WAIVABLE_CHECKS, WaiverForm, daysRemaining } from "@/components/waiver-form"
+import { BulkActionBar } from "@/components/bulk-action-bar"
+import { useRowSelection } from "@/lib/bulk"
+import { useWaivableChecks } from "@/lib/use-waivable-checks"
+import { MAX_WAIVER_DAYS, WaiverForm, daysRemaining } from "@/components/waiver-form"
 import type { CheckWaiver } from "@/lib/api/types"
 
 const EXPIRING_SOON_DAYS = 14
@@ -37,6 +40,7 @@ function matchesFilter(w: CheckWaiver, filter: WaiverFilter): boolean {
 /** Org admins record accepted risks: a failing check is kept out of the score until the waiver expires. */
 export function WaiversCard({ orgLogin }: { orgLogin: string }) {
   const queryClient = useQueryClient()
+  const { titleOf } = useWaivableChecks(orgLogin)
   const queryKey = ["waivers", orgLogin]
   const query = useQuery<CheckWaiver[]>({ queryKey, queryFn: () => api.waivers.list(orgLogin), retry: false })
   // The waiver being renewed or edited; the form below switches from "add" to "save" for it.
@@ -65,6 +69,19 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
   })
 
   const visible = (query.data ?? []).filter((w) => matchesFilter(w, filter))
+  const selection = useRowSelection(visible.map((w) => w.id))
+  const expiredIds = (query.data ?? []).filter((w) => !w.active).map((w) => w.id)
+  // Bulk revokes run per waiver (each is audited on its own).
+  const bulkRevoke = (id: number) => api.waivers.revoke(orgLogin, id)
+  const afterBulk = (failed: number[]) => {
+    selection.keepOnly(failed)
+    return queryClient.invalidateQueries({ queryKey })
+  }
+  // A waiver revoked while its form is open (one at a time or in bulk) can't be saved any more.
+  const loadedIds = query.data?.map((w) => w.id)
+  useEffect(() => {
+    if (loadedIds && editing && !loadedIds.includes(editing.id)) setEditing(null)
+  }, [loadedIds, editing])
   const linkedVisible = linkedWaiver !== null && visible.some((w) => w.id === linkedWaiver)
   useEffect(() => {
     if (linkedVisible) document.getElementById(`waiver-${linkedWaiver}`)?.scrollIntoView?.({ block: "center" })
@@ -127,6 +144,28 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
             </select>
           </label>
           <span className="text-muted-foreground">{visible.length} of {query.data.length}</span>
+          <label className="flex items-center gap-1.5 text-muted-foreground">
+            <input type="checkbox" aria-label="Select all shown waivers" checked={selection.allSelected} disabled={visible.length === 0} onChange={selection.toggleAll} />
+            Select all
+          </label>
+          <BulkActionBar
+            ids={selection.chosen}
+            label="Revoke selected"
+            confirmTitle={`Revoke ${selection.chosen.length} waiver${selection.chosen.length === 1 ? "" : "s"}?`}
+            confirmDescription="The checks count toward the score again from the next scan. This can't be undone."
+            confirmLabel="Revoke"
+            run={bulkRevoke}
+            onDone={afterBulk}
+          />
+          <BulkActionBar
+            ids={expiredIds}
+            label="Revoke all expired"
+            confirmTitle={`Revoke ${expiredIds.length} expired waiver${expiredIds.length === 1 ? "" : "s"}?`}
+            confirmDescription="Expired waivers no longer affect the score; this removes them from the register. This can't be undone."
+            confirmLabel="Revoke"
+            run={bulkRevoke}
+            onDone={afterBulk}
+          />
           <Button
             size="sm"
             variant="outline"
@@ -140,7 +179,7 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
         {visible.length === 0 && <p className="px-4 pb-3 text-xs text-muted-foreground">No waivers match this filter.</p>}
         <ul className="divide-y divide-border">
           {visible.map((w) => {
-            const title = WAIVABLE_CHECKS[w.check_id] ?? w.check_id
+            const title = titleOf(w.check_id)
             const days = daysRemaining(w.expires_at)
             return (
               <li
@@ -149,7 +188,14 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
                 aria-current={w.id === linkedWaiver ? "true" : undefined}
                 className={`px-4 py-2 flex items-start justify-between gap-3 text-xs ${w.id === linkedWaiver ? "bg-elevated outline outline-1 outline-primary" : ""}`}
               >
-                <div className="min-w-0">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 shrink-0"
+                  aria-label={`Select waiver for ${title}`}
+                  checked={selection.isSelected(w.id)}
+                  onChange={() => selection.toggle(w.id)}
+                />
+                <div className="min-w-0 flex-1">
                   <p className="font-medium text-foreground">
                     {title}
                     <span className="ml-2 text-muted-foreground font-normal">{w.repos ? w.repos.join(", ") : "whole organization"}</span>
@@ -158,11 +204,11 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
                     {w.reason} · owner {w.owner} ·{" "}
                     {w.active ? (
                       <>
-                        expires {dueTime(w.expires_at)} · {days} {days === 1 ? "day" : "days"} left
+                        expires <Time iso={w.expires_at} due /> · {days} {days === 1 ? "day" : "days"} left
                         {days <= LAST_WEEK_DAYS && <span className="ml-2 text-warning font-medium">ending this week</span>}
                       </>
                     ) : (
-                      <span className="text-destructive">expired {dueTime(w.expires_at)}</span>
+                      <span className="text-destructive">expired <Time iso={w.expires_at} due /></span>
                     )}
                   </p>
                 </div>
@@ -194,7 +240,7 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
       <ConfirmDialog
         open={confirming !== null}
         onOpenChange={(open) => !open && setConfirming(null)}
-        title={`Revoke the waiver for ${confirming ? (WAIVABLE_CHECKS[confirming.check_id] ?? confirming.check_id) : ""}?`}
+        title={`Revoke the waiver for ${confirming ? titleOf(confirming.check_id) : ""}?`}
         description="The check counts toward the score again from the next scan. This can't be undone."
         confirmLabel="Revoke"
         pending={revoke.isPending}

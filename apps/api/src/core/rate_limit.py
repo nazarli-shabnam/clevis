@@ -76,7 +76,10 @@ _account_buckets = _Buckets()
 
 def _client_key(request: Request) -> str:
     ip = request.client.host if request.client else "unknown"
-    return f"{request.url.path}:{ip}"
+    # The route template, not the concrete URL: a path parameter (an invitation id, an org login) the
+    # caller picks would otherwise give every value its own bucket and the limit would never trip.
+    route = request.scope.get("route")
+    return f"{getattr(route, 'path', None) or request.url.path}:{ip}"
 
 
 def _check_bucket(buckets: _Buckets, key: str, max_requests: int, window_seconds: int) -> None:

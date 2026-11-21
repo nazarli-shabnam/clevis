@@ -176,6 +176,7 @@ class HistoryScope(NamedTuple):
     kind: Literal["org", "own"]
     org_tenant_id: int | None = None
     org_login: str | None = None
+    personal_tenant_id: int | None = None
 
 
 def _user_history_scope(db: Session, user: UserOut, owner: str) -> HistoryScope | None:
@@ -194,11 +195,14 @@ def _user_history_scope(db: Session, user: UserOut, owner: str) -> HistoryScope 
             # with the tenant context set (membership is already confirmed above).
             set_tenant_session_context(db, org.tenant_id, user.id)
             return HistoryScope("org", org.tenant_id, org.github_login)
+    # Only scans in the user's personal tenant: one they ran as an org member is stored under the org's
+    # tenant and stops being theirs to read once they leave it.
+    personal_tenant_id = tenant_repo.ensure_personal_tenant(db, user.id).id
     if (
         installation_repo.get_for_user(db, owner_user_id=user.id, account_login=owner) is not None
-        or scan_results_repo.exists_for_user(db, owner=owner, user_id=user.id)
+        or scan_results_repo.exists_for_user(db, owner=owner, user_id=user.id, personal_tenant_id=personal_tenant_id)
     ):
-        return HistoryScope("own")
+        return HistoryScope("own", personal_tenant_id=personal_tenant_id)
     return None
 
 
@@ -206,7 +210,7 @@ def _scope_filters(scope: HistoryScope, owner: str, user: UserOut) -> dict:
     """Keyword arguments for ``scan_results_repo.list_recent`` / ``list_for_export``."""
     if scope.kind == "org":
         return {"owner": scope.org_login, "org_tenant_id": scope.org_tenant_id}
-    return {"owner": owner, "scanned_by_user_id": user.id}
+    return {"owner": owner, "scanned_by_user_id": user.id, "personal_tenant_id": scope.personal_tenant_id}
 
 
 def _persist_personal_scan(db: Session, user: UserOut, result: dict) -> None:
@@ -685,6 +689,17 @@ def _recent_events_staleness(db: Session, tenant_id: int) -> bool:
     return last_synced_at < cutoff
 
 
+def _activity_incomplete_reason(db: Session, tenant_id: int | None) -> str | None:
+    """Why this tenant's last event backfill could not read all the history, or None. Tenant context is already
+    set by _cockpit_connected_tenant."""
+    if tenant_id is None:
+        return None
+    return db.execute(
+        text("SELECT incomplete_reason FROM activity_sync_cursors WHERE tenant_id = :tenant_id"),
+        {"tenant_id": tenant_id},
+    ).scalar()
+
+
 def _cockpit_events_and_commit_activity(
     db: Session, owner: str, token: str, tenant_id: int | None, repo_names: list[str]
 ) -> tuple[list[OrgEventSummary], bool, bool, tuple[list[int], list[int], bool]]:
@@ -1004,9 +1019,9 @@ def _has_automation_run(db: Session, user: UserOut, owner: str) -> bool | None:
         return None
 
 
-def _cache_job_success_rate(db: Session, owner: str, actor: str | None = None) -> float | None:
+def _cache_job_success_rate(db: Session, owner: str, actor: str | None = None, tenant_id: int | None = None) -> float | None:
     """None (not 0.0) when the owner has no finished cache-clear jobs: "no data" is not a 0% rate."""
-    jobs = job_repo.list_recent_by_type(db, job_type=_CACHE_JOB_TYPE, owner=owner, actor=actor, limit=20)
+    jobs = job_repo.list_recent_by_type(db, job_type=_CACHE_JOB_TYPE, owner=owner, actor=actor, tenant_id=tenant_id, limit=20)
     done = sum(1 for j in jobs if j["status"] == "done")
     failed = sum(1 for j in jobs if j["status"] == "failed")
     return done / (done + failed) if (done + failed) else None
@@ -1060,7 +1075,11 @@ async def _build_cockpit(owner: str, user: UserOut, db: Session, token: str) -> 
         cache_rate = (
             None
             if history_scope is None
-            else _cache_job_success_rate(db, owner, actor=user.email if history_scope.kind == "own" else None)
+            else _cache_job_success_rate(
+                db, owner,
+                actor=user.email if history_scope.kind == "own" else None,
+                tenant_id=history_scope.org_tenant_id if history_scope.kind == "org" else None,
+            )
         )
         return scans, cache_rate
 
@@ -1074,6 +1093,7 @@ async def _build_cockpit(owner: str, user: UserOut, db: Session, token: str) -> 
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise _github_error(exc) from exc
     repo_names = [r["name"] for r in repos]
+    activity_incomplete = await anyio.to_thread.run_sync(lambda: _activity_incomplete_reason(db, connected_tenant_id))
 
     (
         (member_count, member_count_ok),
@@ -1127,6 +1147,7 @@ async def _build_cockpit(owner: str, user: UserOut, db: Session, token: str) -> 
         commit_activity_source="aggregate" if connected_tenant_id is not None else "github",
         recent_events_source="aggregate" if connected_tenant_id is not None else "github",
         recent_events_stale=recent_events_stale,
+        activity_history_incomplete=activity_incomplete,
         degraded=degraded,
         has_automation_run=has_automation_run,
     )

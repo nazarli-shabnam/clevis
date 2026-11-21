@@ -213,7 +213,8 @@ def test_a_previous_scan_stored_under_the_canonical_login_is_found_whatever_casi
     assert _scores(rows) == [66]
 
 
-def test_a_former_member_can_still_read_the_scans_they_ran_themselves(db):
+def test_a_former_member_can_no_longer_read_the_org_scans_they_ran(db):
+    # #1105: a member's scan is stored under the org's tenant, so it is the org's data once they leave.
     org = org_repo.get_or_create(db, github_login="Acme")
     user = _user(db, "leaver@example.com")
     org_membership_repo.get_or_create(db, org_id=org.id, user_id=user.id, role="admin")
@@ -221,10 +222,8 @@ def test_a_former_member_can_still_read_the_scans_they_ran_themselves(db):
     _scan_via_personal_route(http, score=58, owner="acme")  # stored as "Acme" under the org tenant
     org_membership_repo.delete(db, org_id=org.id, user_id=user.id)
 
-    resp = http.get("/me/analytics/history?owner=acme")
-
-    assert resp.status_code == 200
-    assert _scores(resp.json()) == [58]
+    assert http.get("/me/analytics/history?owner=acme").status_code == 403
+    assert http.get("/me/analytics/export?owner=acme").status_code == 403
 
 
 # ── digest ───────────────────────────────────────────────────────────────────

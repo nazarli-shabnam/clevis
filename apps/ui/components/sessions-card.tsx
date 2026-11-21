@@ -1,11 +1,11 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Time } from "@/components/time"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { SectionError } from "@/components/section-error"
 import { api } from "@/lib/api/client"
-import { relativeTime } from "@/lib/format"
 import { describeDevice } from "@/lib/user-agent"
 
 const SESSIONS_KEY = ["auth.sessions"] as const
@@ -54,7 +54,7 @@ export function SessionsCard() {
                   )}
                 </p>
                 <p className="text-muted-foreground">
-                  {s.ip ?? "Unknown IP"} · signed in {relativeTime(s.created_at)} · last active {relativeTime(s.last_seen_at)}
+                  {s.ip ?? "Unknown IP"} · signed in <Time iso={s.created_at} /> · last active <Time iso={s.last_seen_at} />
                 </p>
               </div>
               {!s.current && (

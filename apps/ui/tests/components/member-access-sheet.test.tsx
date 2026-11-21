@@ -99,7 +99,8 @@ describe("MemberAccessSheet", () => {
     expect(screen.getByText("Loading…")).toBeInTheDocument();
     expect(await screen.findByText("Yes")).toBeInTheDocument();
     expect(screen.getByText("Enabled")).toBeInTheDocument();
-    expect(screen.getByText(/5 days ago in acme\/api/)).toBeInTheDocument();
+    expect(screen.getByText("5 days ago")).toBeInTheDocument();
+    expect(screen.getByText(/in acme\/api/)).toBeInTheDocument();
     expect(screen.getByText("3 days ago")).toBeInTheDocument();
     expect(screen.getByText("Direct repository access (1)")).toBeInTheDocument();
     expect(screen.getByText("write")).toBeInTheDocument();

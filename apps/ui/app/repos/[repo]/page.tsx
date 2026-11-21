@@ -3,6 +3,7 @@
 // URL: /repos/<owner~name>; param holds owner and repo joined with "~".
 
 import { useEffect, useRef, useState } from "react"
+import { Time } from "@/components/time"
 import { useParams } from "next/navigation"
 import Link from "next/link"
 import { useQuery } from "@tanstack/react-query"
@@ -22,7 +23,6 @@ import { HeatmapCalendar } from "@/components/charts/heatmap-calendar"
 import { CHART_COLORS } from "@/lib/charts/theme"
 import { CachePanel } from "@/components/repo/cache-panel"
 import { cn } from "@/lib/utils"
-import { relativeTime } from "@/lib/format"
 
 const HEATMAP_SCALE = [CHART_COLORS.grid, "#1e3a8a", "#1d4ed8", "#3b82f6", "#60a5fa"]
 
@@ -162,8 +162,18 @@ export default function RepoDetailPage() {
 
   const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({ overview: null, cache: null, security: null })
 
-  function focusTab(id: Tab) {
+  // Keeps the tab in the URL (?tab=security) so it survives a reload and can be shared; Overview is the default
+  // and stays out of it. replaceState (supported by the Next router) so tab changes don't pile up history entries.
+  function selectTab(id: Tab) {
     setTab(id)
+    const url = new URL(window.location.href)
+    if (id === "overview") url.searchParams.delete("tab")
+    else url.searchParams.set("tab", id)
+    window.history.replaceState(window.history.state, "", url)
+  }
+
+  function focusTab(id: Tab) {
+    selectTab(id)
     tabRefs.current[id]?.focus()
   }
 
@@ -283,7 +293,7 @@ export default function RepoDetailPage() {
             aria-controls={tabPanelId(t.id)}
             aria-selected={tab === t.id}
             tabIndex={tab === t.id ? 0 : -1}
-            onClick={() => setTab(t.id)}
+            onClick={() => selectTab(t.id)}
             onKeyDown={(e) => handleTabKeyDown(e, i)}
             className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors ${
               tab === t.id
@@ -361,7 +371,7 @@ export default function RepoDetailPage() {
                     <span className="truncate">#{p.number} {p.title}</span>
                   </a>
                   <span className="shrink-0 text-muted-foreground whitespace-nowrap">
-                    {p.user ?? "unknown"} · {relativeTime(p.created_at)}
+                    {p.user ?? "unknown"} · <Time iso={p.created_at} />
                   </span>
                 </li>
               ))}

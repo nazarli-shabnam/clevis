@@ -63,6 +63,20 @@ describe("LoginPage GitHub OAuth button", () => {
     expect(screen.getByRole("main")).toBeInTheDocument();
   });
 
+  it("explains why the user was sent here after a 401, then drops the reason from the URL (#1095)", async () => {
+    searchParams = new URLSearchParams("next=%2Frepos&reason=expired");
+    renderPage();
+
+    expect(await screen.findByText(/Your session expired or was signed out elsewhere/)).toBeInTheDocument();
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/login?next=%2Frepos"));
+  });
+
+  it("shows no session-ended notice on a plain visit", async () => {
+    renderPage();
+    await screen.findByPlaceholderText("you@example.com");
+    expect(screen.queryByText(/session expired/)).not.toBeInTheDocument();
+  });
+
   it("appends the current next param to the GitHub OAuth login URL", async () => {
     searchParams = new URLSearchParams({ next: "/invite/abc123" });
     renderPage();

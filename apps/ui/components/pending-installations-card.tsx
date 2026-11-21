@@ -1,10 +1,10 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Time } from "@/components/time"
 import { CircleNotch } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api/client"
-import { relativeTime } from "@/lib/format"
 import { invalidateInstallations } from "@/lib/query-invalidation"
 import type { PendingInstallation } from "@/lib/api/types"
 
@@ -33,7 +33,7 @@ function PendingRow({ pending }: { pending: PendingInstallation }) {
       <div className="flex items-start justify-between gap-3">
         <p className="min-w-0">
           <span className="font-mono text-foreground">{pending.account_login}</span>{" "}
-          <span className="text-muted-foreground">approved on GitHub {relativeTime(pending.created_at)}</span>
+          <span className="text-muted-foreground">approved on GitHub <Time iso={pending.created_at} /></span>
         </p>
         {pending.role === "approver" && (
           <Button size="sm" disabled={connect.isPending} onClick={() => connect.mutate()}>

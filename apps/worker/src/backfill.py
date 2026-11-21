@@ -14,7 +14,13 @@ from datetime import datetime
 
 import httpx
 
-from _rate_limit import MAX_RETRY_AFTER_SECONDS, has_rate_limit_headers, is_secondary_rate_limit, retry_delay_seconds
+from _rate_limit import (
+    MAX_RETRY_AFTER_SECONDS,
+    has_rate_limit_headers,
+    is_secondary_rate_limit,
+    primary_limit_wait_seconds,
+    retry_delay_seconds,
+)
 
 # Bound on top of GitHub's own ~300-event cap, so a looping Link header can't run forever.
 _MAX_PAGES = 3
@@ -36,6 +42,8 @@ def _get_with_retry(client: httpx.Client, url: str, headers: dict, params: dict 
                 time.sleep(2**attempt)
                 continue
             raise
+        if primary_limit_wait_seconds(resp) is not None:
+            return resp  # a spent hourly quota: sleeping cannot help, the job waits out the reset instead
         if (resp.status_code == 429 or has_rate_limit_headers(resp) or resp.status_code >= 500) and attempt < 2:
             time.sleep(_retry_delay_seconds(resp, attempt))
             continue
@@ -58,25 +66,50 @@ def _events_path(account_login: str, account_type: str) -> str:
     return f"/orgs/{account_login}/events"
 
 
-def fetch_events(client: httpx.Client, base: str, headers: dict, account_login: str, account_type: str) -> list[dict]:
+class Coverage:
+    """What a backfill run could not read. The run is bounded on purpose, so a run that hit a cap or skipped a
+    repo is partial, and the caller records that instead of presenting the result as the full history."""
+
+    def __init__(self) -> None:
+        self.reasons: list[str] = []
+
+    def note(self, reason: str) -> None:
+        if reason not in self.reasons:
+            self.reasons.append(reason)
+
+    @property
+    def reason(self) -> str | None:
+        return "; ".join(self.reasons) if self.reasons else None
+
+
+def fetch_events(
+    client: httpx.Client, base: str, headers: dict, account_login: str, account_type: str, coverage: Coverage | None = None
+) -> list[dict]:
     """Follow Link: rel="next" up to _MAX_PAGES.
 
     Raises httpx.HTTPStatusError/RequestError once retries are exhausted."""
     events: list[dict] = []
     url = f"{base}{_events_path(account_login, account_type)}"
     params: dict | None = {"per_page": _PER_PAGE}
+    capped = True
     for _ in range(_MAX_PAGES):
         resp = _get_with_retry(client, url, headers, params)
         resp.raise_for_status()
         page = resp.json()
         if not isinstance(page, list):
+            capped = False
             break
         events.extend(page)
         next_link = resp.links.get("next")
         if not next_link:
+            # GitHub serves at most 300 events and the last page has no next link, so a full window
+            # means the cap was reached, not that the history ended.
+            capped = len(events) >= _MAX_PAGES * _PER_PAGE
             break
         url = next_link["url"]
         params = None  # already encoded in the next link's URL
+    if capped and coverage is not None:
+        coverage.note(f"the public events feed was read only to its first {_MAX_PAGES} pages")
     return events
 
 
@@ -96,7 +129,9 @@ def _is_skippable(error: httpx.HTTPStatusError) -> bool:
     return 400 <= resp.status_code < 500 and resp.status_code != 429 and not _is_secondary_rate_limit(resp)
 
 
-def _list_private_repos(client: httpx.Client, base: str, headers: dict, account_login: str, account_type: str) -> list[str]:
+def _list_private_repos(
+    client: httpx.Client, base: str, headers: dict, account_login: str, account_type: str, coverage: Coverage | None = None
+) -> list[str]:
     """Full names of the most recently pushed private repos the token can read (installation tokens only
     see repos the App was granted, which is what we want)."""
     if account_type == "User":
@@ -116,6 +151,9 @@ def _list_private_repos(client: httpx.Client, base: str, headers: dict, account_
             if not next_link:
                 break
             url, params = next_link["url"], None
+        else:
+            if coverage is not None:
+                coverage.note(f"only the first {_MAX_INSTALLATION_PAGES * 100} repositories of the installation were listed")
     else:
         path, params = f"/orgs/{account_login}/repos", {"type": "private", "sort": "pushed", "direction": "desc", "per_page": _MAX_PRIVATE_REPOS}
         resp = _get_with_retry(client, f"{base}{path}", headers, params)
@@ -124,20 +162,28 @@ def _list_private_repos(client: httpx.Client, base: str, headers: dict, account_
         repos = body.get("repositories", []) if isinstance(body, dict) else body
         if not isinstance(repos, list):
             return []
+        if resp.links.get("next") and coverage is not None:
+            coverage.note(f"private repositories beyond the {_MAX_PRIVATE_REPOS} most recently pushed were not read")
     private = [r for r in repos if isinstance(r, dict) and r.get("private") is True and isinstance(r.get("full_name"), str)]
     private.sort(key=lambda r: r.get("pushed_at") or "", reverse=True)
+    if len(private) > _MAX_PRIVATE_REPOS and coverage is not None:
+        coverage.note(f"private repositories beyond the {_MAX_PRIVATE_REPOS} most recently pushed were not read")
     return [r["full_name"] for r in private[:_MAX_PRIVATE_REPOS]]
 
 
-def fetch_private_repo_events(client: httpx.Client, base: str, headers: dict, account_login: str, account_type: str) -> list[dict]:
+def fetch_private_repo_events(
+    client: httpx.Client, base: str, headers: dict, account_login: str, account_type: str, coverage: Coverage | None = None
+) -> list[dict]:
     """Recent events of the account's private repos, which the org/user events feed never includes.
 
     Best effort per call: a genuine 4xx (missing permission, repo gone) skips that call. Rate limits, 5xx
     and network errors propagate like fetch_events's, so the job is retried."""
     try:
-        repos = _list_private_repos(client, base, headers, account_login, account_type)
+        repos = _list_private_repos(client, base, headers, account_login, account_type, coverage)
     except httpx.HTTPStatusError as error:
         if _is_skippable(error):
+            if coverage is not None:
+                coverage.note("private repositories could not be listed with this token")
             return []
         raise
     events: list[dict] = []
@@ -147,20 +193,27 @@ def fetch_private_repo_events(client: httpx.Client, base: str, headers: dict, ac
             resp.raise_for_status()
         except httpx.HTTPStatusError as error:
             if _is_skippable(error):
+                if coverage is not None:
+                    coverage.note("some private repositories could not be read with this token")
                 continue
             raise
         page = resp.json()
         if isinstance(page, list):
             events.extend(page)
+        if resp.links.get("next") and coverage is not None:
+            coverage.note("only the newest page of events was read for busy private repositories")
     return events
 
 
-def fetch_all_events(client: httpx.Client, base: str, headers: dict, account_login: str, account_type: str) -> list[dict]:
-    """The public events feed plus private-repo events, one entry per GitHub event id."""
+def fetch_all_events(
+    client: httpx.Client, base: str, headers: dict, account_login: str, account_type: str, coverage: Coverage | None = None
+) -> list[dict]:
+    """The public events feed plus private-repo events, one entry per GitHub event id. Anything left unread by
+    the run's bounds is noted on ``coverage``."""
     merged: dict[str, dict] = {}
     for event in (
-        *fetch_events(client, base, headers, account_login, account_type),
-        *fetch_private_repo_events(client, base, headers, account_login, account_type),
+        *fetch_events(client, base, headers, account_login, account_type, coverage),
+        *fetch_private_repo_events(client, base, headers, account_login, account_type, coverage),
     ):
         merged.setdefault(str(event.get("id")), event)
     return list(merged.values())

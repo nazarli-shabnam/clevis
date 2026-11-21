@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import User, get_db
-from src.repositories import org_membership_repo, org_repo, scan_results_repo
+from src.repositories import org_membership_repo, org_repo, scan_results_repo, tenant_repo
 from src.routers.analytics import router
 
 MOCK_OVERVIEW = {
@@ -65,7 +65,6 @@ def test_personal_history_requires_auth(db):
 
 
 def test_personal_history_returns_seeded_rows_newest_first(http, db, mock_user):
-    org = org_repo.get_or_create(db, github_login="acme")
     scan_results_repo.insert(
         db,
         owner="acme",
@@ -73,7 +72,7 @@ def test_personal_history_returns_seeded_rows_newest_first(http, db, mock_user):
         total_checks=3,
         failed_checks=1,
         checks=[],
-        tenant_id=org.tenant_id,
+        tenant_id=tenant_repo.ensure_personal_tenant(db, mock_user.id).id,
         scanned_by_user_id=mock_user.id,
     )
     scan_results_repo.insert(
@@ -83,7 +82,7 @@ def test_personal_history_returns_seeded_rows_newest_first(http, db, mock_user):
         total_checks=3,
         failed_checks=0,
         checks=[],
-        tenant_id=org.tenant_id,
+        tenant_id=tenant_repo.ensure_personal_tenant(db, mock_user.id).id,
         scanned_by_user_id=mock_user.id,
     )
     resp = http.get("/me/analytics/history?owner=acme")
@@ -95,8 +94,6 @@ def test_personal_history_returns_seeded_rows_newest_first(http, db, mock_user):
 
 
 def test_personal_history_only_returns_matching_owner(http, db, mock_user):
-    acme = org_repo.get_or_create(db, github_login="acme")
-    other = org_repo.get_or_create(db, github_login="other-org")
     scan_results_repo.insert(
         db,
         owner="acme",
@@ -104,7 +101,7 @@ def test_personal_history_only_returns_matching_owner(http, db, mock_user):
         total_checks=3,
         failed_checks=0,
         checks=[],
-        tenant_id=acme.tenant_id,
+        tenant_id=tenant_repo.ensure_personal_tenant(db, mock_user.id).id,
         scanned_by_user_id=mock_user.id,
     )
     scan_results_repo.insert(
@@ -114,7 +111,7 @@ def test_personal_history_only_returns_matching_owner(http, db, mock_user):
         total_checks=3,
         failed_checks=1,
         checks=[],
-        tenant_id=other.tenant_id,
+        tenant_id=tenant_repo.ensure_personal_tenant(db, mock_user.id).id,
         scanned_by_user_id=mock_user.id,
     )
     resp = http.get("/me/analytics/history?owner=acme")
@@ -132,6 +129,26 @@ def test_personal_history_forbidden_when_user_has_no_relationship_to_owner(http,
     scan_results_repo.insert(db, owner="acme", score=80, total_checks=3, failed_checks=0, checks=[], tenant_id=org.tenant_id)
     resp = http.get("/me/analytics/history?owner=acme")
     assert resp.status_code == 403
+
+
+def test_removed_member_loses_their_org_scans_in_history_and_export(http, db, mock_user):
+    # #1105: a scan run as an org member is stored under the org's tenant. Once the membership is gone it is
+    # the org's data, not the user's, so the "own" scope must not keep serving it.
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="member")
+    scan_results_repo.insert(
+        db, owner="acme", score=80, total_checks=3, failed_checks=0, checks=[],
+        tenant_id=org.tenant_id, scanned_by_user_id=mock_user.id,
+    )
+    assert len(http.get("/me/analytics/history?owner=acme").json()) == 1
+
+    from src.core.db import Membership
+
+    db.query(Membership).filter(Membership.tenant_id == org.tenant_id, Membership.user_id == mock_user.id).delete()
+    db.commit()
+
+    assert http.get("/me/analytics/history?owner=acme").status_code == 403
+    assert http.get("/me/analytics/export?owner=acme").status_code == 403
 
 
 def test_personal_history_allowed_via_org_membership_even_without_own_scan(http, db, mock_user):

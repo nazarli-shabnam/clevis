@@ -1,16 +1,20 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { Time } from "@/components/time"
 import { useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { CircleNotch } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
-import { dueTime, relativeTime } from "@/lib/format"
 import { CopyButton } from "@/components/copy-button"
 import { EmptyStateAction } from "@/components/empty-state-action"
 import { SectionError } from "@/components/section-error"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { BulkActionBar } from "@/components/bulk-action-bar"
+import { ExpiryFilterSelect } from "@/components/expiry-filter-select"
+import { useRowSelection } from "@/lib/bulk"
+import { matchesExpiry, type ExpiryFilter } from "@/lib/expiry-filter"
 import { Input } from "@/components/ui/input"
 import type { ApiToken, ApiTokenCreated } from "@/lib/api/types"
 
@@ -51,6 +55,8 @@ function TokenRow({
   linked,
   rotating,
   rotateDisabled,
+  selected,
+  onToggle,
   onRotate,
   onRevoked,
 }: {
@@ -59,6 +65,8 @@ function TokenRow({
   linked: boolean
   rotating: boolean
   rotateDisabled: boolean
+  selected: boolean
+  onToggle: () => void
   onRotate: () => void
   onRevoked: () => void
 }) {
@@ -80,7 +88,12 @@ function TokenRow({
       aria-current={linked ? "true" : undefined}
       className={`px-4 py-2 flex items-start justify-between gap-3 text-xs ${linked ? "bg-elevated outline outline-1 outline-primary" : ""}`}
     >
-      <div className="min-w-0">
+      {status === "active" ? (
+        <input type="checkbox" className="mt-0.5 shrink-0" aria-label={`Select token ${token.name}`} checked={selected} onChange={onToggle} />
+      ) : (
+        <span className="w-[13px] shrink-0" aria-hidden />
+      )}
+      <div className="min-w-0 flex-1">
         <p className="font-medium text-foreground">
           {token.name}
           <code className="ml-2 font-mono text-muted-foreground font-normal">{token.prefix}…</code>
@@ -92,9 +105,9 @@ function TokenRow({
           )}
         </p>
         <p className="text-muted-foreground">
-          scope {token.scope} · created {relativeTime(token.created_at)} by {token.created_by} ·{" "}
-          {token.last_used_at ? `last used ${relativeTime(token.last_used_at)}` : "never used"}
-          {status === "active" && token.expires_at ? ` · expires ${dueTime(token.expires_at)}` : ""}
+          scope {token.scope} · created <Time iso={token.created_at} /> by {token.created_by} ·{" "}
+          {token.last_used_at ? <>last used <Time iso={token.last_used_at} /></> : "never used"}
+          {status === "active" && token.expires_at ? <> · expires <Time iso={token.expires_at} due /></> : ""}
         </p>
         {status === "active" && token.creator_left && (
           <p className="text-amber-500">
@@ -176,6 +189,10 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
 
   const [name, setName] = useState("")
   const [expiry, setExpiry] = useState(0)
+  const [expiryFilter, setExpiryFilter] = useState<ExpiryFilter>("any")
+  const visibleTokens = (query.data ?? []).filter((t) => matchesExpiry(t.expires_at, expiryFilter))
+  // Only an active token can be revoked, so only those are selectable.
+  const selection = useRowSelection(visibleTokens.filter((t) => statusOf(t) === "active").map((t) => t.id))
   // Held only in component state: the API never returns the secret again.
   const [created, setCreated] = useState<ApiTokenCreated | null>(null)
   // Set when `created` is a rotation's replacement: the old token stays valid until the admin revokes it,
@@ -186,9 +203,14 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
   // A notification links here with ?token=<id>: that row is marked and scrolled into view.
   const linkedToken = Number(useSearchParams()?.get("token")) || null
   const linkedLoaded = linkedToken !== null && !!query.data?.some((t) => t.id === linkedToken)
+  // A filter that hides the linked row would swallow the scroll and the highlight: show everything for it.
   useEffect(() => {
-    if (linkedLoaded) document.getElementById(`api-token-${linkedToken}`)?.scrollIntoView?.({ block: "center" })
+    if (linkedLoaded) setExpiryFilter("any")
   }, [linkedToken, linkedLoaded])
+  const linkedVisible = linkedToken !== null && visibleTokens.some((t) => t.id === linkedToken)
+  useEffect(() => {
+    if (linkedVisible) document.getElementById(`api-token-${linkedToken}`)?.scrollIntoView?.({ block: "center" })
+  }, [linkedToken, linkedVisible])
 
   const create = useMutation({
     mutationFn: () => api.apiTokens.create(orgLogin, name.trim(), EXPIRY_OPTIONS[expiry].days),
@@ -343,8 +365,28 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
             Couldn&apos;t rotate the token: {rotate.error.message}
           </p>
         )}
+        <div className="px-4 py-2 flex flex-wrap items-center gap-2 text-xs">
+          <ExpiryFilterSelect label="Filter tokens by expiry" value={expiryFilter} onChange={setExpiryFilter} />
+          <label className="flex items-center gap-1.5 text-muted-foreground">
+            <input type="checkbox" aria-label="Select all shown active tokens" checked={selection.allSelected} onChange={selection.toggleAll} />
+            Select all
+          </label>
+          <BulkActionBar
+            ids={selection.chosen}
+            label="Revoke selected"
+            confirmTitle={`Revoke ${selection.chosen.length} token${selection.chosen.length === 1 ? "" : "s"}?`}
+            confirmDescription="Anything using these tokens (for example CI jobs) stops working immediately. This can't be undone."
+            confirmLabel="Revoke"
+            run={(id) => api.apiTokens.revoke(orgLogin, id)}
+            onDone={(failed) => {
+              selection.keepOnly(failed)
+              return queryClient.invalidateQueries({ queryKey })
+            }}
+          />
+        </div>
+        {visibleTokens.length === 0 && <p className="px-4 pb-3 text-xs text-muted-foreground">No tokens match this filter.</p>}
         <ul className="divide-y divide-border">
-          {query.data.map((t) => (
+          {visibleTokens.map((t) => (
             <TokenRow
               key={t.id}
               orgLogin={orgLogin}
@@ -353,6 +395,8 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
               // Rotating while a secret is on screen would replace it before it was copied.
               rotateDisabled={created !== null || rotate.isPending || create.isPending}
               rotating={rotate.isPending && rotate.variables?.id === t.id}
+              selected={selection.isSelected(t.id)}
+              onToggle={() => selection.toggle(t.id)}
               onRotate={() => rotate.mutate(t)}
               onRevoked={() => queryClient.invalidateQueries({ queryKey })}
             />

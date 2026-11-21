@@ -1,6 +1,7 @@
 "use client"
 
 import { Suspense, useEffect, useRef, useState } from "react"
+import { Time } from "@/components/time"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { useQuery } from "@tanstack/react-query"
@@ -13,7 +14,6 @@ import { SectionError } from "@/components/section-error"
 import { EmptyStateNoAccount } from "@/components/empty-state"
 import { ArrowRight } from "@phosphor-icons/react"
 import { CHART_COLORS } from "@/lib/charts/theme"
-import { relativeTime } from "@/lib/format"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
 import { writeActivityLastSeen } from "@/lib/activity-last-seen"
@@ -287,7 +287,7 @@ function ActivityView() {
                       <span className="text-[0.6875rem] text-muted-foreground truncate">{r.body_preview}</span>
                     </span>
                     <span className="text-[0.6875rem] text-muted-foreground whitespace-nowrap shrink-0 ml-2">
-                      {relativeTime(r.published_at)}
+                      <Time iso={r.published_at} />
                     </span>
                   </a>
                 ))}

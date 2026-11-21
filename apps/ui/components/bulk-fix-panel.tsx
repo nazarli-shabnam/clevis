@@ -266,7 +266,7 @@ export function BulkFixPanel({
         {apply.data && (
           <>
             <ResultList items={apply.data.items} />
-            <p className="text-xs text-muted-foreground">Re-run the scan to confirm the results.</p>
+            <p className="text-xs text-muted-foreground">{onApplied ? "Re-scanning to confirm the results…" : "Re-run the scan to confirm the results."}</p>
           </>
         )}
       </div>

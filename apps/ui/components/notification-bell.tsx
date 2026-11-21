@@ -1,10 +1,11 @@
 "use client"
 
 import Link from "next/link"
+import { Time } from "@/components/time"
+import { relativeTime } from "@/lib/format"
 import { useState } from "react"
 import { Popover } from "@base-ui/react/popover"
 import { Bell, GearSix } from "@phosphor-icons/react"
-import { relativeTime } from "@/lib/format"
 import type { NotificationKind } from "@/lib/api/types"
 import { useNotificationPreferences, useNotifications } from "@/lib/use-notifications"
 import { KIND_HINT, KIND_LABEL, KIND_ORDER } from "@/lib/notification-kinds"
@@ -49,7 +50,7 @@ export function PreferencesPanel({ org }: { org: string }) {
 
 /** Header bell for the active org's notifications, with an unread badge and a mark-all-read action. */
 export function NotificationBell() {
-  const { org, notMember, query, markRead, items, unread } = useNotifications()
+  const { org, notMember, query, markRead, dismiss, items, unread, refreshFailed } = useNotifications()
   const [open, setOpen] = useState(false)
   const [customizing, setCustomizing] = useState(false)
 
@@ -94,6 +95,12 @@ export function NotificationBell() {
                 Mark all read
               </button>
             </div>
+            {query.dataUpdatedAt > 0 && (
+              <p className="px-3 pt-2 text-[0.6875rem] text-muted-foreground" aria-live="polite">
+                {refreshFailed || query.isError ? "Couldn't refresh; last updated " : "Updated "}
+                {relativeTime(new Date(query.dataUpdatedAt).toISOString())}
+              </p>
+            )}
             {customizing && <PreferencesPanel org={org} />}
             {query.isError ? (
               <p role="alert" className="px-3 py-4 text-xs text-destructive">
@@ -109,7 +116,15 @@ export function NotificationBell() {
                   <li key={n.id}>
                     <Link
                       href={n.href}
-                      onClick={() => setOpen(false)}
+                      onClick={() => {
+                        // Opening an item counts as having seen it, so it stops adding to the badge.
+                        if (!n.read) dismiss.mutate(n.id)
+                        setOpen(false)
+                      }}
+                      // A middle click opens the link in a new tab through auxclick, not click.
+                      onAuxClick={(e) => {
+                        if (e.button === 1 && !n.read) dismiss.mutate(n.id)
+                      }}
                       className={`flex flex-col gap-0.5 px-3 py-2 text-xs hover:bg-elevated ${n.read ? "text-muted-foreground" : "text-foreground"}`}
                     >
                       <span className="flex items-center gap-2">
@@ -123,7 +138,7 @@ export function NotificationBell() {
                       </span>
                       {n.detail && <span className="truncate text-muted-foreground">{n.detail}</span>}
                       <span className="text-[0.6875rem] text-muted-foreground">
-                        {KIND_LABEL[n.kind]} · {relativeTime(n.at)}
+                        {KIND_LABEL[n.kind]} · <Time iso={n.at} />
                       </span>
                     </Link>
                   </li>

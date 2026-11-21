@@ -112,10 +112,12 @@ def get_membership(
 
 def count_admins_locked(db: Session, tenant_id: int) -> int:
     """Admins of the tenant (any source), their rows locked until the transaction ends so two concurrent
-    removals or demotions cannot both see a spare admin."""
+    removals or demotions cannot both see a spare admin. Locked in id order, and before any other row of the
+    tenant, so two transactions that each lock several admins always queue instead of deadlocking."""
     return len(
         db.query(Membership.id)
         .filter(Membership.tenant_id == tenant_id, Membership.role == "admin")
+        .order_by(Membership.id)
         .with_for_update()
         .all()
     )

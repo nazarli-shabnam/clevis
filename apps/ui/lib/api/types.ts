@@ -148,6 +148,14 @@ export interface ApiTokenCreated extends ApiToken {
   token: string
 }
 
+/** A check an admin may waive, as the API's validation sees it. */
+export interface WaivableCheck {
+  id: string
+  title: string
+  /** The check never names failing repos, so only an org-wide waiver is accepted. */
+  org_wide_only: boolean
+}
+
 export interface CheckWaiverInput {
   check_id: string
   repos: string[] | null
@@ -246,6 +254,7 @@ export interface IngestionHealth {
   loss_lookback_days: number
   lost_recent: number
   last_backfill_at: string | null
+  backfill_incomplete_reason?: string | null
   last_membership_reconcile_at: string | null
 }
 
@@ -600,6 +609,8 @@ export interface InvitationBulkResponse {
 export interface InvitationPreview {
   org_login: string
   status: "pending" | "accepted" | "revoked" | "expired"
+  /** The invited address, masked ("j***@acme.com"). */
+  email?: string
 }
 
 export interface GithubOrgMember {
@@ -764,6 +775,7 @@ export interface CockpitResponse {
   commit_activity_source: "github" | "aggregate"
   recent_events_source: "github" | "aggregate"
   recent_events_stale: boolean
+  activity_history_incomplete?: string | null
   degraded: boolean
 }
 

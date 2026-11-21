@@ -1,12 +1,12 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { Time } from "@/components/time"
 import { useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { EmptyStateInline, EmptyStateNoAccount } from "@/components/empty-state"
 import { SectionError } from "@/components/section-error"
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table"
-import { relativeTime } from "@/lib/format"
 import { api } from "@/lib/api/client"
 import type { ReleaseSummary } from "@/lib/api/types"
 import { useActiveScope } from "@/lib/active-scope"
@@ -53,7 +53,7 @@ const COLUMNS: DataTableColumn<ReleaseSummary>[] = [
     align: "right",
     sortValue: (r) => r.published_at,
     cellClassName: "whitespace-nowrap text-muted-foreground",
-    render: (r) => relativeTime(r.published_at),
+    render: (r) => <Time iso={r.published_at} />,
     csvValue: (r) => r.published_at,
   },
   {

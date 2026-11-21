@@ -81,10 +81,11 @@ class InvitationBulkResponse(BaseModel):
 
 
 class InvitationPreview(BaseModel):
-    # Deliberately excludes the invitee's email — this endpoint is unauthenticated
-    # and invite links are shareable, so the email shouldn't be disclosed pre-auth.
     org_login: str
     status: InvitationStatus
+    # Masked ("a***@acme.com"), never the full address: this endpoint is unauthenticated and invite
+    # links are shareable. Enough for someone signed in with the wrong account to notice before accepting.
+    email: str
 
 
 class InvitationAcceptResponse(BaseModel):

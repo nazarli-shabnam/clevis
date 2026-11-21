@@ -1,9 +1,9 @@
 "use client"
 
 import { useQuery } from "@tanstack/react-query"
+import { Time } from "@/components/time"
 import { SectionError } from "@/components/section-error"
 import { api } from "@/lib/api/client"
-import { relativeTime } from "@/lib/format"
 import type { CheckChange } from "@/lib/api/types"
 
 export const scanChangesKey = (org: string) => ["analytics.changes", org] as const
@@ -56,8 +56,8 @@ export function ScanChangesCard({ org }: { org: string }) {
       ) : (
         <>
           <p className="px-4 pt-3 text-xs text-muted-foreground">
-            Latest scan {d.scanned_at ? relativeTime(d.scanned_at) : ""} compared with the one{" "}
-            {d.previous_scanned_at ? relativeTime(d.previous_scanned_at) : "before"}.
+            Latest scan {d.scanned_at ? <Time iso={d.scanned_at} /> : ""} compared with the one{" "}
+            {d.previous_scanned_at ? <Time iso={d.previous_scanned_at} /> : "before"}.
             {!d.comparable &&
               " A check errored or the set of scored checks differs, so the score change may not reflect a real change."}
           </p>

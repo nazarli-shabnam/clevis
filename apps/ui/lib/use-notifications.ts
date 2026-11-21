@@ -53,7 +53,7 @@ export function useNotifications({ full = false }: { full?: boolean } = {}) {
   // Only the first page carries the unread count (later pages are older items).
   const items = full ? (pages?.flatMap((p) => p.items) ?? []) : (short.data?.items ?? [])
   const unread = full ? (pages?.[0]?.unread_count ?? 0) : (short.data?.unread_count ?? 0)
-  const { isError, error, isFetching, refetch } = full ? long : short
+  const { isError, error, isFetching, refetch, dataUpdatedAt } = full ? long : short
   // The feed queries stay disabled until the membership answer arrives, and a disabled query is not "loading", so
   // count that wait as loading or an empty cache shows "nothing yet" before the feed is even requested.
   const isLoading = (full ? long : short).isLoading || (org !== "" && mine.isPending)
@@ -62,7 +62,7 @@ export function useNotifications({ full = false }: { full?: boolean } = {}) {
   // A failed background refresh with a list already loaded keeps the list on screen (`refreshFailed`);
   // only a failure with nothing to show replaces it.
   const refreshFailed = isError && !loadMoreFailed && items.length > 0
-  const query = { isError: isError && !loadMoreFailed && items.length === 0, error: error as Error, isLoading, isFetching, refetch }
+  const query = { isError: isError && !loadMoreFailed && items.length === 0, error: error as Error, isLoading, isFetching, refetch, dataUpdatedAt }
 
   const markRead = useMutation({
     // Items are newest first; mark up to the newest one this feed actually showed.
@@ -76,8 +76,13 @@ export function useNotifications({ full = false }: { full?: boolean } = {}) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: notificationsKey(org) }),
   })
 
+  const markKindRead = useMutation({
+    mutationFn: (kind: NotificationKind) => api.notifications.markKindRead(org, kind),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: notificationsKey(org) }),
+  })
+
   const more = { hasMore: !!long.hasNextPage, loadingMore: long.isFetchingNextPage, loadMoreFailed, refreshFailed, loadMore: () => long.fetchNextPage() }
-  return { org, notMember, query, markRead, dismiss, items, unread, ...more }
+  return { org, notMember, query, markRead, dismiss, markKindRead, items, unread, ...more }
 }
 
 /** The caller's muted notification kinds for `org`. Loaded only while `enabled` (the settings panel is
