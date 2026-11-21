@@ -294,6 +294,70 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.yml -f docker-compose.ci.yml down -v
 
+  # The pytest job above runs the worker tests as a privileged role, so a worker query on a table, verb or
+  # sequence that clevis_worker was never granted would only fail for a self-hoster who set
+  # WORKER_DB_PASSWORD. This job builds the database the way that deployment does -- the role from the real
+  # init script, created before the migrations so their IF EXISTS (clevis_worker) grant blocks run -- and
+  # checks, as that role, that every statement in apps/worker/src is permitted.
+  worker-grants:
+    name: Worker role grants
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: clevis
+          POSTGRES_USER: clevis
+          POSTGRES_PASSWORD: clevis
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U clevis"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+psycopg://clevis:clevis@localhost:5432/clevis
+      WORKER_DB_PASSWORD: ci-dummy-worker-db-password-not-for-production-use-0
+      JOB_SECRET_KEY: ci-dummy-secret-key-not-for-production-use-00
+      AUTH_SECRET: ci-dummy-auth-secret-not-for-production-use-000
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install API/Worker + test requirements
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r apps/api/requirements.txt
+          python -m pip install -r apps/worker/requirements.txt
+          python -m pip install -e packages/checks
+          python -m pip install -r requirements-test.txt
+
+      - name: Create clevis_worker (init script, before the migrations)
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGPASSWORD: clevis
+          POSTGRES_USER: clevis
+          POSTGRES_DB: clevis
+        run: sh docker/postgres-init/01-create-worker-role.sh
+
+      - name: Run migrations
+        working-directory: apps/api
+        run: python -m alembic upgrade head
+
+      - name: Check the worker's SQL against clevis_worker's grants
+        env:
+          DATABASE_URL: postgresql+psycopg://clevis_worker:${{ env.WORKER_DB_PASSWORD }}@localhost:5432/clevis
+        run: python -m pytest -q apps/worker/tests/test_worker_grants.py
+
   docker:
     name: Docker Build Verification
     runs-on: ubuntu-latest
