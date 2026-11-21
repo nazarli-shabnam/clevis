@@ -268,6 +268,14 @@ function OrgMembershipsSection() {
                       </Link>
                       {m.role === "admin" && (
                         <Link
+                          href={`/settings/org/${encodeURIComponent(m.org_login)}/settings`}
+                          className="text-xs text-primary hover:underline"
+                        >
+                          Org settings
+                        </Link>
+                      )}
+                      {m.role === "admin" && (
+                        <Link
                           href={`/settings/org/${encodeURIComponent(m.org_login)}/activity`}
                           className="text-xs text-primary hover:underline"
                         >

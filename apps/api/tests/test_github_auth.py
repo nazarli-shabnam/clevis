@@ -13,6 +13,7 @@ from sqlalchemy.orm import Query
 from src.core.config import settings
 from src.core.db import User, get_db
 from src.core.rate_limit import _buckets as _rate_limit_buckets
+from src.repositories import tenant_repo
 from src.routers.github_auth import EmailAlreadyRegistered, RegistrationDisabled, find_or_create_user
 from src.routers.github_auth import router as gh_router
 from src.services import github_oauth
@@ -131,7 +132,7 @@ def test_refuses_to_auto_link_an_existing_email_registered_account(db):
     # Self-registration has no email verification, so silently linking a GitHub identity
     # onto an existing account by email match alone would let an attacker who
     # pre-registered a victim's email inherit their real GitHub identity.
-    existing = User(email="owner@example.com", name="Owner", password_hash="x", is_workspace_admin=True)
+    existing = User(email="owner@example.com", name="Owner", password_hash="x", is_workspace_admin=True, email_verified=True)
     db.add(existing)
     db.commit()
     db.refresh(existing)
@@ -144,10 +145,88 @@ def test_refuses_to_auto_link_an_existing_email_registered_account(db):
     assert db.query(User).count() == 1
 
 
+def test_unverified_self_registration_is_replaced_by_the_github_identity(db):
+    # #1104: an unverified, GitHub-less registration proved nothing about the address, so the real owner
+    # (GitHub-verified) gets a fresh account instead of being locked out by a squatter.
+    from datetime import datetime, timedelta, timezone
+
+    from src.core.db import Tenant, UserSession
+
+    squatter = User(email="victim@example.com", password_hash="attacker-hash", email_verified=False, email_verify_token="tok")
+    db.add(squatter)
+    db.commit()
+    squatter_id = squatter.id
+    tenant_repo.ensure_personal_tenant(db, squatter_id)
+    db.add(UserSession(jti="j1", user_id=squatter_id, expires_at=datetime.now(timezone.utc) + timedelta(days=1)))
+    db.commit()
+
+    user = find_or_create_user(db, _identity(github_user_id=777, email="Victim@Example.com", login="victim"))
+
+    assert user.id != squatter_id
+    assert user.github_user_id == 777 and user.email_verified is True and user.password_hash is None
+    assert db.query(User).filter(User.id == squatter_id).count() == 0  # the squatter's row, sessions and tenant are gone
+    assert db.query(UserSession).filter(UserSession.user_id == squatter_id).count() == 0
+    assert db.query(Tenant).filter(Tenant.personal_user_id == squatter_id).count() == 0
+    assert db.query(Tenant).filter(Tenant.personal_user_id == user.id).count() == 1
+
+
+def test_replacement_is_audited_when_a_concurrent_callback_won_the_identity(db):
+    # The squatter's deletion is committed on the "another callback created this identity while we waited for the
+    # lock" path too, so that path records the replacement as well.
+    import json
+
+    from src.core.db import AuditLog
+    from src.services import account_deletion
+
+    squatter = User(email="victim@example.com", password_hash="x", email_verified=False)
+    db.add(squatter)
+    db.commit()
+    squatter_id = squatter.id
+    tenant_repo.ensure_personal_tenant(db, squatter_id)
+    real_delete = account_deletion.delete_account
+
+    def delete_then_lose_the_race(session, user):
+        real_delete(session, user)
+        winner = User(email="other@example.com", password_hash=None, email_verified=True, github_user_id=777)
+        session.add(winner)
+        session.flush()
+        tenant_repo.ensure_personal_tenant(session, winner.id, commit=False)
+
+    with patch.object(account_deletion, "delete_account", delete_then_lose_the_race):
+        user = find_or_create_user(db, _identity(github_user_id=777, email="victim@example.com"))
+
+    assert user.email == "other@example.com"
+    rows = db.query(AuditLog).filter(AuditLog.action == "auth.unverified_registration_replaced").all()
+    assert len(rows) == 1 and json.loads(rows[0].payload)["replaced_user_id"] == squatter_id
+
+
+def test_a_squatter_whose_account_cannot_be_deleted_is_not_replaced(db):
+    from src.services import account_deletion
+
+    squatter = User(email="victim@example.com", password_hash="x", email_verified=False)
+    db.add(squatter)
+    db.commit()
+
+    with patch.object(account_deletion, "delete_account", side_effect=account_deletion.AccountDeletionRefused(["sole admin"])):
+        with pytest.raises(EmailAlreadyRegistered):
+            find_or_create_user(db, _identity(github_user_id=778, email="victim@example.com"))
+
+    assert db.query(User).filter(User.id == squatter.id).count() == 1
+
+
+def test_unverified_account_already_linked_to_another_github_id_is_not_claimed(db):
+    existing = User(email="owner@example.com", password_hash=None, email_verified=False, github_user_id=1)
+    db.add(existing)
+    db.commit()
+
+    with pytest.raises(EmailAlreadyRegistered):
+        find_or_create_user(db, _identity(github_user_id=2, email="owner@example.com"))
+
+
 def test_refuses_to_auto_link_when_existing_email_differs_only_by_case(db):
     # The email-collision check must be case-insensitive, same as the users.email
     # uniqueness constraint itself.
-    existing = User(email="owner@example.com", name="Owner", password_hash="x", is_workspace_admin=True)
+    existing = User(email="owner@example.com", name="Owner", password_hash="x", is_workspace_admin=True, email_verified=True)
     db.add(existing)
     db.commit()
 
@@ -264,7 +343,7 @@ def test_callback_rejects_bad_state(gh_client):
 
 
 def test_callback_redirects_with_error_when_email_already_registered(gh_client, db):
-    existing = User(email="octo@example.com", name="Owner", password_hash="x", is_workspace_admin=True)
+    existing = User(email="octo@example.com", name="Owner", password_hash="x", is_workspace_admin=True, email_verified=True)
     db.add(existing)
     db.commit()
 

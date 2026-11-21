@@ -58,6 +58,33 @@ beforeEach(() => {
 })
 afterEach(cleanup)
 
+describe("ApiTokensCard bulk actions (#1126)", () => {
+  const inDays = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString()
+
+  it("filters by expiry and revokes the selected active tokens after one confirm", async () => {
+    listMock.mockResolvedValue([
+      token({ id: 1, name: "soon", expires_at: inDays(3) }),
+      token({ id: 2, name: "later", expires_at: inDays(60) }),
+      token({ id: 3, name: "never" }),
+      token({ id: 4, name: "gone", revoked_at: new Date().toISOString() }),
+    ])
+    revokeMock.mockResolvedValue(undefined)
+    renderCard()
+    await screen.findByLabelText("Select token soon")
+    expect(screen.queryByLabelText("Select token gone")).not.toBeInTheDocument() // a revoked token has nothing to revoke
+
+    fireEvent.change(screen.getByLabelText("Filter tokens by expiry"), { target: { value: "7" } });
+    expect(screen.queryByText("later")).not.toBeInTheDocument();
+    expect(screen.queryByText("never")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Select all shown active tokens"))
+    fireEvent.click(screen.getByRole("button", { name: "Revoke selected (1)" }))
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Revoke" }))
+    await waitFor(() => expect(revokeMock).toHaveBeenCalledWith("acme", 1))
+    expect(revokeMock).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe("ApiTokensCard", () => {
   it("warns about an active token whose creator left the org", async () => {
     listMock.mockResolvedValue([token({ creator_left: true }), token({ id: 2, name: "fine" })])
@@ -307,6 +334,23 @@ describe("ApiTokensCard", () => {
       const row = (await screen.findByText("linked")).closest("li")
       expect(row).toHaveAttribute("aria-current", "true")
       expect(screen.getByText("ci").closest("li")).not.toHaveAttribute("aria-current")
+    })
+
+    it("clears an expiry filter that would hide the token a notification links to", async () => {
+      listMock.mockResolvedValue([token({ id: 1, name: "soon", expires_at: new Date(Date.now() + 3 * 86_400_000).toISOString() }), token({ id: 2, name: "never" })])
+      const view = renderCard()
+      await screen.findByText("never")
+      fireEvent.change(screen.getByLabelText("Filter tokens by expiry"), { target: { value: "7" } })
+      expect(screen.queryByText("never")).not.toBeInTheDocument()
+
+      searchParams = new URLSearchParams("token=2")
+      view.rerender(
+        <QueryClientProvider client={new QueryClient()}>
+          <ApiTokensCard orgLogin="acme" />
+        </QueryClientProvider>,
+      )
+
+      expect((await screen.findByText("never")).closest("li")).toHaveAttribute("aria-current", "true")
     })
   })
 })

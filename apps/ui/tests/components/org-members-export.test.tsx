@@ -60,7 +60,10 @@ describe("OrgMembersPage CSV export", () => {
     });
   });
 
-  afterEach(() => cleanup());
+  afterEach(() => {
+    cleanup();
+    window.history.replaceState(null, "", "/"); // the roster mirrors its filters into the URL
+  });
 
   it("exports the roster with an explicit 'unknown' for members whose 2FA status isn't known", async () => {
     renderPage();
@@ -114,6 +117,7 @@ describe("OrgMembersPage roster paging", () => {
   afterEach(() => {
     vi.useRealTimers();
     cleanup();
+    window.history.replaceState(null, "", "/"); // the roster mirrors its filters into the URL
   });
 
   it("stays on the page the admin is reviewing when the page re-renders on its own clock tick", async () => {

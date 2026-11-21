@@ -148,3 +148,23 @@ def test_backlog_and_losses_are_not_limited_to_the_24_hour_window(db, org, admin
     age = datetime.now(timezone.utc) - datetime.fromisoformat(body["oldest_backlog_at"])
     assert timedelta(days=2, hours=23) < age < timedelta(days=3, hours=1)
     assert body["lost_recent"] == 1 and body["loss_lookback_days"] == 30
+
+
+def test_reports_why_the_last_backfill_was_incomplete(db, org, admin):
+    # #1092: a capped or partly skipped run used to look like a full sync.
+    db.add(ActivitySyncCursor(
+        tenant_id=org.tenant_id, account_login="acme", account_type="Organization",
+        last_synced_at=datetime.now(timezone.utc), incomplete_reason="private repositories beyond the 50 most recently pushed were not read",
+    ))
+    db.commit()
+
+    body = _client(db, admin).get("/orgs/acme/ingestion-health").json()
+
+    assert body["backfill_incomplete_reason"].startswith("private repositories beyond the 50")
+
+
+def test_a_complete_backfill_has_no_incomplete_reason(db, org, admin):
+    db.add(ActivitySyncCursor(tenant_id=org.tenant_id, account_login="acme", account_type="Organization", last_synced_at=datetime.now(timezone.utc)))
+    db.commit()
+
+    assert _client(db, admin).get("/orgs/acme/ingestion-health").json()["backfill_incomplete_reason"] is None

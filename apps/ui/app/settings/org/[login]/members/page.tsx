@@ -1,6 +1,8 @@
 "use client"
 
+import Link from "next/link"
 import { useParams, useRouter, useSearchParams } from "next/navigation"
+import { Time } from "@/components/time"
 import { useEffect, useMemo, useState } from "react"
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
@@ -10,26 +12,21 @@ import { DataTable, type DataTableColumn } from "@/components/ui/data-table"
 import { ArrowsClockwise, CircleNotch, EnvelopeSimple, PaperPlaneTilt, Warning, X } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { addRevokingId, isRevoking, removeRevokingId } from "@/lib/revoke-pending"
-import { exactTime, relativeTime } from "@/lib/format"
+import { exactTime } from "@/lib/format"
 import { effectiveInvitationStatus, invitationExpiry, type ExpiryTone } from "@/lib/invitation-expiry"
 import { CopyButton } from "@/components/copy-button"
 import { orgRoleFor } from "@/lib/members-href"
 import { EmptyStateAction } from "@/components/empty-state-action"
 import { SectionError } from "@/components/section-error"
-import { HygieneScoringCard } from "@/components/hygiene-scoring-card"
-import { ScheduledScansCard } from "@/components/scheduled-scans-card"
-import { DigestCard } from "@/components/digest-card"
 import { SmtpVerifyNotice } from "@/components/smtp-verify-notice"
-import { AutomationSchedulesCard } from "@/components/automation-schedules-card"
-import { WaiversCard } from "@/components/waivers-card"
-import { ClevisMembersCard } from "@/components/clevis-members-card"
-import { IngestionHealthCard } from "@/components/ingestion-health-card"
-import { EvidenceExportCard } from "@/components/evidence-export-card"
 import { MemberAccessSheet } from "@/components/member-access-sheet"
-import { NotificationDestinationsCard } from "@/components/notification-destinations-card"
-import { BadgeSettingsCard } from "@/components/badge-settings-card"
-import { ApiTokensCard } from "@/components/api-tokens-card"
 import { useDigestSettings } from "@/lib/use-digest-settings"
+import { BulkActionBar } from "@/components/bulk-action-bar"
+import { ExpiryFilterSelect } from "@/components/expiry-filter-select"
+import { useRowSelection } from "@/lib/bulk"
+import { matchesExpiry, type ExpiryFilter } from "@/lib/expiry-filter"
+import { membersViewCodec, type MemberRoleFilter } from "@/lib/list-views"
+import { useUrlView } from "@/lib/use-url-view"
 import type {
   GithubOrgMember,
   GithubOutsideCollaborator,
@@ -156,7 +153,14 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
   const tabs = canReview ? ROSTER_TABS : ROSTER_TABS.filter((t) => t.id === "members")
   const tab = (tabs.some((t) => t.id === rawTab) ? rawTab : "members") as RosterTabId
   const [search, setSearch] = useState("")
-  const [roleFilter, setRoleFilter] = useState<"all" | "member" | "admin">("all")
+  const [roleFilter, setRoleFilter] = useState<MemberRoleFilter>("all")
+  const [twoFaOff, setTwoFaOff] = useState(false)
+  // The roster filters live in the query string so a view can be linked and survives a reload.
+  useUrlView({ search, role: roleFilter, twoFaOff }, membersViewCodec, (v) => {
+    setSearch(v.search)
+    setRoleFilter(v.role)
+    setTwoFaOff(v.twoFaOff)
+  })
 
   function setTab(id: RosterTabId) {
     const params = new URLSearchParams(searchParams.toString())
@@ -218,8 +222,11 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
   // every render (the parent's 60 s clock tick, an opened invite form) would kick the admin off the
   // page they were reviewing.
   const filteredMembers = useMemo(
-    () => (membersQuery.data?.members ?? []).filter((m) => m.login.toLowerCase().includes(search.toLowerCase())),
-    [membersQuery.data, search],
+    () =>
+      (membersQuery.data?.members ?? []).filter(
+        (m) => m.login.toLowerCase().includes(search.toLowerCase()) && (!twoFaOff || m.two_factor_enabled === false),
+      ),
+    [membersQuery.data, search, twoFaOff],
   )
   // Derived from filteredMembers so the count matches the visible table -- a stale org-wide
   // total next to a filtered table reads as a data-integrity bug for a 2FA-compliance number.
@@ -265,13 +272,22 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
             <select
               aria-label="Filter by role"
               value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value as "all" | "member" | "admin")}
+              onChange={(e) => setRoleFilter(e.target.value as MemberRoleFilter)}
               className="text-xs card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
             >
               <option value="all">All roles</option>
               <option value="member">Member</option>
               <option value="admin">Admin</option>
             </select>
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={twoFaOff}
+                disabled={membersQuery.data?.two_factor_overlay_available === false && !twoFaOff}
+                onChange={(e) => setTwoFaOff(e.target.checked)}
+              />
+              2FA off
+            </label>
             {isRefetchingByRole && (
               <span className="text-xs text-muted-foreground flex items-center gap-1">
                 <CircleNotch className="size-3 animate-spin" /> Updating…
@@ -356,7 +372,7 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
               </thead>
               <tbody className="divide-y divide-border">
                 {pendingQuery.data!.invitations.map((inv, i) => (
-                  <tr key={i}><td className="px-4 py-2.5 text-foreground/80">{inv.login ?? inv.email}</td><td className="px-4 py-2.5 text-muted-foreground capitalize">{inv.role}</td><td className="px-4 py-2.5 text-muted-foreground">{relativeTime(inv.invited_at)}</td><td className="px-4 py-2.5 text-muted-foreground">{inv.inviter ?? "—"}</td></tr>
+                  <tr key={i}><td className="px-4 py-2.5 text-foreground/80">{inv.login ?? inv.email}</td><td className="px-4 py-2.5 text-muted-foreground capitalize">{inv.role}</td><td className="px-4 py-2.5 text-muted-foreground"><Time iso={inv.invited_at} /></td><td className="px-4 py-2.5 text-muted-foreground">{inv.inviter ?? "—"}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -378,7 +394,7 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
           <div className="px-4 py-2.5 border-b border-border">
             <span className="text-xs font-medium text-foreground">Permission audit</span>
             <span className="text-xs text-muted-foreground ml-2">
-              generated {permissionAuditQuery.data ? relativeTime(permissionAuditQuery.data.generated_at) : "—"}
+              generated {permissionAuditQuery.data ? <Time iso={permissionAuditQuery.data.generated_at} /> : "—"}
               {permissionAuditQuery.data && permissionAuditQuery.data.repos_scanned < permissionAuditQuery.data.repos_total && (
                 <> · scanned {permissionAuditQuery.data.repos_scanned} of {permissionAuditQuery.data.repos_total} repos</>
               )}
@@ -541,6 +557,14 @@ export default function OrgMembersPage() {
   const params = useParams<{ login: string }>()
   const orgLogin = params.login
   const queryClient = useQueryClient()
+  const router = useRouter()
+  const pageSearchParams = useSearchParams()
+  // Waivers and API tokens moved to the org Settings page; notification links and emails that still point here
+  // with ?waiver= / ?token= are forwarded there, query intact.
+  const movedParams = pageSearchParams.has("waiver") || pageSearchParams.has("token")
+  useEffect(() => {
+    if (movedParams) router.replace(`/settings/org/${encodeURIComponent(orgLogin)}/settings?${pageSearchParams.toString()}`)
+  }, [movedParams, orgLogin, pageSearchParams, router])
   const [email, setEmail] = useState("")
   const [lastLink, setLastLink] = useState<{ id: number; link: string; emailed?: InvitationEmailStatus | null } | null>(null)
   // Emailing the link is the default whenever the server can send mail; the admin can untick it per invite.
@@ -659,6 +683,17 @@ export default function OrgMembersPage() {
     },
   })
 
+  // Only pending invitations can be revoked, so only those are selectable. The expiry filter looks at the
+  // effective status (a lapsed pending one counts as expired); accepted and revoked ones have no clock.
+  const [expiryFilter, setExpiryFilter] = useState<ExpiryFilter>("any")
+  const visibleInvitations = invitations.filter((inv) => {
+    const status = effectiveInvitationStatus(inv, now)
+    return matchesExpiry(status === "pending" || status === "expired" ? inv.expires_at : null, expiryFilter, now)
+  })
+  const invitationSelection = useRowSelection(
+    visibleInvitations.filter((inv) => effectiveInvitationStatus(inv, now) === "pending").map((inv) => inv.id),
+  )
+
   // Revoke and reissue race on the same row (a late regenerate would restore a revoked link), so any
   // pending action on an invitation locks all of its buttons.
   const busy = (id: number) => isRevoking(reissuingIds, id) || isRevoking(revokingIds, id)
@@ -666,6 +701,13 @@ export default function OrgMembersPage() {
   return (
     <>
       <PageHeader title="Members" description={`Manage who can access ${orgLogin} in Clevis.`} />
+      <p className="mb-4 text-xs text-muted-foreground">
+        Scanning, alerts, automation, waivers and API tokens are in{" "}
+        <Link href={`/settings/org/${encodeURIComponent(orgLogin)}/settings`} className="text-primary hover:underline">
+          Organization settings
+        </Link>
+        .
+      </p>
 
       {rolePending ? (
         <div className="card px-4 py-6 flex items-center gap-2 text-sm text-muted-foreground">
@@ -682,15 +724,7 @@ export default function OrgMembersPage() {
         </div>
       ) : (
         <>
-        <HygieneScoringCard orgLogin={orgLogin} />
-        <ScheduledScansCard orgLogin={orgLogin} />
-        <DigestCard orgLogin={orgLogin} />
         <SmtpVerifyNotice orgLogin={orgLogin} />
-        <AutomationSchedulesCard orgLogin={orgLogin} />
-        <ClevisMembersCard orgLogin={orgLogin} />
-        <WaiversCard orgLogin={orgLogin} />
-        <IngestionHealthCard orgLogin={orgLogin} />
-        <EvidenceExportCard orgLogin={orgLogin} />
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="card">
             <div className="px-4 py-3 border-b border-border">
@@ -802,10 +836,37 @@ export default function OrgMembersPage() {
                 focusId="invite-email"
               />
             ) : (
+              <>
+              <div className="px-4 py-2 flex flex-wrap items-center gap-2 text-xs border-b border-border">
+                <ExpiryFilterSelect label="Filter invitations by expiry" value={expiryFilter} onChange={setExpiryFilter} />
+                <label className="flex items-center gap-1.5 text-muted-foreground">
+                  <input type="checkbox" aria-label="Select all shown pending invitations" checked={invitationSelection.allSelected} onChange={invitationSelection.toggleAll} />
+                  Select all pending
+                </label>
+                <BulkActionBar
+                  ids={invitationSelection.chosen}
+                  label="Revoke selected"
+                  confirmTitle={`Revoke ${invitationSelection.chosen.length} invitation${invitationSelection.chosen.length === 1 ? "" : "s"}?`}
+                  confirmDescription="The invitation links stop working. You can invite these people again later."
+                  confirmLabel="Revoke"
+                  run={(id) =>
+                    api.invitations.revoke(orgLogin, id).then(() => {
+                      clearDisplayedLink(id)
+                      setRowNotes(({ [id]: _cleared, ...rest }) => rest)
+                    })
+                  }
+                  onDone={(failed) => {
+                    invitationSelection.keepOnly(failed)
+                    return queryClient.invalidateQueries({ queryKey: ["invitations", orgLogin] })
+                  }}
+                />
+              </div>
+              {visibleInvitations.length === 0 && <p className="px-4 py-3 text-xs text-muted-foreground">No invitations match this filter.</p>}
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-border">
+                      <th className="w-8 px-4 py-2" />
                       <th className="text-left text-muted-foreground font-medium px-4 py-2">Email</th>
                       <th className="text-left text-muted-foreground font-medium px-4 py-2">Status</th>
                       <th className="text-left text-muted-foreground font-medium px-4 py-2">Expires</th>
@@ -813,8 +874,18 @@ export default function OrgMembersPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {invitations.map((inv) => (
+                    {visibleInvitations.map((inv) => (
                       <tr key={inv.id}>
+                        <td className="px-4 py-2.5">
+                          {effectiveInvitationStatus(inv, now) === "pending" && (
+                            <input
+                              type="checkbox"
+                              aria-label={`Select invitation for ${inv.email}`}
+                              checked={invitationSelection.isSelected(inv.id)}
+                              onChange={() => invitationSelection.toggle(inv.id)}
+                            />
+                          )}
+                        </td>
                         <td className="px-4 py-2.5 text-foreground/80">
                           {inv.email}
                           {revokeErrors[inv.id] && (
@@ -871,15 +942,13 @@ export default function OrgMembersPage() {
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </div>
         </div>
         </>
       )}
 
-      {!rolePending && !notAdmin && <NotificationDestinationsCard orgLogin={orgLogin} />}
-      {!rolePending && !notAdmin && <BadgeSettingsCard orgLogin={orgLogin} />}
-      {!rolePending && !notAdmin && <ApiTokensCard orgLogin={orgLogin} />}
 
       <div className="mt-4">
         <GithubRoster orgLogin={orgLogin} canReview={role === "admin"} />

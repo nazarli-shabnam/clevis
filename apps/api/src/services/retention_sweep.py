@@ -145,9 +145,16 @@ def _purge_repo_events(db: Session, cutoff: datetime) -> int:
     # repo_events has strict tenant RLS, so it is purged one tenant at a time with that tenant's
     # context set. tenants has no RLS: read it freely.
     total = 0
-    for (tenant_id,) in db.execute(text("SELECT id FROM tenants")).fetchall():
-        set_session_tenant(db, tenant_id)
-        total += _delete_in_batches(db, _DELETE_REPO_EVENTS, {"tenant_id": tenant_id, "cutoff": cutoff})
+    for (tenant_id,) in db.execute(text("SELECT id FROM tenants ORDER BY id")).fetchall():
+        try:
+            set_session_tenant(db, tenant_id)
+            total += _delete_in_batches(db, _DELETE_REPO_EVENTS, {"tenant_id": tenant_id, "cutoff": cutoff})
+        except Exception as exc:
+            db.rollback()
+            if isinstance(getattr(exc, "orig", None), InsufficientPrivilege):
+                raise  # a missing grant hits every tenant alike: report it once, at the table level
+            # One tenant's lock timeout or error must not starve the tenants after it; it is retried next tick.
+            logger.exception("retention purge of repo_events failed for tenant %d", tenant_id)
     return total
 
 

@@ -4,6 +4,7 @@
 // personal account. Every /me/* endpoint accepts either as `owner`; only Health & Security is org-only.
 
 import { useCallback, useSyncExternalStore } from "react"
+import { safeStorage } from "@/lib/safe-storage"
 
 export type ActiveScope = { kind: "org"; login: string } | { kind: "personal"; login: string }
 
@@ -38,8 +39,8 @@ let cachedRead = false
 
 function read(): ActiveScope | null {
   if (typeof window === "undefined") return null
-  const activeRaw = localStorage.getItem(STORAGE_KEY)
-  const legacyRaw = activeRaw === null ? localStorage.getItem(LEGACY_ORG_KEY) : null
+  const activeRaw = safeStorage.getItem(STORAGE_KEY)
+  const legacyRaw = activeRaw === null ? safeStorage.getItem(LEGACY_ORG_KEY) : null
   if (cachedRead && activeRaw === cachedActiveRaw && legacyRaw === cachedLegacyRaw) return cachedScope
   cachedRead = true
   cachedActiveRaw = activeRaw
@@ -62,7 +63,7 @@ function getServerSnapshot(): ActiveScope | null {
 }
 
 export function setActiveScope(scope: ActiveScope): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(scope))
+  safeStorage.setItem(STORAGE_KEY, JSON.stringify(scope))
   window.dispatchEvent(new Event(CHANGE_EVENT))
 }
 
@@ -70,8 +71,8 @@ export function setActiveScope(scope: ActiveScope): void {
 // user's org. Clears the legacy key too.
 export function clearActiveScope(): void {
   if (typeof window === "undefined") return
-  localStorage.removeItem(STORAGE_KEY)
-  localStorage.removeItem(LEGACY_ORG_KEY)
+  safeStorage.removeItem(STORAGE_KEY)
+  safeStorage.removeItem(LEGACY_ORG_KEY)
   window.dispatchEvent(new Event(CHANGE_EVENT))
 }
 

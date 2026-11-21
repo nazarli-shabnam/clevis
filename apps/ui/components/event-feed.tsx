@@ -1,8 +1,8 @@
 "use client"
 
 import { useState } from "react"
+import { Time } from "@/components/time"
 import Link from "next/link"
-import { relativeTime } from "@/lib/format"
 import { eventItemHref, repoPageHref } from "@/lib/activity-links"
 import type { OrgEvent } from "@/lib/api/types"
 
@@ -114,7 +114,7 @@ export function EventFeed({ events, isLoading }: EventFeedProps) {
                 </p>
               </div>
               <span className="text-[0.6875rem] text-muted-foreground whitespace-nowrap shrink-0 mt-0.5">
-                {relativeTime(event.created_at)}
+                <Time iso={event.created_at} />
               </span>
             </div>
           ))}

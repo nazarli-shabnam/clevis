@@ -1,6 +1,7 @@
 "use client"
 
 import { useQuery } from "@tanstack/react-query"
+import { Time } from "@/components/time"
 import { CircleNotch } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { relativeTime } from "@/lib/format"
@@ -9,7 +10,7 @@ import type { IngestionHealth } from "@/lib/api/types"
 
 const BACKLOG_STALE_MS = 15 * 60_000
 
-const when = (iso: string | null) => (iso ? relativeTime(iso) : "never")
+const when = (iso: string | null) => (iso ? <Time iso={iso} /> : "never")
 
 /** What is wrong with ingestion, if anything, in one sentence; null when it looks healthy. */
 export function ingestionProblem(h: IngestionHealth): string | null {
@@ -84,7 +85,14 @@ export function IngestionHealthCard({ orgLogin }: { orgLogin: string }) {
               {h.received} received · {h.pending} waiting · {h.queue_failed} failed to queue · {h.queue_abandoned} abandoned · {h.dropped} dropped
             </dd>
             <dt className="text-muted-foreground">Last event backfill</dt>
-            <dd>{when(h.last_backfill_at)}</dd>
+            <dd>
+              {when(h.last_backfill_at)}
+              {h.backfill_incomplete_reason && (
+                <span className="block text-warning">
+                  History may be incomplete: {h.backfill_incomplete_reason}.
+                </span>
+              )}
+            </dd>
             <dt className="text-muted-foreground">Last membership reconcile</dt>
             <dd>{when(h.last_membership_reconcile_at)}</dd>
           </dl>

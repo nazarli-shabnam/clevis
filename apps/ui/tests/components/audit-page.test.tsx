@@ -42,11 +42,14 @@ function renderPage() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <AuditPage />
-    </QueryClientProvider>,
-  );
+  return {
+    queryClient,
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <AuditPage />
+      </QueryClientProvider>,
+    ),
+  };
 }
 
 describe("AuditPage", () => {
@@ -64,6 +67,7 @@ describe("AuditPage", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    window.history.replaceState(null, "", "/"); // the page mirrors its filters into the URL
   });
 
   it("builds the action filter from the actions the API reports, not a hard-coded list (#664)", async () => {
@@ -79,6 +83,32 @@ describe("AuditPage", () => {
 
     fireEvent.change(screen.getByLabelText("Filter by action"), { target: { value: "token.save" } });
     await waitFor(() => expect(auditListMock).toHaveBeenLastCalledWith(expect.objectContaining({ action: "token.save", limit: 100 })));
+  });
+
+  it("writes the applied filters to the query string, keeping unrelated params (#1128)", async () => {
+    auditListMock.mockResolvedValue([]);
+    window.history.replaceState(null, "", "/?job_id=42");
+    renderPage();
+
+    fireEvent.change(screen.getByLabelText("Actor"), { target: { value: "u@e.com" } });
+    expect(window.location.search).toBe("?job_id=42"); // typing alone applies nothing
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+
+    await waitFor(() => expect(window.location.search).toBe("?job_id=42&actor=u%40e.com"));
+  });
+
+  it("restores the actor, action and date filters from the query string (#1128)", async () => {
+    auditListMock.mockResolvedValue([]);
+    window.history.replaceState(null, "", "/?actor=u%40e.com&action=token.save&from=2026-01-01");
+    mockSearchParams = new URLSearchParams(window.location.search);
+    renderPage();
+
+    await waitFor(() =>
+      expect(auditListMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ actor: "u@e.com", action: "token.save", since: "2026-01-01T00:00:00Z" }),
+      ),
+    );
+    expect(screen.getByLabelText("Actor")).toHaveValue("u@e.com");
   });
 
   it("still offers only the all-actions option when the actions request fails (#664)", async () => {
@@ -312,6 +342,30 @@ describe("AuditPage", () => {
     expect(screen.getByText("older.event")).toBeInTheDocument();
     // A short page means the log is exhausted, so there is nothing more to load.
     expect(screen.queryByRole("button", { name: /load more/i })).not.toBeInTheDocument();
+  });
+
+  it("blames Load more only for a failed next-page fetch, not for a failed background refresh (#1117)", async () => {
+    const fullPage = Array.from({ length: 100 }, (_, i) => ({
+      id: 200 - i, actor: "u@e.com", action: "installation.connected", target: "acme", payload: "{}", created_at: "2026-01-01T00:00:00Z",
+    }));
+    auditListMock.mockResolvedValue(fullPage);
+    const { queryClient } = renderPage();
+    await waitFor(() => expect(screen.getByText("100 entries")).toBeInTheDocument());
+
+    // A background refresh fails: the list is fine, so no "Couldn't load more".
+    auditListMock.mockRejectedValue(new Error("502 Bad Gateway"));
+    await queryClient.refetchQueries({ queryKey: ["audit"] });
+    await waitFor(() => expect(screen.getByText(/Couldn.t refresh just now/)).toBeInTheDocument());
+    expect(screen.queryByText(/Couldn.t load more/)).not.toBeInTheDocument();
+    expect(screen.getByText("100 entries")).toBeInTheDocument();
+
+    // A failed "Load more" is still reported as such.
+    auditListMock.mockResolvedValue(fullPage);
+    await queryClient.refetchQueries({ queryKey: ["audit"] });
+    await waitFor(() => expect(screen.getByRole("button", { name: /load more/i })).toBeInTheDocument());
+    auditListMock.mockRejectedValue(new Error("page 2 failed"));
+    fireEvent.click(screen.getByRole("button", { name: /load more/i }));
+    expect(await screen.findByText(/Couldn.t load more: page 2 failed/)).toBeInTheDocument();
   });
 
   it("keeps the applied filters and the first page's rows when loading more", async () => {

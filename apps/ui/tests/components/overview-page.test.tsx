@@ -10,6 +10,7 @@ const orgsMineMock = vi.fn();
 const installationsListForOrgMock = vi.fn();
 const installationsListMock = vi.fn();
 const activitySummaryMock = vi.fn();
+const latestScanMock = vi.fn();
 
 let authUser: { id: number } | null = { id: 1 };
 vi.mock("@/lib/auth-context", () => ({
@@ -25,6 +26,7 @@ vi.mock("@/lib/api/client", () => ({
       cockpit: (...args: unknown[]) => cockpitMock(...args),
       myView: (...args: unknown[]) => myViewMock(...args),
       actionsUsage: (...args: unknown[]) => actionsUsageMock(...args),
+      latestScan: (...args: unknown[]) => latestScanMock(...args),
     },
     orgs: {
       mine: (...args: unknown[]) => orgsMineMock(...args),
@@ -87,6 +89,8 @@ describe("OverviewPage cockpit", () => {
     activitySummaryMock.mockReset();
     activitySummaryMock.mockResolvedValue({ org: "acme", days: 7, connected: false, generated_at: "2026-01-01T00:00:00Z", totals: [] });
     cockpitMock.mockReset();
+    latestScanMock.mockReset();
+    latestScanMock.mockRejectedValue(new Error("none"));
     myViewMock.mockReset();
     actionsUsageMock.mockReset();
     orgsMineMock.mockReset();
@@ -225,6 +229,33 @@ describe("OverviewPage cockpit", () => {
     await waitFor(() => expect(screen.getAllByText("Configure →")).toHaveLength(4));
   });
 
+  it("shows how old the score is and when the numbers were last refreshed (#1094)", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockRejectedValue(new Error("No saved token for this org"));
+    cockpitMock.mockResolvedValue({ ...EMPTY_COCKPIT, latest_score: 87 });
+    latestScanMock.mockResolvedValue({
+      owner: "acme", score: 87, total_checks: 1, failed_checks: 0, checks: [],
+      scanned_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+    });
+
+    renderPage();
+
+    expect(await screen.findByText(/Security score from a scan 3 hours ago\./)).toBeInTheDocument();
+    expect(screen.getByText(/Numbers refreshed just now\./)).toBeInTheDocument();
+  });
+
+  it("still says when the numbers were refreshed when the org has no scan yet (#1094)", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockRejectedValue(new Error("No saved token for this org"));
+    cockpitMock.mockResolvedValue({ ...EMPTY_COCKPIT });
+    latestScanMock.mockRejectedValue(new Error("No scans yet"));
+
+    renderPage();
+
+    expect(await screen.findByText(/Numbers refreshed just now\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Security score from a scan/)).not.toBeInTheDocument();
+  });
+
   it("labels commit activity as estimated when the cockpit source is an aggregate", async () => {
     localStorage.setItem("default_org", "acme");
     tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
@@ -296,6 +327,21 @@ describe("OverviewPage cockpit", () => {
     await waitFor(() => {
       expect(screen.getByText("(stale)")).toBeInTheDocument();
     });
+  });
+
+  it("warns that activity history may be incomplete when the last backfill hit a cap (#1092)", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+    cockpitMock.mockResolvedValue({
+      ...EMPTY_COCKPIT,
+      activity_history_incomplete: "private repositories beyond the 50 most recently pushed were not read",
+    });
+
+    renderPage();
+
+    expect(
+      await screen.findByText("(history may be incomplete: private repositories beyond the 50 most recently pushed were not read)"),
+    ).toBeInTheDocument();
   });
 
   it("does not label recent activity as stale when the cockpit says it's current", async () => {
