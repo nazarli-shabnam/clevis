@@ -49,7 +49,7 @@ export function PreferencesPanel({ org }: { org: string }) {
 
 /** Header bell for the active org's notifications, with an unread badge and a mark-all-read action. */
 export function NotificationBell() {
-  const { org, notMember, query, markRead, dismiss, items, unread } = useNotifications()
+  const { org, notMember, query, markRead, dismiss, items, unread, refreshFailed } = useNotifications()
   const [open, setOpen] = useState(false)
   const [customizing, setCustomizing] = useState(false)
 
@@ -94,6 +94,12 @@ export function NotificationBell() {
                 Mark all read
               </button>
             </div>
+            {query.dataUpdatedAt > 0 && (
+              <p className="px-3 pt-2 text-[0.6875rem] text-muted-foreground" aria-live="polite">
+                {refreshFailed || query.isError ? "Couldn't refresh; last updated " : "Updated "}
+                {relativeTime(new Date(query.dataUpdatedAt).toISOString())}
+              </p>
+            )}
             {customizing && <PreferencesPanel org={org} />}
             {query.isError ? (
               <p role="alert" className="px-3 py-4 text-xs text-destructive">

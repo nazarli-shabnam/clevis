@@ -75,6 +75,48 @@ describe("NotificationBell", () => {
      expect(screen.getByRole("link", { name: "View all notifications" })).toHaveAttribute("href", "/notifications");
   });
 
+  it("says how fresh the feed is when opened (#1094)", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "critical_alert")]));
+    wrap(<NotificationBell />);
+    fireEvent.click(await screen.findByRole("button", { name: /Notifications, 1 unread/ }));
+    expect(await screen.findByText(/Updated just now/)).toBeInTheDocument();
+  });
+
+  it("keeps the list and says the refresh failed when a later fetch errors (#1094)", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "critical_alert")]));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <NotificationBell />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Notifications, 1 unread/ }));
+    expect(await screen.findByText("title a")).toBeInTheDocument();
+
+    feedMock.mockRejectedValue(new Error("boom"));
+    await qc.invalidateQueries()
+
+    expect(await screen.findByText(/Couldn't refresh; last updated/)).toBeInTheDocument();
+    expect(screen.getByText("title a")).toBeInTheDocument();
+  });
+
+  it("says the refresh failed when a later fetch errors on an empty feed (#1094)", async () => {
+    feedMock.mockResolvedValue(feed([]));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <NotificationBell />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^Notifications/ }));
+    expect(await screen.findByText(/Updated just now/)).toBeInTheDocument();
+
+    feedMock.mockRejectedValue(new Error("boom"));
+    await qc.invalidateQueries();
+
+    expect(await screen.findByText(/Couldn't refresh; last updated/)).toBeInTheDocument();
+  });
+
   it("marks an unread item read when it is opened, and leaves a read one alone", async () => {
     feedMock.mockResolvedValue(feed([item("a", "critical_alert"), item("b", "score_drop", true)]));
     wrap(<NotificationBell />);
