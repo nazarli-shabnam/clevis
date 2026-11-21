@@ -640,6 +640,25 @@ def test_sla_breaches_page_past_the_per_source_limit_and_all_count_as_unread(db,
     assert len(second["items"]) == 10 and len(seen) == 60
 
 
+def test_an_sla_alert_dismissed_before_it_breached_still_counts_as_unread(db, world):
+    from src.core.db import NotificationDismissal
+
+    t = world["acme"].tenant_id
+    member_user = world["users"]["member"]
+    # 60 high alerts that breached the 30-day SLA about a day ago; the per-source limit lists only 50.
+    for n in range(60):
+        _alert(db, t, number=n, severity="high", when=NOW - timedelta(days=31, minutes=n))
+    ids = {n: i for i, n in db.query(SecurityAlert.id, SecurityAlert.number).filter(SecurityAlert.tenant_id == t)}
+    db.add(NotificationDismissal(user_id=member_user.id, tenant_id=t, item_id=f"sla_breach:{ids[0]}", dismissed_at=NOW))
+    db.add(NotificationDismissal(user_id=member_user.id, tenant_id=t, item_id=f"sla_breach:{ids[1]}", dismissed_at=NOW - timedelta(days=5)))
+    db.commit()
+
+    feed = _client(db, member_user).get("/orgs/acme/notifications").json()
+
+    # Only the dismissal made after the breach counts as reading it; the early one stays unread.
+    assert feed["unread_count"] == 59
+
+
 def _token(db, tenant_id, name, *, expires_in=None, revoked=False):
     from src.core.db import ApiToken, set_session_tenant
 
