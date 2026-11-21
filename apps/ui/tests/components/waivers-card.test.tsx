@@ -261,6 +261,34 @@ describe("WaiversCard", () => {
     await waitFor(() => expect(revokeMock).toHaveBeenCalledWith("acme", 1))
   })
 
+  it("revokes the selected waivers after a single confirm, keeping failures selected (#1126)", async () => {
+    listMock.mockResolvedValue([waiver({ id: 1 }), waiver({ id: 2 }), waiver({ id: 3 })])
+    revokeMock.mockImplementation((_org: string, id: number) => (id === 2 ? Promise.reject(new Error("nope")) : Promise.resolve()))
+    renderCard()
+    fireEvent.click((await screen.findAllByLabelText(/Select waiver for/))[0])
+    fireEvent.click(screen.getAllByLabelText(/Select waiver for/)[1])
+    fireEvent.click(screen.getByRole("button", { name: "Revoke selected (2)" }))
+    expect(revokeMock).not.toHaveBeenCalled()
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Revoke" }))
+
+    await waitFor(() => expect(revokeMock).toHaveBeenCalledTimes(2))
+    expect(await screen.findByText(/1 of 2 failed: nope/)).toBeInTheDocument()
+    // The one that failed stays selected for a retry.
+    expect(screen.getByRole("button", { name: "Revoke selected (1)" })).toBeInTheDocument()
+  })
+
+  it("revokes every expired waiver at once, whatever the filter shows (#1126)", async () => {
+    const past = new Date(Date.now() - 5 * 86_400_000).toISOString()
+    listMock.mockResolvedValue([waiver({ id: 1, active: false, expires_at: past }), waiver({ id: 2 }), waiver({ id: 3, active: false, expires_at: past })])
+    revokeMock.mockResolvedValue(undefined)
+    renderCard()
+    fireEvent.click(await screen.findByRole("button", { name: "Revoke all expired (2)" }))
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Revoke" }))
+
+    await waitFor(() => expect(revokeMock).toHaveBeenCalledTimes(2))
+    expect(revokeMock.mock.calls.map((c) => c[1]).sort()).toEqual([1, 3])
+  })
+
   it("keeps the waiver when the revoke confirmation is cancelled", async () => {
     listMock.mockResolvedValue([waiver()])
     renderCard()

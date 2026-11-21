@@ -20,6 +20,10 @@ import { SectionError } from "@/components/section-error"
 import { SmtpVerifyNotice } from "@/components/smtp-verify-notice"
 import { MemberAccessSheet } from "@/components/member-access-sheet"
 import { useDigestSettings } from "@/lib/use-digest-settings"
+import { BulkActionBar } from "@/components/bulk-action-bar"
+import { ExpiryFilterSelect } from "@/components/expiry-filter-select"
+import { useRowSelection } from "@/lib/bulk"
+import { matchesExpiry, type ExpiryFilter } from "@/lib/expiry-filter"
 import { membersViewCodec, type MemberRoleFilter } from "@/lib/list-views"
 import { useUrlView } from "@/lib/use-url-view"
 import type {
@@ -678,6 +682,17 @@ export default function OrgMembersPage() {
     },
   })
 
+  // Only pending invitations can be revoked, so only those are selectable. The expiry filter looks at the
+  // effective status (a lapsed pending one counts as expired); accepted and revoked ones have no clock.
+  const [expiryFilter, setExpiryFilter] = useState<ExpiryFilter>("any")
+  const visibleInvitations = invitations.filter((inv) => {
+    const status = effectiveInvitationStatus(inv, now)
+    return matchesExpiry(status === "pending" || status === "expired" ? inv.expires_at : null, expiryFilter, now)
+  })
+  const invitationSelection = useRowSelection(
+    visibleInvitations.filter((inv) => effectiveInvitationStatus(inv, now) === "pending").map((inv) => inv.id),
+  )
+
   // Revoke and reissue race on the same row (a late regenerate would restore a revoked link), so any
   // pending action on an invitation locks all of its buttons.
   const busy = (id: number) => isRevoking(reissuingIds, id) || isRevoking(revokingIds, id)
@@ -820,10 +835,37 @@ export default function OrgMembersPage() {
                 focusId="invite-email"
               />
             ) : (
+              <>
+              <div className="px-4 py-2 flex flex-wrap items-center gap-2 text-xs border-b border-border">
+                <ExpiryFilterSelect label="Filter invitations by expiry" value={expiryFilter} onChange={setExpiryFilter} />
+                <label className="flex items-center gap-1.5 text-muted-foreground">
+                  <input type="checkbox" aria-label="Select all shown pending invitations" checked={invitationSelection.allSelected} onChange={invitationSelection.toggleAll} />
+                  Select all pending
+                </label>
+                <BulkActionBar
+                  ids={invitationSelection.chosen}
+                  label="Revoke selected"
+                  confirmTitle={`Revoke ${invitationSelection.chosen.length} invitation${invitationSelection.chosen.length === 1 ? "" : "s"}?`}
+                  confirmDescription="The invitation links stop working. You can invite these people again later."
+                  confirmLabel="Revoke"
+                  run={(id) =>
+                    api.invitations.revoke(orgLogin, id).then(() => {
+                      clearDisplayedLink(id)
+                      setRowNotes(({ [id]: _cleared, ...rest }) => rest)
+                    })
+                  }
+                  onDone={(failed) => {
+                    invitationSelection.keepOnly(failed)
+                    return queryClient.invalidateQueries({ queryKey: ["invitations", orgLogin] })
+                  }}
+                />
+              </div>
+              {visibleInvitations.length === 0 && <p className="px-4 py-3 text-xs text-muted-foreground">No invitations match this filter.</p>}
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-border">
+                      <th className="w-8 px-4 py-2" />
                       <th className="text-left text-muted-foreground font-medium px-4 py-2">Email</th>
                       <th className="text-left text-muted-foreground font-medium px-4 py-2">Status</th>
                       <th className="text-left text-muted-foreground font-medium px-4 py-2">Expires</th>
@@ -831,8 +873,18 @@ export default function OrgMembersPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {invitations.map((inv) => (
+                    {visibleInvitations.map((inv) => (
                       <tr key={inv.id}>
+                        <td className="px-4 py-2.5">
+                          {effectiveInvitationStatus(inv, now) === "pending" && (
+                            <input
+                              type="checkbox"
+                              aria-label={`Select invitation for ${inv.email}`}
+                              checked={invitationSelection.isSelected(inv.id)}
+                              onChange={() => invitationSelection.toggle(inv.id)}
+                            />
+                          )}
+                        </td>
                         <td className="px-4 py-2.5 text-foreground/80">
                           {inv.email}
                           {revokeErrors[inv.id] && (
@@ -889,6 +941,7 @@ export default function OrgMembersPage() {
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </div>
         </div>
