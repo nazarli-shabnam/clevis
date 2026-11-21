@@ -128,6 +128,7 @@ describe("CheckCard", () => {
     expect(waiverCoverage(["API", "web"], failing)).toEqual({ covers: true, missing: [] });
     expect(waiverCoverage(["api"], failing)).toEqual({ covers: false, missing: ["web"] });
     expect(waiverCoverage(["api", "web"], { ...failing, truncated: true }).covers).toBe(false);
+    expect(waiverCoverage(["api"], { names: [], truncated: false }).covers).toBe(false); // nothing named: the API skips it
   });
 
   it("offers no waiver for a check the API does not list as waivable", async () => {

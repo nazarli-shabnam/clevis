@@ -48,7 +48,8 @@ export function waiverCoverage(entered: string[], failing: FailingRepos): { cove
   if (entered.length === 0) return { covers: true, missing: [] }
   const have = new Set(entered.map((r) => r.toLowerCase()))
   const missing = failing.names.filter((r) => !have.has(r.toLowerCase()))
-  return { covers: !failing.truncated && missing.length === 0, missing }
+  // No named failing repos (the check failed without listing them) means a repo list never applies either.
+  return { covers: failing.names.length > 0 && !failing.truncated && missing.length === 0, missing }
 }
 
 interface WaiverFormProps {
@@ -149,7 +150,9 @@ export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, comp
         <p role="status" className={compact ? "text-xs text-yellow-400" : "sm:col-span-2 text-xs text-yellow-400"}>
           {failing?.truncated
             ? "This check fails on at least as many repositories as a scan lists, so a repository list will not take effect. Leave the list blank to waive it for the whole organization."
-            : `This waiver will not take effect until it also names: ${coverage.missing.join(", ")}.`}
+            : coverage.missing.length === 0
+              ? "This check does not name the repositories it fails on, so a repository list will not take effect. Leave the list blank to waive it for the whole organization."
+              : `This waiver will not take effect until it also names: ${coverage.missing.join(", ")}.`}
         </p>
       )}
       <div>
