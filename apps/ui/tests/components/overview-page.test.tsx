@@ -229,6 +229,25 @@ describe("OverviewPage cockpit", () => {
     await waitFor(() => expect(screen.getAllByText("Configure →")).toHaveLength(4));
   });
 
+  it("keeps the loaded cards and shows only a hint when a background refetch fails (#1107)", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockRejectedValue(new Error("No saved token for this org"));
+    cockpitMock.mockResolvedValue({ ...EMPTY_COCKPIT, repo_count: 12, open_pr_count: 5, latest_score: 87, member_count: 9 });
+
+    const { queryClient } = renderPage();
+    await waitFor(() => expect(screen.getByText("12")).toBeInTheDocument());
+
+    // One blip on the 30 s poll: the query goes to status "error" but still holds the previous data.
+    cockpitMock.mockRejectedValue(new Error("502 Bad Gateway"));
+    await queryClient.refetchQueries({ queryKey: ["analytics.cockpit", "acme"] });
+
+    await waitFor(() => expect(queryClient.getQueryState(["analytics.cockpit", "acme"])?.status).toBe("error"));
+    expect(screen.getByText("12")).toBeInTheDocument();
+    expect(screen.queryAllByText("Configure →")).toHaveLength(0);
+    expect(screen.queryByText("502 Bad Gateway")).not.toBeInTheDocument();
+    expect(screen.getByText(/Couldn.t refresh just now/)).toBeInTheDocument();
+  });
+
   it("shows how old the score is and when the numbers were last refreshed (#1094)", async () => {
     localStorage.setItem("default_org", "acme");
     tokensResolveMock.mockRejectedValue(new Error("No saved token for this org"));
