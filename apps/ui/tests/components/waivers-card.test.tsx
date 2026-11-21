@@ -261,6 +261,21 @@ describe("WaiversCard", () => {
     await waitFor(() => expect(revokeMock).toHaveBeenCalledWith("acme", 1))
   })
 
+  it("also refreshes the repository pages' waiver badges after a revoke (#1159)", async () => {
+    listMock.mockResolvedValue([waiver()])
+    revokeMock.mockResolvedValue(undefined)
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WaiversCard orgLogin="acme" />
+      </QueryClientProvider>,
+    )
+    fireEvent.click(await screen.findByRole("button", { name: /Revoke waiver for Default branch has protection rules/ }))
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Revoke" }))
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["repo-detail-waivers"] }))
+  })
+
   it("revokes the selected waivers after a single confirm, keeping failures selected (#1126)", async () => {
     listMock.mockResolvedValue([waiver({ id: 1 }), waiver({ id: 2 }), waiver({ id: 3 })])
     revokeMock.mockImplementation((_org: string, id: number) => (id === 2 ? Promise.reject(new Error("nope")) : Promise.resolve()))

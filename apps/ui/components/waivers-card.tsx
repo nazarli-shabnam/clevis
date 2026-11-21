@@ -15,7 +15,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { BulkActionBar } from "@/components/bulk-action-bar"
 import { useRowSelection } from "@/lib/bulk"
 import { useWaivableChecks } from "@/lib/use-waivable-checks"
-import { MAX_WAIVER_DAYS, WaiverForm, daysRemaining } from "@/components/waiver-form"
+import { MAX_WAIVER_DAYS, WaiverForm, daysRemaining, invalidateWaivers } from "@/components/waiver-form"
 import type { CheckWaiver } from "@/lib/api/types"
 
 const EXPIRING_SOON_DAYS = 14
@@ -63,7 +63,7 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
     onSuccess: (_data, id) => {
       // A revoked waiver can't be saved any more (PUT 404s), so drop the form's binding to it.
       setEditing((current) => (current?.id === id ? null : current))
-      return queryClient.invalidateQueries({ queryKey })
+      return invalidateWaivers(queryClient, orgLogin)
     },
     onSettled: () => setConfirming(null),
   })
@@ -75,7 +75,7 @@ export function WaiversCard({ orgLogin }: { orgLogin: string }) {
   const bulkRevoke = (id: number) => api.waivers.revoke(orgLogin, id)
   const afterBulk = (failed: number[]) => {
     selection.keepOnly(failed)
-    return queryClient.invalidateQueries({ queryKey })
+    return invalidateWaivers(queryClient, orgLogin)
   }
   // A waiver revoked while its form is open (one at a time or in bulk) can't be saved any more.
   const loadedIds = query.data?.map((w) => w.id)
