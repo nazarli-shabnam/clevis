@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const getMock = vi.fn();
 const setMock = vi.fn();
 const repoMock = vi.fn();
+const triageGetMock = vi.fn();
+const triageSetMock = vi.fn();
 
 vi.mock("@/lib/api/client", () => ({
   api: {
@@ -12,6 +14,10 @@ vi.mock("@/lib/api/client", () => ({
       automationSchedules: (...a: unknown[]) => getMock(...a),
       setAutomationSchedules: (...a: unknown[]) => setMock(...a),
       setPrNudgeRepo: (...a: unknown[]) => repoMock(...a),
+    },
+    dependabotTriage: {
+      getRepo: (...a: unknown[]) => triageGetMock(...a),
+      setRepo: (...a: unknown[]) => triageSetMock(...a),
     },
   },
 }));
@@ -39,7 +45,7 @@ function renderCard() {
 
 describe("AutomationSchedulesCard", () => {
   beforeEach(() => {
-    [getMock, setMock, repoMock].forEach((m) => m.mockReset());
+    [getMock, setMock, repoMock, triageGetMock, triageSetMock].forEach((m) => m.mockReset());
     getMock.mockResolvedValue(schedules());
   });
   afterEach(cleanup);
@@ -60,7 +66,7 @@ describe("AutomationSchedulesCard", () => {
     renderCard();
 
     fireEvent.change(await screen.findByLabelText("Repository to nudge"), { target: { value: "api" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add nudge repository" }));
     await waitFor(() => expect(repoMock).toHaveBeenCalledWith("acme", "acme", "api", true));
 
     fireEvent.click(screen.getByRole("button", { name: "Stop nudging acme/web" }));
@@ -71,17 +77,60 @@ describe("AutomationSchedulesCard", () => {
     renderCard();
 
     fireEvent.change(await screen.findByLabelText("Repository to nudge"), { target: { value: "acme/api/extra" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add nudge repository" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/name or owner\/name/);
     expect(repoMock).not.toHaveBeenCalled();
   });
 
-  it("says a scheduled run does nothing until a repository is added, and shows the triage repo count", async () => {
+  it("says a scheduled nudge run does nothing until a repository is added, and lists the triage repos", async () => {
     renderCard();
 
     expect(await screen.findByText(/does nothing until a repository is added/)).toBeInTheDocument();
-    expect(screen.getByText(/1 repository enabled in the/)).toBeInTheDocument();
+    expect(screen.getByText("acme/api")).toBeInTheDocument();
+  });
+
+  it("removes a triage repository while keeping its saved mode and merge method (#1168)", async () => {
+    triageGetMock.mockResolvedValue({ enabled: true, mode: "approve_and_merge", merge_method: "rebase" });
+    triageSetMock.mockResolvedValue({});
+    renderCard();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Stop triaging acme/api" }));
+
+    await waitFor(() =>
+      expect(triageSetMock).toHaveBeenCalledWith("acme", "acme", "api", {
+        enabled: false,
+        mode: "approve_and_merge",
+        merge_method: "rebase",
+      }),
+    );
+  });
+
+  it("adds a triage repository, defaulting the owner to the org", async () => {
+    triageGetMock.mockResolvedValue({ enabled: false, mode: "approve_only", merge_method: "squash" });
+    triageSetMock.mockResolvedValue({});
+    renderCard();
+
+    fireEvent.change(await screen.findByLabelText("Repository to triage"), { target: { value: "web" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add triage repository" }));
+
+    await waitFor(() =>
+      expect(triageSetMock).toHaveBeenCalledWith("acme", "acme", "web", {
+        enabled: true,
+        mode: "approve_only",
+        merge_method: "squash",
+      }),
+    );
+  });
+
+  it("rejects a triage repository with extra path segments", async () => {
+    renderCard();
+
+    fireEvent.change(await screen.findByLabelText("Repository to triage"), { target: { value: "acme/api/extra" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add triage repository" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/name or owner\/name/);
+    expect(triageGetMock).not.toHaveBeenCalled();
   });
 
   it("shows an error with a retry when the schedules cannot be loaded", async () => {
