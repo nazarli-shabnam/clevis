@@ -14,6 +14,8 @@ export interface AuthUser {
   email: string
   name: string | null
   is_workspace_admin: boolean
+  /** From /auth/me. False for a GitHub-only account (no password to change); absent until /auth/me has answered. */
+  has_password?: boolean
 }
 
 interface AuthContextValue {

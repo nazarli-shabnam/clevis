@@ -189,6 +189,26 @@ describe("SettingsPage", () => {
     expect(screen.queryByText("Instance configuration")).not.toBeInTheDocument();
   });
 
+  it("shows the password and email forms to an account with a password, and a note instead to a GitHub-only one (#1163)", async () => {
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([]);
+    configGetAllMock.mockResolvedValue({});
+    const me = (extra: object) =>
+      new Response(JSON.stringify({ id: 1, email: "admin@example.com", name: "Admin", is_workspace_admin: true, ...extra }), { status: 200 });
+
+    fetchMock.mockResolvedValue(me({ has_password: true }));
+    renderPage();
+    expect(await screen.findByRole("button", { name: "Change password" })).toBeInTheDocument();
+    expect(screen.queryByText(/managed there/)).not.toBeInTheDocument();
+    cleanup();
+
+    fetchMock.mockResolvedValue(me({ has_password: false }));
+    renderPage();
+    expect(await screen.findByText(/You sign in with GitHub; your email and password are managed there/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Change password" })).not.toBeInTheDocument();
+  });
+
   it("lets a plain member open the roster from their org row ('View members'), admins get 'Manage members' (#663)", async () => {
     orgsMineMock.mockResolvedValue([
       { org_login: "acme", role: "admin" },

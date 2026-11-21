@@ -180,6 +180,8 @@ class MeResponse(BaseModel):
     created_at: datetime
     # Set once a GitHub account is linked (sign-in with GitHub, or Settings > Profile for a password account).
     github_login: str | None = None
+    # False for a GitHub-only account: change-password / change-email can only fail for it (the UI hides them).
+    has_password: bool = True
 
 
 class PatchMeRequest(BaseModel):
