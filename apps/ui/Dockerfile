@@ -1,5 +1,5 @@
 # Keep the Bun version in sync with `bun-version` in .github/workflows/ci.yml.
-FROM oven/bun:1.4.2-alpine AS builder
+FROM oven/bun:1.4.4-alpine AS builder
 WORKDIR /app
 
 COPY package.json bun.lock ./
@@ -18,7 +18,7 @@ ENV NEXT_PUBLIC_GITHUB_WEB_BASE=$NEXT_PUBLIC_GITHUB_WEB_BASE
 # next/font fetches Google Fonts here; Google occasionally answers with something the loader cannot parse (a rerun passes), so retry.
 RUN bun run build || (sleep 10 && bun run build) || (sleep 30 && bun run build)
 
-FROM node:22-alpine AS runner
+FROM node:26-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 # Bind to all interfaces so Traefik can reach the server via the Docker network --
