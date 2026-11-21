@@ -6,6 +6,7 @@ import { clearActiveScope } from "@/lib/active-scope"
 import { clearActivityLastSeen } from "@/lib/activity-last-seen"
 import { clearDismissals } from "@/lib/first-run-dismissal"
 import { errorDetail, fetchWithTimeout } from "@/lib/api/client"
+import { clearTrackedJobs } from "@/lib/running-jobs"
 import { safeStorage } from "@/lib/safe-storage"
 
 export interface AuthUser {
@@ -45,6 +46,7 @@ const _LOGOUT_WARNING =
 // logout AND login/setSession, since /register calls setSession() without going through logout().
 function clearPerUserBrowserState(): void {
   clearActiveScope()
+  clearTrackedJobs()
   clearDismissals()
   clearActivityLastSeen()
 }

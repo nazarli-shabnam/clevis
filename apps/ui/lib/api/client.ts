@@ -82,6 +82,7 @@ import type {
   WorkflowLintResponse,
   WorkflowsResponse,
 } from "./types"
+import { describeJob, forgetJob, jobGeneration, markLive, trackJob, unmarkLive } from "@/lib/running-jobs"
 import { safeStorage } from "@/lib/safe-storage"
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080"
@@ -309,8 +310,26 @@ export async function awaitJob<T>(jobId: number, opts: { signal?: AbortSignal } 
 // returns. Validation and permission errors still reject immediately (they answer before the job exists);
 // a job that fails rejects with its message.
 async function postJob<T>(path: string, body: unknown, opts: { signal?: AbortSignal } = {}): Promise<T> {
+  const generation = jobGeneration()
   const { job_id } = await post<{ job_id: number }>(`${path}?async=1`, body)
-  return awaitJob<T>(job_id, opts)
+  // Remember the job so it can be found again after a reload or navigation (see lib/running-jobs.ts), unless
+  // the identity was reset (sign-out) while the request was in flight.
+  if (generation === jobGeneration()) trackJob({ jobId: job_id, ...describeJob(path, body), startedAt: Date.now() })
+  markLive(job_id)
+  try {
+    const result = await awaitJob<T>(job_id, opts)
+    forgetJob(job_id)
+    return result
+  } catch (err) {
+    // A job that ended (failed) or that the server does not know is finished business; one that may still be
+    // running (we lost contact, or ran out of patience) stays tracked so it can be re-attached.
+    if (!(err instanceof JobStillRunningError) && !(err instanceof DOMException && err.name === "AbortError")) {
+      forgetJob(job_id)
+    }
+    throw err
+  } finally {
+    unmarkLive(job_id)
+  }
 }
 
 // Carries an optional client-supplied PAT to GET endpoints via a header (never
