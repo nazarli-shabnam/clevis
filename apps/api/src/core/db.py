@@ -380,6 +380,11 @@ class User(Base):
     email_verify_token: Mapped[str | None] = mapped_column(Text, nullable=True, unique=True)
     email_verify_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    @property
+    def has_password(self) -> bool:
+        """False for an account created through GitHub sign-in: it has no password to change or confirm with."""
+        return bool(self.password_hash)
+
 
 class Org(Base):
     __tablename__ = "orgs"
