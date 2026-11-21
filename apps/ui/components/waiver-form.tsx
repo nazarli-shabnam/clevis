@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { api } from "@/lib/api/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -9,6 +9,14 @@ import { useWaivableChecks } from "@/lib/use-waivable-checks"
 import type { CheckWaiver } from "@/lib/api/types"
 
 export const MAX_WAIVER_DAYS = 90
+
+/** Refresh everything a waiver write changes: the org's waiver list and each repository page's "Waived until" badge. */
+export function invalidateWaivers(queryClient: QueryClient, orgLogin: string) {
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: ["waivers", orgLogin] }),
+    queryClient.invalidateQueries({ queryKey: ["repo-detail-waivers"] }),
+  ])
+}
 
 /** A local calendar day as the YYYY-MM-DD an <input type="date"> uses (not the UTC day toISOString gives). */
 const localDay = (d: Date) =>
@@ -78,7 +86,7 @@ export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, comp
     onSuccess: async () => {
       setReason("")
       setRepos("")
-      await queryClient.invalidateQueries({ queryKey: ["waivers", orgLogin] })
+      await invalidateWaivers(queryClient, orgLogin)
       onSaved?.()
     },
   })
