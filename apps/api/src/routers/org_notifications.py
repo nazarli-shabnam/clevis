@@ -507,6 +507,10 @@ def _item_exists(db: Session, ctx: OrgContext, org_login: str, kind: str, row_id
         model = SecurityAlert
     elif kind == "score_drop":
         model = ScanResult
+    elif kind == "sla_breach":  # shown to every member; the feed only builds these from Dependabot alerts
+        return db.query(SecurityAlert.id).filter(
+            SecurityAlert.id == row_id, SecurityAlert.tenant_id == tenant_id, SecurityAlert.kind == "dependabot"
+        ).first() is not None
     elif not is_admin:
         return False
     elif kind == "job_failed":
@@ -516,7 +520,7 @@ def _item_exists(db: Session, ctx: OrgContext, org_login: str, kind: str, row_id
         return install is not None and install.id == row_id
     elif kind == "api_token_expiring":
         model = ApiToken
-    else:
+    else:  # waiver_expired, waiver_expiring: the only kinds left, both admin-only
         model = CheckWaiver
     return db.query(model.id).filter(model.id == row_id, model.tenant_id == tenant_id).first() is not None
 
