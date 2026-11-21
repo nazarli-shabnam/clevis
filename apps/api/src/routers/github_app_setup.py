@@ -9,6 +9,8 @@ told to remove them instead of silently ignoring the new App."""
 
 import logging
 
+import httpx
+import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -34,6 +36,12 @@ class AppStatus(BaseModel):
     permissions: dict[str, str]
     read_only_permissions: dict[str, str]
     events: list[str]
+    # What the registered App itself lacks (None: not checked, see app_check_error). GitHub only offers an org
+    # owner "Accept new permissions" for permissions the App requests, so the App's owner must add these first.
+    app_missing_permissions: dict[str, str] | None = None
+    app_owner_login: str | None = None
+    app_owner_type: str | None = None
+    app_check_error: str | None = None
 
 
 class ManifestRequest(BaseModel):
@@ -71,7 +79,7 @@ def _refuse_if_env_supplies_the_app() -> None:
 
 @router.get("", response_model=AppStatus)
 def app_status(_user: UserOut = Depends(require_workspace_admin)) -> AppStatus:
-    return AppStatus(
+    status = AppStatus(
         source=github_app_credentials.source(),
         configured=github_app.credentials_configured(),
         app_id=github_app_credentials.app_id(),
@@ -80,6 +88,23 @@ def app_status(_user: UserOut = Depends(require_workspace_admin)) -> AppStatus:
         read_only_permissions=app_permissions.manifest_permissions(True),
         events=sorted(_INGESTED_EVENT_TYPES),
     )
+    if status.configured:
+        try:
+            app = github_app.get_app()
+        # TypeError: an encrypted PEM (jwt loads the key without a password).
+        except (httpx.HTTPError, ValueError, TypeError, jwt.PyJWTError, github_app.GitHubAppNotConfigured):
+            logger.warning("could not read the GitHub App's permissions from GitHub", exc_info=True)
+            status.app_check_error = "Could not read the App's permissions from GitHub."
+        else:
+            granted = app.get("permissions")
+            if isinstance(granted, dict):
+                status.app_missing_permissions = app_permissions.app_permission_gaps(granted)
+                owner = app.get("owner") or {}
+                status.app_owner_login = owner.get("login")
+                status.app_owner_type = owner.get("type")
+            else:
+                status.app_check_error = "GitHub did not return the App's permissions."
+    return status
 
 
 @router.post("/manifest", response_model=ManifestResponse)
