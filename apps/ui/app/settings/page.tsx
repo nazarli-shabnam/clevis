@@ -962,8 +962,21 @@ export default function SettingsPage() {
       )}
       <div className="flex flex-col gap-4">
         <ProfileSection />
-        <ChangePasswordCard />
-        <ChangeEmailCard />
+        {user?.has_password === false ? (
+          <div className="card">
+            <div className="px-4 py-3 border-b border-border">
+              <span className="section-title">Password and email</span>
+            </div>
+            <p className="p-4 text-sm text-muted-foreground">
+              You sign in with GitHub; your email and password are managed there.
+            </p>
+          </div>
+        ) : (
+          <>
+            <ChangePasswordCard />
+            <ChangeEmailCard />
+          </>
+        )}
         <SessionsCard />
         <AppearanceSection />
         <OrgMembershipsSection />

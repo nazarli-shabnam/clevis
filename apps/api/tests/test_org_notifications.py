@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from src.core.auth import UserOut, require_auth
-from src.core.db import Job, ScanResult, User, get_db
+from src.core.db import Job, ScanResult, SecurityAlert, User, get_db
 from src.repositories import installation_repo, job_repo, org_membership_repo, org_repo, scan_results_repo
 from src.routers.org_notifications import router
 
@@ -474,6 +474,24 @@ def test_dismiss_rejects_items_that_do_not_exist_or_the_caller_cannot_see(db, wo
     assert admin.post(f"/orgs/acme/notifications/job_failed:{job}/dismiss").status_code == 204
 
 
+def test_sla_breach_can_be_dismissed_by_members_but_only_for_real_dependabot_alerts(db, world):
+    t = world["acme"].tenant_id
+    _alert(db, t, number=1, when=NOW - timedelta(days=10))  # critical, past the 7-day SLA
+    _alert(db, t, number=2, kind="code_scanning", when=NOW - timedelta(days=10))
+    member = _client(db, world["users"]["member"])
+    admin = _client(db, world["users"]["admin"])
+    sla = [i["id"] for i in member.get("/orgs/acme/notifications").json()["items"] if i["kind"] == "sla_breach"]
+    assert len(sla) == 1
+
+    assert member.post(f"/orgs/acme/notifications/{sla[0]}/dismiss").status_code == 204
+    assert admin.post(f"/orgs/acme/notifications/{sla[0]}/dismiss").status_code == 204
+    assert admin.post("/orgs/acme/notifications/sla_breach:999999/dismiss").status_code == 404
+    # No waiver row shares the id, and a code-scanning alert is not an SLA item.
+    other = db.query(SecurityAlert.id).filter(SecurityAlert.kind == "code_scanning").scalar()
+    assert admin.post(f"/orgs/acme/notifications/sla_breach:{other}/dismiss").status_code == 404
+    assert member.post("/orgs/acme/notifications/waiver_expired:1/dismiss").status_code == 404
+
+
 def test_dismissing_a_drift_again_after_it_changed_marks_it_read_again(db, world):
     db.execute(text(f"SET app.tenant_id = {world['acme'].tenant_id}"))
     inst = installation_repo.create(
@@ -620,6 +638,27 @@ def test_sla_breaches_page_past_the_per_source_limit_and_all_count_as_unread(db,
     second = member.get("/orgs/acme/notifications", params={"before": last["at"], "before_id": last["id"]}).json()
     seen = {i["id"] for i in first["items"]} | {i["id"] for i in second["items"]}
     assert len(second["items"]) == 10 and len(seen) == 60
+
+
+def test_an_sla_alert_dismissed_before_it_breached_still_counts_as_unread(db, world):
+    from src.core.db import NotificationDismissal
+
+    t = world["acme"].tenant_id
+    member_user = world["users"]["member"]
+    # 60 high alerts that breached the 30-day SLA about a day ago; the per-source limit lists only 50.
+    for n in range(60):
+        _alert(db, t, number=n, severity="high", when=NOW - timedelta(days=31, minutes=n))
+    ids = {n: i for i, n in db.query(SecurityAlert.id, SecurityAlert.number).filter(SecurityAlert.tenant_id == t)}
+    db.add(NotificationDismissal(user_id=member_user.id, tenant_id=t, item_id=f"sla_breach:{ids[0]}", dismissed_at=NOW))
+    db.add(NotificationDismissal(user_id=member_user.id, tenant_id=t, item_id=f"sla_breach:{ids[1]}", dismissed_at=NOW - timedelta(days=5)))
+    # A zero-padded id passes validation and is stored as sent; it must neither crash the count nor be ignored.
+    db.add(NotificationDismissal(user_id=member_user.id, tenant_id=t, item_id=f"sla_breach:000{ids[2]}", dismissed_at=NOW))
+    db.commit()
+
+    feed = _client(db, member_user).get("/orgs/acme/notifications").json()
+
+    # Only dismissals made after the breach count as reading it; the early one stays unread.
+    assert feed["unread_count"] == 58
 
 
 def _token(db, tenant_id, name, *, expires_in=None, revoked=False):

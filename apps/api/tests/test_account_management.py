@@ -232,3 +232,12 @@ def test_a_github_only_account_deletes_with_just_its_email(client, db):
     assert client.post("/auth/me/delete", headers=headers, json={"confirm_email": "gh-only@example.com"}).status_code == 204
     db.expire_all()
     assert db.query(User).filter(User.id == user_id).first() is None
+
+
+def test_me_says_whether_the_account_has_a_password(client, db):
+    """The UI hides the password and email forms for a GitHub-only account (#1163)."""
+    _setup_owner(client)
+    assert client.get("/auth/me", headers=_register(client)).json()["has_password"] is True
+    _, gh_headers = _github_only_headers(db)
+    assert client.get("/auth/me", headers=gh_headers).json()["has_password"] is False
+

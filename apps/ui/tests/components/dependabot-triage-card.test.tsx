@@ -18,8 +18,7 @@ vi.mock("@/lib/api/client", () => ({
 
 import { DependabotTriageCard } from "@/components/automation/dependabot-triage-card"
 
-function renderCard() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+function renderCard(qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })) {
   return render(
     <QueryClientProvider client={qc}>
       <DependabotTriageCard org="acme" owner="acme" repo="api" token="" />
@@ -63,6 +62,18 @@ describe("DependabotTriageCard", () => {
       mode: "approve_and_merge",
       merge_method: "rebase",
     })
+  })
+
+  it("refreshes the automation-schedules card's repo count after saving (#1159)", async () => {
+    mockSetRepo.mockResolvedValueOnce({ enabled: true, mode: "approve_only", merge_method: "squash" })
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+    const invalidate = vi.spyOn(qc, "invalidateQueries")
+    renderCard(qc)
+    await waitFor(() => expect(screen.getByLabelText(/Enabled for api/)).not.toBeChecked())
+    await new Promise((r) => setTimeout(r, 0))
+    fireEvent.click(screen.getByLabelText(/Enabled for api/))
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }))
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["automation-schedules", "acme"] }))
   })
 
   it("offers an approve button in approve_only mode (the safer mode isn't dead in the UI)", async () => {

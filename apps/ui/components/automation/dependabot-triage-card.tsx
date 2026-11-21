@@ -60,7 +60,12 @@ export function DependabotTriageCard({ org, owner, repo, token }: Props) {
         mode,
         merge_method: mergeMethod,
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: settingKey }),
+    // The org settings page's schedule card counts the repos triage is enabled on.
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: settingKey }),
+        queryClient.invalidateQueries({ queryKey: ["automation-schedules", org.trim()] }),
+      ]),
   })
 
   // The saved setting could not be read and nothing has ever loaded (403 for a non-admin, 404 for an

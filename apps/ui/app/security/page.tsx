@@ -30,7 +30,7 @@ import { BarGroupChart } from "@/components/charts/bar-group-chart"
 import { CHART_COLORS } from "@/lib/charts/theme"
 import { isOrgMemberOnly } from "@/lib/members-href"
 import { useLookupOwner } from "@/lib/use-lookup-owner"
-import type { CheckResult, InstallationMeta, MyOrgMembership } from "@/lib/api/types"
+import type { CheckResult, InstallationMeta, MyOrgMembership, SecurityMatrixResponse } from "@/lib/api/types"
 
 const TABS = [
   { id: "all", label: "All" },
@@ -269,10 +269,22 @@ export default function SecurityPage() {
   const [selectedRepo, setSelectedRepo] = useState("")
   // Repos the matrix filter handed to the bulk fixer; the panel ticks those that fail its chosen check.
   const [bulkPreselect, setBulkPreselect] = useState<string[]>([])
+  // mutate() clears a mutation's data while it runs, so the bulk fixer reads the last finished matrix: its
+  // per-repo results must stay up while the re-scan that follows an apply is pending.
+  const [lastMatrix, setLastMatrix] = useState<SecurityMatrixResponse | undefined>()
+  // A scan for the previous owner can still finish after the box changed; its result must not be stored
+  // (the bulk fixer would then act on that owner's repos under the new name). Same-owner rescans still land.
+  const currentOwner = useRef(owner)
+  currentOwner.current = owner
   const matrixMutation = useMutation({
     mutationFn: (forOwner: string) => api.security.matrix(forOwner, token),
-    onSuccess: (data) => setSelectedRepo(data.repos[0]?.repo ?? ""),
+    onSuccess: (data, forOwner) => {
+      if (forOwner !== currentOwner.current) return
+      setSelectedRepo(data.repos[0]?.repo ?? "")
+      setLastMatrix(data)
+    },
   })
+  const bulkMatrix = matrixMutation.data ?? lastMatrix
 
   // The render right after an owner change still holds the previous owner's results until the reset
   // effect below runs; these keep them off the screen for that render instead of relying on the effect.
@@ -290,6 +302,7 @@ export default function SecurityPage() {
   useEffect(() => {
     scan.reset()
     matrixMutation.reset()
+    setLastMatrix(undefined)
     setSelectedRepo("")
     setBulkPreselect([])
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -796,8 +809,8 @@ export default function SecurityPage() {
       )}
 
       {/* Same gating as "Fix this": plain members would only get a 403 from the API. */}
-      {matrixMutation.data && !isOrgMemberOnly(memberships, matrixMutation.data.owner) && (
-        <BulkFixPanel owner={matrixMutation.data.owner} repos={matrixMutation.data.repos} token={token || undefined} preselected={bulkPreselect} onApplied={() => runScan()} />
+      {bulkMatrix && !isOrgMemberOnly(memberships, bulkMatrix.owner) && (
+        <BulkFixPanel owner={bulkMatrix.owner} repos={bulkMatrix.repos} token={token || undefined} preselected={bulkPreselect} onApplied={() => runScan()} />
       )}
     </>
   )

@@ -1,7 +1,9 @@
 // Triggers a browser "save file" for an in-memory string; isolated so tests can stub it. No-op on the server.
 
 export function downloadTextFile(filename: string, content: string, mimeType = "text/plain"): void {
-  downloadBlob(filename, new Blob([content], { type: `${mimeType};charset=utf-8` }))
+  // Excel only reads a CSV as UTF-8 when it starts with a BOM; without it non-ASCII names turn to mojibake.
+  const body = mimeType === "text/csv" ? `\uFEFF${content}` : content
+  downloadBlob(filename, new Blob([body], { type: `${mimeType};charset=utf-8` }))
 }
 
 /** Save a Blob (e.g. a zip the API generated) under `filename`. */

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const createIssueMock = vi.fn();
 const remediateMock = vi.fn();
+const waiverCreateMock = vi.fn();
 const catalog = [
   { id: "organization_members_mfa_required", title: "Organization requires 2FA/MFA", org_wide_only: true },
   { id: "repository_default_branch_protection_enabled", title: "Default branch has protection rules", org_wide_only: false },
@@ -13,13 +14,14 @@ const catalog = [
 ];
 vi.mock("@/lib/api/client", () => ({
   api: {
-    waivers: { checks: () => Promise.resolve(catalog) },
+    waivers: { checks: () => Promise.resolve(catalog), create: (...a: unknown[]) => waiverCreateMock(...a) },
     issues: { create: (...a: unknown[]) => createIssueMock(...a) },
     security: { remediate: (...a: unknown[]) => remediateMock(...a) },
   },
 }));
 
 import { CheckCard } from "@/components/check-card";
+import { waiverCoverage } from "@/components/waiver-form";
 import type { CheckResult } from "@/lib/api/types";
 
 function renderWithClient(ui: React.ReactElement) {
@@ -91,6 +93,42 @@ describe("CheckCard", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Waive…" }));
     expect(screen.getByLabelText(/Repositories/)).toHaveValue("api, web");
+  });
+
+  it("warns when a repo list would not cover every failing repo, and says so after saving (#1157)", async () => {
+    waiverCreateMock.mockResolvedValue({});
+    renderWithClient(<CheckCard check={failingWithRepos(["api", "web", "docs"])} waiveOrg="acme" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Waive…" }));
+    expect(screen.queryByText(/will not take effect/)).not.toBeInTheDocument(); // prefilled list covers all
+    fireEvent.change(screen.getByLabelText(/Repositories/), { target: { value: "api" } });
+    expect(screen.getByText("This waiver will not take effect until it also names: web, docs.")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "legacy" } });
+    fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "team" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add waiver" }));
+    expect(await screen.findByText(/does not cover every repository/)).toBeInTheDocument();
+    expect(screen.queryByText(/It applies from the next scan/)).not.toBeInTheDocument();
+  });
+
+  it("does not prefill a repo list when the scan's list is cut off, and suggests an org-wide waiver (#1157)", async () => {
+    const names = Array.from({ length: 25 }, (_, i) => `repo-${String(i).padStart(2, "0")}`);
+    renderWithClient(<CheckCard check={failingWithRepos(names, 100)} waiveOrg="acme" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Waive…" }));
+    expect(screen.getByLabelText(/Repositories/)).toHaveValue("");
+    expect(screen.queryByText(/will not take effect/)).not.toBeInTheDocument(); // blank = org-wide, applies
+    fireEvent.change(screen.getByLabelText(/Repositories/), { target: { value: names.join(", ") } });
+    expect(screen.getByText(/a repository list will not take effect/)).toBeInTheDocument();
+  });
+
+  it("waiverCoverage mirrors the API: blank is org-wide, a list must name every failing repo (#1157)", () => {
+    const failing = { names: ["api", "web"], truncated: false };
+    expect(waiverCoverage([], failing).covers).toBe(true);
+    expect(waiverCoverage(["API", "web"], failing)).toEqual({ covers: true, missing: [] });
+    expect(waiverCoverage(["api"], failing)).toEqual({ covers: false, missing: ["web"] });
+    expect(waiverCoverage(["api", "web"], { ...failing, truncated: true }).covers).toBe(false);
+    expect(waiverCoverage(["api"], { names: [], truncated: false }).covers).toBe(false); // nothing named: the API skips it
   });
 
   it("offers no waiver for a check the API does not list as waivable", async () => {
