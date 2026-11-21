@@ -2,6 +2,7 @@
 
 import Link from "next/link"
 import { useParams, useRouter, useSearchParams } from "next/navigation"
+import { Time } from "@/components/time"
 import { useEffect, useMemo, useState } from "react"
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
@@ -11,7 +12,7 @@ import { DataTable, type DataTableColumn } from "@/components/ui/data-table"
 import { ArrowsClockwise, CircleNotch, EnvelopeSimple, PaperPlaneTilt, Warning, X } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { addRevokingId, isRevoking, removeRevokingId } from "@/lib/revoke-pending"
-import { exactTime, relativeTime } from "@/lib/format"
+import { exactTime } from "@/lib/format"
 import { effectiveInvitationStatus, invitationExpiry, type ExpiryTone } from "@/lib/invitation-expiry"
 import { CopyButton } from "@/components/copy-button"
 import { orgRoleFor } from "@/lib/members-href"
@@ -371,7 +372,7 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
               </thead>
               <tbody className="divide-y divide-border">
                 {pendingQuery.data!.invitations.map((inv, i) => (
-                  <tr key={i}><td className="px-4 py-2.5 text-foreground/80">{inv.login ?? inv.email}</td><td className="px-4 py-2.5 text-muted-foreground capitalize">{inv.role}</td><td className="px-4 py-2.5 text-muted-foreground">{relativeTime(inv.invited_at)}</td><td className="px-4 py-2.5 text-muted-foreground">{inv.inviter ?? "—"}</td></tr>
+                  <tr key={i}><td className="px-4 py-2.5 text-foreground/80">{inv.login ?? inv.email}</td><td className="px-4 py-2.5 text-muted-foreground capitalize">{inv.role}</td><td className="px-4 py-2.5 text-muted-foreground"><Time iso={inv.invited_at} /></td><td className="px-4 py-2.5 text-muted-foreground">{inv.inviter ?? "—"}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -393,7 +394,7 @@ function GithubRoster({ orgLogin, canReview }: { orgLogin: string; canReview: bo
           <div className="px-4 py-2.5 border-b border-border">
             <span className="text-xs font-medium text-foreground">Permission audit</span>
             <span className="text-xs text-muted-foreground ml-2">
-              generated {permissionAuditQuery.data ? relativeTime(permissionAuditQuery.data.generated_at) : "—"}
+              generated {permissionAuditQuery.data ? <Time iso={permissionAuditQuery.data.generated_at} /> : "—"}
               {permissionAuditQuery.data && permissionAuditQuery.data.repos_scanned < permissionAuditQuery.data.repos_total && (
                 <> · scanned {permissionAuditQuery.data.repos_scanned} of {permissionAuditQuery.data.repos_total} repos</>
               )}

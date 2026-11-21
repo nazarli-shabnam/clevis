@@ -1,5 +1,5 @@
-import { relativeTime } from "@/lib/format"
 import { SectionError } from "@/components/section-error"
+import { Time } from "@/components/time"
 import { EmptyStateInline } from "@/components/empty-state"
 import { Button } from "@/components/ui/button"
 import type { MyViewIssueSummary, MyViewPRSummary } from "@/lib/api/types"
@@ -73,7 +73,7 @@ export function MyItemsList({
                   </span>
                 </span>
                 <span className="text-[0.6875rem] text-muted-foreground whitespace-nowrap shrink-0 ml-3">
-                  {relativeTime(item.updated_at)}
+                  <Time iso={item.updated_at} />
                 </span>
               </a>
             ))}

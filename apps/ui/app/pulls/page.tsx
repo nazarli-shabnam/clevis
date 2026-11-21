@@ -1,6 +1,7 @@
 "use client"
 
 import { Suspense, useEffect, useMemo, useState } from "react"
+import { Time } from "@/components/time"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -12,7 +13,6 @@ import { GitPullRequest } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
 import { isOrgMemberOnly } from "@/lib/members-href"
-import { relativeTime } from "@/lib/format"
 import { FlowRankingCard } from "@/components/flow-ranking-card"
 import { githubWebUrl } from "@/lib/github-web"
 import { PULL_SORT_LABELS, ageDays, isStale, sortPulls, type PullSort } from "@/lib/pull-triage"
@@ -50,7 +50,7 @@ function Age({ pull, staleDays }: { pull: PullRow; staleDays: number }) {
       className={stale ? "text-warning font-medium" : undefined}
       title={stale ? `Open ${ageDays(pull.created_at)} days with no activity for ${staleDays}+ days` : undefined}
     >
-      {relativeTime(pull.created_at)}
+      <Time iso={pull.created_at} />
     </span>
   )
 }
@@ -104,7 +104,7 @@ const pullColumns = (staleDays: number): DataTableColumn<PullRow>[] => [
     align: "right",
     sortValue: (p) => p.updated_at ?? p.created_at,
     cellClassName: "text-muted-foreground whitespace-nowrap",
-    render: (p) => relativeTime(p.updated_at ?? p.created_at),
+    render: (p) => <Time iso={p.updated_at ?? p.created_at} />,
     csvValue: (p) => p.updated_at ?? p.created_at,
   },
   {

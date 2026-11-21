@@ -1,11 +1,11 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { Time } from "@/components/time"
 import { useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { CircleNotch } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
-import { dueTime, relativeTime } from "@/lib/format"
 import { CopyButton } from "@/components/copy-button"
 import { EmptyStateAction } from "@/components/empty-state-action"
 import { SectionError } from "@/components/section-error"
@@ -105,9 +105,9 @@ function TokenRow({
           )}
         </p>
         <p className="text-muted-foreground">
-          scope {token.scope} · created {relativeTime(token.created_at)} by {token.created_by} ·{" "}
-          {token.last_used_at ? `last used ${relativeTime(token.last_used_at)}` : "never used"}
-          {status === "active" && token.expires_at ? ` · expires ${dueTime(token.expires_at)}` : ""}
+          scope {token.scope} · created <Time iso={token.created_at} /> by {token.created_by} ·{" "}
+          {token.last_used_at ? <>last used <Time iso={token.last_used_at} /></> : "never used"}
+          {status === "active" && token.expires_at ? <> · expires <Time iso={token.expires_at} due /></> : ""}
         </p>
         {status === "active" && token.creator_left && (
           <p className="text-amber-500">

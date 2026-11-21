@@ -313,7 +313,8 @@ describe("SecurityPage", () => {
     fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
 
     expect(await screen.findByText("Stored failing check")).toBeInTheDocument();
-    expect(screen.getByText(/Last scanned 3 hours ago/)).toBeInTheDocument();
+    expect(screen.getByText(/Last scanned/)).toBeInTheDocument();
+    expect(screen.getByText("3 hours ago")).toBeInTheDocument();
     expect(analyticsLatestScanMock).toHaveBeenCalledWith("acme");
     expect(analyticsOverviewMock).not.toHaveBeenCalled(); // no GitHub calls just to look
     expect(screen.getByRole("button", { name: "Rescan" })).toBeInTheDocument();
