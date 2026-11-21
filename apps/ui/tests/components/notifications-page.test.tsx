@@ -2,6 +2,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const downloadMock = vi.fn();
+vi.mock("@/lib/download", () => ({ downloadTextFile: (...a: unknown[]) => downloadMock(...a) }));
 const feedMock = vi.fn();
 const markReadMock = vi.fn();
 const dismissMock = vi.fn();
@@ -228,6 +230,22 @@ describe("NotificationsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Preferences" }));
     expect(await screen.findByText("Show these in your notifications:")).toBeInTheDocument();
     await waitFor(() => expect(prefsMock).toHaveBeenCalledWith("acme"));
+  });
+
+  it("exports only the filtered rows as CSV", async () => {
+    feedMock.mockResolvedValue(feed([item("a", "score_drop"), item("b", "job_failed")]));
+    renderPage();
+
+    await screen.findByText("title a");
+    fireEvent.click(screen.getByRole("button", { name: "Job failed" }));
+    fireEvent.click(screen.getByRole("button", { name: "Export CSV" }));
+
+    expect(downloadMock).toHaveBeenCalledOnce();
+    const [name, csv, mime] = downloadMock.mock.calls[0];
+    expect(name).toMatch(/^clevis-notifications-acme-\d{4}-\d{2}-\d{2}\.csv$/);
+    expect(mime).toBe("text/csv");
+    expect(csv).toContain("title a");
+    expect(csv).not.toContain("title b");
   });
 
   it("marks an unread item read when it is opened", async () => {
