@@ -26,6 +26,12 @@ _VERBS = {
     "delete": re.compile(r"\bDELETE\s+FROM\s+([a-z_][a-z0-9_]*)"),
     "select": re.compile(r"\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)"),
 }
+# ``INSERT ... ON CONFLICT ... DO UPDATE`` also needs UPDATE (and SELECT, to read the conflicting row), which the
+# plain verbs above do not see. The tempered dot stops at the next INSERT so one statement is matched at a time.
+_UPSERT = re.compile(
+    r"\bINSERT\s+INTO\s+([a-z_][a-z0-9_]*)(?:(?!INSERT\s+INTO).)*?ON\s+CONFLICT(?:(?!INSERT\s+INTO).)*?DO\s+UPDATE\b",
+    re.DOTALL,
+)
 
 
 def _sql_uses(tables: set[str]) -> dict[tuple[str, str], str]:
@@ -37,6 +43,10 @@ def _sql_uses(tables: set[str]) -> dict[tuple[str, str], str]:
             for name in pattern.findall(text):
                 if name in tables:  # drops CTE names, catalogs and words that are not tables
                     uses.setdefault((name, privilege), path.name)
+        for name in _UPSERT.findall(text):
+            if name in tables:
+                uses.setdefault((name, "update"), path.name)
+                uses.setdefault((name, "select"), path.name)
     return uses
 
 
