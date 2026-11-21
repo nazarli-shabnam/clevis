@@ -318,6 +318,30 @@ describe("BulkFixPanel", () => {
     expect(bulkMock).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the applied results after the re-scan drops the fixed repo from the matrix (#1156)", async () => {
+    bulkMock
+      .mockResolvedValueOnce({ check_id: SS, dry_run: true, items: [{ repo: "api", status: "would_change", detail: "d" }] })
+      .mockResolvedValueOnce({ check_id: SS, dry_run: false, items: [{ repo: "api", status: "applied", detail: "d" }] });
+    const { rerender } = renderPanel();
+    fireEvent.click(checkbox("api"));
+    fireEvent.click(screen.getByRole("button", { name: "Preview changes (1)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Apply to 1 repo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm — change 1 repo" }));
+    expect(await screen.findByText("applied")).toBeInTheDocument();
+
+    // the re-scan finished: api passes now, so it is no longer a candidate
+    rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <BulkFixPanel owner="acme" repos={[row("api"), REPOS[1]]} token="ghp_t" />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText("applied")).toBeInTheDocument();
+
+    // picking repos again starts over
+    fireEvent.click(checkbox("web"));
+    await waitFor(() => expect(screen.queryByText("applied")).toBeNull());
+  });
+
   it("never acts on a repo that has dropped out of the matrix since it was ticked", async () => {
     bulkMock.mockResolvedValue({ check_id: SS, dry_run: true, items: [{ repo: "web", status: "would_change", detail: "d" }] });
     const { rerender } = renderPanel();
