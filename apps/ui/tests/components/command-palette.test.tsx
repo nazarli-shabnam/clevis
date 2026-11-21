@@ -38,11 +38,14 @@ import { CommandPalette } from "@/components/command-palette";
 
 function renderPalette() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>
-      <CommandPalette />
-    </QueryClientProvider>,
-  );
+  return {
+    queryClient: qc,
+    ...render(
+      <QueryClientProvider client={qc}>
+        <CommandPalette />
+      </QueryClientProvider>,
+    ),
+  };
 }
 
 const openWithKey = () => fireEvent.keyDown(window, { key: "k", ctrlKey: true });
@@ -173,6 +176,29 @@ describe("CommandPalette", () => {
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Scan of acme finished: score 83."));
     expect(toastInfo).toHaveBeenCalledWith("Scanning acme…");
     expect(push).not.toHaveBeenCalled();
+  });
+
+  it("ignores a second scan command while one is still running, and refreshes the cockpit when it finishes (#1119)", async () => {
+    let finish!: (v: unknown) => void;
+    overviewMock.mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+    const { queryClient } = renderPalette();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+
+    async function runScan() {
+      openWithKey();
+      const input = await screen.findByRole("combobox");
+      fireEvent.change(input, { target: { value: "run security scan" } });
+      fireEvent.click(await screen.findByRole("option", { name: /Run security scan/ }));
+    }
+    await runScan();
+    await waitFor(() => expect(overviewMock).toHaveBeenCalledTimes(1));
+    await runScan();
+    await waitFor(() => expect(toastInfo).toHaveBeenCalledWith("A scan of acme is already running."));
+    expect(overviewMock).toHaveBeenCalledTimes(1);
+
+    finish({ owner: "acme", score: 90 });
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Scan of acme finished: score 90."));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["analytics.cockpit", "acme"] });
   });
 
   it("marks all notifications read and surfaces a failure", async () => {

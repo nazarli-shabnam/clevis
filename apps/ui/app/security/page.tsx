@@ -6,7 +6,7 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
-import { ScanChangesCard, scanChangesKey } from "@/components/scan-changes-card"
+import { ScanChangesCard } from "@/components/scan-changes-card"
 import { ScanExplorer } from "@/components/scan-explorer"
 import { EmptyStateNoAccount } from "@/components/empty-state"
 import { CheckCard } from "@/components/check-card"
@@ -23,7 +23,7 @@ import { downloadTextFile } from "@/lib/download"
 import { useActiveScope } from "@/lib/active-scope"
 import { useAuth } from "@/lib/auth-context"
 import { hasOrgLogin, shouldApplyResolvedToken } from "@/lib/token-resolve"
-import { invalidateTokens } from "@/lib/query-invalidation"
+import { invalidateScanData, invalidateTokens } from "@/lib/query-invalidation"
 import { DonutChart } from "@/components/charts/donut-chart"
 import { AreaTimeChart } from "@/components/charts/area-time-chart"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
@@ -238,12 +238,7 @@ export default function SecurityPage() {
   const scan = useMutation({
     mutationFn: (forOwner: string) => api.analytics.overview(forOwner, token),
     onSuccess: (_data, forOwner) => {
-      queryClient.invalidateQueries({ queryKey: ["analytics.latest-scan", forOwner] })
-      queryClient.invalidateQueries({ queryKey: ["analytics.history", forOwner] })
-      queryClient.invalidateQueries({ queryKey: ["analytics.scans", forOwner] })
-      queryClient.invalidateQueries({ queryKey: scanChangesKey(forOwner) })
-      // Overview's score and the sidebar dot read the cockpit, which otherwise lags up to its 30s refetch.
-      queryClient.invalidateQueries({ queryKey: ["analytics.cockpit", forOwner] })
+      invalidateScanData(queryClient, forOwner)
     },
   })
 
