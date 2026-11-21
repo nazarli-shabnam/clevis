@@ -250,6 +250,30 @@ describe("InviteAcceptPage", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("/"));
   });
 
+  it("switches the active scope to the joined org, replacing the one the user had (#1169)", async () => {
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "personal", login: "user" }));
+    previewMock.mockResolvedValue({ org_login: "acme", status: "pending" });
+    acceptMock.mockResolvedValue({ org_login: "acme", role: "member" });
+
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /accept invitation/i }));
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/"));
+    expect(JSON.parse(localStorage.getItem("active_scope")!)).toEqual({ kind: "org", login: "acme" });
+  });
+
+  it("keeps the current scope when accepting fails", async () => {
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "personal", login: "user" }));
+    previewMock.mockResolvedValue({ org_login: "acme", status: "pending" });
+    acceptMock.mockRejectedValue(new Error("nope"));
+
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /accept invitation/i }));
+
+    await screen.findByText("nope");
+    expect(JSON.parse(localStorage.getItem("active_scope")!)).toEqual({ kind: "personal", login: "user" });
+  });
+
   it("invalidates the cached org memberships on accept so the new org shows up immediately (#591)", async () => {
     const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
     previewMock.mockResolvedValue({ org_login: "acme", status: "pending" });

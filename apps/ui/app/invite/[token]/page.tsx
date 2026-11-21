@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Warning, CheckCircle, CircleNotch } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { useAuth } from "@/lib/auth-context"
+import { setActiveScope } from "@/lib/active-scope"
 import { matchesMaskedEmail } from "@/lib/masked-email"
 import type { InvitationPreview } from "@/lib/api/types"
 
@@ -39,6 +40,8 @@ export default function InviteAcceptPage() {
       // would otherwise keep telling the now-member to use an invite link they just accepted. Only
       // this org's entry goes: invites to other orgs are still pending.
       removePendingInvitation(accepted.org_login)
+      // The invitation is the moment this member is looking for that org: land on it, not on the scope they had.
+      setActiveScope({ kind: "org", login: accepted.org_login })
       router.push("/")
     },
   })
