@@ -562,18 +562,33 @@ def test_dependabot_mixed_403_and_a_real_alert_still_fails():
     assert result["status"] == "fail"
 
 
-def test_dependabot_non_404_403_error_propagates():
-    check = DependabotAlertsCheck()
-    repos = [{"name": "api"}]
+def _check_cases():
+    return [
+        (DependabotAlertsCheck, "dependabot", {"security_advisory": {"severity": "critical"}}),
+        (CodeScanningCheck, "code-scanning", {"number": 1}),
+    ]
+
+
+@pytest.mark.parametrize("failure", ["http_451", "truncated"])
+@pytest.mark.parametrize("check_cls,segment,alert", _check_cases())
+def test_one_odd_repo_does_not_error_the_whole_check(check_cls, segment, alert, failure):
+    # An unexpected status or a truncated listing on one repo is "unknown" for that repo only;
+    # the real findings on the others must still be reported.
+    repos = [{"name": "odd"}, {"name": "vulnerable"}]
 
     def fake_get(url, token):
-        response = httpx.Response(500, request=httpx.Request("GET", url))
-        raise httpx.HTTPStatusError("server error", request=response.request, response=response)
+        if "/odd/" in url:
+            if failure == "truncated":
+                raise PaginationTruncatedError(url, [])
+            response = httpx.Response(451, request=httpx.Request("GET", url))
+            raise httpx.HTTPStatusError("blocked", request=response.request, response=response)
+        return [alert]
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr("checks.github_checks._get_all_pages", _paged(fake_get))
-        with pytest.raises(httpx.HTTPStatusError):
-            check.run(owner="acme", token="tok", repos=repos)
+        result = check_cls().run(owner="acme", token="tok", repos=repos)
+    assert result["status"] == "fail"
+    assert result["value"]["repos"] == ["vulnerable"]
 
 
 # ── CodeScanningCheck ────────────────────────────────────────────────────────

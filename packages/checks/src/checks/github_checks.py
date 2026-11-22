@@ -401,10 +401,14 @@ class DependabotAlertsCheck(Check):
                 if _feature_disabled(exc):
                     disabled += 1
                     continue
-                if exc.response.status_code == 403:
-                    forbidden += 1
-                    continue
-                raise
+                # 403 and any other status (451, 429/5xx after retries): unknown, not zero, and
+                # one odd repo must not hide every other repo's findings.
+                forbidden += 1
+                continue
+            except PaginationTruncatedError:
+                # More open alerts than the pagination cap: this repo's count is unknown.
+                forbidden += 1
+                continue
             urgent = False
             for alert in alerts:
                 severity = (alert.get("security_advisory") or {}).get("severity")
@@ -464,10 +468,14 @@ class CodeScanningCheck(Check):
                 if _feature_disabled(exc):
                     disabled += 1
                     continue
-                if exc.response.status_code == 403:
-                    forbidden += 1
-                    continue
-                raise
+                # 403 and any other status (451, 429/5xx after retries): unknown, not zero, and
+                # one odd repo must not hide every other repo's findings.
+                forbidden += 1
+                continue
+            except PaginationTruncatedError:
+                # More open alerts than the pagination cap: this repo's count is unknown.
+                forbidden += 1
+                continue
             if alerts:
                 repos_with_alerts += 1
                 open_count += len(alerts)
