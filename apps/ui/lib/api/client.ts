@@ -700,7 +700,7 @@ export const api = {
       org: string,
       owner: string,
       repo: string,
-      body: { enabled: boolean; mode: "approve_only" | "approve_and_merge"; merge_method?: string },
+      body: { enabled: boolean; mode?: "approve_only" | "approve_and_merge"; merge_method?: string },
     ) =>
       put<{ enabled: boolean; mode: string; merge_method: string }>(
         `/orgs/${encodeURIComponent(org)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/automation/dependabot-triage`,

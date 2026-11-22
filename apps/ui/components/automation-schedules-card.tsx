@@ -84,16 +84,11 @@ export function AutomationSchedulesCard({ orgLogin }: { orgLogin: string }) {
     },
   })
   const setTriageRepo = useMutation({
-    mutationFn: async ({ repo, enabled }: { repo: string; enabled: boolean }) => {
+    mutationFn: ({ repo, enabled }: { repo: string; enabled: boolean }) => {
       const [owner, name] = splitRepo(repo)
-      // The PUT replaces the whole setting, so carry over the saved mode and merge method; a repository with
-      // none saved starts in approve_only, the mode that never merges.
-      const current = await api.dependabotTriage.getRepo(orgLogin, owner, name)
-      return api.dependabotTriage.setRepo(orgLogin, owner, name, {
-        enabled,
-        mode: current.mode,
-        merge_method: current.merge_method,
-      })
+      // Only `enabled` is sent: the API keeps the saved mode and merge method (approve-only/squash when none
+      // is saved), so a save from the Dependabot triage card in between is never overwritten.
+      return api.dependabotTriage.setRepo(orgLogin, owner, name, { enabled })
     },
     onSuccess: () => {
       setNewTriageRepo("")
@@ -219,7 +214,7 @@ export function AutomationSchedulesCard({ orgLogin }: { orgLogin: string }) {
               </Button>
             </form>
             <p className="text-xs text-muted-foreground">
-              A repository added here starts in approve-only mode; choose approve-and-merge in the Dependabot triage card.
+              A repository with no saved settings starts in approve-only mode; one that already has settings keeps its saved mode. Change it in the Dependabot triage card.
             </p>
           </div>
           {(update.isError || setRepo.isError || setTriageRepo.isError) && (
