@@ -309,6 +309,10 @@ BEGIN
   IF EXISTS (SELECT FROM pg_proc WHERE proname = 'purge_tenant_github_data') THEN
     GRANT EXECUTE ON FUNCTION purge_tenant_github_data(integer) TO clevis_api;
   END IF;
+  -- Migration 0092's account-deletion detach of a personal tenant's audit rows (audit_logs' RLS rejects a NULL tenant).
+  IF EXISTS (SELECT FROM pg_proc WHERE proname = 'detach_tenant_audit_logs') THEN
+    GRANT EXECUTE ON FUNCTION detach_tenant_audit_logs(integer) TO clevis_api;
+  END IF;
 END
 $do$;
 

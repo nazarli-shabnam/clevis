@@ -13,7 +13,7 @@ from src.core.config import settings
 from src.core.db import AuditLog, Membership, ScanResult, Tenant, User, UserSession, get_db, set_session_tenant
 from src.core.rate_limit import _account_buckets as _account_rate_limit_buckets
 from src.core.rate_limit import _buckets as _rate_limit_buckets
-from src.repositories import invitation_repo, org_membership_repo, org_repo
+from src.repositories import audit_repo, invitation_repo, org_membership_repo, org_repo
 from src.routers.auth import router as auth_router
 from src.services import email_change, password_reset
 from src.services.email import EmailNotConfigured
@@ -245,21 +245,22 @@ def test_deleting_an_account_keeps_its_audit_rows_for_the_workspace_admin(client
     headers = _register(client)
     member_id = db.query(User).filter(User.email == "member@example.com").one().id
     personal = db.query(Tenant).filter(Tenant.personal_user_id == member_id).one().id
-    db.add(AuditLog(actor="member@example.com", action="security.remediate", target="outside/repo", payload="{}", tenant_id=personal))
-    db.commit()
+    audit_repo.write(db, "member@example.com", "security.remediate", "outside/repo", {}, tenant_id=personal)  # sets the RLS tenant
     before = db.query(AuditLog).filter(AuditLog.tenant_id == personal).count()
-    assert before >= 1  # the row above plus the sign-in rows
+    assert before >= 1  # the row above plus any sign-in rows
 
     resp = client.post("/auth/me/delete", headers=headers, json={"confirm_email": "member@example.com", "password": "supersecret1234"})
     assert resp.status_code == 204
 
     db.expire_all()
     assert db.query(Tenant).filter(Tenant.id == personal).first() is None
-    kept = db.query(AuditLog).filter(AuditLog.actor == "member@example.com", AuditLog.tenant_id.is_(None)).all()
-    assert len(kept) == before and "security.remediate" in {r.action for r in kept}
-    # The workspace-admin read (SECURITY DEFINER, no tenant context) still returns them.
-    admin_view = db.execute(text("SELECT action FROM audit_logs_for_admin(NULL, 1000)")).scalars().all()
-    assert "security.remediate" in admin_view
+    # Detached rows have no tenant, which audit_logs' RLS hides from ordinary reads by design; the workspace admin
+    # reads them through the SECURITY DEFINER view (no tenant context), so assert through that.
+    kept = db.execute(
+        text("SELECT action, tenant_id FROM audit_logs_for_admin(NULL, 1000) WHERE actor = 'member@example.com'")
+    ).all()
+    assert len(kept) == before and all(tenant_id is None for _, tenant_id in kept)
+    assert "security.remediate" in {action for action, _ in kept}
 
 
 def test_deleting_an_account_also_clears_references_left_in_an_org_they_already_left(client, db):
