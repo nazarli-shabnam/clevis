@@ -169,6 +169,30 @@ describe("SettingsPage", () => {
     expect(screen.getAllByRole("button", { name: "Save" }).length).toBeGreaterThan(0);
   });
 
+  it("keeps an unsaved display-name edit when the session user is re-set with the same name (#1233)", async () => {
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([]);
+    configGetAllMock.mockResolvedValue({});
+    // The slow first /auth/me check lands after the person has started typing and replaces the user object.
+    const meGate = deferred<Response>();
+    fetchMock.mockReturnValue(meGate.promise);
+
+    renderPage();
+
+    const nameInput = await screen.findByPlaceholderText("Your name");
+    fireEvent.change(nameInput, { target: { value: "Typed but unsaved" } });
+    await act(async () => {
+      meGate.resolve(
+        new Response(JSON.stringify({ id: 1, email: "admin@example.com", name: "Admin", is_workspace_admin: true }), {
+          status: 200,
+        }),
+      );
+    });
+
+    expect(screen.getByPlaceholderText("Your name")).toHaveValue("Typed but unsaved");
+  });
+
   it("hides the saved tokens section from a non-admin, who would only see a permanent 403 (#660)", async () => {
     // A member: confirmed by /auth/me and by the stored JWT.
     const payload = b64url({ sub: "2", email: "member@example.com", name: "Member", is_workspace_admin: false, exp: Math.floor(Date.now() / 1000) + 3600 });

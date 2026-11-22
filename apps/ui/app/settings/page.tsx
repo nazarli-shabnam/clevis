@@ -58,7 +58,7 @@ function ProfileSection() {
 
   useEffect(() => {
     setName(user?.name || "")
-  }, [user])
+  }, [user?.name])
 
   async function save() {
     setIsSaving(true)
