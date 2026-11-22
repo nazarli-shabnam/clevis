@@ -56,13 +56,18 @@ function CellLoadError() {
   )
 }
 
-function RepoActivityCell({ org, repo, token }: { org: string; repo: string; token: string }) {
-  const [ref, inView] = useInView<HTMLDivElement>()
-  const { data, isLoading, isError } = useQuery({
+// The activity and release cells read different fields of one stats response; React Query dedupes the fetch.
+function useRepoStats(org: string, repo: string, token: string, enabled: boolean) {
+  return useQuery({
     queryKey: ["repo-stats", org, repo, token],
     queryFn: () => api.repos.stats(org, repo, token),
-    enabled: inView,
+    enabled,
   })
+}
+
+function RepoActivityCell({ org, repo, token }: { org: string; repo: string; token: string }) {
+  const [ref, inView] = useInView<HTMLDivElement>()
+  const { data, isLoading, isError } = useRepoStats(org, repo, token, inView)
 
   const weeks = (data?.commit_activity ?? []).slice(-8).map((w) => w.total)
   const isEstimated = data?.commit_activity_source === "aggregate"
@@ -95,13 +100,7 @@ function RepoActivityCell({ org, repo, token }: { org: string; repo: string; tok
 
 function RepoReleaseCell({ org, repo, token }: { org: string; repo: string; token: string }) {
   const [ref, inView] = useInView<HTMLDivElement>()
-  // Same query key as RepoActivityCell — React Query dedupes the fetch, this just
-  // reads a different field off the already-fetched (or in-flight) stats response.
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ["repo-stats", org, repo, token],
-    queryFn: () => api.repos.stats(org, repo, token),
-    enabled: inView,
-  })
+  const { data, isLoading, isError } = useRepoStats(org, repo, token, inView)
 
   const release = data?.latest_release
   return (

@@ -830,6 +830,14 @@ describe("api.repos", () => {
     expect(JSON.parse(init.body as string)).toEqual({ token: undefined });
   });
 
+  it("POSTs to /me/repos/{owner}/{repo}/security", async () => {
+    stubOkJson({ repository: "acme/demo", branch_protection: "protected", secret_scanning: "enabled" });
+    await api.repos.security("acme", "demo", "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/repos/acme/demo/security");
+    expect(JSON.parse(init.body as string)).toEqual({ token: "ghp_test" });
+  });
+
   it("POSTs to /me/repos/{owner}/{repo}/flow-metrics", async () => {
     stubOkJson({ repository: "acme/demo" });
     await api.repos.flowMetrics("acme", "demo", "ghp_test");

@@ -600,21 +600,13 @@ export const api = {
       post<RepoListResponse>(`/me/repos/${encodeURIComponent(owner)}`, { token: token || undefined }),
     // The per-repo routes are /me too, for the same reason: the org-scoped ones 404 for a personal account.
     stats: (owner: string, repo: string, token: string) =>
-      post<RepoStatsResponse>(`/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/stats`, {
-        token: token || undefined,
-      }),
+      post<RepoStatsResponse>(`/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/stats`, { token: token || undefined }),
     flowMetrics: (owner: string, repo: string, token: string) =>
-      post<RepoFlowMetricsResponse>(`/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/flow-metrics`, {
-        token: token || undefined,
-      }),
+      post<RepoFlowMetricsResponse>(`/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/flow-metrics`, { token: token || undefined }),
     pulls: (owner: string, repo: string, token: string) =>
-      post<RepoPullsResponse>(`/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`, {
-        token: token || undefined,
-      }),
+      post<RepoPullsResponse>(`/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`, { token: token || undefined }),
     security: (owner: string, repo: string, token: string) =>
-      post<RepoSecurityResponse>(`/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/security`, {
-        token: token || undefined,
-      }),
+      post<RepoSecurityResponse>(`/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/security`, { token: token || undefined }),
   },
   jobs: {
     list: () => get<JobOut[]>("/jobs"),
