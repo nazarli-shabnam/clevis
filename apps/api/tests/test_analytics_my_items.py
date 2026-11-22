@@ -105,15 +105,9 @@ def test_propagates_network_error_from_user_endpoint(http, path):
             http.get(f"{path}?owner=acme")
 
 
-def test_falls_back_to_users_github_login_when_user_endpoint_unresolvable(app, http):
-    """A GitHub App installation token can't call GET /user, but if the signed-in Clevis
-    user linked their own GitHub identity via OAuth, my-prs should use that login rather
-    than degrading to empty."""
-    app.dependency_overrides[require_auth] = lambda: UserOut(
-        id=1, email="myitems@example.com", name=None, is_workspace_admin=False, github_login="octocat"
-    )
-
-    def _request_side_effect(method, path, params=None):
+def _forbidden_user_endpoint(expected_login=None, items=None):
+    """GitHubClient.request stand-in: an installation token gets 403 on /user; searches are recorded."""
+    def _request(method, path, params=None):
         if path == "/user":
             raise httpx.HTTPStatusError(
                 "boom",
@@ -121,19 +115,55 @@ def test_falls_back_to_users_github_login_when_user_endpoint_unresolvable(app, h
                 response=httpx.Response(403, request=httpx.Request("GET", "https://api.github.com/user")),
             )
         if path == "/search/issues":
-            assert "author:octocat" in params["q"]
+            if items is not None:
+                items.append(params["q"])
             return {"items": [], "total_count": 0}
         return {}
+    return _request
+
+
+def _link_github(db, user: UserOut, *, github_user_id, github_login):
+    row = db.get(User, user.id)
+    row.github_user_id, row.github_login = github_user_id, github_login
+    db.commit()
+
+
+def test_uses_the_login_github_currently_gives_the_linked_account_not_the_stored_one(db, mock_user, http):
+    """The stored github_login is only refreshed at sign-in, so after a rename it can name someone else.
+    With an installation token (403 on /user) the current login is looked up by the immutable id (#1245)."""
+    _link_github(db, mock_user, github_user_id=4242, github_login="alice")  # stored name is stale
+    queries: list[str] = []
 
     with (
-        patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
+        patch("src.routers.analytics.resolve_owner_token", return_value="ghs_install"),
         patch("src.routers.analytics.GitHubClient") as mock_client,
+        patch("src.routers.analytics.github_app.get_user_login_by_id", return_value="alice2") as by_id,
     ):
-        mock_client.return_value.request.side_effect = _request_side_effect
+        mock_client.return_value.request.side_effect = _forbidden_user_endpoint(items=queries)
         resp = http.get("/me/github/my-prs?owner=acme")
 
     assert resp.status_code == 200
     assert resp.json()["identity_unresolved"] is False
+    by_id.assert_called_once_with("ghs_install", 4242)
+    assert queries and all("alice2" in q and "author:alice " not in q + " " for q in queries)
+
+
+@pytest.mark.parametrize("path", ["/me/github/my-prs", "/me/github/my-reviews", "/me/github/my-issues", "/me/github/my-view"])
+def test_identity_unresolved_when_the_linked_account_no_longer_exists(db, mock_user, http, path):
+    _link_github(db, mock_user, github_user_id=4242, github_login="alice")
+    queries: list[str] = []
+
+    with (
+        patch("src.routers.analytics.resolve_owner_token", return_value="ghs_install"),
+        patch("src.routers.analytics.GitHubClient") as mock_client,
+        patch("src.routers.analytics.github_app.get_user_login_by_id", return_value=None),
+    ):
+        mock_client.return_value.request.side_effect = _forbidden_user_endpoint(items=queries)
+        resp = http.get(f"{path}?owner=acme")
+
+    assert resp.status_code == 200
+    assert resp.json()["identity_unresolved"] is True
+    assert queries == []  # nothing was searched under a name we could not verify
 
 
 def test_my_prs_success_returns_pagination_fields(http):
