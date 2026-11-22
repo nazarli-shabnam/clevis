@@ -51,7 +51,7 @@ export function FlowRankingCard({ org, repos, token }: { org: string; repos: str
     const key = ["repo-flow-metrics", org, org, repo, token]
     const state = queryClient.getQueryState<RepoFlowMetricsResponse>(key)
     if (state?.data && Date.now() - state.dataUpdatedAt < STALE_MS) return state.data
-    const fresh = await api.repos.flowMetrics(org, org, repo, token)
+    const fresh = await api.repos.flowMetrics(org, repo, token)
     queryClient.setQueryData(key, fresh)
     return fresh
   }

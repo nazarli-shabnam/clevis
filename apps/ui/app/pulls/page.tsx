@@ -290,7 +290,7 @@ function PullRequestsView() {
             queryClient
               .fetchQuery({
                 queryKey: ["repo-pulls", org, repo, token],
-                queryFn: () => api.repos.pulls(org, org, repo, token),
+                queryFn: () => api.repos.pulls(org, repo, token),
                 staleTime: REPO_PULLS_STALE_MS,
               })
               .then((r) => {

@@ -67,7 +67,7 @@ export function FlowMetricsCard({
   const [requested, setRequested] = useState(false)
   const query = useQuery({
     queryKey: ["repo-flow-metrics", org, owner, repo, token],
-    queryFn: () => api.repos.flowMetrics(org, owner, repo, token),
+    queryFn: () => api.repos.flowMetrics(owner, repo, token),
     enabled: requested && tokenReady,
     retry: false,
   })

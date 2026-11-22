@@ -36,7 +36,7 @@ afterEach(() => {
 
 describe("FlowRankingCard", () => {
   it("loads nothing until asked, then ranks repos slowest first and links to each", async () => {
-    flowMock.mockImplementation((_o: string, _w: string, repo: string) =>
+    flowMock.mockImplementation((_w: string, repo: string) =>
       Promise.resolve(repo === "slow" ? metrics(100, 30, 0.4) : metrics(10, 2, 0)),
     )
     renderCard(["fast", "slow"])
@@ -50,7 +50,7 @@ describe("FlowRankingCard", () => {
   })
 
   it("re-sorts when a column header is clicked, and flips the direction on a second click", async () => {
-    flowMock.mockImplementation((_o: string, _w: string, repo: string) =>
+    flowMock.mockImplementation((_w: string, repo: string) =>
       Promise.resolve(repo === "a" ? metrics(100, 1, 0.1) : metrics(10, 9, 0.5)),
     )
     renderCard(["a", "b"])
@@ -77,7 +77,7 @@ describe("FlowRankingCard", () => {
   })
 
   it("lists repositories that failed instead of hiding them", async () => {
-    flowMock.mockImplementation((_o: string, _w: string, repo: string) =>
+    flowMock.mockImplementation((_w: string, repo: string) =>
       repo === "bad" ? Promise.reject(new Error("boom")) : Promise.resolve(metrics(5, 1, 0)),
     )
     renderCard(["good", "bad"])

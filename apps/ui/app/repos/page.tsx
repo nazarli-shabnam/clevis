@@ -60,7 +60,7 @@ function RepoActivityCell({ org, repo, token }: { org: string; repo: string; tok
   const [ref, inView] = useInView<HTMLDivElement>()
   const { data, isLoading, isError } = useQuery({
     queryKey: ["repo-stats", org, repo, token],
-    queryFn: () => api.repos.stats(org, org, repo, token),
+    queryFn: () => api.repos.stats(org, repo, token),
     enabled: inView,
   })
 
@@ -99,7 +99,7 @@ function RepoReleaseCell({ org, repo, token }: { org: string; repo: string; toke
   // reads a different field off the already-fetched (or in-flight) stats response.
   const { data, isLoading, isError } = useQuery({
     queryKey: ["repo-stats", org, repo, token],
-    queryFn: () => api.repos.stats(org, org, repo, token),
+    queryFn: () => api.repos.stats(org, repo, token),
     enabled: inView,
   })
 
@@ -126,7 +126,7 @@ function RepoPullsCell({ org, repo, token }: { org: string; repo: string; token:
   const [ref, inView] = useInView<HTMLDivElement>()
   const { data, isLoading, isError } = useQuery({
     queryKey: ["repo-pulls", org, repo, token],
-    queryFn: () => api.repos.pulls(org, org, repo, token),
+    queryFn: () => api.repos.pulls(org, repo, token),
     enabled: inView,
   })
 
@@ -414,7 +414,7 @@ function ReposView() {
       const batch = targets.slice(i, i + PROTECTION_BATCH_SIZE)
       const results = await Promise.all(
         batch.map((name) =>
-          api.repos.security(org, org, name, loadedToken).then(
+          api.repos.security(org, name, loadedToken).then(
             (r) => r.branch_protection,
             () => "unknown" as const,
           ),

@@ -10,9 +10,9 @@ from sqlalchemy.orm import Session
 
 from src.core.auth import UserOut, require_auth
 from src.core.path_params import Owner, Repo
-from src.core.db import RepoEventDailyCount, get_db
+from src.core.db import Org, RepoEventDailyCount, get_db
 from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role
-from src.repositories import installation_repo
+from src.repositories import installation_repo, org_repo, tenant_repo
 from src.schemas.repos import (
     RepoListInput,
     RepoFlowMetricsResponse,
@@ -85,6 +85,31 @@ def _repo_org_connected(db: Session, org_id: int, account_login: str) -> bool:
     # connected installation.
     installation = installation_repo.get_for_org(db, org_id=org_id, account_login=account_login)
     return installation is not None and installation.installation_id is not None
+
+
+# Cache-key stand-in for an owner that is not a Clevis org the caller belongs to (a personal account, or an org
+# reached with the caller's own token): live GitHub data only. Real tenant ids start at 1.
+_NO_TENANT = 0
+
+
+def _owner_token(db: Session, user: UserOut, owner: str, payload) -> str:
+    """The token for the ``/me/repos/{owner}/...`` routes: the org installation for an org the caller belongs to,
+    otherwise the caller's own (personal installation or pasted token); same role gate as the other ``/me/*`` routes."""
+    try:
+        return resolve_owner_token(db, user_id=user.id, owner=owner, client_token=_client_token(payload))
+    except InsufficientOrgRole as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except NoGitHubTokenAvailable as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+def _member_org(db: Session, user_id: int, owner: str) -> Org | None:
+    """The Clevis org named ``owner`` when the caller belongs to it, else None."""
+    org = org_repo.get_by_login_ci(db, owner)
+    if org is None:
+        return None
+    org = org_repo.ensure_tenant_linked(db, org)
+    return org if tenant_repo.get_membership(db, org.tenant_id, user_id) is not None else None
 
 
 def _repo_commit_activity_from_aggregate(db: Session, tenant_id: int, repo: str) -> list[dict]:
@@ -239,12 +264,7 @@ def personal_list_repos(
     """Repository list for any owner the caller may use, including a personal account that has no Clevis
     org row (``/orgs/{org}/repos`` needs one). Org members get the org installation as before; the same role
     gate as the other ``/me/*`` routes applies."""
-    try:
-        token = resolve_owner_token(db, user_id=user.id, owner=owner, client_token=_client_token(payload))
-    except InsufficientOrgRole as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
-    except NoGitHubTokenAvailable as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    token = _owner_token(db, user, owner, payload)
     try:
         account_type = get_account_type(owner=owner, token=token)
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
@@ -279,7 +299,44 @@ def org_repo_stats(
         raise _github_error(exc) from exc
 
 
+@router.post("/me/repos/{owner}/{repo}/stats", response_model=RepoStatsResponse)
+def personal_repo_stats(
+    owner: Owner,
+    repo: Repo,
+    payload: RepoStatsInput,
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """``/orgs/{org}/repos/{owner}/{repo}/stats`` for any owner the caller may use, including a personal
+    account that has no Clevis org row (that route answers 404 for one). An org the caller belongs to behaves
+    exactly as before: its installation token and stored push-event aggregate."""
+    token = _owner_token(db, user, owner, payload)
+    org = _member_org(db, user.id, owner)
+    connected = org is not None and _repo_org_connected(db, org.id, owner)
+    try:
+        return _cached_stats(owner, repo, token, db, org.tenant_id if org else _NO_TENANT, connected)
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        raise _github_error(exc) from exc
+
+
 _flow_cache: dict[tuple[int, str, str, str], tuple[float, dict]] = {}
+
+
+def _cached_flow_metrics(tenant_id: int, owner: str, repo: str, token: str) -> dict:
+    key = (tenant_id, owner, repo, _token_hash(token))
+    now = time.monotonic()
+    cached = _flow_cache.get(key)
+    if cached and now - cached[0] < _STATS_CACHE_TTL_SECONDS:
+        return cached[1]
+    try:
+        result = flow_metrics.compute(GitHubClient(token), owner, repo)
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        raise _github_error(exc) from exc
+    _flow_cache[key] = (now, result)
+    # Same sweep as _stats_cache: rotating installation tokens add a key each hour.
+    for stale in [k for k, (at, _) in list(_flow_cache.items()) if now - at >= _STATS_CACHE_TTL_SECONDS]:
+        _flow_cache.pop(stale, None)
+    return result
 
 
 @router.post("/orgs/{org_login}/repos/{owner}/{repo}/flow-metrics", response_model=RepoFlowMetricsResponse)
@@ -296,20 +353,21 @@ def org_repo_flow_metrics(
         token = resolve_org_token(db, org_id=ctx.org.id, account_login=owner, client_token=_client_token(payload))
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    key = (ctx.org.tenant_id, owner, repo, _token_hash(token))
-    now = time.monotonic()
-    cached = _flow_cache.get(key)
-    if cached and now - cached[0] < _STATS_CACHE_TTL_SECONDS:
-        return cached[1]
-    try:
-        result = flow_metrics.compute(GitHubClient(token), owner, repo)
-    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
-        raise _github_error(exc) from exc
-    _flow_cache[key] = (now, result)
-    # Same sweep as _stats_cache: rotating installation tokens add a key each hour.
-    for stale in [k for k, (at, _) in list(_flow_cache.items()) if now - at >= _STATS_CACHE_TTL_SECONDS]:
-        _flow_cache.pop(stale, None)
-    return result
+    return _cached_flow_metrics(ctx.org.tenant_id, owner, repo, token)
+
+
+@router.post("/me/repos/{owner}/{repo}/flow-metrics", response_model=RepoFlowMetricsResponse)
+def personal_repo_flow_metrics(
+    owner: Owner,
+    repo: Repo,
+    payload: RepoStatsInput,
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """``/orgs/{org}/repos/{owner}/{repo}/flow-metrics`` for any owner the caller may use (see personal_repo_stats)."""
+    token = _owner_token(db, user, owner, payload)
+    org = _member_org(db, user.id, owner)
+    return _cached_flow_metrics(org.tenant_id if org else _NO_TENANT, owner, repo, token)
 
 
 @router.post("/orgs/{org_login}/repos/{owner}/{repo}/pulls", response_model=RepoPullsResponse)
@@ -327,6 +385,18 @@ def org_repo_pulls(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _list_pulls(owner, repo, token, payload.state)
+
+
+@router.post("/me/repos/{owner}/{repo}/pulls", response_model=RepoPullsResponse)
+def personal_repo_pulls(
+    owner: Owner,
+    repo: Repo,
+    payload: RepoPullsInput,
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """``/orgs/{org}/repos/{owner}/{repo}/pulls`` for any owner the caller may use (see personal_repo_stats)."""
+    return _list_pulls(owner, repo, _owner_token(db, user, owner, payload), payload.state)
 
 
 def _fetch_security(owner: str, repo: str, token: str) -> RepoSecurityResponse:
@@ -373,6 +443,22 @@ def org_repo_security(
         token = resolve_org_token(db, org_id=ctx.org.id, account_login=owner, client_token=_client_token(payload))
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    try:
+        return _fetch_security(owner, repo, token)
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        raise _github_error(exc) from exc
+
+
+@router.post("/me/repos/{owner}/{repo}/security", response_model=RepoSecurityResponse)
+def personal_repo_security(
+    owner: Owner,
+    repo: Repo,
+    payload: RepoSecurityInput,
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """``/orgs/{org}/repos/{owner}/{repo}/security`` for any owner the caller may use (see personal_repo_stats)."""
+    token = _owner_token(db, user, owner, payload)
     try:
         return _fetch_security(owner, repo, token)
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:

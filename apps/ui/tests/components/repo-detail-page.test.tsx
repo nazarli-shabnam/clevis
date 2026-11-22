@@ -213,7 +213,7 @@ describe("RepoDetailPage", () => {
 
   it("shows the no-activity placeholder when commit_activity is empty", async () => {
     renderPage();
-    await waitFor(() => expect(reposStatsMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
+    await waitFor(() => expect(reposStatsMock).toHaveBeenCalledWith("acme", "demo", ""));
     expect(await screen.findByText(/no commit activity available yet/i)).toBeInTheDocument();
   });
 
@@ -282,14 +282,14 @@ describe("RepoDetailPage", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: /security/i }));
 
-    await waitFor(() => expect(reposSecurityMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
+    await waitFor(() => expect(reposSecurityMock).toHaveBeenCalledWith("acme", "demo", ""));
   });
 
   it("opens the Security tab straight from ?tab=security", async () => {
     window.history.replaceState(null, "", "/repos/acme~demo?tab=security");
     try {
       renderPage();
-      await waitFor(() => expect(reposSecurityMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
+      await waitFor(() => expect(reposSecurityMock).toHaveBeenCalledWith("acme", "demo", ""));
       expect(screen.getByRole("tab", { name: /security/i })).toHaveAttribute("aria-selected", "true");
     } finally {
       window.history.replaceState(null, "", "/");
@@ -485,8 +485,8 @@ describe("RepoDetailPage", () => {
 
     renderPage();
 
-    await waitFor(() => expect(reposStatsMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
-    await waitFor(() => expect(reposPullsMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
+    await waitFor(() => expect(reposStatsMock).toHaveBeenCalledWith("acme", "demo", ""));
+    await waitFor(() => expect(reposPullsMock).toHaveBeenCalledWith("acme", "demo", ""));
     expect(reposStatsMock).toHaveBeenCalledTimes(1); // no second round trip once a token "settles"
     expect(tokensResolveMock).not.toHaveBeenCalled();
   });
@@ -524,7 +524,7 @@ describe("RepoDetailPage", () => {
     renderPage();
 
     fireEvent.click(await screen.findByRole("button", { name: "Load metrics" }));
-    await waitFor(() => expect(reposFlowMetricsMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
+    await waitFor(() => expect(reposFlowMetricsMock).toHaveBeenCalledWith("acme", "demo", ""));
     expect(reposFlowMetricsMock).toHaveBeenCalledTimes(1);
   });
 
@@ -688,6 +688,19 @@ describe("RepoDetailPage", () => {
     fireEvent.click(screen.getByRole("link", { name: /org-wide report/i }));
 
     expect(localStorage.getItem("active_scope")).toBe(JSON.stringify({ kind: "org", login: "acme" }));
+  });
+
+  it("does not switch a personal account into an org scope or offer the org-only links (#1239)", async () => {
+    localStorage.clear();
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "personal", login: "acme" }));
+    renderPage();
+    await waitFor(() => expect(reposStatsMock).toHaveBeenCalledWith("acme", "demo", ""));
+    fireEvent.click(screen.getByRole("tab", { name: /security/i }));
+
+    await waitFor(() => expect(reposSecurityMock).toHaveBeenCalledWith("acme", "demo", ""));
+    expect(screen.queryByRole("link", { name: /org-wide report/i })).not.toBeInTheDocument();
+    expect(localStorage.getItem("active_scope")).toBe(JSON.stringify({ kind: "personal", login: "acme" }));
+    localStorage.clear();
   });
 
   it("wires every tab to a panel that actually exists in the document, for all three tabs", () => {
