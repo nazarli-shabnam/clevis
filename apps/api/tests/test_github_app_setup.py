@@ -180,6 +180,13 @@ def test_status_takes_the_slug_from_github_when_the_credentials_have_none(db, mo
     assert _client(db, _user(db)).get("/github-app").json()["slug"] == "clevis-prod"
 
 
+def test_status_prefers_the_slug_github_reports_over_a_stale_configured_one(db, monkeypatch):
+    monkeypatch.setattr(github_app, "credentials_configured", lambda: True)
+    monkeypatch.setattr(github_app_credentials, "slug", lambda: "old-slug")
+    monkeypatch.setattr(github_app, "get_app", lambda: {"slug": "clevis-prod", "permissions": {}})
+    assert _client(db, _user(db)).get("/github-app").json()["slug"] == "clevis-prod"
+
+
 def test_status_flags_an_answer_without_permissions(db, monkeypatch):
     monkeypatch.setattr(github_app, "credentials_configured", lambda: True)
     monkeypatch.setattr(github_app, "get_app", lambda: {})
