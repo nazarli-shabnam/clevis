@@ -246,7 +246,7 @@ class UnpinnedActions(_PerRepoCheck):
         )[:_MAX_WORKFLOW_FILES]
         unpinned = 0
         for path in files:
-            body = _gh._get(f"{base_url}/repos/{owner}/{repo['name']}/contents/{path}", token)
+            body = _gh._get(f"{base_url}/repos/{owner}/{repo['name']}/contents/{quote(path, safe='/')}", token)
             text = base64.b64decode(body.get("content", "")).decode("utf-8", errors="replace")
             unpinned += len(unpinned_third_party_uses(text, owner))
         if unpinned == 0 and found[1]:
