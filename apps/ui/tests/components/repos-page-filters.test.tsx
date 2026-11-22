@@ -199,7 +199,26 @@ describe("ReposPage filters", () => {
     fireEvent.change(screen.getByLabelText("Filter by visibility"), { target: { value: "public" } });
     await waitFor(() => expect(visibleNames().sort()).toEqual(["legacy", "web"]));
     fireEvent.click(screen.getByLabelText("Select all visible repositories"));
+    expect(screen.getByText("2 selected")).toBeInTheDocument(); // "api" is hidden by the filter, so it is not counted (#1241)
+  });
+
+  it("counts and sends only the selected repos still on screen (#1241)", async () => {
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "acme" })); // the Automation link needs a matching scope
+    renderPage();
+    await loadReposByHand();
+
+    fireEvent.click(screen.getByLabelText("Select all visible repositories"));
     expect(screen.getByText("3 selected")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Filter by status"), { target: { value: "archived" } });
+    await waitFor(() => expect(visibleNames()).toEqual(["legacy"]));
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open in Automation" }).getAttribute("href")).toMatch(/repos=legacy$/);
+
+    // Clearing the filter brings the earlier selection back.
+    fireEvent.change(screen.getByLabelText("Filter by status"), { target: { value: "all" } });
+    await waitFor(() => expect(screen.getByText("3 selected")).toBeInTheDocument());
+    localStorage.removeItem("active_scope");
   });
 
   it("explains an empty result caused by the filters and counts matches against the total", async () => {
