@@ -166,7 +166,7 @@ describe("SettingsPage", () => {
     await waitFor(() => {
       expect(screen.getByText("Instance configuration")).toBeInTheDocument();
     });
-    expect(screen.getAllByRole("button", { name: "Save" }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Save Worker Poll Interval" })).toBeInTheDocument();
   });
 
   it("hides the saved tokens section from a non-admin, who would only see a permanent 403 (#660)", async () => {
@@ -294,17 +294,48 @@ describe("SettingsPage", () => {
       expect(screen.getByText("Instance configuration")).toBeInTheDocument();
     });
 
-    const saveButtons = screen.getAllByRole("button", { name: "Save" });
-    fireEvent.click(saveButtons[0]);
+    fireEvent.change(await screen.findByLabelText("Worker Poll Interval"), { target: { value: "7" } });
+    const saveButton = screen.getByRole("button", { name: "Save Worker Poll Interval" });
+    fireEvent.click(saveButton);
 
     await waitFor(() => {
-      expect(saveButtons[0]).toBeDisabled();
+      expect(saveButton).toBeDisabled();
     });
 
     await act(async () => {
       updateGate.resolve({ worker_poll_seconds: "5", registration_enabled: "true" });
       await updateGate.promise;
     });
+  });
+
+  it("names each config Save button, disables it until the value differs, and confirms a save (#1235)", async () => {
+    orgsMineMock.mockResolvedValue([]);
+    installationsListMock.mockResolvedValue([]);
+    tokensListMock.mockResolvedValue([]);
+    configGetAllMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true" });
+    configUpdateMock.mockResolvedValueOnce({ worker_poll_seconds: "9", registration_enabled: "true" });
+
+    renderPage();
+
+    const input = await screen.findByLabelText("Worker Poll Interval");
+    const save = screen.getByRole("button", { name: "Save Worker Poll Interval" });
+    expect(save).toBeDisabled(); // value equals what the server holds
+
+    fireEvent.change(input, { target: { value: "9" } });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
+    expect(save).toBeDisabled();
+    fireEvent.change(input, { target: { value: "10" } });
+    expect(screen.queryByText("Saved")).not.toBeInTheDocument();
+
+    // A failure is announced and tied to the field.
+    configUpdateMock.mockRejectedValueOnce(new Error("Must be between 1 and 30"));
+    fireEvent.click(screen.getByRole("button", { name: "Save Worker Poll Interval" }));
+    const alert = await screen.findByText("Must be between 1 and 30");
+    expect(alert).toHaveAttribute("role", "alert");
+    expect(input).toHaveAttribute("aria-describedby", alert.id);
   });
 
   it("saves a chosen leadership-digest cadence", async () => {
@@ -324,7 +355,7 @@ describe("SettingsPage", () => {
     fireEvent.change(cadence, { target: { value: "weekly" } });
 
     const row = cadence.closest("div")!.parentElement!;
-    fireEvent.click(within(row).getByRole("button", { name: "Save" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Save / }));
 
     await waitFor(() => expect(configUpdateMock).toHaveBeenCalledWith("digest_cadence", "weekly"));
   });
@@ -342,7 +373,7 @@ describe("SettingsPage", () => {
     const cadence = (await screen.findAllByDisplayValue("Off"))[0] as HTMLSelectElement;
     fireEvent.change(cadence, { target: { value: "weekly" } });
     const row = cadence.closest("div")!.parentElement!;
-    fireEvent.click(within(row).getByRole("button", { name: "Save" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Save / }));
 
     await waitFor(() => expect(configUpdateMock).toHaveBeenCalledWith("digest_cadence", "weekly"));
     await waitFor(() => expect(within(row).queryByRole("button", { name: "Saving..." })).not.toBeInTheDocument());
@@ -362,7 +393,7 @@ describe("SettingsPage", () => {
 
     const cadence = (await screen.findAllByDisplayValue("Off"))[0]; // Leadership Digest is listed before Scheduled Scans
     const row = cadence.closest("div")!.parentElement!;
-    fireEvent.click(within(row).getByRole("button", { name: "Save" }));
+    fireEvent.click(within(row).getByRole("button", { name: /^Save / }));
 
     // Must send "off", not "" (which _ENUM_KEYS would 422).
     await waitFor(() => expect(configUpdateMock).toHaveBeenCalledWith("digest_cadence", "off"));
@@ -400,7 +431,7 @@ describe("SettingsPage", () => {
     expect(await screen.findByText("config unavailable")).toBeInTheDocument();
     // No invented "Enabled" default to look at, and nothing for Save to overwrite the server with.
     expect(screen.queryByLabelText("Self-Registration")).not.toBeInTheDocument();
-    expect(screen.queryAllByRole("button", { name: "Save" })).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: "Save Worker Poll Interval" })).not.toBeInTheDocument();
     expect(configUpdateMock).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -424,11 +455,11 @@ describe("SettingsPage", () => {
     expect(registration.value).toBe("true");
     expect(hygiene.value).toBe("false");
 
-    fireEvent.click(within(registration.closest("div")!.parentElement!).getByRole("button", { name: "Save" }));
+    fireEvent.click(within(registration.closest("div")!.parentElement!).getByRole("button", { name: /^Save / }));
     // Must send the visible value, not "" (which the API rejects for a boolean key).
     await waitFor(() => expect(configUpdateMock).toHaveBeenCalledWith("registration_enabled", "true"));
 
-    fireEvent.click(within(hygiene.closest("div")!.parentElement!).getByRole("button", { name: "Save" }));
+    fireEvent.click(within(hygiene.closest("div")!.parentElement!).getByRole("button", { name: /^Save / }));
     await waitFor(() => expect(configUpdateMock).toHaveBeenCalledWith("score_hygiene_checks", "false"));
   });
 
