@@ -53,13 +53,15 @@ export default function InviteAcceptPage() {
   // email mismatch (also 403, different wording), so only this case gets a resend affordance.
   const needsVerification = accept.isError && accept.error.message.toLowerCase().includes("verify")
   const [resendState, setResendState] = useState<"idle" | "sending" | "sent" | "error">("idle")
+  const [resendError, setResendError] = useState("")
 
   async function resendVerification() {
     setResendState("sending")
     try {
       await api.auth.resendVerification()
       setResendState("sent")
-    } catch {
+    } catch (e) {
+      setResendError(e instanceof Error ? e.message : "")
       setResendState("error")
     }
   }
@@ -162,7 +164,9 @@ export default function InviteAcceptPage() {
                     )
                   )}
                   {resendState === "error" && (
-                    <p className="text-xs text-destructive">Couldn&rsquo;t resend the verification email. Try again shortly.</p>
+                    <p role="alert" className="text-xs text-destructive">
+                      Couldn&rsquo;t resend the verification email{resendError ? `: ${resendError}` : ". Try again shortly."}
+                    </p>
                   )}
                 </div>
               )}

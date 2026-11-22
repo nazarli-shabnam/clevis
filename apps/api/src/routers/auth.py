@@ -636,6 +636,12 @@ def resend_verification(
         raise HTTPException(status_code=404, detail="User not found")
     if user.email_verified:
         return {"ok": True, "already_verified": True}
+    if not smtp_configured():
+        # Same answer as /auth/me/email: the mail can never arrive, so don't say it was sent.
+        raise HTTPException(
+            status_code=409,
+            detail="Email isn't configured on this server, so a verification link can't be sent. Ask an administrator to verify your email",
+        )
     check_account_rate_limit(f"resend-verification:{user.email.lower()}")
     _generate_verification_token(user)
     db.commit()

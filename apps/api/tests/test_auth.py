@@ -495,13 +495,29 @@ def test_resend_verification_regenerates_the_token(auth_client, db):
     user = db.query(User).filter(User.email == "member@example.com").first()
     original_token = user.email_verify_token
 
-    resp = auth_client.post("/auth/resend-verification", headers={"Authorization": f"Bearer {token}"})
+    with patch("src.routers.auth.smtp_configured", return_value=True):
+        resp = auth_client.post("/auth/resend-verification", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
     assert resp.json() == {"ok": True, "already_verified": False}
 
     db.refresh(user)
     assert user.email_verify_token is not None
     assert user.email_verify_token != original_token
+
+
+def test_resend_verification_is_a_409_when_the_server_has_no_smtp(auth_client, db):
+    _setup_owner(auth_client)
+    token = auth_client.post(
+        "/auth/register", json={"email": "member@example.com", "password": "supersecret1234"}
+    ).json()["access_token"]
+    user = db.query(User).filter(User.email == "member@example.com").first()
+    original_token = user.email_verify_token
+
+    with patch("src.routers.auth.smtp_configured", return_value=False):
+        resp = auth_client.post("/auth/resend-verification", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 409 and "isn't configured" in resp.json()["detail"]
+    db.refresh(user)
+    assert user.email_verify_token == original_token  # nothing was regenerated for a mail that cannot go out
 
 
 def test_resend_verification_is_a_noop_for_an_already_verified_account(auth_client):
