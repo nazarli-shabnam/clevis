@@ -15,6 +15,7 @@ from src.core.rate_limit import _buckets as _rate_limit_buckets
 from src.repositories import invitation_repo, org_membership_repo, org_repo
 from src.routers.auth import router as auth_router
 from src.services import email_change, password_reset
+from src.services.email import EmailNotConfigured
 
 
 @pytest.fixture(autouse=True)
@@ -115,6 +116,19 @@ def test_a_failing_notice_does_not_undo_the_email_change(client, db, monkeypatch
     headers = _register(client)
     _smtp_on(monkeypatch)
     notice.side_effect = RuntimeError("smtp down")
+    with patch("src.routers.auth.send_email_change_email") as send:
+        client.post("/auth/me/email", headers=headers, json={"new_email": "new@example.com", "password": "supersecret1234"})
+    token = send.call_args.args[1].split("token=", 1)[1]
+
+    assert client.post("/auth/confirm-email-change", json={"token": token}).status_code == 200
+    assert db.query(User).filter(User.email == "new@example.com").count() == 1
+
+
+def test_an_unconfigured_smtp_does_not_undo_the_email_change(client, db, monkeypatch, notice):
+    _setup_owner(client)
+    headers = _register(client)
+    _smtp_on(monkeypatch)
+    notice.side_effect = EmailNotConfigured()
     with patch("src.routers.auth.send_email_change_email") as send:
         client.post("/auth/me/email", headers=headers, json={"new_email": "new@example.com", "password": "supersecret1234"})
     token = send.call_args.args[1].split("token=", 1)[1]
