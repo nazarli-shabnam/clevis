@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from src.core.path_params import Owner
 from src.core.app_config import get_config
 from src.core.auth import UserOut, require_auth
-from src.core.db import RepoEventDailyCount, get_db, release_connection, set_session_user
+from src.core.db import RepoEventDailyCount, User, get_db, release_connection, set_session_user
 from src.core.rbac import (
     OrgContext,
     assert_owner_matches_org,
@@ -47,7 +47,7 @@ from src.schemas.analytics import (
     ScanExportResponse,
     ScanHistoryEntry,
 )
-from src.services import api_job_runner, notifications, scan_limiter, scan_service  # noqa: F401 - tests patch src.routers.analytics.notifications
+from src.services import api_job_runner, github_app, notifications, scan_limiter, scan_service  # noqa: F401 - tests patch src.routers.analytics.notifications
 from src.services.stored_identity import load_stored_identity
 from src.services.analytics_service import (
     get_account_type,
@@ -1158,7 +1158,7 @@ async def _build_cockpit(owner: str, user: UserOut, db: Session, token: str) -> 
 
 
 
-def _my_login(client: GitHubClient, fallback_login: str | None = None) -> str | None:
+def _my_login(client: GitHubClient, token: str, github_user_id: int | None) -> str | None:
     try:
         data = client.request("GET", "/user")
         return data.get("login") if isinstance(data, dict) else None
@@ -1167,9 +1167,13 @@ def _my_login(client: GitHubClient, fallback_login: str | None = None) -> str | 
             # A real auth/server failure (not the expected installation-token 403); propagate rather
             # than masquerade as zero PRs/issues.
             raise
-        # Installation tokens get a 403 on /user; fall back to the Clevis user's OAuth-linked login.
-        # None (empty response) if they never linked GitHub.
-        return fallback_login
+        # Installation tokens get a 403 on /user. Ask GitHub for the login of the account the Clevis user linked,
+        # by its immutable id: the stored github_login can be stale after a rename, and the released name may now
+        # belong to someone else, whose private items this token could then search. None if they never linked
+        # GitHub or the account no longer exists.
+        if github_user_id is None:
+            return None
+        return github_app.get_user_login_by_id(token, github_user_id)
 
 
 def _search_items(client: GitHubClient, query: str, per_page: int = 10, sort_oldest: bool = False) -> list[dict]:
@@ -1295,7 +1299,7 @@ async def my_view(
         raise HTTPException(status_code=400, detail=str(exc))
 
     client = GitHubClient(token)
-    login = await anyio.to_thread.run_sync(lambda: _my_login(client, user.github_login))
+    login = await anyio.to_thread.run_sync(lambda: _my_login(client, token, db.query(User.github_user_id).filter(User.id == user.id).scalar()))
     if login is None:
         return MyViewResponse(identity_unresolved=True)
 
@@ -1360,7 +1364,7 @@ async def _my_items_list(
         raise HTTPException(status_code=400, detail=str(exc))
 
     client = GitHubClient(token)
-    login = await anyio.to_thread.run_sync(lambda: _my_login(client, user.github_login))
+    login = await anyio.to_thread.run_sync(lambda: _my_login(client, token, db.query(User.github_user_id).filter(User.id == user.id).scalar()))
     if login is None:
         return response_cls(page=page, per_page=per_page, identity_unresolved=True)
     if page * per_page > _MAX_SEARCH_RESULTS:

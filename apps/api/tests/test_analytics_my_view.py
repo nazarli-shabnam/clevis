@@ -111,13 +111,13 @@ def test_my_view_propagates_network_error_from_user_endpoint(http):
             http.get("/me/github/my-view?owner=acme")
 
 
-def test_my_view_falls_back_to_users_github_login_when_user_endpoint_unresolvable(app, http):
+def test_my_view_resolves_the_linked_account_login_by_id_when_user_endpoint_unresolvable(db, mock_user, http):
     """A GitHub App installation token can't call GET /user, but if the signed-in Clevis
-    user linked their own GitHub identity via OAuth, my-view should use that login rather
-    than degrading to empty."""
-    app.dependency_overrides[require_auth] = lambda: UserOut(
-        id=1, email="myview@example.com", name=None, is_workspace_admin=False, github_login="octocat"
-    )
+    user linked their own GitHub identity via OAuth, my-view should use that account's current
+    login (looked up by id, #1245) rather than degrading to empty."""
+    row = db.get(User, mock_user.id)
+    row.github_user_id, row.github_login = 4242, "stale-name"
+    db.commit()
 
     def _request_side_effect(method, path, params=None):
         if path == "/user":
@@ -142,6 +142,7 @@ def test_my_view_falls_back_to_users_github_login_when_user_endpoint_unresolvabl
     with (
         patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
         patch("src.routers.analytics.get_account_type", return_value="Organization"),
+        patch("src.routers.analytics.github_app.get_user_login_by_id", return_value="octocat"),
         patch("src.routers.analytics.GitHubClient") as mock_client,
     ):
         mock_client.return_value.request.side_effect = _request_side_effect
