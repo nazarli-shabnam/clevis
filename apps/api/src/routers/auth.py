@@ -422,11 +422,11 @@ def _check_new_password(password: str) -> None:
         raise HTTPException(status_code=422, detail=f"Password must be at most {_MAX_PASSWORD_LEN} bytes")
 
 
-def _send_password_reset_email(to_email: str, reset_url: str) -> None:
+def _send_password_reset_email(to_email: str, token: str) -> None:
     """Runs after the response, so the time to answer does not depend on whether the account exists or the
-    mail server is slow. Never raises."""
+    mail server is slow. Never raises (the link is built here so an empty CORS_ORIGINS cannot fail the request)."""
     try:
-        send_password_reset_email(to_email, reset_url)
+        send_password_reset_email(to_email, f"{settings.cors_origins[0]}/reset-password?token={token}")
     except EmailNotConfigured:
         logger.warning("SMTP not configured -- cannot send a password reset email to %s", to_email)
     except Exception:
@@ -441,7 +441,7 @@ def forgot_password(body: ForgotPasswordRequest, background: BackgroundTasks, db
     user = db.query(User).filter(func.lower(User.email) == body.email.lower()).first()
     if user is not None and user.password_hash:
         token = password_reset.make_token(user.id, user.password_hash, user.email)
-        background.add_task(_send_password_reset_email, user.email, f"{settings.cors_origins[0]}/reset-password?token={token}")
+        background.add_task(_send_password_reset_email, user.email, token)
     return {"ok": True}
 
 
@@ -505,10 +505,10 @@ def change_password(
     }
 
 
-def _send_email_change_email(to_email: str, confirm_url: str) -> None:
-    """Runs after the response. Never raises."""
+def _send_email_change_email(to_email: str, token: str) -> None:
+    """Runs after the response. Never raises (the link is built here so an empty CORS_ORIGINS cannot fail the request)."""
     try:
-        send_email_change_email(to_email, confirm_url)
+        send_email_change_email(to_email, f"{settings.cors_origins[0]}/confirm-email-change?token={token}")
     except EmailNotConfigured:
         logger.warning("SMTP not configured -- cannot send an email-change confirmation to %s", to_email)
     except Exception:
@@ -553,9 +553,7 @@ def request_email_change(
     if db.query(User).filter(func.lower(User.email) == new_email).first():
         raise HTTPException(status_code=409, detail="An account with this email already exists")
     token = email_change.make_token(user, new_email)
-    background.add_task(
-        _send_email_change_email, new_email, f"{settings.cors_origins[0]}/confirm-email-change?token={token}"
-    )
+    background.add_task(_send_email_change_email, new_email, token)
     return {"ok": True}
 
 
