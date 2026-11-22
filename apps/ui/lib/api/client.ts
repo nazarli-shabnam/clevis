@@ -190,7 +190,8 @@ async function downloadFile(
 
 // An Error that also carries the HTTP status, so a caller can treat one specific status as data.
 class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  // `code`: a stable machine-readable reason some endpoints add next to `detail` (branch on it, not on the text).
+  constructor(message: string, readonly status: number, readonly code?: string) {
     super(message)
   }
 }
@@ -205,7 +206,10 @@ function notifyUnauthorized() {
 async function handleResponse<T>(res: Response): Promise<T> {
   const json = await res.json().catch(() => null)
   if (res.status === 401) notifyUnauthorized()
-  if (!res.ok) throw new ApiError(errorDetail(json, `Request failed: ${res.status}`), res.status)
+  if (!res.ok) {
+    const code = (json as { code?: unknown } | null)?.code
+    throw new ApiError(errorDetail(json, `Request failed: ${res.status}`), res.status, typeof code === "string" ? code : undefined)
+  }
   return json as T
 }
 

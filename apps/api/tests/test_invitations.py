@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
+from src.core.coded_errors import CodedHTTPException, coded_http_exception_handler
 from src.core.auth import UserOut, require_auth
 from src.core.rate_limit import _buckets as _rate_limit_buckets
 from src.core.db import Invitation, User, get_db
@@ -54,6 +55,7 @@ def _reset_rate_limiter():
 def _client(db, user):
     app = FastAPI()
     app.include_router(invitations_router)
+    app.add_exception_handler(CodedHTTPException, coded_http_exception_handler)
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[require_auth] = lambda: user
     return TestClient(app)
@@ -237,6 +239,17 @@ def test_accept_invitation_unverified_email_forbidden(db, acme_org):
     resp = _client(db, unverified).post(f"/invitations/{token}/accept")
     assert resp.status_code == 403
     assert "verify" in resp.json()["detail"].lower()
+    assert resp.json()["code"] == "email_unverified"  # the UI branches on this, not on the message text
+
+
+def test_accept_invitation_account_mismatch_has_no_verification_code(db, acme_org):
+    # The mismatch message embeds the caller's own address, so a client must not infer anything from its text.
+    wrong = _make_user(db, "verify@corp.example")
+    created = _client(db, acme_org["admin"]).post("/orgs/acme/invitations", json={"email": "dave@acme.com"}).json()
+    token = created["invite_link"].rsplit("/", 1)[-1]
+
+    resp = _client(db, wrong).post(f"/invitations/{token}/accept")
+    assert resp.status_code == 403 and "code" not in resp.json()
 
 
 def test_accept_invitation_succeeds_once_verified(db, acme_org):
