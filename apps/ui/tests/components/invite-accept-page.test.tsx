@@ -237,6 +237,20 @@ describe("InviteAcceptPage", () => {
     expect(screen.queryByRole("button", { name: /resend verification email/i })).not.toBeInTheDocument();
   });
 
+  it("shows the server's reason when resend is refused (e.g. no SMTP configured)", async () => {
+    previewMock.mockResolvedValue({ org_login: "acme", status: "pending" });
+    acceptMock.mockRejectedValue(unverifiedError());
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: /accept invitation/i }));
+    const resendButton = await screen.findByRole("button", { name: /resend verification email/i });
+    resendVerificationMock.mockRejectedValue(new Error("Email isn't configured on this server"));
+    fireEvent.click(resendButton);
+
+    await screen.findByText(/email isn.t configured on this server/i);
+  });
+
   it("does not show a resend button for an unrelated accept failure", async () => {
     previewMock.mockResolvedValue({ org_login: "acme", status: "pending" });
     acceptMock.mockRejectedValue(new Error("Invitation has expired"));
