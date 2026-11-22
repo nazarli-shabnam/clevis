@@ -552,3 +552,32 @@ def test_event_deltas_apply_to_the_stored_set_not_a_stale_copy(db, acme):
 
     assert client.patch(url, json={"remove_events": ["score_drop"]}).json()["events"] == ["automation_failed"]
     assert client.patch(url, json={"events": ["score_drop"], "add_events": ["waiver_expired"]}).status_code == 422
+
+
+def _mark_failing(db, dest_id, times=3):
+    for _ in range(times):
+        notification_repo.record_delivery(db, dest_id, False, "HTTP 404")
+
+
+@pytest.mark.parametrize(
+    "patch_body,start_enabled,resets",
+    [
+        ({"url": HOOK + "2"}, True, True),
+        ({"secret": "new-secret"}, True, True),
+        ({"enabled": True}, False, True),
+        ({"name": "renamed"}, True, False),
+        ({"enabled": True}, True, False),  # already on: nothing was fixed
+    ],
+)
+def test_editing_the_target_or_re_enabling_clears_the_failure_status(db, acme, patch_body, start_enabled, resets):
+    client = _client(db, acme["admin"])
+    dest_id = _create(client, kind="generic", secret="old-secret").json()["id"]
+    dest = db.get(NotificationDestination, dest_id)
+    dest.enabled = start_enabled
+    db.commit()
+    _mark_failing(db, dest_id)
+    with _public_dns():
+        assert client.patch(f"/orgs/acme/notification-destinations/{dest_id}", json=patch_body).status_code == 200
+    db.refresh(dest)
+    state = (dest.last_status, dest.last_error, dest.consecutive_failures)
+    assert state == ((None, None, 0) if resets else ("failed", "HTTP 404", 3))
