@@ -594,6 +594,16 @@ def test_forgot_password_answers_the_same_for_known_unknown_and_passwordless_acc
     assert send.call_args.args[0] == "owner@example.com" and "/reset-password?token=" in send.call_args.args[1]
 
 
+def test_forgot_password_still_answers_200_for_a_real_account_when_cors_origins_is_empty(auth_client):
+    from src.core.config import settings
+
+    _setup_owner(auth_client)
+    with patch.object(settings, "cors_origins", []), patch("src.routers.auth.send_password_reset_email") as send:
+        resp = auth_client.post("/auth/forgot-password", json={"email": "owner@example.com"})
+    assert resp.status_code == 200 and resp.json() == {"ok": True}
+    send.assert_not_called()  # no UI origin to build a link from; logged, not a 500
+
+
 def test_reset_password_sets_the_password_once_signs_everyone_out_and_verifies_the_email(auth_client, db):
     from src.core.db import AuditLog
 
