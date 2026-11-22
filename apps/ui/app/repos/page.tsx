@@ -443,6 +443,9 @@ function ReposView() {
       if (!next.delete(name)) next.add(name)
       return next
     })
+  // Only the rows on screen count: a selection made before a search or filter hid some rows must not leak into
+  // the chip or the Automation link.
+  const visibleSelected = repos.filter((r) => selected.has(r.name)).map((r) => r.name)
   const allVisibleSelected = repos.length > 0 && repos.every((r) => selected.has(r.name))
   const toggleAllVisible = () =>
     setSelected((prev) => {
@@ -624,12 +627,12 @@ function ReposView() {
                   />
                   No push in {STALE_DAYS}+ days
                 </label>
-                {selected.size > 0 && (
+                {visibleSelected.length > 0 && (
                   <>
-                    <span className="stat-chip">{selected.size} selected</span>
+                    <span className="stat-chip">{visibleSelected.length} selected</span>
                     {loadedOrg === scopeOrgLogin && (
                       <Link
-                        href={`/automation?owner=${encodeURIComponent(loadedOrg)}&repos=${[...selected].map(encodeURIComponent).join(",")}`}
+                        href={`/automation?owner=${encodeURIComponent(loadedOrg)}&repos=${visibleSelected.map(encodeURIComponent).join(",")}`}
                         className="text-primary underline"
                       >
                         Open in Automation
