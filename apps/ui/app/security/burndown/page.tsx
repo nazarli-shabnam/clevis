@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
+import { useSearchParams } from "next/navigation"
 import { useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { SectionError } from "@/components/section-error"
@@ -28,16 +29,23 @@ export default function DependabotBurndownPage() {
   const org = scope?.kind === "org" ? scope.login : ""
 
   // Window, severity, sort and repo live in the URL so a view can be shared and notifications can deep-link.
-  // Read once after mount (no hydration mismatch), then mirrored with replaceState (no history entries).
+  // Read after mount (no hydration mismatch) and again whenever the search params change, so a notification link
+  // clicked while this page is already open moves the view too (Next keeps the page mounted). The view is mirrored
+  // back with replaceState (no history entries); a query this page wrote itself is skipped (`lastWritten`), so the
+  // lagging params update that follows our own replaceState can't overwrite newer state.
   const [view, setView] = useState<BurndownView>(DEFAULT_BURNDOWN_VIEW)
   const [restored, setRestored] = useState(false)
+  const lastWritten = useRef<string | null>(null)
+  const urlQuery = useSearchParams()?.toString() ?? ""
   useEffect(() => {
+    if (window.location.search.slice(1) === lastWritten.current) return
     setView(burndownViewFromParams(new URLSearchParams(window.location.search)))
     setRestored(true)
-  }, [])
+  }, [urlQuery])
   useEffect(() => {
     if (!restored) return
     const qs = burndownViewToParams(view).toString()
+    lastWritten.current = qs
     window.history.replaceState(null, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`)
   }, [restored, view])
   const update = (patch: Partial<BurndownView>) => setView((v) => ({ ...v, ...patch }))
