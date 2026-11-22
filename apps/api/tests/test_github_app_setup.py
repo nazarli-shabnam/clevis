@@ -173,6 +173,20 @@ def test_status_reports_no_gap_when_the_app_requests_everything(db, monkeypatch)
     assert _client(db, _user(db)).get("/github-app").json()["app_missing_permissions"] == {}
 
 
+def test_status_takes_the_slug_from_github_when_the_credentials_have_none(db, monkeypatch):
+    monkeypatch.setattr(github_app, "credentials_configured", lambda: True)
+    monkeypatch.setattr(github_app_credentials, "slug", lambda: None)
+    monkeypatch.setattr(github_app, "get_app", lambda: {"slug": "clevis-prod", "permissions": {}})
+    assert _client(db, _user(db)).get("/github-app").json()["slug"] == "clevis-prod"
+
+
+def test_status_flags_an_answer_without_permissions(db, monkeypatch):
+    monkeypatch.setattr(github_app, "credentials_configured", lambda: True)
+    monkeypatch.setattr(github_app, "get_app", lambda: {})
+    body = _client(db, _user(db)).get("/github-app").json()
+    assert body["app_missing_permissions"] is None and body["app_check_error"]
+
+
 def test_status_still_answers_when_github_cannot_be_asked(db, monkeypatch):
     monkeypatch.setattr(github_app, "credentials_configured", lambda: True)
 

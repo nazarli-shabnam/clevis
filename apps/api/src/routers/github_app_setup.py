@@ -99,6 +99,7 @@ def app_status(_user: UserOut = Depends(require_workspace_admin)) -> AppStatus:
             granted = app.get("permissions")
             if isinstance(granted, dict):
                 status.app_missing_permissions = app_permissions.app_permission_gaps(granted)
+                status.slug = status.slug or app.get("slug")
                 owner = app.get("owner") or {}
                 status.app_owner_login = owner.get("login")
                 status.app_owner_type = owner.get("type")

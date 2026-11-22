@@ -342,7 +342,7 @@ export default function AutomationPage() {
       {driftInstalls.length > 0 && (
         <div className="mb-4 flex flex-col gap-2">
           {driftInstalls.map((i) => (
-            <PermissionDriftNotice key={i.id} install={i} canManage={!memberOnly} />
+            <PermissionDriftNotice key={i.id} install={i} canManage={!writesBlocked} />
           ))}
         </div>
       )}

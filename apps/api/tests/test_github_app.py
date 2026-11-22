@@ -144,6 +144,19 @@ def test_get_installation_uses_app_jwt_not_installation_token(app_configured):
     assert decoded["iss"] == _APP_ID
 
 
+def test_get_app_uses_the_app_jwt(app_configured):
+    with patch("src.services.github_app.httpx.Client") as mock_cls:
+        client = MagicMock()
+        client.__enter__ = MagicMock(return_value=client)
+        client.__exit__ = MagicMock(return_value=False)
+        client.get = MagicMock(return_value=MagicMock(json=MagicMock(return_value={"slug": "clevis"})))
+        mock_cls.return_value = client
+        assert github_app.get_app() == {"slug": "clevis"}
+    assert client.get.call_args.args[0].endswith("/app")
+    token = client.get.call_args.kwargs["headers"]["Authorization"].removeprefix("Bearer ")
+    assert jwt.decode(token, app_configured, algorithms=["RS256"], options={"verify_exp": False})["iss"] == _APP_ID
+
+
 def test_get_installation_raises_on_404(app_configured):
     with patch("src.services.github_app.httpx.Client") as mock_cls:
         mock_client = MagicMock()

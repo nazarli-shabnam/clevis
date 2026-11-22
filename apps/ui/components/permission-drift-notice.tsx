@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ArrowSquareOut, Copy, Warning } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api/client"
@@ -38,8 +38,23 @@ function missingPermissions(install: InstallationMeta): string[] {
 // Shown after a re-check that still finds permissions missing. GitHub's "Accept new permissions"
 // button only exists once the App itself requests them, so the App owner must enable them first.
 function StillMissing({ install }: { install: InstallationMeta }) {
-  const { slug } = useGithubAppSlug()
+  const { slug: fallbackSlug } = useGithubAppSlug()
   const isWorkspaceAdmin = !!useOptionalAuth()?.user?.is_workspace_admin
+  // The App's owner decides which settings page holds its permissions (an organization-owned App is
+  // opened through that organization). Only workspace admins can read the status.
+  const { data: app } = useQuery({
+    queryKey: ["github-app-status"],
+    queryFn: () => api.githubApp.status(),
+    enabled: isWorkspaceAdmin,
+    retry: false,
+  })
+  const slug = app?.slug || fallbackSlug
+  const appSettings = `settings/apps/${slug ? encodeURIComponent(slug) : ""}/permissions`
+  const permissionsPath =
+    app?.app_owner_type === "Organization" && app.app_owner_login
+      ? `organizations/${encodeURIComponent(app.app_owner_login)}/${appSettings}`
+      : appSettings
+  if (missingPermissions(install).length === 0) return null
   return (
     <p className="text-muted-foreground">
       GitHub still reports these permissions as missing: <strong>{missingPermissions(install).join(", ")}</strong>.
@@ -51,14 +66,14 @@ function StillMissing({ install }: { install: InstallationMeta }) {
         <>
           {" ("}
           <a
-            href={githubWebUrl(`settings/apps/${encodeURIComponent(slug)}/permissions`)}
+            href={githubWebUrl(permissionsPath)}
             target="_blank"
             rel="noreferrer"
             className="text-primary hover:underline"
           >
             open App permissions
           </a>
-          {"; for an organization-owned App use that organization’s Developer settings)"}
+          {")"}
         </>
       )}
       {isWorkspaceAdmin && ", then accept them on the installation."}
@@ -238,7 +253,7 @@ export function PermissionDriftNotice({
           />
         </>
       )}
-      {refresh.isSuccess && <StillMissing install={install} />}
+      {refresh.isSuccess && <StillMissing install={refresh.data} />}
       {refresh.isError && <p className="text-destructive">{refresh.error.message}</p>}
     </div>
   )
