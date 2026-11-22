@@ -135,6 +135,20 @@ def get_installation(installation_id: int) -> dict:
     return resp.json()
 
 
+def get_app() -> dict:
+    """The App itself (``GET /app``, App JWT): its registered ``permissions`` and ``owner``. What the App
+    requests bounds what any installation can be granted. Raises like ``get_installation``."""
+    headers = {
+        "Authorization": f"Bearer {generate_app_jwt()}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    with httpx.Client(timeout=10) as client:
+        resp = client.get(f"{settings.github_api_base}/app", headers=headers)
+    resp.raise_for_status()
+    return resp.json()
+
+
 def delete_installation(installation_id: int) -> None:
     """Uninstall the App via GitHub's App API -- a real revocation, not just removing our
     own DB row. A 404 (already uninstalled) is treated as success, since the end state is

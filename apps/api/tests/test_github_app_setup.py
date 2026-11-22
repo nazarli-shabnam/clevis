@@ -153,6 +153,60 @@ def test_status_reports_the_requirements_and_where_the_app_comes_from(db):
     assert body["events"] == sorted(_INGESTED_EVENT_TYPES)
 
 
+def test_status_lists_what_the_registered_app_itself_lacks(db, monkeypatch):
+    monkeypatch.setattr(github_app, "credentials_configured", lambda: True)
+    read_only = app_permissions.manifest_permissions(True)
+    monkeypatch.setattr(
+        github_app, "get_app", lambda: {"permissions": read_only, "owner": {"login": "acme", "type": "Organization"}}
+    )
+    body = _client(db, _user(db)).get("/github-app").json()
+    missing = body["app_missing_permissions"]
+    assert missing["issues"] == "write" and missing["workflows"] == "write" and missing["administration"] == "write"
+    assert "emails" not in missing  # a user permission, never an installation one
+    assert (body["app_owner_login"], body["app_owner_type"]) == ("acme", "Organization")
+    assert body["app_check_error"] is None
+
+
+def test_status_reports_no_gap_when_the_app_requests_everything(db, monkeypatch):
+    monkeypatch.setattr(github_app, "credentials_configured", lambda: True)
+    monkeypatch.setattr(github_app, "get_app", lambda: {"permissions": app_permissions.manifest_permissions(False)})
+    assert _client(db, _user(db)).get("/github-app").json()["app_missing_permissions"] == {}
+
+
+def test_status_takes_the_slug_from_github_when_the_credentials_have_none(db, monkeypatch):
+    monkeypatch.setattr(github_app, "credentials_configured", lambda: True)
+    monkeypatch.setattr(github_app_credentials, "slug", lambda: None)
+    monkeypatch.setattr(github_app, "get_app", lambda: {"slug": "clevis-prod", "permissions": {}})
+    assert _client(db, _user(db)).get("/github-app").json()["slug"] == "clevis-prod"
+
+
+def test_status_prefers_the_slug_github_reports_over_a_stale_configured_one(db, monkeypatch):
+    monkeypatch.setattr(github_app, "credentials_configured", lambda: True)
+    monkeypatch.setattr(github_app_credentials, "slug", lambda: "old-slug")
+    monkeypatch.setattr(github_app, "get_app", lambda: {"slug": "clevis-prod", "permissions": {}})
+    assert _client(db, _user(db)).get("/github-app").json()["slug"] == "clevis-prod"
+
+
+def test_status_flags_an_answer_without_permissions(db, monkeypatch):
+    monkeypatch.setattr(github_app, "credentials_configured", lambda: True)
+    monkeypatch.setattr(github_app, "get_app", lambda: {})
+    body = _client(db, _user(db)).get("/github-app").json()
+    assert body["app_missing_permissions"] is None and body["app_check_error"]
+
+
+def test_status_still_answers_when_github_cannot_be_asked(db, monkeypatch):
+    monkeypatch.setattr(github_app, "credentials_configured", lambda: True)
+
+    def down():
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(github_app, "get_app", down)
+    resp = _client(db, _user(db)).get("/github-app")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["app_missing_permissions"] is None and body["app_check_error"]
+
+
 def test_the_manifest_endpoint_builds_the_manifest_from_the_request_origin(db):
     resp = _manifest(_client(db, _user(db)), organization="acme", read_only=True, name="My Clevis")
     assert resp.status_code == 200

@@ -143,6 +143,14 @@ ORG_ADMINISTRATION_PERMISSION: dict[str, str] = {"organization_administration": 
 USER_EMAIL_PERMISSION: dict[str, str] = {"emails": "read"}
 
 
+def app_permission_gaps(app_permissions: dict[str, str] | None) -> dict[str, str]:
+    """What the App itself (``GET /app``) does not request of everything Clevis uses. An installation can only be
+    granted what the App requests, so a gap here is why "Accept new permissions" never appears on GitHub. The user
+    permission ``emails`` is left out: it is not an installation permission and may not be listed for the App."""
+    required = {k: v for k, v in manifest_permissions(False).items() if k not in USER_EMAIL_PERMISSION}
+    return missing_permissions(app_permissions, required)
+
+
 def manifest_permissions(read_only: bool = False) -> dict[str, str]:
     """Every permission Clevis uses, generated from the tables above so a manifest cannot drift from the code.
 

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { SectionError } from "@/components/section-error"
 import { api } from "@/lib/api/client"
+import { githubWebUrl } from "@/lib/github-web"
 import type { GithubAppManifest, GithubAppStatus } from "@/lib/api/types"
 
 /** Hands the manifest to GitHub the way its manifest flow requires: the browser itself POSTs a form whose
@@ -78,6 +79,47 @@ export function GithubAppSetupCard() {
             {s.slug ? <> App: <strong>{s.slug}</strong>.</> : null}
           </p>
 
+          {s.app_missing_permissions && Object.keys(s.app_missing_permissions).length > 0 && (
+            <div role="alert" className="border border-warning/30 bg-warning/5 px-3 py-2.5 flex flex-col gap-1.5">
+              <p className="text-warning font-medium">
+                This App doesn&rsquo;t request {Object.keys(s.app_missing_permissions).length} permission
+                {Object.keys(s.app_missing_permissions).length === 1 ? "" : "s"} Clevis uses, so those automations stay
+                blocked for every organization.
+              </p>
+              <ul className="font-mono grid gap-x-6 sm:grid-cols-2">
+                {Object.entries(s.app_missing_permissions).map(([name, level]) => (
+                  <li key={name}>
+                    {name}: {level}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-muted-foreground">
+                Enable them on the App
+                {s.slug && (
+                  <>
+                    {" ("}
+                    <a
+                      href={githubWebUrl(
+                        s.app_owner_type === "Organization" && s.app_owner_login
+                          ? `organizations/${encodeURIComponent(s.app_owner_login)}/settings/apps/${encodeURIComponent(s.slug)}/permissions`
+                          : `settings/apps/${encodeURIComponent(s.slug)}/permissions`,
+                      )}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-primary hover:underline"
+                    >
+                      open its permissions page
+                    </a>
+                    {")"}
+                  </>
+                )}
+                . Then each organization&rsquo;s owner clicks <strong>Accept new permissions</strong> on its
+                installation.
+              </p>
+            </div>
+          )}
+          {s.app_check_error && <p className="text-muted-foreground">{s.app_check_error}</p>}
+
           {s.source !== "env" && (
             <div className="flex flex-col gap-2">
               <div className="grid gap-2 sm:grid-cols-2">
@@ -94,7 +136,8 @@ export function GithubAppSetupCard() {
                   <input type="checkbox" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} className="mt-0.5" />
                   <span>
                     Read-only (no automations). The default grants write access for the optional automations (file issues,
-                    fix this, nudges, Dependabot triage, cache clear); this drops every write permission.
+                    fix this, nudges, Dependabot triage, cache clear); this drops every write permission, so every
+                    organization will show those automations as blocked until the App&apos;s permissions are widened on GitHub.
                   </span>
                 </label>
               </div>

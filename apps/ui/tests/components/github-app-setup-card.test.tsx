@@ -61,6 +61,57 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe("GithubAppSetupCard: permissions the App itself lacks", () => {
+  it("lists them with a link to the org-owned App's permissions page", async () => {
+    statusMock.mockResolvedValue(
+      status({
+        source: "database",
+        configured: true,
+        slug: "clevis-acme",
+        app_missing_permissions: { issues: "write", workflows: "write" },
+        app_owner_login: "acme",
+        app_owner_type: "Organization",
+      }),
+    )
+    renderCard()
+    expect(await screen.findByText(/doesn.t request 2 permissions Clevis uses/i)).toBeInTheDocument()
+    expect(screen.getByText("issues: write")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: /open its permissions page/i })).toHaveAttribute(
+      "href",
+      expect.stringContaining("/organizations/acme/settings/apps/clevis-acme/permissions"),
+    )
+  })
+
+  it("links a personally owned App through the user's own settings", async () => {
+    statusMock.mockResolvedValue(
+      status({
+        source: "env",
+        configured: true,
+        slug: "clevis",
+        app_missing_permissions: { issues: "write" },
+        app_owner_login: "me",
+        app_owner_type: "User",
+      }),
+    )
+    renderCard()
+    const link = await screen.findByRole("link", { name: /open its permissions page/i })
+    expect(link.getAttribute("href")).toMatch(/\/settings\/apps\/clevis\/permissions$/)
+    expect(link.getAttribute("href")).not.toContain("/organizations/")
+  })
+
+  it("shows no warning when nothing is missing, and a quiet note when GitHub couldn't be asked", async () => {
+    statusMock.mockResolvedValue(status({ configured: true, app_missing_permissions: {} }))
+    const { unmount } = renderCard()
+    await screen.findByText("No GitHub App is set up yet.")
+    expect(screen.queryByText(/doesn.t request/i)).not.toBeInTheDocument()
+    unmount()
+
+    statusMock.mockResolvedValue(status({ configured: true, app_check_error: "Could not read the App's permissions from GitHub." }))
+    renderCard()
+    expect(await screen.findByText(/could not read the app.s permissions/i)).toBeInTheDocument()
+  })
+})
+
 describe("GithubAppSetupCard", () => {
   it("creates the App by posting the manifest to GitHub", async () => {
     statusMock.mockResolvedValue(status())

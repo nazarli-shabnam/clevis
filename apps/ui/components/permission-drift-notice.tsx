@@ -1,13 +1,15 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ArrowSquareOut, Copy, Warning } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api/client"
+import { useOptionalAuth } from "@/lib/auth-context"
 import type { InstallationMeta } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
 import { invalidateInstallations } from "@/lib/query-invalidation"
+import { useGithubAppSlug } from "@/lib/use-github-app-slug"
 
 // GitHub page for this installation with the single "Accept new permissions" button
 // (owner only). Needs no App slug, unlike the generic app page.
@@ -18,6 +20,65 @@ export function approvalUrl(install: InstallationMeta): string | null {
       ? `organizations/${encodeURIComponent(install.account_login)}/settings/installations`
       : "settings/installations"
   return githubWebUrl(`${base}/${install.installation_id}/permissions/update`)
+}
+
+const RANK: Record<string, number> = { read: 1, write: 2, admin: 3 }
+
+// Union of what the blocked automations still need, at the highest level any asks for.
+function missingPermissions(install: InstallationMeta): string[] {
+  const out: Record<string, string> = {}
+  for (const f of install.blocked_features ?? []) {
+    for (const [perm, level] of Object.entries(f.missing)) {
+      if ((RANK[level] ?? 0) > (RANK[out[perm]] ?? 0)) out[perm] = level
+    }
+  }
+  return Object.entries(out).map(([perm, level]) => `${perm}: ${level}`)
+}
+
+// Shown after a re-check that still finds permissions missing. GitHub's "Accept new permissions"
+// button only exists once the App itself requests them, so the App owner must enable them first.
+function StillMissing({ install }: { install: InstallationMeta }) {
+  const { slug: fallbackSlug } = useGithubAppSlug()
+  const isWorkspaceAdmin = !!useOptionalAuth()?.user?.is_workspace_admin
+  // The App's owner decides which settings page holds its permissions (an organization-owned App is
+  // opened through that organization). Only workspace admins can read the status.
+  const { data: app } = useQuery({
+    queryKey: ["github-app-status"],
+    queryFn: () => api.githubApp.status(),
+    enabled: isWorkspaceAdmin,
+    retry: false,
+  })
+  const slug = app?.slug || fallbackSlug
+  const appSettings = `settings/apps/${slug ? encodeURIComponent(slug) : ""}/permissions`
+  const permissionsPath =
+    app?.app_owner_type === "Organization" && app.app_owner_login
+      ? `organizations/${encodeURIComponent(app.app_owner_login)}/${appSettings}`
+      : appSettings
+  if (missingPermissions(install).length === 0) return null
+  return (
+    <p className="text-muted-foreground">
+      GitHub still reports these permissions as missing: <strong>{missingPermissions(install).join(", ")}</strong>.
+      If there was no &ldquo;Accept new permissions&rdquo; button, the App itself doesn&rsquo;t request them yet:
+      {isWorkspaceAdmin
+        ? " the App’s owner must first enable them under the App’s Permissions & events"
+        : " ask your workspace admin to enable them on the GitHub App first, then accept them on the installation."}
+      {isWorkspaceAdmin && slug && (
+        <>
+          {" ("}
+          <a
+            href={githubWebUrl(permissionsPath)}
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary hover:underline"
+          >
+            open App permissions
+          </a>
+          {")"}
+        </>
+      )}
+      {isWorkspaceAdmin && ", then accept them on the installation."}
+    </p>
+  )
 }
 
 function useRefreshPermissions(install: InstallationMeta) {
@@ -43,16 +104,19 @@ function useRefreshPermissions(install: InstallationMeta) {
 export function PermissionDriftNotice({
   install,
   className,
+  canManage = true,
 }: {
   install: InstallationMeta
   className?: string
+  /** False for someone who can neither re-check (org admin only) nor approve: they get "ask an admin", no buttons. */
+  canManage?: boolean
 }) {
   const refresh = useRefreshPermissions(install)
   const [waiting, setWaiting] = useState(false)
   const [copied, setCopied] = useState(false)
   const [copyFailed, setCopyFailed] = useState(false)
   const wrap = ["text-xs", className].filter(Boolean).join(" ")
-  const canRefresh = install.installation_id != null
+  const canRefresh = install.installation_id != null && canManage
   const isOrg = install.account_type === "Organization"
 
   // After sending the user to GitHub, re-read permissions when they come back to this tab.
@@ -99,6 +163,8 @@ export function PermissionDriftNotice({
     "What it enables:",
     ...items.map((i) => `- ${i.label}${i.why ? `: ${i.why}` : ""}`),
     "",
+    `GitHub permissions needed: ${missingPermissions(install).join(", ")}. If the App doesn't request them yet, enable them under the App's Permissions & events first.`,
+    "",
     url ? `To approve, open ${url} and click "Accept new permissions".` : "",
   ].join("\n")
 
@@ -111,6 +177,21 @@ export function PermissionDriftNotice({
       setCopied(false)
       setCopyFailed(true)
     }
+  }
+
+  if (!canManage) {
+    return (
+      <div className={`${wrap} border border-warning/30 bg-warning/5 px-3 py-2.5 flex flex-col gap-1.5`}>
+        <p className="text-warning font-medium flex items-center gap-1.5">
+          <Warning className="size-3.5 shrink-0" />
+          {items.length} automation{items.length === 1 ? " is" : "s are"} blocked for {install.account_login}
+        </p>
+        <p className="text-muted-foreground">
+          Ask an admin of {install.account_login}, or your workspace admin, to enable{" "}
+          <strong>{missingPermissions(install).join(", ")}</strong> for the Clevis GitHub App. Nothing for you to do.
+        </p>
+      </div>
+    )
   }
 
   return (
@@ -172,6 +253,7 @@ export function PermissionDriftNotice({
           />
         </>
       )}
+      {refresh.isSuccess && <StillMissing install={refresh.data} />}
       {refresh.isError && <p className="text-destructive">{refresh.error.message}</p>}
     </div>
   )

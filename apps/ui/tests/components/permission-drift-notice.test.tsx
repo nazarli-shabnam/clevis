@@ -4,6 +4,7 @@ import type { ReactElement } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { PermissionDriftNotice } from "@/components/permission-drift-notice"
+import * as authContext from "@/lib/auth-context"
 import type { InstallationMeta } from "@/lib/api/types"
 
 // The notice uses react-query for its "check now" refresh, so it needs a provider.
@@ -25,9 +26,16 @@ function install(overrides: Partial<InstallationMeta> = {}): InstallationMeta {
   }
 }
 
+function signInAs(isWorkspaceAdmin: boolean) {
+  vi.spyOn(authContext, "useOptionalAuth").mockReturnValue({
+    user: { id: 1, email: "a@example.com", name: null, is_workspace_admin: isWorkspaceAdmin },
+  } as unknown as ReturnType<typeof authContext.useOptionalAuth>)
+}
+
 beforeEach(() => vi.stubEnv("NEXT_PUBLIC_GITHUB_APP_SLUG", "clevis"))
 afterEach(() => {
   cleanup()
+  vi.restoreAllMocks()
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
 })
@@ -257,6 +265,116 @@ describe("PermissionDriftNotice", () => {
     expect(screen.queryByRole("link")).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /check now/i })).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: /copy request for owner/i })).toBeInTheDocument()
+  })
+
+  it("explains the App must request the permissions when a re-check still finds them missing", async () => {
+    signInAs(true)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify(install({ blocked_features: [{ feature: "stale_pr_nudges", label: "Stale pull-request nudges", missing: { pull_requests: "write" } }] })), { status: 200, headers: { "Content-Type": "application/json" } }),
+      ),
+    )
+    render(
+      <PermissionDriftNotice
+        install={install({
+          blocked_features: [
+            { feature: "stale_pr_nudges", label: "Stale pull-request nudges", missing: { pull_requests: "write" } },
+          ],
+        })}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: /i approved it/i }))
+    expect(await screen.findByText(/still reports these permissions as missing/i)).toBeInTheDocument()
+    expect(screen.getByText("pull_requests: write")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: /open app permissions/i })).toHaveAttribute(
+      "href",
+      expect.stringContaining("/settings/apps/clevis/permissions"),
+    )
+  })
+
+  it("says nothing more when the re-check finds nothing missing", async () => {
+    signInAs(true)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify(install()), { status: 200, headers: { "Content-Type": "application/json" } }),
+      ),
+    )
+    render(
+      <PermissionDriftNotice
+        install={install({
+          blocked_features: [
+            { feature: "stale_pr_nudges", label: "Stale pull-request nudges", missing: { pull_requests: "write" } },
+          ],
+        })}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: /i approved it/i }))
+    await waitFor(() => expect(screen.getByRole("button", { name: /check now/i })).toBeEnabled())
+    expect(screen.queryByText(/still reports these permissions as missing/i)).not.toBeInTheDocument()
+  })
+
+  it("links an organization-owned App through its owner's settings", async () => {
+    signInAs(true)
+    const blocked = install({
+      blocked_features: [
+        { feature: "stale_pr_nudges", label: "Stale pull-request nudges", missing: { pull_requests: "write" } },
+      ],
+    })
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        new Response(
+          JSON.stringify(String(url).endsWith("/github-app") ? { slug: "clevis", app_owner_login: "acme", app_owner_type: "Organization" } : blocked),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    )
+    render(<PermissionDriftNotice install={blocked} />)
+    fireEvent.click(screen.getByRole("button", { name: /i approved it/i }))
+    const link = await screen.findByRole("link", { name: /open app permissions/i })
+    await waitFor(() => expect(link).toHaveAttribute("href", expect.stringContaining("/organizations/acme/settings/apps/clevis/permissions")))
+  })
+
+  it("tells a non-workspace-admin to ask their workspace admin, with no App link", async () => {
+    signInAs(false)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify(install({ blocked_features: [{ feature: "stale_pr_nudges", label: "Stale pull-request nudges", missing: { pull_requests: "write" } }] })), { status: 200, headers: { "Content-Type": "application/json" } }),
+      ),
+    )
+    render(
+      <PermissionDriftNotice
+        install={install({
+          blocked_features: [
+            { feature: "stale_pr_nudges", label: "Stale pull-request nudges", missing: { pull_requests: "write" } },
+          ],
+        })}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: /i approved it/i }))
+    expect(await screen.findByText(/ask your workspace admin to enable them/i)).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: /open app permissions/i })).not.toBeInTheDocument()
+  })
+
+  it("shows plain members who to ask and offers no buttons or links", () => {
+    render(
+      <PermissionDriftNotice
+        canManage={false}
+        install={install({
+          blocked_features: [
+            { feature: "stale_pr_nudges", label: "Stale pull-request nudges", missing: { pull_requests: "write" } },
+          ],
+        })}
+      />,
+    )
+    expect(screen.getByText(/1 automation is blocked for acme/i)).toBeInTheDocument()
+    expect(screen.getByText(/ask an admin of acme/i)).toBeInTheDocument()
+    expect(screen.getByText("pull_requests: write")).toBeInTheDocument()
+    expect(screen.queryByRole("link")).not.toBeInTheDocument()
+    expect(screen.queryByRole("button")).not.toBeInTheDocument()
   })
 
   it("re-checks permissions when the user returns from GitHub", async () => {

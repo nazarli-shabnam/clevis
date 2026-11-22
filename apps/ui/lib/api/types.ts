@@ -1153,6 +1153,11 @@ export interface GithubAppStatus {
   permissions: Record<string, string>
   read_only_permissions: Record<string, string>
   events: string[]
+  /** What the registered App itself does not request (null: not checked, see app_check_error). */
+  app_missing_permissions?: Record<string, string> | null
+  app_owner_login?: string | null
+  app_owner_type?: string | null
+  app_check_error?: string | null
 }
 
 /** POST /github-app/manifest: the manifest GitHub shows the admin and the URL the browser posts it to. */
