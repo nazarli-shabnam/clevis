@@ -232,6 +232,22 @@ describe("RepoDetailPage", () => {
     expect(screen.getByText(/top contributors/i)).toBeInTheDocument();
   });
 
+  it("formats each week in UTC, since the week starts Sunday 00:00 UTC (#1240)", async () => {
+    const format = vi.spyOn(Date.prototype, "toLocaleDateString");
+    reposStatsMock.mockResolvedValue({
+      repository: "acme/demo",
+      commit_activity: [{ week: 1762646400, total: 3, days: [] }], // Sun 2025-11-09 00:00 UTC
+      participation: {},
+      contributors: [],
+    });
+
+    renderPage();
+
+    await waitFor(() => expect(format).toHaveBeenCalled());
+    expect(format).toHaveBeenCalledWith(undefined, expect.objectContaining({ month: "short", day: "numeric", timeZone: "UTC" }));
+    expect(new Date(1762646400 * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })).toBe("Nov 9");
+  });
+
   it("labels the commit-activity chart and calendar as estimated when the source is an aggregate", async () => {
     reposStatsMock.mockResolvedValue({
       repository: "acme/demo",

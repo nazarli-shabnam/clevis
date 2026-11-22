@@ -246,7 +246,7 @@ export default function RepoDetailPage() {
   const commitActivity = statsQuery.data?.commit_activity ?? []
   const isEstimatedActivity = statsQuery.data?.commit_activity_source === "aggregate"
   const areaData = commitActivity.map((w) => ({
-    week: new Date(w.week * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+    week: new Date(w.week * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" }),
     value: w.total,
   }))
   const heatmapData = commitActivity.map((w) => w.total)
