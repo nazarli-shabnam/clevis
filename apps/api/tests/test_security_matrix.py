@@ -388,6 +388,25 @@ def test_secret_scanning_never_includes_secret_value(client):
     assert "secret" not in alert
 
 
+def test_secret_scanning_reads_live_even_when_a_webhook_alert_is_stored(connected_client, db, acme_org_with_installation):
+    # Secret scanning is never backfilled, so one stored webhook row must not hide the older/resolved alerts.
+    _insert_security_alert(
+        db, acme_org_with_installation.tenant_id, repo="acme/api", kind="secret_scanning", number=6,
+        state="open", severity=None, details={"secret_type": "x"},
+    )
+    live = [
+        {"number": n, "state": st, "secret_type": "x", "created_at": "2026-07-01T00:00:00Z", "html_url": f"https://g/{n}"}
+        for n, st in ((1, "open"), (2, "resolved"), (6, "open"))
+    ]
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        mock_client.return_value.request.return_value = live
+        resp = connected_client.get("/me/repos/acme/api/secret-scanning", headers={"X-GitHub-Token": "ghp_test"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "github" and [a["number"] for a in body["alerts"]] == [1, 2, 6]
+
+
 def test_secret_scanning_skips_malformed_entries(client):
     with patch("src.routers.security.GitHubClient") as mock_client:
         mock_client.return_value.request.return_value = [{"state": "open"}]  # missing number/created_at
@@ -733,36 +752,6 @@ def test_security_matrix_unconnected_org_still_uses_live_github(client, db):
 
     row = resp.json()["repos"][0]
     assert row["alerts_source"] == "github"
-
-
-def test_secret_scanning_uses_aggregate_when_installation_connected(connected_client, db, acme_org_with_installation):
-    _insert_security_alert(
-        db, acme_org_with_installation.tenant_id, repo="acme/demo", kind="secret_scanning", number=1,
-        state="open", severity=None,
-        details={"secret_type": "github_personal_access_token", "secret_type_display_name": "GitHub Personal Access Token", "resolution": None},
-    )
-    _insert_security_alert(
-        db, acme_org_with_installation.tenant_id, repo="acme/demo", kind="secret_scanning", number=2,
-        state="resolved", severity=None,
-        details={"secret_type": "aws_access_key_id", "secret_type_display_name": "AWS Access Key", "resolution": "revoked"},
-    )
-
-    with patch("src.routers.security.GitHubClient") as mock_client:
-        resp = connected_client.get("/me/repos/acme/demo/secret-scanning", headers={"X-GitHub-Token": "ghp_test"})
-        mock_client.return_value.request.assert_not_called()
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["source"] == "aggregate"
-    alerts = {a["number"]: a for a in body["alerts"]}
-    assert alerts[1]["state"] == "open"
-    assert alerts[1]["resolved_at"] is None
-    assert alerts[2]["state"] == "resolved"
-    assert alerts[2]["resolved_reason"] == "revoked"
-    assert alerts[2]["resolved_at"] is not None
-    assert "secret" not in alerts[1]
-    # url is None (not ""): security_alerts doesn't store GitHub's html_url.
-    assert alerts[1]["url"] is None
 
 
 def test_secret_scanning_falls_back_to_live_when_aggregate_has_no_rows(connected_client, db, acme_org_with_installation):

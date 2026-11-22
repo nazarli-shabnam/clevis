@@ -349,35 +349,6 @@ def personal_repo_security_row(
         raise _github_error(exc) from exc
 
 
-def _secret_scanning_alerts_from_aggregate(db: Session, tenant_id: int, owner: str, repo: str) -> list[SecretAlert]:
-    """Reads security_alerts instead of a live GitHub call. No `url` field is stored (only
-    the live API response carries html_url) -- None, not "" (a fake link); the UI renders
-    a plain non-link row when url is missing."""
-    rows = (
-        db.query(SecurityAlert)
-        .filter(
-            SecurityAlert.tenant_id == tenant_id,
-            SecurityAlert.repo == f"{owner}/{repo}",
-            SecurityAlert.kind == "secret_scanning",
-        )
-        .all()
-    )
-    return [
-        SecretAlert(
-            number=row.number,
-            state=row.state,
-            secret_type=row.details.get("secret_type", ""),
-            secret_type_display=row.details.get("secret_type_display_name", row.details.get("secret_type", "")),
-            resolved_reason=row.details.get("resolution"),
-            created_at=row.created_at,
-            resolved_at=row.updated_at if row.state != "open" else None,
-            repo=f"{owner}/{repo}",
-            url=None,
-        )
-        for row in rows
-    ]
-
-
 @router.get("/me/repos/{owner}/{repo}/secret-scanning", response_model=SecretScanningResponse)
 def personal_secret_scanning(
     owner: Owner,
@@ -391,15 +362,8 @@ def personal_secret_scanning(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    tenant_id = _security_connected_tenant(db, user.id, owner)
-    if tenant_id is not None:
-        alerts = _secret_scanning_alerts_from_aggregate(db, tenant_id, owner, repo)
-        # security_alerts has no backfill/sync-cursor -- only webhook events populate it, so
-        # a zero-row result is ambiguous ("no alerts" vs "not yet ingested") and can't be
-        # trusted as authoritative -- fall back to the live call rather than under-report.
-        if alerts:
-            return SecretScanningResponse(repository=f"{owner}/{repo}", alerts=alerts, source="aggregate")
-
+    # Always live: secret scanning is deliberately not backfilled into security_alerts, so stored rows only
+    # hold alerts whose webhooks arrived after install and would under-report (and hide resolved ones).
     client = GitHubClient(token)
     try:
         raw = client.request("GET", f"/repos/{owner}/{repo}/secret-scanning/alerts", params={"per_page": 50})
