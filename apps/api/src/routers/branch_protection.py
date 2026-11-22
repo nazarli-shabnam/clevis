@@ -63,8 +63,10 @@ class BulkApplyResponse(BaseModel):
 
 
 def _all_forbidden(errors: list[str | None]) -> bool:
+    # More than one repo, as in remediation_bulk: a single 403 is as likely an archived or ungranted repo as a
+    # missing App permission, and the per-repo result is more useful than the "re-approve" hint.
     real = [e for e in errors if e]
-    return bool(real) and len(real) == len(errors) and all("403" in e for e in real)
+    return len(errors) > 1 and len(real) == len(errors) and all("403" in e for e in real)
 
 
 @router.get("/orgs/{org_login}/branch-protection/preset")
