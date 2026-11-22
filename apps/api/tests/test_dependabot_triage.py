@@ -409,6 +409,19 @@ def test_get_setting_returns_defaults_then_the_saved_row(db, acme):
     assert after.json() == {"enabled": True, "mode": "approve_and_merge", "merge_method": "rebase"}
 
 
+def test_switching_only_enabled_keeps_the_saved_mode_and_merge_method(db, acme):
+    client = _client(db, acme["admin"].id)
+    url = "/orgs/acme/repos/acme/api/automation/dependabot-triage"
+    assert client.put(url, json={"enabled": True}).json() == {
+        "enabled": True, "mode": "approve_only", "merge_method": "squash",
+    }
+    client.put(url, json={"enabled": True, "mode": "approve_and_merge", "merge_method": "rebase"})
+    assert client.put(url, json={"enabled": False}).json() == {
+        "enabled": False, "mode": "approve_and_merge", "merge_method": "rebase",
+    }
+    assert client.put(url, json={"enabled": True, "mode": "bogus"}).status_code == 422
+
+
 def test_setting_keys_ignore_the_casing_of_the_repo_in_the_url(db, acme):
     """Enable via /Acme/Api, disable via /acme/api: one row, disabled; GET agrees under either casing (#898)."""
     client = _client(db, acme["admin"].id)

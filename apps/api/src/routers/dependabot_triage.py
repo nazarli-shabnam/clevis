@@ -34,8 +34,10 @@ _MERGE_METHODS = ("merge", "squash", "rebase")
 
 class SettingRequest(BaseModel):
     enabled: bool
-    mode: str = dependabot_triage.MODE_APPROVE_ONLY
-    merge_method: str = "squash"
+    # Omitted = keep what is saved (approve-only / squash for a repository with nothing saved), so a caller
+    # that only switches `enabled` cannot overwrite a mode or merge method saved meanwhile.
+    mode: str | None = None
+    merge_method: str | None = None
 
 
 class TriageRequest(BaseModel):
@@ -91,9 +93,12 @@ def set_triage_setting(
     db: Session = Depends(get_db),
 ):
     assert_owner_matches_org(owner, ctx)
-    if body.mode not in dependabot_triage.MODES:
+    saved = automation_settings_repo.get(db, ctx.org.tenant_id, f"{owner}/{repo}", _FEATURE)
+    mode = body.mode or (saved.mode if saved and saved.mode else dependabot_triage.MODE_APPROVE_ONLY)
+    merge_method = body.merge_method or ((saved.extra or {}).get("merge_method", "squash") if saved else "squash")
+    if mode not in dependabot_triage.MODES:
         raise HTTPException(status_code=422, detail=f"mode must be one of: {', '.join(dependabot_triage.MODES)}")
-    if body.merge_method not in _MERGE_METHODS:
+    if merge_method not in _MERGE_METHODS:
         raise HTTPException(status_code=422, detail=f"merge_method must be one of: {', '.join(_MERGE_METHODS)}")
     automation_settings_repo.upsert(
         db,
@@ -101,16 +106,16 @@ def set_triage_setting(
         f"{owner}/{repo}",
         _FEATURE,
         enabled=body.enabled,
-        mode=body.mode,
-        extra={"merge_method": body.merge_method},
+        mode=mode,
+        extra={"merge_method": merge_method},
     )
     audit_repo.write(
         db, user.email, "dependabot_triage.setting_saved", f"{owner}/{repo}",
-        {"enabled": body.enabled, "mode": body.mode, "merge_method": body.merge_method},
+        {"enabled": body.enabled, "mode": mode, "merge_method": merge_method},
         tenant_id=ctx.org.tenant_id, commit=False,
     )
     db.commit()
-    return {"enabled": body.enabled, "mode": body.mode, "merge_method": body.merge_method}
+    return {"enabled": body.enabled, "mode": mode, "merge_method": merge_method}
 
 
 @router.post("/orgs/{org_login}/dependabot-triage", response_model=TriageResponse)
