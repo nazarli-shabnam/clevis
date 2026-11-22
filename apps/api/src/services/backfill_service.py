@@ -83,4 +83,7 @@ def _enqueue_security_alerts_if_needed(
             **token_fields,
         },
         tenant_id=tenant_id,
+        # No commit: the caller's repo-events enqueue commits both, so the gap-heal sweep's transaction-scoped
+        # advisory lock covers the whole check-then-enqueue window and a crash leaves neither or both.
+        commit=False,
     )
