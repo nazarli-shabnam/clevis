@@ -180,6 +180,21 @@ def test_unpinned_actions_check_reads_workflow_files():
     assert out["status"] == "fail" and out["value"]["unpinned_uses"] == 1
 
 
+def test_unpinned_actions_quotes_special_characters_in_workflow_filenames():
+    wf = base64.b64encode(b"steps:\n  - uses: thirdparty/tool@v2\n").decode()
+    requested = []
+
+    def get(url, token):
+        if "/git/trees/" in url:
+            return _tree(".github/workflows/ci#1 ?%.yml")
+        requested.append(url)
+        return {"content": wf}
+
+    out = _run(h.UnpinnedActions(), [_repo()], get)
+    assert out["status"] == "fail" and out["value"]["unpinned_uses"] == 1
+    assert requested[0].endswith("/contents/.github/workflows/ci%231%20%3F%25.yml")
+
+
 def test_api_errors_make_a_repo_unknown_and_all_unknown_is_error():
     out = _run(h.CodeownersPresent(), [_repo()], lambda u, t: (_ for _ in ()).throw(_status_error(500)))
     assert out["status"] == "error" and out["value"]["unknown"] == 1
