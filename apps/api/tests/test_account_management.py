@@ -4,6 +4,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy import text
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -12,7 +13,7 @@ from src.core.config import settings
 from src.core.db import AuditLog, Membership, ScanResult, Tenant, User, UserSession, get_db, set_session_tenant
 from src.core.rate_limit import _account_buckets as _account_rate_limit_buckets
 from src.core.rate_limit import _buckets as _rate_limit_buckets
-from src.repositories import invitation_repo, org_membership_repo, org_repo
+from src.repositories import audit_repo, invitation_repo, org_membership_repo, org_repo
 from src.routers.auth import router as auth_router
 from src.services import email_change, password_reset
 from src.services.email import EmailNotConfigured
@@ -232,11 +233,34 @@ def test_a_member_deletes_their_account_and_what_hangs_off_it(client, db):
     assert db.query(UserSession).filter(UserSession.user_id == member_id).count() == 0
     assert db.query(ScanResult).filter(ScanResult.tenant_id == org_tenant).one().scanned_by_user_id is None
     assert not invitation_repo.list_pending_for_email(db, "friend@example.com")
-    assert db.query(AuditLog).filter(AuditLog.tenant_id == personal).count() == 0  # their own sign-in rows went
+    assert db.query(AuditLog).filter(AuditLog.tenant_id == personal).count() == 0  # nothing points at the deleted tenant
     set_session_tenant(db, org_tenant)  # RLS: the session still points at the deleted personal tenant
     left = db.query(AuditLog).filter(AuditLog.action == "account.deleted").one()
     assert left.actor == "member@example.com" and left.tenant_id == org_tenant  # the org keeps a trace
     assert client.get("/auth/me", headers=headers).status_code == 401
+
+
+def test_deleting_an_account_keeps_its_audit_rows_for_the_workspace_admin(client, db):
+    _setup_owner(client)
+    headers = _register(client)
+    member_id = db.query(User).filter(User.email == "member@example.com").one().id
+    personal = db.query(Tenant).filter(Tenant.personal_user_id == member_id).one().id
+    audit_repo.write(db, "member@example.com", "security.remediate", "outside/repo", {}, tenant_id=personal)  # sets the RLS tenant
+    before = db.query(AuditLog).filter(AuditLog.tenant_id == personal).count()
+    assert before >= 1  # the row above plus any sign-in rows
+
+    resp = client.post("/auth/me/delete", headers=headers, json={"confirm_email": "member@example.com", "password": "supersecret1234"})
+    assert resp.status_code == 204
+
+    db.expire_all()
+    assert db.query(Tenant).filter(Tenant.id == personal).first() is None
+    # Detached rows have no tenant, which audit_logs' RLS hides from ordinary reads by design; the workspace admin
+    # reads them through the SECURITY DEFINER view (no tenant context), so assert through that.
+    kept = db.execute(
+        text("SELECT action, tenant_id FROM audit_logs_for_admin(NULL, 1000) WHERE actor = 'member@example.com'")
+    ).all()
+    assert len(kept) == before and all(tenant_id is None for _, tenant_id in kept)
+    assert "security.remediate" in {action for action, _ in kept}
 
 
 def test_deleting_an_account_also_clears_references_left_in_an_org_they_already_left(client, db):
