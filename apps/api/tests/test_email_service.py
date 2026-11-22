@@ -7,7 +7,7 @@ import pytest
 from pydantic import SecretStr
 
 from src.core.config import settings
-from src.services.email import EmailNotConfigured, is_configured, send_email, send_verification_email
+from src.services.email import EmailNotConfigured, is_configured, send_email, send_email_changed_notice, send_verification_email
 
 
 def test_is_configured_reflects_smtp_settings(monkeypatch):
@@ -146,3 +146,10 @@ def test_none_security_sends_over_plain_smtp_without_starttls(monkeypatch):
     mock_smtp.starttls.assert_not_called()
     mock_smtp.send_message.assert_called_once()
 
+
+
+def test_the_email_changed_notice_goes_to_the_old_address_and_names_the_new_one():
+    with patch("src.services.email.send_email") as send:
+        send_email_changed_notice("old@example.com", "new@example.com")
+    to, _subject, body = send.call_args.args
+    assert to == "old@example.com" and "new@example.com" in body

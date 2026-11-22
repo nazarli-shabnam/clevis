@@ -101,3 +101,16 @@ def send_email_change_email(to_email: str, confirm_url: str) -> None:
             "If you didn't ask for this, ignore this email; nothing changes."
         ),
     )
+
+
+def send_email_changed_notice(old_email: str, new_email: str) -> None:
+    send_email(
+        old_email,
+        "Your Clevis email address was changed",
+        (
+            f"The email address of your Clevis account was changed from this address to {new_email}.\n\n"
+            "You have been signed out everywhere. If you made this change, nothing more is needed.\n"
+            "If you did not, someone else has your password and a mailbox of their own: contact your "
+            "workspace administrator right away."
+        ),
+    )

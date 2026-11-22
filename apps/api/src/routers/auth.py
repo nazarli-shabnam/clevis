@@ -39,6 +39,7 @@ from src.services.email import (
     EmailNotConfigured,
     is_configured as smtp_configured,
     send_email_change_email,
+    send_email_changed_notice,
     send_password_reset_email,
     send_verification_email,
 )
@@ -359,7 +360,7 @@ def register(body: RegisterRequest, request: Request, db: Session = Depends(get_
 
 
 @router.post("/verify-email", response_model=VerifyEmailResponse, dependencies=[Depends(rate_limit())])
-def verify_email(body: VerifyEmailRequest, db: Session = Depends(get_db)):
+def verify_email(body: VerifyEmailRequest, request: Request, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email_verify_token == body.token).first()
     if user is None:
         raise HTTPException(status_code=400, detail="Invalid or expired verification link")
@@ -371,6 +372,8 @@ def verify_email(body: VerifyEmailRequest, db: Session = Depends(get_db)):
     user.email_verified = True
     user.email_verify_token = None
     user.email_verify_token_expires_at = None
+    # Verification gates accepting org invitations, so when an address became verified belongs in the audit view.
+    auth_audit.record(db, user, "auth.email_verified", request=request, commit=False)
     db.commit()
     return {"ok": True}
 
@@ -512,6 +515,16 @@ def _send_email_change_email(to_email: str, confirm_url: str) -> None:
         logger.exception("failed to send an email-change confirmation to %s", to_email)
 
 
+def _send_email_changed_notice(old_email: str, new_email: str) -> None:
+    """Runs after the response. Never raises: the change is already committed."""
+    try:
+        send_email_changed_notice(old_email, new_email)
+    except EmailNotConfigured:
+        logger.warning("SMTP not configured -- cannot tell %s that its account email was changed", old_email)
+    except Exception:
+        logger.exception("failed to tell %s that its account email was changed", old_email)
+
+
 @router.post("/me/email", response_model=VerifyEmailResponse, dependencies=[Depends(rate_limit())])
 def request_email_change(
     body: ChangeEmailRequest,
@@ -547,9 +560,12 @@ def request_email_change(
 
 
 @router.post("/confirm-email-change", response_model=VerifyEmailResponse, dependencies=[Depends(rate_limit())])
-def confirm_email_change(body: ConfirmEmailChangeRequest, request: Request, db: Session = Depends(get_db)):
+def confirm_email_change(
+    body: ConfirmEmailChangeRequest, request: Request, background: BackgroundTasks, db: Session = Depends(get_db)
+):
     """Apply a confirmed email change. The link reached the new mailbox, so the address is verified; every
-    session is signed out (the session tokens carry the old address), and the link works once."""
+    session is signed out (the session tokens carry the old address), and the link works once. The old address
+    is told afterwards, so an owner whose account was moved by someone else hears of it."""
     invalid = HTTPException(status_code=400, detail="This confirmation link is invalid or has expired")
     parsed = email_change.parse_token(body.token)
     if parsed is None:
@@ -573,6 +589,7 @@ def confirm_email_change(body: ConfirmEmailChangeRequest, request: Request, db: 
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="An account with this email already exists") from None
+    background.add_task(_send_email_changed_notice, old_email, new_email)
     return {"ok": True}
 
 

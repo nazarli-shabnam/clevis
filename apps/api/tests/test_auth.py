@@ -13,7 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Query
 
 from src.core.auth import UserOut, require_auth, require_workspace_admin
-from src.core.db import User, get_db
+from src.core.db import AuditLog, User, get_db
 from src.core.rate_limit import _account_buckets as _account_rate_limit_buckets
 from src.core.rate_limit import _buckets as _rate_limit_buckets
 from src.repositories import invitation_repo, org_repo
@@ -452,6 +452,20 @@ def test_verify_email_marks_the_account_verified_and_clears_the_token(auth_clien
     assert user.email_verified is True
     assert user.email_verify_token is None
     assert user.email_verify_token_expires_at is None
+
+
+def test_verify_email_is_audited(auth_client, db):
+    _setup_owner(auth_client)
+    auth_client.post("/auth/register", json={"email": "member@example.com", "password": "supersecret1234"})
+    token = db.query(User).filter(User.email == "member@example.com").first().email_verify_token
+
+    assert auth_client.post("/auth/verify-email", json={"token": token}).status_code == 200
+
+    rows = db.query(AuditLog).filter(AuditLog.action == "auth.email_verified").all()
+    assert [r.actor for r in rows] == ["member@example.com"]
+    # A rejected link leaves no row.
+    auth_client.post("/auth/verify-email", json={"token": "not-a-real-token"})
+    assert db.query(AuditLog).filter(AuditLog.action == "auth.email_verified").count() == 1
 
 
 def test_verify_email_rejects_an_unknown_token(auth_client):
