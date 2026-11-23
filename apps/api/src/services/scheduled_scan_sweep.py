@@ -102,7 +102,7 @@ def _scan_one(db: Session, org_id: int, tenant_id: int, org_login: str, cadence:
         return False
     org = db.get(Org, org_id)
     try:
-        token = resolve_org_token(db, org_id=org_id, account_login=org_login, client_token=None)
+        token = resolve_org_token(db, org_id=org_id, account_login=org_login, client_token=None, for_scan=True)
     except NoGitHubTokenAvailable:
         logger.info("scheduled scan: %s has no GitHub App installation token; skipping", org_login)
         db.commit()

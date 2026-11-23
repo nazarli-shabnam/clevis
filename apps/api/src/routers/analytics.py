@@ -328,6 +328,7 @@ async def org_analytics_overview(
                 # The scan is stored as the org's latest score (badge, score API, alerts). A member's own
                 # token could be deliberately under-privileged so checks error out and the score drops.
                 allow_client_token=ctx.membership.role == "admin",
+                for_scan=True,
             )
         )
     except InsufficientOrgRole as exc:
@@ -378,7 +379,12 @@ async def personal_analytics_overview(
     try:
         token = await anyio.to_thread.run_sync(
             lambda: resolve_owner_token(
-                db, user_id=user.id, owner=payload.owner, client_token=client_token, client_token_min_role="admin"
+                db,
+                user_id=user.id,
+                owner=payload.owner,
+                client_token=client_token,
+                client_token_min_role="admin",
+                for_scan=True,
             )
         )
     except InsufficientOrgRole as exc:
@@ -1052,7 +1058,7 @@ async def personal_analytics_cockpit(
 ):
     try:
         token = await anyio.to_thread.run_sync(
-            lambda: resolve_owner_token(db, user_id=user.id, owner=owner, client_token=x_github_token)
+            lambda: resolve_owner_token(db, user_id=user.id, owner=owner, client_token=x_github_token, for_scan=True)
         )
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
