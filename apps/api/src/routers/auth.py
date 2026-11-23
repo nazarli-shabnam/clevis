@@ -483,7 +483,10 @@ def change_password(
     caller gets a fresh token so this one stays signed in."""
     # A stolen session must not be able to guess the current password at full speed.
     check_account_rate_limit(f"change-password:{current_user.id}")
-    user = db.query(User).filter(User.id == current_user.id).with_for_update().first()
+    # populate_existing: require_auth already loaded this row into the session, and a plain locked re-query
+    # would hand back that possibly stale object, so a password change or sign-out-everywhere that committed
+    # while this request waited for the lock would be checked against and overwritten from old values.
+    user = db.query(User).filter(User.id == current_user.id).with_for_update().populate_existing().first()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     if not user.password_hash:
@@ -745,7 +748,9 @@ def revoke_sessions(
     db: Session = Depends(get_db),
 ):
     """Invalidate every previously issued JWT for the caller (log out everywhere)."""
-    user = db.query(User).filter(User.id == current_user.id).first()
+    # Locked and refreshed (see change_password): the bump is read-modify-write, so it must start from the
+    # committed value or a concurrent bump would be overwritten with the same number and a new token survive.
+    user = db.query(User).filter(User.id == current_user.id).with_for_update().populate_existing().first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     user.token_version += 1
