@@ -103,6 +103,27 @@ describe("openActivityStream() 401 handling (#904)", () => {
   });
 });
 
+describe("error codes", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("exposes a machine-readable `code` from the error body on the thrown error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ detail: "Verify your email first", code: "email_unverified" }), { status: 403 }),
+        ),
+      ),
+    );
+    await expect(api.invitations.accept("tok")).rejects.toMatchObject({ status: 403, code: "email_unverified" });
+  });
+
+  it("leaves `code` undefined when the body has none", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({ detail: "no" }), { status: 403 }))));
+    await expect(api.invitations.accept("tok")).rejects.toMatchObject({ code: undefined });
+  });
+});
+
 describe("del() errors", () => {
   afterEach(() => vi.unstubAllGlobals());
 

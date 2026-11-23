@@ -10,6 +10,7 @@ from src.core.db import engine
 from src.core.logging import setup_logging
 from src.core.middleware import CookieOriginMiddleware, RequestIdMiddleware, SecurityHeadersMiddleware
 from src.core.rls_posture import warn_if_rls_bypassed
+from src.core.coded_errors import CodedHTTPException, coded_http_exception_handler
 from src.core.validation_errors import validation_error_handler
 from src.core.version import VERSION
 from src.routers import (
@@ -117,6 +118,7 @@ app = FastAPI(
     redoc_url=None,
 )
 app.add_exception_handler(RequestValidationError, validation_error_handler)
+app.add_exception_handler(CodedHTTPException, coded_http_exception_handler)
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 # Added before CORS so it sits inside it: a refusal still carries CORS headers the UI can read.
