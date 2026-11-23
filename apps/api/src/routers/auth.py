@@ -322,6 +322,8 @@ def register(body: RegisterRequest, request: Request, db: Session = Depends(get_
             status_code=422,
             detail=f"Password must be at most {_MAX_PASSWORD_LEN} bytes",
         )
+    # Deliberately distinguishable (409), unlike login and forgot-password: a sign-up form has to say why it failed.
+    # Accepted enumeration tradeoff, limited by the per-IP rate limit; see AGENTS.md (#1258).
     if db.query(User).filter(func.lower(User.email) == body.email.lower()).first():
         raise HTTPException(status_code=409, detail="An account with this email already exists")
     user = User(
