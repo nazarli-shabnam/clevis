@@ -41,3 +41,20 @@ def test_refuses_unknown_accounts_mismatches_and_weak_passwords(db):
     assert _run(db, []) == 2
     db.expire_all()
     assert db.query(User).filter(User.email == "someone@example.com").one().password_hash == "old-hash"
+
+
+def test_prepare_env_reads_empty_secrets_from_the_init_secrets_files(tmp_path, monkeypatch):
+    job, auth = tmp_path / "job_secret", tmp_path / "auth_secret"
+    job.write_text("job-from-file" + chr(10))
+    auth.write_text("a" * 40 + chr(10))
+    monkeypatch.setattr(set_password, "_SECRET_FILES", {"JOB_SECRET_KEY": str(job), "AUTH_SECRET": str(auth)})
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@db:5432/d")
+    monkeypatch.setenv("JOB_SECRET_KEY", "")
+    monkeypatch.setenv("AUTH_SECRET", "set-in-the-environment-and-longer-than-32")
+
+    set_password._prepare_env()
+
+    import os
+
+    assert os.environ["JOB_SECRET_KEY"] == "job-from-file"  # empty: filled from the file, newline stripped
+    assert os.environ["AUTH_SECRET"] == "set-in-the-environment-and-longer-than-32"  # an environment value wins
