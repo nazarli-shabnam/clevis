@@ -117,10 +117,12 @@ app = FastAPI(
     redoc_url=None,
 )
 app.add_exception_handler(RequestValidationError, validation_error_handler)
+# Each add_middleware wraps the ones before it. The cookie-origin check goes in first so it sits inside all
+# the others: a refusal then still gets the request id and the security headers, and (being inside CORS) the
+# CORS headers the UI needs to read it.
+app.add_middleware(CookieOriginMiddleware, allowed_origins=_cors_origins)
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
-# Added before CORS so it sits inside it: a refusal still carries CORS headers the UI can read.
-app.add_middleware(CookieOriginMiddleware, allowed_origins=_cors_origins)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,

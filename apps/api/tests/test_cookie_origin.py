@@ -77,3 +77,19 @@ def test_security_headers_are_added_and_auth_responses_are_not_cached():
     assert c.get("/auth/own").headers["Cache-Control"] == "private, max-age=5"  # a route's own value wins
     plain = c.get("/orgs/x")
     assert plain.headers["X-Content-Type-Options"] == "nosniff" and "Cache-Control" not in plain.headers
+
+
+def test_a_refused_request_on_the_real_app_still_carries_the_request_id_and_security_headers():
+    """CookieOriginMiddleware must sit inside RequestId and SecurityHeaders in src.main (#1263)."""
+    from src.main import app
+
+    resp = TestClient(app, base_url="https://api.example.com").post(
+        "/auth/logout",
+        headers={"Origin": "https://evil.example", "X-Request-ID": "trace-1263"},
+        cookies={SESSION_COOKIE_NAME: "whatever"},
+    )
+
+    assert resp.status_code == 403 and resp.json() == {"detail": "Cross-origin request refused"}
+    assert resp.headers["X-Request-ID"] == "trace-1263"
+    assert resp.headers["X-Content-Type-Options"] == "nosniff"
+    assert resp.headers["Cache-Control"] == "no-store"  # an /auth/* response, set by SecurityHeadersMiddleware
