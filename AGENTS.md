@@ -98,7 +98,7 @@ Key variables:
 - `JOB_SECRET_KEY` — Fernet key for token encryption; generate with `openssl rand -hex 32`
 - `AUTH_SECRET` — JWT signing secret; generate with `openssl rand -hex 32`. Must be at least 32 characters: `Settings` (`apps/api/src/core/config.py`) and `apps/api/entrypoint.sh` both reject a shorter value at startup.
 - `REDIS_PASSWORD` — the webhook ingestion queue's (Redis Streams) credential. Auths the `redis` Compose service (`--requirepass`, so any other container on the shared network can't read/inject stream entries); `apps/api/entrypoint.sh` builds `REDIS_URL` from it, same pattern as `DB_USER`/`DB_PASSWORD`/`DB_NAME` → `DATABASE_URL`. `REDIS_URL` itself is local-dev-only (outside Docker), same as `DATABASE_URL`.
-- `API_PORT` / `UI_PORT` — `8080` / `3000`
+- `API_PORT` — only read by the local dev runner `apps/api/run_dev.py` (`python run_dev.py` in `apps/api`), default `8090`. Plain `uvicorn src.main:app` and the container serve on `8080`; the UI dev server's port `3000` is fixed in `apps/ui/package.json`. There is no `UI_PORT`.
 
 **Deploy-time config (env vars, safe defaults in code):**
 - `NEXT_PUBLIC_API_BASE` — default `http://localhost:8080` (baked in at UI build time as a Next.js `NEXT_PUBLIC_*` var, not read at runtime; see `apps/ui/Dockerfile`'s `ARG`).
