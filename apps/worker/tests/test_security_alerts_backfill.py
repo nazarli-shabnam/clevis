@@ -265,17 +265,6 @@ def _state_in(conn, tenant_id, repo, number):
         return cur.fetchone()[0]
 
 
-def test_a_close_keeps_the_alerts_own_updated_at(pg_conn, tenant_id):
-    _insert_open_alert(pg_conn, tenant_id, 96, "now() - interval '1 day'", "now() - interval '2 hours'")
-
-    _run(pg_conn, _Client(_routes()), tenant_id)
-
-    with pg_conn.cursor() as cur:
-        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
-        cur.execute("SELECT updated_at < now() - interval '1 hour' FROM security_alerts WHERE tenant_id = %s AND number = 96", (tenant_id,))
-        assert cur.fetchone()[0] is True
-
-
 def test_open_alerts_of_a_repo_that_left_the_listing_are_closed_but_other_accounts_are_not(pg_conn, tenant_id):
     _insert_alert_in(pg_conn, tenant_id, "acme/old-name", 5)  # renamed away: no longer listed
     _insert_alert_in(pg_conn, tenant_id, "other/elsewhere", 6)  # another account's repo on the same tenant

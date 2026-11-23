@@ -144,11 +144,11 @@ def close_missing(cur, *, tenant_id: int, repo: str, kind: str, open_numbers: li
     """Close stored ``open`` alerts that a complete listing no longer contains (a close webhook was missed), so
     the stored rows the matrix trusts do not keep a stale open finding. Only rows Clevis stored before the
     listing began: one ingested since is newer than what was read and must not be closed from it. The row's own
-    ``updated_at`` (GitHub's, maintained by the webhook upsert) is guarded and kept: an alert reopened by a webhook
-    while the listing was being read has ``updated_at`` after ``fetched_before`` and is left open, and a close here
-    must not post-date a later GitHub change."""
+    ``updated_at`` (GitHub's, maintained by the webhook upsert) is guarded: an alert reopened by a webhook while
+    the listing was being read has ``updated_at`` after ``fetched_before`` and is left open. The close still stamps
+    ``updated_at`` because the burn-down reads it as the close time."""
     cur.execute(
-        "UPDATE security_alerts SET state = 'fixed' "
+        "UPDATE security_alerts SET state = 'fixed', updated_at = NOW() "
         "WHERE tenant_id = %s AND repo = %s AND kind = %s AND state = 'open' "
         "AND NOT (number = ANY(%s)) AND ingested_at < %s AND updated_at < %s",
         (tenant_id, repo, kind, open_numbers, fetched_before, fetched_before),
@@ -166,7 +166,7 @@ def close_unlisted_repos(
     like close_missing only to rows stored and last updated before the listing began. The caller must only pass a listing that
     was read in full (not truncated at _MAX_REPOS)."""
     cur.execute(
-        "UPDATE security_alerts SET state = 'fixed' "
+        "UPDATE security_alerts SET state = 'fixed', updated_at = NOW() "
         "WHERE tenant_id = %s AND kind = ANY(%s) AND state = 'open' "
         "AND lower(split_part(repo, '/', 1)) = lower(%s) AND NOT (repo = ANY(%s)) AND ingested_at < %s "
         "AND updated_at < %s",
