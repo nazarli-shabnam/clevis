@@ -72,6 +72,9 @@ def create_destination(
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
+    if body.kind == "generic" and body.secret is not None and not body.secret.get_secret_value():
+        # Same rule as PATCH: an empty secret would otherwise create an unsigned webhook that looks signed.
+        raise HTTPException(status_code=422, detail="A signing secret cannot be empty")
     if body.kind == "email":
         stored = _email_recipients_or_422(db, ctx, body.recipients)
     else:

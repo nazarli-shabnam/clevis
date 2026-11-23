@@ -205,6 +205,13 @@ def test_secret_is_only_kept_for_generic_destinations(db, acme):
     assert body["signed"] is False
 
 
+def test_create_rejects_an_empty_signing_secret_for_a_generic_destination(db, acme):
+    client = _client(db, acme["admin"])
+    resp = _create(client, kind="generic", secret="")
+    assert resp.status_code == 422
+    assert client.get("/orgs/acme/notification-destinations").json() == []
+
+
 def test_destination_creation_takes_the_tenant_lock_before_counting(db, acme):
     # The cap is a read-then-insert: without a per-tenant lock two concurrent creates both read a count under it.
     statements: list[str] = []
