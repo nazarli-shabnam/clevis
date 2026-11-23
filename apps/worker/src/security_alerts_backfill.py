@@ -143,12 +143,15 @@ def mark_announced(
 def close_missing(cur, *, tenant_id: int, repo: str, kind: str, open_numbers: list[int], fetched_before) -> None:
     """Close stored ``open`` alerts that a complete listing no longer contains (a close webhook was missed), so
     the stored rows the matrix trusts do not keep a stale open finding. Only rows Clevis stored before the
-    listing began: one ingested since is newer than what was read and must not be closed from it."""
+    listing began: one ingested since is newer than what was read and must not be closed from it. The row's own
+    ``updated_at`` (GitHub's, maintained by the webhook upsert) is guarded and kept: an alert reopened by a webhook
+    while the listing was being read has ``updated_at`` after ``fetched_before`` and is left open, and a close here
+    must not post-date a later GitHub change."""
     cur.execute(
-        "UPDATE security_alerts SET state = 'fixed', updated_at = NOW() "
+        "UPDATE security_alerts SET state = 'fixed' "
         "WHERE tenant_id = %s AND repo = %s AND kind = %s AND state = 'open' "
-        "AND NOT (number = ANY(%s)) AND ingested_at < %s",
-        (tenant_id, repo, kind, open_numbers, fetched_before),
+        "AND NOT (number = ANY(%s)) AND ingested_at < %s AND updated_at < %s",
+        (tenant_id, repo, kind, open_numbers, fetched_before, fetched_before),
     )
 
 
@@ -160,13 +163,14 @@ def close_unlisted_repos(
     they are not counted twice or kept alive in the burn-down, digest and SLA items.
 
     Scoped to the account's own repos (a personal tenant may hold webhook alerts for another installation), and
-    like close_missing only to rows stored before the listing began. The caller must only pass a listing that
+    like close_missing only to rows stored and last updated before the listing began. The caller must only pass a listing that
     was read in full (not truncated at _MAX_REPOS)."""
     cur.execute(
-        "UPDATE security_alerts SET state = 'fixed', updated_at = NOW() "
+        "UPDATE security_alerts SET state = 'fixed' "
         "WHERE tenant_id = %s AND kind = ANY(%s) AND state = 'open' "
-        "AND lower(split_part(repo, '/', 1)) = lower(%s) AND NOT (repo = ANY(%s)) AND ingested_at < %s",
-        (tenant_id, list(_ALERT_PATHS), account_login, listed_repos, fetched_before),
+        "AND lower(split_part(repo, '/', 1)) = lower(%s) AND NOT (repo = ANY(%s)) AND ingested_at < %s "
+        "AND updated_at < %s",
+        (tenant_id, list(_ALERT_PATHS), account_login, listed_repos, fetched_before, fetched_before),
     )
 
 

@@ -209,12 +209,12 @@ def test_backfill_stamps_sla_notified_only_for_dependabot_alerts_already_past_th
     assert stamped[("code_scanning", 7)] is False
 
 
-def _insert_open_alert(conn, tenant_id, number, ingested_offset_sql):
+def _insert_open_alert(conn, tenant_id, number, ingested_offset_sql, updated_offset_sql="now() - interval '1 minute'"):
     with conn.cursor() as cur:
         cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
         cur.execute(
             "INSERT INTO security_alerts (tenant_id, repo, kind, number, state, severity, created_at, updated_at, ingested_at) "
-            f"VALUES (%s, 'acme/api', 'dependabot', %s, 'open', 'critical', now(), now(), {ingested_offset_sql})",
+            f"VALUES (%s, 'acme/api', 'dependabot', %s, 'open', 'critical', now(), {updated_offset_sql}, {ingested_offset_sql})",
             (tenant_id, number),
         )
     conn.commit()
@@ -238,12 +238,21 @@ def test_a_complete_listing_closes_stored_open_alerts_it_no_longer_contains(pg_c
     assert _state(pg_conn, tenant_id, 1) == "open"  # still listed
 
 
+def test_an_alert_reopened_by_a_webhook_while_the_listing_was_read_stays_open(pg_conn, tenant_id):
+    # Stored long ago (old ingested_at) but updated by a reopen webhook after the listing began.
+    _insert_open_alert(pg_conn, tenant_id, 97, "now() - interval '1 day'", "now() + interval '1 hour'")
+
+    _run(pg_conn, _Client(_routes()), tenant_id)
+
+    assert _state(pg_conn, tenant_id, 97) == "open"
+
+
 def _insert_alert_in(conn, tenant_id, repo, number):
     with conn.cursor() as cur:
         cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
         cur.execute(
             "INSERT INTO security_alerts (tenant_id, repo, kind, number, state, severity, created_at, updated_at, ingested_at) "
-            "VALUES (%s, %s, 'dependabot', %s, 'open', 'critical', now(), now(), now() - interval '1 day')",
+            "VALUES (%s, %s, 'dependabot', %s, 'open', 'critical', now(), now() - interval '1 minute', now() - interval '1 day')",
             (tenant_id, repo, number),
         )
     conn.commit()
@@ -254,6 +263,17 @@ def _state_in(conn, tenant_id, repo, number):
         cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
         cur.execute("SELECT state FROM security_alerts WHERE tenant_id = %s AND repo = %s AND number = %s", (tenant_id, repo, number))
         return cur.fetchone()[0]
+
+
+def test_a_close_keeps_the_alerts_own_updated_at(pg_conn, tenant_id):
+    _insert_open_alert(pg_conn, tenant_id, 96, "now() - interval '1 day'", "now() - interval '2 hours'")
+
+    _run(pg_conn, _Client(_routes()), tenant_id)
+
+    with pg_conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        cur.execute("SELECT updated_at < now() - interval '1 hour' FROM security_alerts WHERE tenant_id = %s AND number = 96", (tenant_id,))
+        assert cur.fetchone()[0] is True
 
 
 def test_open_alerts_of_a_repo_that_left_the_listing_are_closed_but_other_accounts_are_not(pg_conn, tenant_id):
