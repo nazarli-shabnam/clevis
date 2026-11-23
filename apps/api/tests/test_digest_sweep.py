@@ -308,3 +308,18 @@ def test_delivery_is_abandoned_when_the_slot_is_lost_between_recipients(db):
 
     assert send.call_count == 1  # a peer holds the slot now, so the rest is its job
     assert "digest.sent" not in _actions(db, org.tenant_id)
+
+
+def test_weekly_digest_does_not_slide_earlier_each_cycle():
+    # Hourly polls over ten weeks: after the first send, every send lands on the same weekday and the gap
+    # never shrinks below 6 days (the old 12h-per-cycle grace compounded to ~6.5, then 6.0, 5.5 ...).
+    start = datetime(2026, 11, 2, 9, 0, tzinfo=timezone.utc)  # a Monday
+    last, sends, now = None, [], start
+    while now < start + timedelta(weeks=10):
+        if digest_sweep._is_due(last, now, 7):
+            last = now
+            sends.append(now)
+        now += timedelta(hours=1)
+    assert len(sends) == 11  # the first, then exactly one per week
+    assert all(b - a >= timedelta(days=6) for a, b in zip(sends, sends[1:]))
+    assert len({s.weekday() for s in sends[1:]}) == 1 and len({s.hour for s in sends[1:]}) == 1
