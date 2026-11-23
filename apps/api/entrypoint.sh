@@ -56,6 +56,8 @@ fi
 
 # Trust X-Forwarded-Proto from Traefik so request.url_for() (GitHub OAuth
 # redirect_uri) reports https instead of the http uvicorn receives behind the proxy --
-# otherwise GitHub rejects the callback. '*' is safe: Traefik and the API only talk
-# over the internal Docker network.
-exec uvicorn src.main:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips='*'
+# otherwise GitHub rejects the callback. The default '*' trusts forwarded headers from any peer, which is only
+# right when nothing but the proxy can reach the API (the compose file publishes no port); set
+# FORWARDED_ALLOW_IPS (comma-separated IPs/CIDRs, e.g. the proxy's address) to trust only the proxy. It matters
+# because the per-IP rate limits and the IPs recorded in audit and session rows come from X-Forwarded-For.
+exec uvicorn src.main:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips="${FORWARDED_ALLOW_IPS:-*}"
