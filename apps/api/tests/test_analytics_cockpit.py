@@ -320,6 +320,23 @@ def test_cockpit_degrades_when_events_fetch_fails(http, db, mock_user):
     assert body["degraded"] is True
 
 
+def test_cockpit_reports_the_aggregate_repo_cap_only_for_an_org_larger_than_it(http, db, mock_user):
+    from src.routers.analytics import _MAX_REPOS_FOR_AGGREGATES
+
+    def _limit(count):
+        repos = [{"name": f"r{i}"} for i in range(count)]
+        patchers = _patch_all({"src.routers.analytics._safe_list_repos": {"return_value": repos}})
+        _start_all(patchers)
+        try:
+            with patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"):
+                return http.get("/me/analytics/cockpit/acme").json()["aggregate_repo_limit"]
+        finally:
+            _stop_all(patchers)
+
+    assert _limit(_MAX_REPOS_FOR_AGGREGATES) is None
+    assert _limit(_MAX_REPOS_FOR_AGGREGATES + 1) == _MAX_REPOS_FOR_AGGREGATES
+
+
 def test_cockpit_not_degraded_when_every_safe_call_succeeds_but_returns_empty(http, db, mock_user):
     """A genuinely empty org (no PRs, no events) must NOT be flagged degraded -- only an actual
     failed call should set it."""

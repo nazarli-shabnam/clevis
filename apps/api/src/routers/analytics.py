@@ -1149,6 +1149,7 @@ async def _build_cockpit(owner: str, user: UserOut, db: Session, token: str) -> 
         recent_events_stale=recent_events_stale,
         activity_history_incomplete=activity_incomplete,
         degraded=degraded,
+        aggregate_repo_limit=_MAX_REPOS_FOR_AGGREGATES if len(repo_names) > _MAX_REPOS_FOR_AGGREGATES else None,
         has_automation_run=has_automation_run,
     )
 
