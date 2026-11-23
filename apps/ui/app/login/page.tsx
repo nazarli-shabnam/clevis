@@ -24,6 +24,7 @@ function GithubMark() {
 const GITHUB_ERROR_MESSAGES: Record<string, string> = {
   github_not_configured: "GitHub sign-in isn't set up on this server yet. Use email and password, or ask an admin to configure it.",
   github_invalid_state: "Your GitHub sign-in attempt expired or was invalid. Please try again.",
+  github_access_denied: "GitHub sign-in was cancelled. Try again, or use your email and password.",
   github_oauth_failed: "GitHub sign-in failed. Please try again.",
   github_email_registered: "An account already exists with this email. Sign in with your password below, then use \"Link GitHub account\" in Settings > Profile to connect GitHub to it.",
   setup_complete: "Setup was already completed by someone else. Sign in with your account below.",
