@@ -4,8 +4,10 @@ Two additive changes for the Actions-cache feature:
 
 * ``cache_size_points``: one row per (tenant, day) with the org's total Actions cache bytes, written by the
   cockpit read so the Overview can chart growth instead of only the current total. Tenant-isolated with the
-  usual RLS policy. Not purged on app uninstall (the purge function is not touched here); the rows are plain
-  numbers and the series simply stops growing.
+  usual RLS policy. ``clevis_api`` gets DELETE because account deletion (services/account_deletion.py) issues a
+  ``DELETE ... WHERE tenant_id`` against every tenant table it does not skip, so without the grant it would fail
+  with a permission error under the RLS-enforcing role. Not purged on app uninstall (the purge function is not
+  touched here); the rows are plain numbers and the series simply stops growing.
 * ``orgs.stale_cache_clear_schedule``: nullable override of the instance ``stale_cache_clear_cadence`` for the
   new scheduled "clear caches idle for N days" automation, same NULL = follow the instance pattern as
   ``orgs.pr_nudge_schedule`` (0084). No default and no backfill, so nothing runs unattended for any existing org.
@@ -49,7 +51,7 @@ def upgrade() -> None:
         DO $$
         BEGIN
             IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'clevis_api') THEN
-                GRANT SELECT, INSERT, UPDATE ON cache_size_points TO clevis_api;
+                GRANT SELECT, INSERT, UPDATE, DELETE ON cache_size_points TO clevis_api;
             END IF;
         END
         $$;
