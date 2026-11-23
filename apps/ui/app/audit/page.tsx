@@ -105,8 +105,11 @@ export default function AuditPage() {
   const jobsById = new Map(jobs.map((j) => [j.id, j]))
 
   const highlightRef = useRef<HTMLTableRowElement>(null)
+  // Scroll once per highlighted job, when its row first renders; later rows loading in must not pull the page back.
+  const scrolledJobId = useRef<number | null>(null)
   useEffect(() => {
-    if (highlightRef.current) {
+    if (highlightRef.current && scrolledJobId.current !== highlightJobId) {
+      scrolledJobId.current = highlightJobId
       highlightRef.current.scrollIntoView({ block: "center", behavior: "smooth" })
     }
   }, [highlightJobId, logs.length])
