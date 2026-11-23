@@ -58,3 +58,15 @@ def test_prepare_env_reads_empty_secrets_from_the_init_secrets_files(tmp_path, m
 
     assert os.environ["JOB_SECRET_KEY"] == "job-from-file"  # empty: filled from the file, newline stripped
     assert os.environ["AUTH_SECRET"] == "set-in-the-environment-and-longer-than-32"  # an environment value wins
+
+
+def test_prepare_env_leaves_a_secret_unset_when_its_file_is_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(set_password, "_SECRET_FILES", {"JOB_SECRET_KEY": str(tmp_path / "absent")})
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@db:5432/d")
+    monkeypatch.delenv("JOB_SECRET_KEY", raising=False)
+
+    set_password._prepare_env()  # no file: no crash, the settings module reports the missing variable
+
+    import os
+
+    assert "JOB_SECRET_KEY" not in os.environ
