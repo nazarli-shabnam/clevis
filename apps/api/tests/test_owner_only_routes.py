@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+from src.core._crypto import encrypt_job_token
 from src.core.auth import UserOut, require_auth
 from src.core.db import User, get_db
 from src.routers.actions_cache import router as cache_router
@@ -156,6 +157,19 @@ def test_tokens_resolve_writes_audit_log(db):
     assert len(logs) == 1
     assert logs[0].actor == _OWNER.email
     assert logs[0].target == "acme"
+
+
+def test_tokens_resolve_reports_a_token_the_current_key_cannot_decrypt(db):
+    from src.core.db import AuditLog, SavedToken
+
+    db.add(SavedToken(org="acme", label="acme", encrypted_token=encrypt_job_token("ghp_test", "some-other-key-entirely")))
+    db.commit()
+
+    resp = _client(tokens_router, db, _OWNER, prefix="/tokens").post("/tokens/resolve", json={"org": "acme"})
+
+    assert resp.status_code == 409
+    assert "JOB_SECRET_KEY" in resp.json()["detail"]
+    assert db.query(AuditLog).filter(AuditLog.action == "token.resolve").count() == 0  # nothing was revealed
 
 
 # ── actions cache ─────────────────────────────────────────────────────────────
