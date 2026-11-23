@@ -18,6 +18,7 @@ import { isOrgMemberOnly, membersHref } from "@/lib/members-href"
 import { useAuth } from "@/lib/auth-context"
 import { CHART_COLORS } from "@/lib/charts/theme"
 import { formatBytes, relativeTime } from "@/lib/format"
+import { CompareCard } from "@/components/compare-card"
 import { SectionError } from "@/components/section-error"
 import { EmptyStateNoAccount } from "@/components/empty-state"
 import { FirstRunChecklist } from "@/components/first-run-checklist"
@@ -304,6 +305,8 @@ export default function OverviewPage() {
           )}
         </div>
       )}
+
+      {cockpit && org && <CompareCard login={org} cockpit={cockpit} memberships={memberships} />}
 
       <div className="grid gap-4 lg:grid-cols-2 mb-6">
         <div className="card">
