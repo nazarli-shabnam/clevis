@@ -4,6 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const burndownMock = vi.fn()
 const downloadMock = vi.fn()
+// What Next's useSearchParams would report: the router's view of the URL, which lags replaceState.
+let routerSearch = ""
+
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(routerSearch) }))
 
 vi.mock("@/lib/api/client", () => ({
   api: { security: { dependabotBurndown: (...a: unknown[]) => burndownMock(...a) } },
@@ -45,6 +49,7 @@ function renderPage() {
 beforeEach(() => {
   burndownMock.mockReset()
   downloadMock.mockReset()
+  routerSearch = ""
   localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "acme" }))
 })
 afterEach(() => {
@@ -136,6 +141,31 @@ describe("DependabotBurndownPage", () => {
 
     fireEvent.click(screen.getByTitle("Show all repositories"))
     expect(await screen.findByRole("link", { name: "acme/api" })).toBeInTheDocument()
+  })
+
+  it("applies a notification deep link when the page is already open (#1237)", async () => {
+    burndownMock.mockResolvedValue({
+      ...DATA,
+      repos: [
+        ...DATA.repos,
+        { repo: "acme/web", open: { critical: 0, high: 1, medium: 0, low: 0 }, breaches: 0, oldest_age_days: 3, oldest_alert_number: 7 },
+      ],
+    })
+    const { rerender } = renderPage()
+    expect(await screen.findByRole("link", { name: "acme/web" })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "acme/api" })).toBeInTheDocument()
+
+    // The bell navigates to ?repo=... while this page stays mounted: only the router's search params change.
+    window.history.replaceState(null, "", "/security/burndown?repo=acme%2Fapi")
+    routerSearch = "repo=acme%2Fapi"
+    rerender(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <DependabotBurndownPage />
+      </QueryClientProvider>,
+    )
+
+    await waitFor(() => expect(screen.queryByRole("link", { name: "acme/web" })).not.toBeInTheDocument())
+    expect(screen.getByRole("link", { name: "acme/api" })).toBeInTheDocument()
   })
 
   it("filters by severity and sorts from the controls, and says when nothing matches", async () => {
