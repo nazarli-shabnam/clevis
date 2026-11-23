@@ -217,8 +217,8 @@ describe("ReposPage", () => {
     expect(reposListMock).toHaveBeenCalledWith("acme", "");
 
     // Per-visible-row lazy fetches fire once the list is loaded.
-    await waitFor(() => expect(reposStatsMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
-    await waitFor(() => expect(reposPullsMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
+    await waitFor(() => expect(reposStatsMock).toHaveBeenCalledWith("acme", "demo", ""));
+    await waitFor(() => expect(reposPullsMock).toHaveBeenCalledWith("acme", "demo", ""));
   });
 
   it("shows an empty state when no repos match the name filter", async () => {
@@ -574,7 +574,7 @@ describe("ReposPage", () => {
     fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
     fireEvent.click(screen.getByRole("button", { name: /load repositories/i }));
     await waitFor(() => expect(screen.getByText("demo")).toBeInTheDocument());
-    await waitFor(() => expect(reposStatsMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
+    await waitFor(() => expect(reposStatsMock).toHaveBeenCalledWith("acme", "demo", ""));
 
     reposStatsMock.mockClear();
     reposPullsMock.mockClear();

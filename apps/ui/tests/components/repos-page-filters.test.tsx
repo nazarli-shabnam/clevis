@@ -140,7 +140,7 @@ describe("ReposPage filters", () => {
 
   it("checks protection on request, then filters to unprotected repos", async () => {
     securityMock.mockReset();
-    securityMock.mockImplementation((_o: string, _w: string, name: string) =>
+    securityMock.mockImplementation((_w: string, name: string) =>
       Promise.resolve({ repository: name, branch_protection: name === "web" ? "unprotected" : "protected", secret_scanning: "unknown" }),
     );
     renderPage();

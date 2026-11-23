@@ -65,7 +65,7 @@ describe("FlowMetricsCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Load metrics" }))
 
     await waitFor(() => expect(screen.getByText("Median cycle time:")).toBeInTheDocument())
-    expect(flowMock).toHaveBeenCalledWith("acme", "acme", "api", "")
+    expect(flowMock).toHaveBeenCalledWith("acme", "api", "")
     expect(screen.getByText("1d 3h")).toBeInTheDocument()
     expect(screen.getByText("3 of the last 12 merged had no review.")).toBeInTheDocument()
     expect(screen.getByText("10m avg")).toBeInTheDocument()
@@ -119,7 +119,7 @@ describe("FlowMetricsCard", () => {
     expect(flowMock).not.toHaveBeenCalled()
 
     update({ token: "ghp_resolved", tokenReady: true })
-    await waitFor(() => expect(flowMock).toHaveBeenCalledWith("acme", "acme", "api", "ghp_resolved"))
+    await waitFor(() => expect(flowMock).toHaveBeenCalledWith("acme", "api", "ghp_resolved"))
     expect(flowMock).toHaveBeenCalledTimes(1)
   })
 

@@ -15,7 +15,7 @@ import { GitPullRequest, ArrowSquareOut, Star, GitFork, Eye, ShieldCheck, Shield
 import { api } from "@/lib/api/client"
 import type { CheckWaiver, RepoSecurityRow } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
-import { setActiveScope } from "@/lib/active-scope"
+import { setActiveScope, useActiveScope } from "@/lib/active-scope"
 import { parseOwnerRepo } from "@/lib/repo-segment"
 import { AreaTimeChart } from "@/components/charts/area-time-chart"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
@@ -111,11 +111,13 @@ function MatrixRows({
   owner,
   repo,
   waivers,
+  personalOwner,
 }: {
   row: RepoSecurityRow
   owner: string
   repo: string
   waivers: CheckWaiver[] | undefined
+  personalOwner: boolean
 }) {
   const tone = (dimension: string, ok: boolean): Tone =>
     row.unknown_dimensions.includes(dimension) ? "unknown" : ok ? "good" : "bad"
@@ -128,7 +130,7 @@ function MatrixRows({
         goodLabel="No critical/high"
         badLabel={`${row.dependabot_critical_count} critical, ${row.dependabot_high_count} high`}
         waiver={activeWaiver(waivers, "repository_dependabot_alerts_clear", repo)}
-        link={{ href: "/security/burndown", text: "Burndown", onClick: scopeToOrg }}
+        link={personalOwner ? undefined : { href: "/security/burndown", text: "Burndown", onClick: scopeToOrg }}
       />
       <SecurityStatusRow
         label="Code scanning alerts"
@@ -154,6 +156,10 @@ export default function RepoDetailPage() {
   const parsed = parseOwnerRepo(params.repo || "")
   const owner = parsed?.owner ?? ""
   const repo = parsed?.repo ?? ""
+  // The org-wide report, burn-down and alerts pages are org-only, so a personal account is never switched into an
+  // org scope to reach them (and is not offered the links).
+  const { scope } = useActiveScope()
+  const personalOwner = scope?.kind === "personal" && scope.login.toLowerCase() === owner.toLowerCase()
 
   const [tab, setTab] = useState<Tab>("overview")
   // The API resolves the installation token server-side (falling back to a saved token for a workspace
@@ -200,20 +206,20 @@ export default function RepoDetailPage() {
 
   const statsQuery = useQuery({
     queryKey: ["repo-detail-stats", owner, repo, token],
-    queryFn: () => api.repos.stats(owner, owner, repo, token),
+    queryFn: () => api.repos.stats(owner, repo, token),
     enabled: !!owner && !!repo,
   })
 
   const pullsQuery = useQuery({
     queryKey: ["repo-detail-pulls", owner, repo, token],
-    queryFn: () => api.repos.pulls(owner, owner, repo, token),
+    queryFn: () => api.repos.pulls(owner, repo, token),
     enabled: !!owner && !!repo,
   })
 
   // Gated on the Security tab being opened, so the Overview/Cache tabs never fire it.
   const securityQuery = useQuery({
     queryKey: ["repo-detail-security", owner, repo, token],
-    queryFn: () => api.repos.security(owner, owner, repo, token),
+    queryFn: () => api.repos.security(owner, repo, token),
     enabled: tab === "security" && !!owner && !!repo,
   })
 
@@ -478,13 +484,15 @@ export default function RepoDetailPage() {
       >
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <span className="section-label">Repository security status</span>
-          <Link
-            href="/security"
-            onClick={() => setActiveScope({ kind: "org", login: owner })}
-            className="text-xs text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1"
-          >
-            Org-wide report <ArrowSquareOut className="size-3" />
-          </Link>
+          {!personalOwner && (
+            <Link
+              href="/security"
+              onClick={() => setActiveScope({ kind: "org", login: owner })}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1"
+            >
+              Org-wide report <ArrowSquareOut className="size-3" />
+            </Link>
+          )}
         </div>
         <div className="p-4">
           <p className="text-xs text-muted-foreground mb-3">
@@ -525,7 +533,11 @@ export default function RepoDetailPage() {
                 goodLabel="Enabled"
                 badLabel="Disabled"
                 waiver={activeWaiver(waiversQuery.data, "repository_secret_scanning_enabled", repo)}
-                link={{ href: "/security", text: "Alerts", onClick: () => setActiveScope({ kind: "org", login: owner }) }}
+                link={
+                  personalOwner
+                    ? undefined
+                    : { href: "/security", text: "Alerts", onClick: () => setActiveScope({ kind: "org", login: owner }) }
+                }
               />
             </div>
           ) : null}
@@ -542,7 +554,7 @@ export default function RepoDetailPage() {
             </div>
           ) : securityRowQuery.data ? (
             <div className="mt-2 flex flex-col gap-2">
-              <MatrixRows row={securityRowQuery.data} owner={owner} repo={repo} waivers={waiversQuery.data} />
+              <MatrixRows row={securityRowQuery.data} owner={owner} repo={repo} waivers={waiversQuery.data} personalOwner={personalOwner} />
             </div>
           ) : null}
         </div>
