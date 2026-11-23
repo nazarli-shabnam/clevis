@@ -33,7 +33,8 @@ class CheckResult(BaseModel):
     # scoring is on). None on scans stored before the stamp existed.
     scored: bool | None = None
     status: Literal["pass", "fail", "error", "not_applicable"]
-    value: bool | str | dict[str, int] | None = None
+    # Counters, plus the capped affected-repo names a failing repo-level check adds under "repos".
+    value: bool | str | dict[str, int | list[str]] | None = None
 
 
 class AnalyticsResponse(BaseModel):
