@@ -780,6 +780,50 @@ def test_policy_on_revokes_the_leavers_tokens_only_and_audits(db, acme):
     assert json.loads(log.payload)["reason"] == "creator_left_org"
 
 
+def test_turning_the_policy_on_revokes_tokens_whose_creator_already_left_and_audits_it(db, acme):
+    from src.repositories import tenant_repo
+
+    boss = _second_admin(db, acme)
+    leaver_token = _new_token(db, acme)
+    boss_token = _client(db, boss).post("/orgs/acme/api-tokens", json={"name": "boss"}).json()["token"]
+    unknown_token = _client(db, boss).post("/orgs/acme/api-tokens", json={"name": "unknown"}).json()["token"]
+    db.query(ApiToken).filter(ApiToken.name == "unknown").update({ApiToken.created_by_user_id: None})
+    db.commit()
+    tenant_repo.delete_membership(db, acme["org"].tenant_id, acme["admin"].id)  # policy still off: nothing revoked
+    assert api_token_repo.resolve(db, leaver_token) is not None
+
+    assert _client(db, boss).put("/orgs/acme/api-token-policy", json={"revoke_on_creator_leave": True}).status_code == 200
+
+    assert api_token_repo.resolve(db, leaver_token) is None
+    assert api_token_repo.resolve(db, boss_token) is not None  # creator still a member
+    assert api_token_repo.resolve(db, unknown_token) is not None  # unknown creator is not "departed"
+    revoked = db.query(AuditLog).filter(AuditLog.action == "api_token.auto_revoked").one()
+    assert json.loads(revoked.payload) | {"token_id": None} == {
+        "token_id": None, "reason": "creator_left_org", "creator_user_id": acme["admin"].id, "when": "policy_enabled",
+    }
+    updated = db.query(AuditLog).filter(AuditLog.action == "api_token_policy.updated").one()
+    assert json.loads(updated.payload) == {"revoke_on_creator_leave": True, "revoked_existing": 1}
+
+
+def test_saving_the_policy_again_or_turning_it_off_does_not_sweep(db, acme):
+    from src.repositories import tenant_repo
+
+    boss = _second_admin(db, acme)
+    leaver_token = _new_token(db, acme)
+    _client(db, boss).put("/orgs/acme/api-token-policy", json={"revoke_on_creator_leave": True})
+    # A departure while the policy is on is handled by the per-removal revoke; simulate one it never saw by
+    # re-opening the token and saving "on" again: no catch-up, since the policy was already on.
+    tenant_repo.delete_membership(db, acme["org"].tenant_id, acme["admin"].id)
+    assert api_token_repo.resolve(db, leaver_token) is None
+    db.query(ApiToken).update({ApiToken.revoked_at: None})
+    db.commit()
+
+    _client(db, boss).put("/orgs/acme/api-token-policy", json={"revoke_on_creator_leave": True})
+    assert api_token_repo.resolve(db, leaver_token) is not None
+    _client(db, boss).put("/orgs/acme/api-token-policy", json={"revoke_on_creator_leave": False})
+    assert api_token_repo.resolve(db, leaver_token) is not None
+
+
 def test_creating_a_token_still_works_for_a_current_member_when_the_policy_is_on(db, acme):
     _client(db, acme["admin"]).put("/orgs/acme/api-token-policy", json={"revoke_on_creator_leave": True})
 

@@ -258,7 +258,8 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
             disabled={setPolicy.isPending}
             onChange={(e) => setPolicy.mutate(e.target.checked)}
           />
-          Revoke a member&apos;s tokens when they leave this org
+          Revoke a member&apos;s tokens when they leave this org (turning it on also revokes the tokens of members
+          who have already left)
         </label>
       )}
       {policy.isError && (
