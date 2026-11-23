@@ -66,14 +66,14 @@ _DEFAULT_SAFE_MOCKS = {
     "src.routers.analytics._safe_member_count": {"return_value": (12, True)},
     "src.routers.analytics._safe_recent_events": {"return_value": ([], True)},
     "src.routers.analytics._safe_open_pr_count": {"return_value": (7, True)},
-    "src.routers.analytics._safe_pr_merge_rate_4w": {"return_value": []},
+    "src.routers.analytics._safe_pr_merge_rate_4w": {"return_value": ([], True)},
     "src.routers.analytics._safe_commit_activity_4w_and_heatmap_52w": {
         "return_value": ([1, 2, 3, 4], [0] * 52, True)
     },
     "src.routers.analytics._safe_total_cache_bytes": {"return_value": (123456, True)},
-    "src.routers.analytics._safe_milestones": {"return_value": ([], [])},
-    "src.routers.analytics._safe_pr_cycle_time_8w": {"return_value": []},
-    "src.routers.analytics._safe_release_cadence_4w": {"return_value": [0, 0, 0, 0]},
+    "src.routers.analytics._safe_milestones": {"return_value": (([], []), True)},
+    "src.routers.analytics._safe_pr_cycle_time_8w": {"return_value": ([], True)},
+    "src.routers.analytics._safe_release_cadence_4w": {"return_value": ([0, 0, 0, 0], True)},
 }
 
 
@@ -318,6 +318,29 @@ def test_cockpit_degrades_when_events_fetch_fails(http, db, mock_user):
     body = resp.json()
     assert body["recent_events"] == []
     assert body["degraded"] is True
+
+
+@pytest.mark.parametrize(
+    "helper,failed",
+    [
+        ("_safe_pr_merge_rate_4w", ([], False)),
+        ("_safe_milestones", (([], []), False)),
+        ("_safe_pr_cycle_time_8w", ([], False)),
+        ("_safe_release_cadence_4w", ([0, 0, 0, 0], False)),
+    ],
+)
+def test_cockpit_degrades_when_a_search_or_per_repo_fetch_fails(http, db, mock_user, helper, failed):
+    """A failed GitHub read must not look like "no activity yet" (and must not be cached as such)."""
+    patchers = _patch_all({f"src.routers.analytics.{helper}": {"return_value": failed}})
+    _start_all(patchers)
+    try:
+        with patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"):
+            resp = http.get("/me/analytics/cockpit/acme")
+    finally:
+        _stop_all(patchers)
+
+    assert resp.status_code == 200
+    assert resp.json()["degraded"] is True
 
 
 def test_cockpit_not_degraded_when_every_safe_call_succeeds_but_returns_empty(http, db, mock_user):
@@ -733,12 +756,12 @@ def test_safe_open_pr_count_returns_zero_and_not_ok_on_http_error():
         assert _safe_open_pr_count("acme", "ghp_test") == (0, False)
 
 
-def test_safe_pr_merge_rate_4w_returns_empty_list_on_error():
+def test_safe_pr_merge_rate_4w_returns_empty_list_and_not_ok_on_error():
     from src.routers.analytics import _safe_pr_merge_rate_4w
 
     with patch("src.routers.analytics.GitHubClient") as mock_client:
         mock_client.return_value.request.side_effect = httpx.RequestError("boom")
-        assert _safe_pr_merge_rate_4w("acme", "ghp_test") == []
+        assert _safe_pr_merge_rate_4w("acme", "ghp_test") == ([], False)
 
 
 def test_safe_pr_merge_rate_4w_returns_four_chronological_buckets():
@@ -746,7 +769,8 @@ def test_safe_pr_merge_rate_4w_returns_four_chronological_buckets():
 
     with patch("src.routers.analytics.GitHubClient") as mock_client:
         mock_client.return_value.request.return_value = {"total_count": 3}
-        buckets = _safe_pr_merge_rate_4w("acme", "ghp_test")
+        buckets, ok = _safe_pr_merge_rate_4w("acme", "ghp_test")
+    assert ok is True
     assert len(buckets) == 4
     weeks = [b.week for b in buckets]
     assert weeks == sorted(weeks)
@@ -1130,14 +1154,15 @@ def test_cockpit_cache_rate_for_an_own_scope_caller_counts_only_their_jobs(http,
 # ---------------------------------------------------------------------------
 
 
-def test_safe_milestones_returns_empty_on_error():
+def test_safe_milestones_returns_empty_and_not_ok_on_error():
     from src.routers.analytics import _safe_milestones
 
     with patch("src.routers.analytics.GitHubClient") as mock_client:
         mock_client.return_value.request.side_effect = httpx.RequestError("boom")
-        milestones, at_risk = _safe_milestones("acme", "ghp_test", ["repo-a"])
+        (milestones, at_risk), ok = _safe_milestones("acme", "ghp_test", ["repo-a"])
     assert milestones == []
     assert at_risk == []
+    assert ok is False
 
 
 def test_safe_milestones_flags_overdue_as_critical():
@@ -1147,7 +1172,7 @@ def test_safe_milestones_flags_overdue_as_critical():
         mock_client.return_value.request.return_value = [
             {"title": "v1", "due_on": "2020-01-01T00:00:00Z", "open_issues": 3, "closed_issues": 1}
         ]
-        milestones, at_risk = _safe_milestones("acme", "ghp_test", ["repo-a"])
+        (milestones, at_risk), _ok = _safe_milestones("acme", "ghp_test", ["repo-a"])
 
     assert milestones[0].state == "overdue"
     assert milestones[0].progress_pct == 25.0
@@ -1163,7 +1188,7 @@ def test_safe_milestones_on_track_when_no_due_date():
         mock_client.return_value.request.return_value = [
             {"title": "backlog", "due_on": None, "open_issues": 0, "closed_issues": 0}
         ]
-        milestones, at_risk = _safe_milestones("acme", "ghp_test", ["repo-a"])
+        (milestones, at_risk), _ok = _safe_milestones("acme", "ghp_test", ["repo-a"])
 
     assert milestones[0].state == "on_track"
     assert at_risk == []
@@ -1179,10 +1204,11 @@ def test_safe_milestones_one_bad_repo_does_not_blank_others():
 
     with patch("src.routers.analytics.GitHubClient") as mock_client:
         mock_client.return_value.request.side_effect = _side_effect
-        milestones, _ = _safe_milestones("acme", "ghp_test", ["repo-bad", "repo-good"])
+        (milestones, _), ok = _safe_milestones("acme", "ghp_test", ["repo-bad", "repo-good"])
 
     assert len(milestones) == 1
     assert milestones[0].repo == "repo-good"
+    assert ok is False  # one repo could not be read, so the list may be incomplete
 
 
 def test_milestone_state_unparsable_due_on_treated_as_on_track():
@@ -1215,7 +1241,7 @@ def test_safe_milestones_multiple_overdue_milestones_same_repo_collect_both_reas
             {"title": "v1-overdue", "due_on": "2020-01-01T00:00:00Z", "open_issues": 3, "closed_issues": 1},
             {"title": "v2-overdue", "due_on": "2020-02-01T00:00:00Z", "open_issues": 5, "closed_issues": 0},
         ]
-        milestones, at_risk = _safe_milestones("acme", "ghp_test", ["repo-a"])
+        (milestones, at_risk), _ok = _safe_milestones("acme", "ghp_test", ["repo-a"])
 
     assert len(milestones) == 2
     assert len(at_risk) == 1
@@ -1229,12 +1255,12 @@ def test_safe_milestones_multiple_overdue_milestones_same_repo_collect_both_reas
 # ---------------------------------------------------------------------------
 
 
-def test_safe_pr_cycle_time_8w_returns_empty_on_error():
+def test_safe_pr_cycle_time_8w_returns_empty_and_not_ok_on_error():
     from src.routers.analytics import _safe_pr_cycle_time_8w
 
     with patch("src.routers.analytics.GitHubClient") as mock_client:
         mock_client.return_value.request.side_effect = httpx.RequestError("boom")
-        assert _safe_pr_cycle_time_8w("acme", "ghp_test") == []
+        assert _safe_pr_cycle_time_8w("acme", "ghp_test") == ([], False)
 
 
 def test_safe_pr_cycle_time_8w_computes_average_days():
@@ -1247,7 +1273,8 @@ def test_safe_pr_cycle_time_8w_computes_average_days():
                 {"created_at": "2026-01-01T00:00:00Z", "closed_at": "2026-01-05T00:00:00Z"},
             ]
         }
-        buckets = _safe_pr_cycle_time_8w("acme", "ghp_test")
+        buckets, ok = _safe_pr_cycle_time_8w("acme", "ghp_test")
+    assert ok is True
     assert len(buckets) == 8
     assert all(b.avg_days == 3.0 for b in buckets)
 
@@ -1257,7 +1284,8 @@ def test_safe_pr_cycle_time_8w_zero_when_no_merges():
 
     with patch("src.routers.analytics.GitHubClient") as mock_client:
         mock_client.return_value.request.return_value = {"items": []}
-        buckets = _safe_pr_cycle_time_8w("acme", "ghp_test")
+        buckets, ok = _safe_pr_cycle_time_8w("acme", "ghp_test")
+    assert ok is True
     assert all(b.avg_days == 0.0 for b in buckets)
 
 
@@ -1273,16 +1301,17 @@ def test_safe_pr_cycle_time_8w_skips_malformed_search_items():
                 {"created_at": "2026-01-01T00:00:00Z", "closed_at": "not-a-date"},  # ValueError
             ]
         }
-        buckets = _safe_pr_cycle_time_8w("acme", "ghp_test")
+        buckets, ok = _safe_pr_cycle_time_8w("acme", "ghp_test")
+    assert ok is True
     assert all(b.avg_days == 0.0 for b in buckets)
 
 
-def test_safe_release_cadence_4w_returns_zeros_on_error():
+def test_safe_release_cadence_4w_returns_zeros_and_not_ok_on_error():
     from src.routers.analytics import _safe_release_cadence_4w
 
     with patch("src.routers.analytics.GitHubClient") as mock_client:
         mock_client.return_value.request.side_effect = httpx.RequestError("boom")
-        assert _safe_release_cadence_4w("acme", "ghp_test", ["repo-a"]) == [0, 0, 0, 0]
+        assert _safe_release_cadence_4w("acme", "ghp_test", ["repo-a"]) == ([0, 0, 0, 0], False)
 
 
 def test_safe_release_cadence_4w_buckets_by_week():
@@ -1291,7 +1320,8 @@ def test_safe_release_cadence_4w_buckets_by_week():
     this_week_release = {"published_at": (_week_start(0) + timedelta(days=1)).isoformat() + "T00:00:00Z"}
     with patch("src.routers.analytics.GitHubClient") as mock_client:
         mock_client.return_value.request.return_value = [this_week_release]
-        totals = _safe_release_cadence_4w("acme", "ghp_test", ["repo-a"])
+        totals, ok = _safe_release_cadence_4w("acme", "ghp_test", ["repo-a"])
+    assert ok is True
     assert totals[3] == 1
     assert sum(totals) == 1
 
@@ -1309,9 +1339,10 @@ def test_safe_release_cadence_4w_skips_non_list_response_and_missing_or_bad_date
 
     with patch("src.routers.analytics.GitHubClient") as mock_client:
         mock_client.return_value.request.side_effect = _side_effect
-        totals = _safe_release_cadence_4w("acme", "ghp_test", ["repo-not-a-list", "repo-b"])
+        totals, ok = _safe_release_cadence_4w("acme", "ghp_test", ["repo-not-a-list", "repo-b"])
 
     assert totals == [0, 0, 0, 0]
+    assert ok is True  # a non-list reply is not a failed read
 
 
 def _cached_cockpit(http, token="ghp_test", overrides=None):
