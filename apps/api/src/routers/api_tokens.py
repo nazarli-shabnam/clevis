@@ -87,13 +87,18 @@ def set_token_policy(
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
+    turned_on = body.revoke_on_creator_leave and not ctx.org.revoke_tokens_on_creator_leave
     ctx.org.revoke_tokens_on_creator_leave = body.revoke_on_creator_leave
+    payload = {"revoke_on_creator_leave": body.revoke_on_creator_leave}
+    if turned_on:
+        # Departures before now were never seen by the per-removal revoke, so catch up once (same transaction).
+        payload["revoked_existing"] = api_token_repo.revoke_for_departed_creators(db, ctx.org.tenant_id)
     audit_repo.write(
         db,
         actor=user.email,
         action="api_token_policy.updated",
         target=ctx.org.github_login,
-        payload={"revoke_on_creator_leave": body.revoke_on_creator_leave},
+        payload=payload,
         tenant_id=ctx.org.tenant_id,
         commit=False,
     )

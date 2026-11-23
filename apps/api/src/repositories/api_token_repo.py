@@ -119,3 +119,30 @@ def revoke_for_departed_creator(db: Session, tenant_id: int, user_id: int) -> in
             tenant_id=tenant_id, commit=False,
         )
     return len(revoked)
+
+
+def revoke_for_departed_creators(db: Session, tenant_id: int) -> int:
+    """Revoke every active token in this org whose creator is no longer a member: the one-time catch-up when
+    ``orgs.revoke_tokens_on_creator_leave`` is switched on, because the per-departure revoke above only sees
+    removals that happen while it is on. A token with an unknown creator (``created_by_user_id`` NULL) is not
+    treated as departed. Audited per token like the per-departure revoke; does not commit."""
+    revoked = db.execute(
+        text(
+            """
+            UPDATE api_tokens t SET revoked_at = now()
+            WHERE t.tenant_id = :t AND t.revoked_at IS NULL AND t.created_by_user_id IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM memberships m WHERE m.tenant_id = t.tenant_id AND m.user_id = t.created_by_user_id
+              )
+            RETURNING t.id, t.name, t.created_by_user_id
+            """
+        ),
+        {"t": tenant_id},
+    ).all()
+    for token_id, name, creator_id in revoked:
+        audit_repo.write(
+            db, "system", "api_token.auto_revoked", name,
+            {"token_id": token_id, "reason": "creator_left_org", "creator_user_id": creator_id, "when": "policy_enabled"},
+            tenant_id=tenant_id, commit=False,
+        )
+    return len(revoked)
