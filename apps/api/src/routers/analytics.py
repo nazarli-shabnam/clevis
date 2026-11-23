@@ -761,7 +761,8 @@ def _safe_open_pr_count(owner: str, token: str, account_type: str = "Organizatio
         return 0, False
 
 
-def _safe_pr_merge_rate_4w(owner: str, token: str, account_type: str = "Organization") -> list[PrWeekBucket]:
+def _safe_pr_merge_rate_4w(owner: str, token: str, account_type: str = "Organization") -> tuple[list[PrWeekBucket], bool]:
+    """(buckets, ok): ok=False means a search call failed, so the empty list is a fallback, not "no PRs"."""
     try:
         client = GitHubClient(token)
         qualifier = _owner_search_qualifier(owner, account_type)
@@ -777,12 +778,13 @@ def _safe_pr_merge_rate_4w(owner: str, token: str, account_type: str = "Organiza
                 )
                 for start in week_starts
             ]
-            return [
+            buckets = [
                 PrWeekBucket(week=start.isoformat(), opened=opened_f.result(), merged=merged_f.result())
                 for start, opened_f, merged_f in futures
             ]
+            return buckets, True
     except (httpx.HTTPStatusError, httpx.RequestError):
-        return []
+        return [], False
 
 
 def _week_total(week: dict) -> int:
@@ -884,21 +886,29 @@ def _milestone_state(due_on: str | None, progress_pct: float) -> str:
     return "on_track"
 
 
-def _safe_milestones(owner: str, token: str, repo_names: list[str]) -> tuple[list[MilestoneSummary], list[AtRiskRepo]]:
-    """Each repo's open milestones, best-effort per repo so one broken repo doesn't blank the rest."""
+def _safe_milestones(
+    owner: str, token: str, repo_names: list[str]
+) -> tuple[tuple[list[MilestoneSummary], list[AtRiskRepo]], bool]:
+    """Each repo's open milestones, best-effort per repo so one broken repo doesn't blank the rest.
+    Returns ((milestones, at_risk), ok); ok=False when any repo's read failed, so the result may be incomplete."""
     client = GitHubClient(token)
     milestones: list[MilestoneSummary] = []
+    ok = True
 
-    def _fetch(repo: str) -> list[dict]:
+    def _fetch(repo: str) -> list[dict] | None:
         try:
             return client.request("GET", f"/repos/{owner}/{repo}/milestones", params={"state": "open"})
         except (httpx.HTTPStatusError, httpx.RequestError):
-            return []
+            return None
 
     with nullcontext(_GITHUB_FANOUT_POOL) as pool:
         futures = {pool.submit(_fetch, repo): repo for repo in repo_names[:_MAX_REPOS_FOR_AGGREGATES]}
         for future, repo in futures.items():
-            for m in future.result():
+            fetched = future.result()
+            if fetched is None:
+                ok = False
+                continue
+            for m in fetched:
                 open_issues = m.get("open_issues", 0)
                 closed_issues = m.get("closed_issues", 0)
                 total = open_issues + closed_issues
@@ -937,7 +947,7 @@ def _safe_milestones(owner: str, token: str, repo_names: list[str]) -> tuple[lis
                 existing.severity = "critical"
 
     at_risk_repos = sorted(at_risk_by_repo.values(), key=lambda r: r.severity != "critical")
-    return milestones[:10], at_risk_repos[:10]
+    return (milestones[:10], at_risk_repos[:10]), ok
 
 
 def _week_pr_cycle_time(client: GitHubClient, owner: str, start: date, account_type: str = "Organization") -> PrCycleTimeWeek:
@@ -962,7 +972,8 @@ def _week_pr_cycle_time(client: GitHubClient, owner: str, start: date, account_t
     return PrCycleTimeWeek(week=start.isoformat(), avg_days=avg_days)
 
 
-def _safe_pr_cycle_time_8w(owner: str, token: str, account_type: str = "Organization") -> list[PrCycleTimeWeek]:
+def _safe_pr_cycle_time_8w(owner: str, token: str, account_type: str = "Organization") -> tuple[list[PrCycleTimeWeek], bool]:
+    """(weeks, ok): ok=False means a search call failed and the empty list is a fallback."""
     try:
         client = GitHubClient(token)
         week_starts = [_week_start(weeks_ago) for weeks_ago in range(7, -1, -1)]
@@ -970,27 +981,32 @@ def _safe_pr_cycle_time_8w(owner: str, token: str, account_type: str = "Organiza
             futures = [
                 pool.submit(_week_pr_cycle_time, client, owner, start, account_type) for start in week_starts
             ]
-            return [f.result() for f in futures]
+            return [f.result() for f in futures], True
     except (httpx.HTTPStatusError, httpx.RequestError):
-        return []
+        return [], False
 
 
-def _safe_release_cadence_4w(owner: str, token: str, repo_names: list[str]) -> list[int]:
-    """Weekly release counts across the org's repos for the last 4 weeks."""
+def _safe_release_cadence_4w(owner: str, token: str, repo_names: list[str]) -> tuple[list[int], bool]:
+    """Weekly release counts across the org's repos for the last 4 weeks, as (totals, ok); ok=False when any
+    repo's read failed, so the counts may be too low."""
     week_starts = [_week_start(weeks_ago) for weeks_ago in range(3, -1, -1)]
     totals = [0, 0, 0, 0]
+    ok = True
 
-    def _fetch(repo: str) -> list[dict]:
+    def _fetch(repo: str) -> list[dict] | None:
         try:
             client = GitHubClient(token)
             return client.request("GET", f"/repos/{owner}/{repo}/releases", params={"per_page": 20})
         except (httpx.HTTPStatusError, httpx.RequestError):
-            return []
+            return None
 
     with nullcontext(_GITHUB_FANOUT_POOL) as pool:
         futures = [pool.submit(_fetch, repo) for repo in repo_names[:_MAX_REPOS_FOR_AGGREGATES]]
         for future in futures:
             releases = future.result()
+            if releases is None:
+                ok = False
+                continue
             if not isinstance(releases, list):
                 continue
             for r in releases:
@@ -1005,7 +1021,7 @@ def _safe_release_cadence_4w(owner: str, token: str, repo_names: list[str]) -> l
                     if start <= published < start + timedelta(days=7):
                         totals[i] += 1
                         break
-    return totals
+    return totals, ok
 
 
 def _has_automation_run(db: Session, user: UserOut, owner: str) -> bool | None:
@@ -1099,11 +1115,11 @@ async def _build_cockpit(owner: str, user: UserOut, db: Session, token: str) -> 
         (member_count, member_count_ok),
         (recent_events, recent_events_degraded, recent_events_stale, (commit_activity_4w, commit_heatmap_52w, commit_activity_ok)),
         (open_pr_count, open_pr_count_ok),
-        pr_merge_rate_4w,
+        (pr_merge_rate_4w, pr_merge_rate_ok),
         (total_cache_size_bytes, cache_bytes_ok),
-        (milestones, at_risk_repos),
-        pr_cycle_time_8w,
-        release_cadence_4w,
+        ((milestones, at_risk_repos), milestones_ok),
+        (pr_cycle_time_8w, pr_cycle_time_ok),
+        (release_cadence_4w, release_cadence_ok),
     ) = await asyncio.gather(
         anyio.to_thread.run_sync(lambda: _safe_member_count(owner, token, account_type)),
         anyio.to_thread.run_sync(
@@ -1123,6 +1139,10 @@ async def _build_cockpit(owner: str, user: UserOut, db: Session, token: str) -> 
         or not cache_bytes_ok
         or not commit_activity_ok
         or recent_events_degraded
+        or not pr_merge_rate_ok
+        or not milestones_ok
+        or not pr_cycle_time_ok
+        or not release_cadence_ok
     )
 
     # Last: audit_tenant re-points the RLS tenant context, which every read above has already finished with.
