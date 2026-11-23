@@ -1,10 +1,12 @@
 """Dependabot alert burn-down from ingested ``security_alerts`` rows: open alerts by severity over
 time, median/oldest age, and SLA breaches per severity and per repo.
 
-Limits worth knowing (surfaced to users in the UI): rows exist only for alerts delivered by
-webhook (there is no backfill), and the table keeps no separate "closed at" timestamp, so a closed
-alert's ``updated_at`` stands in for its close time. An alert reopened later is shown as open
-for its whole life in the trend.
+Limits worth knowing (surfaced to users in the UI): rows come from webhooks plus the open-alert backfill
+(``github.backfill_security_alerts``, migration 0080; at install and again about monthly), which lists only
+open alerts. The table keeps no separate "closed at" timestamp, so a closed alert's ``updated_at`` stands in
+for its close time, and when the backfill closes a stored alert whose close webhook was missed it sets
+``updated_at = NOW()``, so such an alert's trend close day can be the sync day rather than the real one. An alert reopened later is shown
+as open for its whole life in the trend.
 """
 
 from __future__ import annotations
