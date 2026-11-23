@@ -141,7 +141,22 @@ python -m pip install -r apps/api/requirements.txt
 python -m pip install -r apps/worker/requirements.txt
 python -m pip install -e packages/checks
 python -m pip install -r requirements-test.txt
-python -m pytest -q --cov=apps/api/src --cov=apps/worker/src --cov=packages/checks/src --cov-report=xml --cov-report=term --cov-fail-under=85
+ruff check .
+
+# Migrations, against the local Postgres (DATABASE_URL as the superuser, see `docker compose up db`)
+cd apps/api
+python -m alembic upgrade head
+python -m alembic check          # fails on model / migration drift
+python -m alembic downgrade base # every downgrade() must still run ...
+python -m alembic upgrade head   # ... and bring the schema back identical
+python -m alembic check
+cd ../..
+
+# CI runs the tests as the non-superuser `clevis_api` role, so a missing table grant only fails there.
+# Provision it the way CI does (the same script operators use, see docs/self-hosting.md), then point
+# DATABASE_URL at it for the test run:
+PGHOST=localhost PGPORT=5432 PGPASSWORD=<DB_PASSWORD> POSTGRES_USER=<DB_USER> POSTGRES_DB=<DB_NAME>   API_DB_PASSWORD=<API_DB_PASSWORD> sh docker/provision-api-role-existing-deployment.sh
+DATABASE_URL=postgresql+psycopg://clevis_api:<API_DB_PASSWORD>@localhost:5432/<DB_NAME>   python -m pytest -q --cov=apps/api/src --cov=apps/worker/src --cov=packages/checks/src --cov-report=xml --cov-report=term --cov-fail-under=85
 python -m compileall apps/api/src apps/worker/src
 ```
 
