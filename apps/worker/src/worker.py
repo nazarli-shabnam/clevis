@@ -360,11 +360,13 @@ def _handle_clear_actions_cache(conn: psycopg.Connection, job_id: int, payload_r
                 return
 
             # GitHub has no bulk-delete endpoint (keyless DELETE is a 422): list every
-            # cache entry, then delete each by id.
+            # cache entry, then delete each by id. A ref without a key narrows the listing to that ref,
+            # so a branch-scoped request never deletes the caches of other branches.
             cache_ids: list[int] = []
             page = 1
+            list_params = {"per_page": 100, **({"ref": payload.ref} if payload.ref else {})}
             while True:
-                resp = client.get(repo_path, headers=headers, params={"per_page": 100, "page": page})
+                resp = client.get(repo_path, headers=headers, params={**list_params, "page": page})
                 if _github_response_is_error(conn, job_id, retry_count, resp):
                     return
                 batch = (resp.json() or {}).get("actions_caches", [])
