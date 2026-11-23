@@ -338,8 +338,12 @@ def github_callback(
         if not code:  # e.g. the user denied access on GitHub (error=access_denied)
             return _ui_settings_redirect("github_link_error=oauth")
         return _complete_link(request, db, code, state, session)
-    if not code or not state or not github_oauth.verify_state(state, cookie_nonce=cookie_nonce):
+    if not state or not github_oauth.verify_state(state, cookie_nonce=cookie_nonce):
         error_response = _ui_login_error_redirect("github_invalid_state")
+        _clear_state_cookie(error_response)
+        return error_response
+    if not code:  # a valid state with no code: the user cancelled on GitHub's authorize page (error=access_denied)
+        error_response = _ui_login_error_redirect("github_access_denied")
         _clear_state_cookie(error_response)
         return error_response
     next_path = github_oauth.decode_state_next(state)
