@@ -237,7 +237,9 @@ async def run_scan(org_login: str, token: ResolvedToken = Depends(require_scope(
 async def _scan_and_record(token: ResolvedToken, db: Session) -> ScoreOut:
     try:
         github_token = await anyio.to_thread.run_sync(
-            lambda: resolve_org_token(db, org_id=token.org_id, account_login=token.org_login, client_token=None)
+            lambda: resolve_org_token(
+                db, org_id=token.org_id, account_login=token.org_login, client_token=None, for_scan=True
+            )
         )
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))

@@ -37,6 +37,9 @@ _TOKEN_EXPIRY_MARGIN_SECONDS = 60
 # A token baked into a background job must outlive the worker's whole retry budget (~23 min of backoff,
 # see worker.MAX_RETRIES) plus the run itself, so a cached token with less than this left is not reused.
 JOB_TOKEN_MIN_TTL_SECONDS = 30 * 60
+# One scan makes hundreds of GitHub calls over several minutes with a single token, so a cached token that is
+# about to expire is not reused for it: the late calls would 401 and be stored as errored checks.
+SCAN_TOKEN_MIN_TTL_SECONDS = 10 * 60
 
 
 class GitHubAppNotConfigured(RuntimeError):
