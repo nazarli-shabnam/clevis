@@ -164,3 +164,18 @@ def test_a_partly_delivered_alert_counts_as_sent_so_it_is_not_repeated_to_those_
         assert notifications.send(dest, "test", "t", {"org": "acme-mail"}, email_allowed=allowed) == (True, "1/2 sent")
     with SMTP_ON, patch("src.services.email.send_email", side_effect=OSError("down")):
         assert notifications.send(dest, "test", "t", {"org": "acme-mail"}, email_allowed=allowed) == (False, "0/2 sent")
+
+
+def test_changing_recipients_clears_the_failure_status(db, acme):
+    from src.repositories import notification_repo
+
+    client = _client(db, acme["admin"])
+    dest_id = _create(client, ["mail-member@e.com"]).json()["id"]
+    for _ in range(3):
+        notification_repo.record_delivery(db, dest_id, False, "smtp down")
+    with SMTP_ON:
+        resp = client.patch(f"/orgs/acme-mail/notification-destinations/{dest_id}", json={"recipients": ["mail-admin@e.com"]})
+    assert resp.status_code == 200
+    row = db.get(NotificationDestination, dest_id)
+    db.refresh(row)
+    assert (row.last_status, row.last_error, row.consecutive_failures) == (None, None, 0)

@@ -174,6 +174,7 @@ def update_destination(
             changed.append("secret")
 
     # `null` on these is "not provided", not "clear": they are NOT NULL columns.
+    re_enabled = "enabled" in sent and body.enabled is True and not dest.enabled
     for field in ("name", "enabled", "min_score_drop"):
         if field in sent and getattr(body, field) is not None:
             setattr(dest, field, getattr(body, field))
@@ -186,6 +187,13 @@ def update_destination(
         current = [e for e in dest.events if e not in removed]
         dest.events = current + [e for e in dict.fromkeys(body.add_events or []) if e not in current]
         changed.append("events")
+
+    # Delivery health describes the old target: after a fix (new URL/secret/recipients) or a re-enable it
+    # would keep showing "failing" until some later send, which a rarely-triggered event may never make.
+    if re_enabled or {"url", "secret", "recipients"} & set(changed):
+        dest.last_status = None
+        dest.last_error = None
+        dest.consecutive_failures = 0
 
     audit_repo.write(
         db,
