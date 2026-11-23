@@ -6,6 +6,7 @@ const getMock = vi.fn();
 const setMock = vi.fn();
 const repoMock = vi.fn();
 const triageSetMock = vi.fn();
+const cacheRepoMock = vi.fn();
 
 vi.mock("@/lib/api/client", () => ({
   api: {
@@ -13,6 +14,7 @@ vi.mock("@/lib/api/client", () => ({
       automationSchedules: (...a: unknown[]) => getMock(...a),
       setAutomationSchedules: (...a: unknown[]) => setMock(...a),
       setPrNudgeRepo: (...a: unknown[]) => repoMock(...a),
+      setStaleCacheRepo: (...a: unknown[]) => cacheRepoMock(...a),
     },
     dependabotTriage: {
       setRepo: (...a: unknown[]) => triageSetMock(...a),
@@ -27,8 +29,10 @@ const off = { enabled: null, effective: false, cadence: null, instance_cadence: 
 const schedules = (over: Partial<AutomationSchedules> = {}): AutomationSchedules => ({
   pr_nudges: off,
   dependabot_triage: off,
+  stale_cache_clear: off,
   pr_nudge_repos: [],
   triage_repos: ["acme/api"],
+  stale_cache_repos: { "acme/web": 14 },
   ...over,
 });
 
@@ -137,6 +141,24 @@ describe("AutomationSchedulesCard", () => {
 
     fireEvent.change(await screen.findByLabelText("Triage Dependabot pull requests automatically"), { target: { value: "off" } });
     await waitFor(() => expect(setMock).toHaveBeenCalledWith("acme", { dependabot_triage: false }));
+  });
+
+  it("lets an admin schedule idle-cache clearing and add a repository with its idle days", async () => {
+    setMock.mockResolvedValue(schedules());
+    cacheRepoMock.mockResolvedValue({ enabled: true, idle_days: 3 });
+    renderCard();
+
+    expect(await screen.findByText("idle for 14+ days")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Clear idle Actions caches automatically"), { target: { value: "on" } });
+    await waitFor(() => expect(setMock).toHaveBeenCalledWith("acme", { stale_cache_clear: true }));
+
+    fireEvent.change(screen.getByLabelText("Repository to clear caches of"), { target: { value: "api" } });
+    fireEvent.change(screen.getByLabelText("Idle days before a cache is cleared"), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add cache repository" }));
+    await waitFor(() => expect(cacheRepoMock).toHaveBeenCalledWith("acme", "acme", "api", true, 3));
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop clearing caches of acme/web" }));
+    await waitFor(() => expect(cacheRepoMock).toHaveBeenCalledWith("acme", "acme", "web", false, 14));
   });
 
   it("surfaces an error from saving a schedule or a repository", async () => {

@@ -261,6 +261,17 @@ class RepoMoveEdge(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class CacheSizePoint(Base):
+    """An org's total Actions cache bytes on one day (migration 0094), recorded by the cockpit read."""
+
+    __tablename__ = "cache_size_points"
+
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), primary_key=True)
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class OrgMember(Base):
     """Current org membership (row deleted on member_removed), populated from `organization` webhooks.
 
@@ -420,6 +431,8 @@ class Org(Base):
     # True = run on a schedule, False = never, NULL = follow the instance.
     pr_nudge_schedule: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     dependabot_triage_schedule: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Same override pattern for the scheduled stale-cache clear (migration 0094).
+    stale_cache_clear_schedule: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # Stays nullable: a new Org and its Tenant reference each other, and NOT NULL can't be deferred
     # like a FK can. org_repo.get_or_create self-heals missing values.
     tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

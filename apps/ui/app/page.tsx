@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { Time } from "@/components/time"
 import Link from "next/link"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { SinceLastVisitCard } from "@/components/since-last-visit-card"
 import { StatCard } from "@/components/stat-card"
@@ -110,6 +110,7 @@ export default function OverviewPage() {
     refetchInterval: 30_000,
   })
   const cockpit = cockpitQuery.data
+  const queryClient = useQueryClient()
   // When the score was produced (org scopes only: the stored-scan route is org-gated). The same key and fetch as
   // the Security page, so the two share one cache entry and a finished scan refreshes both.
   const latestScanQuery = useQuery({
@@ -137,6 +138,19 @@ export default function OverviewPage() {
     retry: false,
   })
   const usage = actionsUsageQuery.data
+  // Org-scoped only: the history is stored per org tenant. Best effort, so the chart simply stays hidden on error.
+  const cacheHistoryQuery = useQuery({
+    queryKey: ["analytics.cache-history", org, user?.id ?? "anon"],
+    queryFn: () => api.analytics.cacheHistory(org, 30),
+    enabled: isOrgScope && org.trim().length > 0,
+    retry: false,
+  })
+  // The cockpit read records today's point, so the history read that started alongside it may predate that write.
+  const cockpitUpdatedAt = cockpitQuery.dataUpdatedAt
+  useEffect(() => {
+    if (cockpitUpdatedAt > 0) queryClient.invalidateQueries({ queryKey: ["analytics.cache-history", org] })
+  }, [cockpitUpdatedAt, org, queryClient])
+  const cacheHistoryData = (cacheHistoryQuery.data ?? []).map((p) => ({ week: p.day.slice(5), value: Math.round(p.total_bytes / 1e6) }))
 
   const [myViewTab, setMyViewTab] = useState<MyViewTabId>("prs")
   const myViewQuery = useQuery({
@@ -312,6 +326,17 @@ export default function OverviewPage() {
             )}
           </div>
         </div>
+
+        {cacheHistoryQuery.isSuccess && cacheHistoryData.length > 1 && (
+          <div className="card">
+            <div className="px-4 py-3 border-b border-border">
+              <span className="section-label">Actions Cache Size (30d)</span>
+            </div>
+            <div className="p-4">
+              <AreaTimeChart data={cacheHistoryData} label="MB" color={CHART_COLORS.series[3]} height={200} />
+            </div>
+          </div>
+        )}
 
         {actionsUsageQuery.isSuccess && usage && usage.total_minutes_used > 0 && (
           <div className="card">

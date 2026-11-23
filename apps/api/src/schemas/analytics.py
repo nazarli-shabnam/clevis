@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, ConfigDict, SecretStr
 
 
 class AnalyticsInput(BaseModel):
@@ -35,6 +35,12 @@ class CheckResult(BaseModel):
     status: Literal["pass", "fail", "error", "not_applicable"]
     # Counters, plus the capped affected-repo names a failing repo-level check adds under "repos".
     value: bool | str | dict[str, int | list[str]] | None = None
+
+
+class CacheSizePointOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    day: date
+    total_bytes: int
 
 
 class AnalyticsResponse(BaseModel):

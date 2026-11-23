@@ -6,6 +6,7 @@ const tokensResolveMock = vi.fn();
 const cockpitMock = vi.fn();
 const myViewMock = vi.fn();
 const actionsUsageMock = vi.fn();
+const cacheHistoryMock = vi.fn();
 const orgsMineMock = vi.fn();
 const installationsListForOrgMock = vi.fn();
 const installationsListMock = vi.fn();
@@ -26,6 +27,7 @@ vi.mock("@/lib/api/client", () => ({
       cockpit: (...args: unknown[]) => cockpitMock(...args),
       myView: (...args: unknown[]) => myViewMock(...args),
       actionsUsage: (...args: unknown[]) => actionsUsageMock(...args),
+      cacheHistory: (...args: unknown[]) => cacheHistoryMock(...args),
       latestScan: (...args: unknown[]) => latestScanMock(...args),
     },
     orgs: {
@@ -93,6 +95,8 @@ describe("OverviewPage cockpit", () => {
     latestScanMock.mockRejectedValue(new Error("none"));
     myViewMock.mockReset();
     actionsUsageMock.mockReset();
+    cacheHistoryMock.mockReset();
+    cacheHistoryMock.mockRejectedValue(new Error("no history"));
     orgsMineMock.mockReset();
     orgsMineMock.mockResolvedValue([]);
     installationsListMock.mockReset();
@@ -483,6 +487,56 @@ describe("OverviewPage cockpit", () => {
     expect(screen.getByText(/1,250 min/)).toBeInTheDocument();
     expect(screen.getByText(/900 included · 350 billable/)).toBeInTheDocument();
     expect(screen.getByText("actions_linux")).toBeInTheDocument();
+  });
+
+  it("charts the recorded Actions cache size once there are at least two daily points", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+    cockpitMock.mockResolvedValue({ ...EMPTY_COCKPIT });
+    cacheHistoryMock.mockResolvedValue([
+      { day: "2026-11-21", total_bytes: 500_000_000 },
+      { day: "2026-11-22", total_bytes: 900_000_000 },
+    ]);
+
+    renderPage();
+
+    expect(await screen.findByText("Actions Cache Size (30d)")).toBeInTheDocument();
+    expect(cacheHistoryMock).toHaveBeenCalledWith("acme", 30);
+  });
+
+  it("hides the cache size chart while there is a single point or the history cannot be read", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+    cockpitMock.mockResolvedValue({ ...EMPTY_COCKPIT });
+    cacheHistoryMock.mockResolvedValue([{ day: "2026-11-22", total_bytes: 900_000_000 }]);
+
+    renderPage();
+
+    await waitFor(() => expect(cacheHistoryMock).toHaveBeenCalled());
+    expect(screen.queryByText("Actions Cache Size (30d)")).not.toBeInTheDocument();
+  });
+
+  it("hides the cache size chart when a later history read fails and shows it again on recovery", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+    cockpitMock.mockResolvedValue({ ...EMPTY_COCKPIT });
+    const points = [
+      { day: "2026-11-21", total_bytes: 500_000_000 },
+      { day: "2026-11-22", total_bytes: 900_000_000 },
+    ];
+    cacheHistoryMock.mockResolvedValue(points);
+
+    const { queryClient } = renderPage();
+    expect(await screen.findByText("Actions Cache Size (30d)")).toBeInTheDocument();
+
+    // The failed refetch keeps the last data, but the chart must not keep showing it.
+    cacheHistoryMock.mockRejectedValue(new Error("history down"));
+    await queryClient.refetchQueries({ queryKey: ["analytics.cache-history", "acme"] });
+    await waitFor(() => expect(screen.queryByText("Actions Cache Size (30d)")).not.toBeInTheDocument());
+
+    cacheHistoryMock.mockResolvedValue(points);
+    await queryClient.refetchQueries({ queryKey: ["analytics.cache-history", "acme"] });
+    expect(await screen.findByText("Actions Cache Size (30d)")).toBeInTheDocument();
   });
 
   it("omits the billable clause when nothing was billed on top of the allowance", async () => {

@@ -1,6 +1,7 @@
-"""Per-tick work for the unattended-automation loop: stale-PR nudges and Dependabot auto-triage.
+"""Per-tick work for the unattended-automation loop: stale-PR nudges, Dependabot auto-triage and clearing idle
+Actions caches.
 
-Both are opt-in per repo (``automation_repo_settings``) and were manual-only; this runs them on a cadence.
+All are opt-in per repo (``automation_repo_settings``) and were manual-only; this runs them on a cadence.
 It follows scheduled_scan_sweep.py and keeps its safety rails, because it writes to GitHub with nobody watching:
 - installation tokens only (``client_token=None``): an org without a GitHub App is never touched, and a pasted
   token is never used for an unattended run;
@@ -34,7 +35,7 @@ from sqlalchemy.orm import Session
 from src.core.app_config import get_config
 from src.core.db import set_session_tenant
 from src.repositories import audit_repo, automation_settings_repo
-from src.services import dependabot_triage, notifications, pr_nudge
+from src.services import dependabot_triage, notifications, pr_nudge, stale_cache_clear
 from src.services.github_client import GitHubClient
 from src.services.scan_schedule import CADENCE_INTERVAL
 from src.services.sweep_lock import try_acquire_sweep_slot
@@ -159,6 +160,34 @@ def _run_dependabot_triage(
     return {"repos": len(repos), "acted": acted, "failed": failed, "stale": stale}
 
 
+def _run_stale_cache_clear(
+    db: Session, client: GitHubClient, tenant_id: int, org_login: str, repos: list, actor: str
+) -> dict:
+    deleted_total, failed, stale = 0, 0, 0
+    for setting in repos:
+        owner, name = _repo_parts(setting.repo)
+        idle_days = int((setting.extra or {}).get("idle_days", stale_cache_clear.DEFAULT_IDLE_DAYS))
+        try:
+            deleted = stale_cache_clear.clear_idle_caches(client, owner, name, idle_days)
+        except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            payload = {"idle_days": idle_days, "error": type(exc).__name__}
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in _STALE_REPO_STATUSES:
+                stale += 1  # deleted, renamed or removed from the installation: a stale opt-in, not a failure
+                payload["stale_repo"] = exc.response.status_code
+            else:
+                failed += 1
+            audit_repo.write(db, actor, "stale_cache_clear.sweep", setting.repo, payload, tenant_id=tenant_id)
+            continue
+        deleted_total += deleted
+        audit_repo.write(
+            db, actor, "stale_cache_clear.sweep", setting.repo,
+            {"idle_days": idle_days, "deleted": deleted}, tenant_id=tenant_id,
+        )
+    if failed:
+        raise RuntimeError(f"{failed} of {len(repos)} repositories failed")
+    return {"repos": len(repos), "deleted": deleted_total, "failed": failed, "stale": stale}
+
+
 @dataclass(frozen=True)
 class Automation:
     name: str  # audit-action prefix and advisory-lock key
@@ -183,6 +212,10 @@ AUTOMATIONS = (
     Automation(
         "dependabot_triage", "dependabot_triage_cadence", "dependabot_triage_schedule", "dependabot_triage",
         _run_dependabot_triage,
+    ),
+    Automation(
+        "stale_cache_clear", "stale_cache_clear_cadence", "stale_cache_clear_schedule", "stale_cache_clear",
+        _run_stale_cache_clear,
     ),
 )
 

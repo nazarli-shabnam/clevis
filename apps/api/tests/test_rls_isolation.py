@@ -131,6 +131,7 @@ _EXPECTED_FORCE_RLS_TABLES = {
     "api_tokens",
     "security_alert_syncs",
     "repo_move_edges",
+    "cache_size_points",
 }
 
 
