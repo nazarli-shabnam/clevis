@@ -119,7 +119,8 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-      # Required for Settings() to construct (redis_url has no default); not used by any test yet.
+      # Required for Settings() to construct (redis_url has no default), and used by the webhook tests
+      # (apps/api/tests/test_webhooks.py flushes it and asserts on the stream), so do not remove it.
       redis:
         image: redis:7-alpine
         ports:
