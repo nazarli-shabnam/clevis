@@ -88,3 +88,15 @@ def test_other_tenants_syncs_do_not_suppress_it(db):
     _enqueue(db, org)
 
     assert len(_alert_jobs(db)) == 1
+
+
+def test_both_jobs_are_committed_together_so_a_sweep_lock_spans_them(db, monkeypatch):
+    org = org_repo.get_or_create(db, github_login="acme")
+    commits = []
+    real_commit = db.commit
+    monkeypatch.setattr(db, "commit", lambda: (commits.append(db.query(Job).count()), real_commit())[1])
+
+    _enqueue(db, org)
+
+    # One commit, taken only after both jobs were added (the first one would end the lock's transaction).
+    assert commits == [2]
