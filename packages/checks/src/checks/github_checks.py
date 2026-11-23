@@ -71,9 +71,9 @@ def _retry_delay_seconds(r: httpx.Response, attempt: int) -> float:
     reset_raw = r.headers.get("X-RateLimit-Reset") if (r.status_code == 429 or _is_secondary_rate_limit(r)) else None
     if reset_raw is not None:
         try:
-            delay = float(reset_raw) - time.time()
-            if delay > 0:
-                return min(delay, _MAX_RETRY_AFTER_SECONDS)
+            # A reset already in the past (clock skew, or the window rolled over) means the quota is
+            # back: retry almost at once rather than falling through to the full cap.
+            return min(max(float(reset_raw) - time.time(), 1.0), _MAX_RETRY_AFTER_SECONDS)
         except ValueError:
             pass
     if r.status_code == 429 or _is_secondary_rate_limit(r):

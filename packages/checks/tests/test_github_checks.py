@@ -239,6 +239,17 @@ def test_get_falls_back_to_ratelimit_reset_when_no_retry_after():
     assert 20 <= slept <= 30
 
 
+def test_get_retries_quickly_when_ratelimit_reset_is_already_past():
+    request = httpx.Request("GET", "https://x/y")
+    rate_limited = httpx.Response(429, headers={"X-RateLimit-Reset": str(int(time.time() - 30))}, request=request)
+    ok_response = httpx.Response(200, json={"login": "acme"}, request=request)
+    responses = iter([rate_limited, ok_response])
+
+    with patch("time.sleep") as mock_sleep, patch("httpx.Client.get", side_effect=lambda url, headers: next(responses)):
+        assert _get("https://x/y", "tok") == {"login": "acme"}
+    mock_sleep.assert_called_once_with(1.0)
+
+
 def test_get_ignores_a_malformed_ratelimit_reset_and_waits_the_cap():
     # A non-numeric X-RateLimit-Reset must not raise; it falls through to the cap.
     request = httpx.Request("GET", "https://x/y")
