@@ -101,6 +101,7 @@ Key variables:
 - `API_PORT` / `UI_PORT` — `8080` / `3000`
 
 **Deploy-time config (env vars, safe defaults in code):**
+- `WORKER_API_TOKEN` / `API_INTERNAL_URL` — unset / `http://api:8080`. When `WORKER_API_TOKEN` (a random secret shared by the api and worker containers) is set, the worker asks the API at `API_INTERNAL_URL` (`POST /internal/jobs/{id}/installation-token`) for a fresh installation token on every job attempt instead of relying on the one minted at enqueue time; without it the token in the job payload is used. Both are passed to the worker through `docker-compose.yml`; change `API_INTERNAL_URL` only if the API service name or port differs.
 - `NEXT_PUBLIC_API_BASE` — default `http://localhost:8080` (baked in at UI build time as a Next.js `NEXT_PUBLIC_*` var, not read at runtime; see `apps/ui/Dockerfile`'s `ARG`).
 - `CORS_ORIGINS` — JSON array of allowed origins; default `["http://localhost:3000"]`. Read once at API startup (a security boundary), so a change requires an API restart. Set your real UI domain in production.
 - `GITHUB_API_BASE` — default `https://api.github.com`; set for GitHub Enterprise (e.g. `https://github.yourco.com/api/v3`). Used by both the API and the worker. Not runtime-editable because it's where GitHub tokens are sent.

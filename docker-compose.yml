@@ -141,6 +141,8 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       # Optional: lets the worker ask the API for a fresh installation token per job attempt (shared with the API).
       WORKER_API_TOKEN: ${WORKER_API_TOKEN:-}
+      # Where it reaches the API for that refresh; change only if the api service name or port differs.
+      API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:8080}
       GITHUB_API_BASE: ${GITHUB_API_BASE:-https://api.github.com}
       WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD:-}
       # Fallback credential for deployments without a dedicated worker role: entrypoint.sh only uses
