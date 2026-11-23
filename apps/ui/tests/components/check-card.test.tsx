@@ -435,6 +435,24 @@ describe("CheckCard — fix this (#287)", () => {
     expect(onRemediated).toHaveBeenCalled();
   });
 
+  it("lets the admin fix another repository after a fix succeeded", async () => {
+    remediateMock.mockResolvedValue({ check_id: remediable.id, repo: "api", remediated: true });
+    renderWithClient(<CheckCard check={remediable} owner="acme" token="ghp_x" />);
+
+    fireEvent.change(screen.getByLabelText("Repository to fix"), { target: { value: "api" } });
+    fireEvent.click(screen.getByRole("button", { name: /fix this/i }));
+    fireEvent.click(screen.getByRole("button", { name: /confirm — apply the fix/i }));
+    await waitFor(() => expect(screen.getByText(/Applied — re-run the scan/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Fix another repository" }));
+    const input = screen.getByLabelText("Repository to fix") as HTMLInputElement;
+    expect(input.value).toBe("");
+    fireEvent.change(input, { target: { value: "worker" } });
+    fireEvent.click(screen.getByRole("button", { name: /fix this/i }));
+    fireEvent.click(screen.getByRole("button", { name: /confirm — apply the fix/i }));
+    await waitFor(() => expect(remediateMock).toHaveBeenLastCalledWith("acme", "worker", remediable.id, "ghp_x"));
+  });
+
   it("disarms on Cancel and surfaces a failed fix", async () => {
     renderWithClient(<CheckCard check={remediable} owner="acme" />);
     fireEvent.change(screen.getByLabelText("Repository to fix"), { target: { value: "api" } });
