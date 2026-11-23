@@ -280,6 +280,23 @@ def test_every_repo_403_becomes_a_400_with_the_permission_hint(db, acme):
     assert resp.status_code == 400 and "Administration" in resp.json()["detail"]
 
 
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_a_single_repo_403_returns_its_own_result_not_the_permission_hint(db, acme, dry_run):
+    client = _client(db, acme["admin"].id)
+    def request(method, path, params=None, json=None):
+        raise httpx.HTTPStatusError(
+            "403", request=httpx.Request(method, "https://api.github.com"), response=httpx.Response(403)
+        )
+
+    with patch("src.routers.branch_protection.GitHubClient") as mock:
+        mock.return_value.request.side_effect = request
+        resp = _post(client, {"repos": ["archived"], "dry_run": dry_run})
+    assert resp.status_code == 200
+    body = resp.json()
+    row = (body["diffs"] if dry_run else body["results"])[0]
+    assert row["repo"] == "archived" and "403" in (row["error"] or "")
+
+
 def test_dry_run_all_repos_403_becomes_a_400(db, acme):
     client = _client(db, acme["admin"].id)
 
