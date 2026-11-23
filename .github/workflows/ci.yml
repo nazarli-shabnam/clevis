@@ -367,16 +367,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Dummy secrets, same pattern as the "e2e" job's -- this stack is thrown away at the
-      # end of the job, nothing here is a real credential.
+      # Dummy credentials -- this stack is thrown away at the end of the job, nothing here is a real one.
+      # JOB_SECRET_KEY and AUTH_SECRET are deliberately left unset: this job runs the README Quickstart's
+      # zero-config path (the `init-secrets` service generates them onto named volumes and the entrypoints
+      # read them from there), which the e2e job, setting both explicitly, does not exercise.
       - name: Write CI env file
         run: |
           cat > .env <<'EOF'
           DB_USER=clevis
           DB_PASSWORD=clevis
           DB_NAME=clevis
-          JOB_SECRET_KEY=ci-docker-secret-key-not-for-production-use-00
-          AUTH_SECRET=ci-docker-auth-secret-not-for-production-use-000
           NEXT_PUBLIC_API_BASE=http://localhost:8080
           NEXT_PUBLIC_GITHUB_APP_SLUG=
           REDIS_PASSWORD=ci-docker-redis-password-not-for-production-00
@@ -388,6 +388,13 @@ jobs:
       # image actually runs the way it runs in production, not just that it builds.
       - name: Build and start the full stack
         run: docker compose -f docker-compose.yml -f docker-compose.ci.yml up --build -d --wait
+
+      # With both variables unset the api could only have started from the generated files (its entrypoint
+      # exits otherwise); check them directly anyway so a broken fallback fails here with a clear message.
+      - name: Check the generated secrets were used
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml exec -T api test -s /run/clevis/job/job_secret
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml exec -T api test -s /run/clevis/auth/auth_secret
 
       - name: Stack logs (on failure)
         if: failure()
