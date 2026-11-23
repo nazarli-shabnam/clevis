@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { Time } from "@/components/time"
 import Link from "next/link"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { SinceLastVisitCard } from "@/components/since-last-visit-card"
 import { StatCard } from "@/components/stat-card"
@@ -110,6 +110,7 @@ export default function OverviewPage() {
     refetchInterval: 30_000,
   })
   const cockpit = cockpitQuery.data
+  const queryClient = useQueryClient()
   // When the score was produced (org scopes only: the stored-scan route is org-gated). The same key and fetch as
   // the Security page, so the two share one cache entry and a finished scan refreshes both.
   const latestScanQuery = useQuery({
@@ -144,6 +145,11 @@ export default function OverviewPage() {
     enabled: isOrgScope && org.trim().length > 0,
     retry: false,
   })
+  // The cockpit read records today's point, so the history read that started alongside it may predate that write.
+  const cockpitUpdatedAt = cockpitQuery.dataUpdatedAt
+  useEffect(() => {
+    if (cockpitUpdatedAt > 0) queryClient.invalidateQueries({ queryKey: ["analytics.cache-history", org] })
+  }, [cockpitUpdatedAt, org, queryClient])
   const cacheHistoryData = (cacheHistoryQuery.data ?? []).map((p) => ({ week: p.day.slice(5), value: Math.round(p.total_bytes / 1e6) }))
 
   const [myViewTab, setMyViewTab] = useState<MyViewTabId>("prs")
@@ -314,7 +320,7 @@ export default function OverviewPage() {
           </div>
         </div>
 
-        {cacheHistoryData.length > 1 && (
+        {cacheHistoryQuery.isSuccess && cacheHistoryData.length > 1 && (
           <div className="card">
             <div className="px-4 py-3 border-b border-border">
               <span className="section-label">Actions Cache Size (30d)</span>

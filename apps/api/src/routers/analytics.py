@@ -878,21 +878,21 @@ def _safe_total_cache_bytes(owner: str, token: str, repo_names: list[str]) -> tu
     ok = True
     with nullcontext(_GITHUB_FANOUT_POOL) as pool:
         futures = [
-            pool.submit(client.request, "GET", f"/repos/{owner}/{repo}/actions/caches")
+            pool.submit(client.request_paginated, f"/repos/{owner}/{repo}/actions/caches", None, "actions_caches")
             for repo in repo_names[:_MAX_REPOS_FOR_AGGREGATES]
         ]
         for future in futures:
             try:
-                data = future.result()
-            except (httpx.HTTPStatusError, httpx.RequestError):
+                caches = future.result()  # every page: a repo with more than one page of caches is not understated
+            except (httpx.HTTPStatusError, httpx.RequestError, TypeError, KeyError):
                 ok = False
                 continue
-            if not isinstance(data, dict):
+            if not isinstance(caches, list):
                 ok = False
                 continue
             # A malformed cache entry must degrade this one repo, not fail the whole cockpit.
             try:
-                total += sum(_cache_entry_bytes(c) for c in data.get("actions_caches", []))
+                total += sum(_cache_entry_bytes(c) for c in caches)
             except (AttributeError, TypeError):
                 ok = False
     return total, ok

@@ -919,13 +919,13 @@ def test_safe_commit_activity_4w_and_heatmap_52w_partial_aggregation_rejects_bad
 def test_safe_total_cache_bytes_partial_aggregation_rejects_bad_size(bad_size):
     from src.routers.analytics import _safe_total_cache_bytes
 
-    def _side_effect(method, path):
+    def _side_effect(path, params=None, items_key=None):
         if "repo-bad" in path:
-            return {"actions_caches": [{"size_in_bytes": bad_size}]}
-        return {"actions_caches": [{"size_in_bytes": 100}]}
+            return [{"size_in_bytes": bad_size}]
+        return [{"size_in_bytes": 100}]
 
     with patch("src.routers.analytics.GitHubClient") as mock_client:
-        mock_client.return_value.request.side_effect = _side_effect
+        mock_client.return_value.request_paginated.side_effect = _side_effect
         total, ok = _safe_total_cache_bytes("acme", "ghp_test", ["repo-bad", "repo-good"])
 
     assert total == 100
@@ -971,13 +971,13 @@ def test_safe_commit_activity_4w_and_heatmap_52w_non_dict_week_degrades_not_rais
 def test_safe_total_cache_bytes_malformed_entry_degrades_not_raises():
     from src.routers.analytics import _safe_total_cache_bytes
 
-    def _side_effect(method, path):
+    def _side_effect(path, params=None, items_key=None):
         if "repo-bad" in path:
-            return {"actions_caches": [{"size_in_bytes": "not-a-number"}]}
-        return {"actions_caches": [{"size_in_bytes": 100}]}
+            return [{"size_in_bytes": "not-a-number"}]
+        return [{"size_in_bytes": 100}]
 
     with patch("src.routers.analytics.GitHubClient") as mock_client:
-        mock_client.return_value.request.side_effect = _side_effect
+        mock_client.return_value.request_paginated.side_effect = _side_effect
         total, ok = _safe_total_cache_bytes("acme", "ghp_test", ["repo-bad", "repo-good"])
 
     assert total == 100  # repo-good's contribution survives
@@ -988,7 +988,7 @@ def test_safe_total_cache_bytes_returns_zero_and_not_ok_on_error():
     from src.routers.analytics import _safe_total_cache_bytes
 
     with patch("src.routers.analytics.GitHubClient") as mock_client:
-        mock_client.return_value.request.side_effect = httpx.RequestError("boom")
+        mock_client.return_value.request_paginated.side_effect = httpx.RequestError("boom")
         assert _safe_total_cache_bytes("acme", "ghp_test", ["repo-a"]) == (0, False)
 
 
@@ -996,9 +996,9 @@ def test_safe_total_cache_bytes_sums_across_repos():
     from src.routers.analytics import _safe_total_cache_bytes
 
     with patch("src.routers.analytics.GitHubClient") as mock_client:
-        mock_client.return_value.request.side_effect = [
-            {"actions_caches": [{"size_in_bytes": 100}, {"size_in_bytes": 50}]},
-            {"actions_caches": [{"size_in_bytes": 25}]},
+        mock_client.return_value.request_paginated.side_effect = [
+            [{"size_in_bytes": 100}, {"size_in_bytes": 50}],
+            [{"size_in_bytes": 25}],
         ]
         total, ok = _safe_total_cache_bytes("acme", "ghp_test", ["repo-a", "repo-b"])
     assert total == 175
@@ -1024,7 +1024,7 @@ def test_safe_total_cache_bytes_non_dict_response_flags_not_ok():
     from src.routers.analytics import _safe_total_cache_bytes
 
     with patch("src.routers.analytics.GitHubClient") as mock_client:
-        mock_client.return_value.request.return_value = ["not", "a", "dict"]
+        mock_client.return_value.request_paginated.return_value = {"message": "not a list"}
         total, ok = _safe_total_cache_bytes("acme", "ghp_test", ["repo-a"])
 
     assert total == 0
@@ -1034,13 +1034,13 @@ def test_safe_total_cache_bytes_non_dict_response_flags_not_ok():
 def test_safe_total_cache_bytes_one_bad_repo_sums_the_rest_but_flags_not_ok():
     from src.routers.analytics import _safe_total_cache_bytes
 
-    def _side_effect(method, path):
+    def _side_effect(path, params=None, items_key=None):
         if "repo-bad" in path:
             raise httpx.RequestError("boom")
-        return {"actions_caches": [{"size_in_bytes": 50}]}
+        return [{"size_in_bytes": 50}]
 
     with patch("src.routers.analytics.GitHubClient") as mock_client:
-        mock_client.return_value.request.side_effect = _side_effect
+        mock_client.return_value.request_paginated.side_effect = _side_effect
         total, ok = _safe_total_cache_bytes("acme", "ghp_test", ["repo-bad", "repo-good"])
 
     assert total == 50

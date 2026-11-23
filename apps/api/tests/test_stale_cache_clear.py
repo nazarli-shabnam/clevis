@@ -32,7 +32,8 @@ class _FakeClient:
     def request(self, method, path, params=None, json=None):
         if method == "GET":
             self.list_params.append(params)
-            return {"actions_caches": list(self.caches)}
+            page, size = (params or {}).get("page", 1), (params or {}).get("per_page", 100)
+            return {"actions_caches": list(self.caches[(page - 1) * size : page * size])}
         cache_id = int(path.rsplit("/", 1)[1])
         if cache_id in self.gone:
             self.caches = [c for c in self.caches if c["id"] != cache_id]
@@ -49,6 +50,14 @@ def test_only_caches_idle_longer_than_the_threshold_are_deleted_oldest_first():
     assert stale_cache_clear.clear_idle_caches(client, "acme", "api", 7, NOW) == 2
     assert client.deleted == [1, 2]
     assert client.list_params[0]["sort"] == "last_accessed_at" and client.list_params[0]["direction"] == "asc"
+
+
+def test_an_eligible_cache_behind_a_full_page_of_unknown_last_use_is_still_found(monkeypatch):
+    monkeypatch.setattr(stale_cache_clear, "_PAGE", 2)
+    client = _FakeClient([{"id": 1}, {"id": 2}, _cache(3, 30), _cache(4, 1)])
+
+    assert stale_cache_clear.clear_idle_caches(client, "acme", "api", 7, NOW) == 1
+    assert client.deleted == [3]  # the unknown ones were skipped, the in-use one ended the read
 
 
 def test_a_cache_already_gone_is_skipped_and_an_unknown_last_use_is_never_deleted():

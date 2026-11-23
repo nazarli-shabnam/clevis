@@ -504,6 +504,29 @@ describe("OverviewPage cockpit", () => {
     expect(screen.queryByText("Actions Cache Size (30d)")).not.toBeInTheDocument();
   });
 
+  it("hides the cache size chart when a later history read fails and shows it again on recovery", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+    cockpitMock.mockResolvedValue({ ...EMPTY_COCKPIT });
+    const points = [
+      { day: "2026-11-21", total_bytes: 500_000_000 },
+      { day: "2026-11-22", total_bytes: 900_000_000 },
+    ];
+    cacheHistoryMock.mockResolvedValue(points);
+
+    const { queryClient } = renderPage();
+    expect(await screen.findByText("Actions Cache Size (30d)")).toBeInTheDocument();
+
+    // The failed refetch keeps the last data, but the chart must not keep showing it.
+    cacheHistoryMock.mockRejectedValue(new Error("history down"));
+    await queryClient.refetchQueries({ queryKey: ["analytics.cache-history", "acme"] });
+    await waitFor(() => expect(screen.queryByText("Actions Cache Size (30d)")).not.toBeInTheDocument());
+
+    cacheHistoryMock.mockResolvedValue(points);
+    await queryClient.refetchQueries({ queryKey: ["analytics.cache-history", "acme"] });
+    expect(await screen.findByText("Actions Cache Size (30d)")).toBeInTheDocument();
+  });
+
   it("omits the billable clause when nothing was billed on top of the allowance", async () => {
     localStorage.setItem("default_org", "acme");
     tokensResolveMock.mockResolvedValue({ token: "ghp_test" });

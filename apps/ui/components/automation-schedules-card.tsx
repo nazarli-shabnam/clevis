@@ -291,10 +291,13 @@ export function AutomationSchedulesCard({ orgLogin }: { orgLogin: string }) {
               </Button>
             </form>
           </div>
-          {(update.isError || setRepo.isError || setTriageRepo.isError || setCacheRepo.isError) && (
-            <p role="alert" className="text-xs text-destructive">
-              {(update.error ?? setRepo.error ?? setTriageRepo.error ?? setCacheRepo.error)?.message}
-            </p>
+          {[update, setRepo, setTriageRepo, setCacheRepo].map(
+            (mutation, i) =>
+              mutation.isError && (
+                <p key={i} role="alert" className="text-xs text-destructive">
+                  {mutation.error?.message}
+                </p>
+              ),
           )}
         </div>
       )}
