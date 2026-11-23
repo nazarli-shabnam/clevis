@@ -605,6 +605,23 @@ def test_redis_unreachable_still_returns_200_and_marks_row_queue_failed(db, webh
     assert row.status == "queue_failed"
 
 
+def test_a_late_xadd_failure_does_not_overwrite_a_row_the_worker_already_processed(db, webhook_client, monkeypatch):
+    """XADD can raise after Redis accepted the entry (a client timeout); by then the worker may have processed it."""
+
+    class _TimingOutClient:
+        def xadd(self, *args, **kwargs):
+            db.execute(text("UPDATE webhook_deliveries SET status = 'processed' WHERE delivery_id = 'delivery-late-fail'"))
+            raise TimeoutError("xadd timed out after the entry was accepted")
+
+    monkeypatch.setattr(webhooks_module, "get_redis_client", lambda: _TimingOutClient())
+
+    resp = _post(webhook_client, "release", {"action": "published"}, headers_extra={"X-GitHub-Delivery": "delivery-late-fail"})
+
+    assert resp.status_code == 200
+    row = db.query(WebhookDelivery).filter(WebhookDelivery.delivery_id == "delivery-late-fail").one()
+    assert row.status == "processed"
+
+
 def test_route_is_registered_on_the_real_app(db, monkeypatch):
     # Every other test in this file mounts `webhooks_router` on an isolated FastAPI()
     # instance, so they would all still pass even if `src.main` never actually included
