@@ -478,6 +478,45 @@ _CONNECTED_SAFE_MOCKS = {
 }
 
 
+def test_cockpit_records_todays_cache_size_for_a_connected_org_and_serves_it_as_history(
+    http, db, mock_user, acme_org_with_installation
+):
+    from src.repositories import cache_size_repo
+
+    patchers = [patch(target, **kwargs) for target, kwargs in _CONNECTED_SAFE_MOCKS.items()]
+    _start_all(patchers)
+    try:
+        with patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"):
+            assert http.get("/me/analytics/cockpit/acme").status_code == 200
+            assert http.get("/me/analytics/cockpit/acme").status_code == 200  # same day: one point, not two
+    finally:
+        _stop_all(patchers)
+
+    points = cache_size_repo.list_points(db, acme_org_with_installation.tenant_id, 30)
+    assert [p.total_bytes for p in points] == [123456]  # the default mock's total
+
+    resp = http.get("/orgs/acme/analytics/cache-history?days=30")
+    assert resp.status_code == 200
+    assert [p["total_bytes"] for p in resp.json()] == [123456]
+
+
+def test_cockpit_does_not_record_a_cache_point_for_a_failed_or_partial_read(
+    http, db, mock_user, acme_org_with_installation
+):
+    from src.repositories import cache_size_repo
+
+    failed = {**_CONNECTED_SAFE_MOCKS, "src.routers.analytics._safe_total_cache_bytes": {"return_value": (0, False)}}
+    patchers = [patch(target, **kwargs) for target, kwargs in failed.items()]
+    _start_all(patchers)
+    try:
+        with patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"):
+            assert http.get("/me/analytics/cockpit/acme").status_code == 200
+    finally:
+        _stop_all(patchers)
+
+    assert cache_size_repo.list_points(db, acme_org_with_installation.tenant_id, 30) == []
+
+
 def test_cockpit_connected_org_uses_aggregate_commit_activity(http, db, mock_user, acme_org_with_installation):
     today = datetime.now(timezone.utc).date()
     _insert_daily_count(db, acme_org_with_installation.tenant_id, repo="acme/demo", event_type="push", day=today, count=4)

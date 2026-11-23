@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from src.core.path_params import Owner
 from src.core.app_config import get_config
 from src.core.auth import UserOut, require_auth
-from src.core.db import RepoEventDailyCount, User, get_db, release_connection, set_session_user
+from src.core.db import RepoEventDailyCount, User, get_db, release_connection, set_session_tenant, set_session_user
 from src.core.rbac import (
     OrgContext,
     assert_owner_matches_org,
@@ -24,12 +24,21 @@ from src.core.rbac import (
     require_org_role,
     set_tenant_session_context,
 )
-from src.repositories import audit_repo, installation_repo, job_repo, org_repo, scan_results_repo, tenant_repo
+from src.repositories import (
+    audit_repo,
+    cache_size_repo,
+    installation_repo,
+    job_repo,
+    org_repo,
+    scan_results_repo,
+    tenant_repo,
+)
 from src.routers.github import _cached_events, _fetch_events_from_repo_events
 from src.schemas.analytics import (
     ActionsUsageResponse,
     AnalyticsInput,
     AnalyticsResponse,
+    CacheSizePointOut,
     HygieneScoringSettings,
     HygieneScoringUpdate,
     AtRiskRepo,
@@ -435,6 +444,16 @@ def org_analytics_history(
     )
 
 
+@router.get("/orgs/{org_login}/analytics/cache-history", response_model=list[CacheSizePointOut])
+def org_cache_history(
+    days: int = Query(30, ge=1, le=365),
+    ctx: OrgContext = Depends(require_org_role(min_role="member")),
+    db: Session = Depends(get_db),
+):
+    """The org's recorded daily total of Actions cache bytes (a point is written each time the cockpit is read)."""
+    return cache_size_repo.list_points(db, ctx.org.tenant_id, days)
+
+
 @router.get("/orgs/{org_login}/analytics/latest-scan", response_model=LatestScanOut)
 def org_latest_scan(
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
@@ -625,6 +644,16 @@ def _safe_member_count(owner: str, token: str, account_type: str = "Organization
         return len(client.request_paginated(f"/orgs/{owner}/members")), True
     except (httpx.HTTPStatusError, httpx.RequestError):
         return 0, False
+
+
+def _record_cache_size(db: Session, tenant_id: int, total_bytes: int) -> None:
+    """Best effort: a failed write must not fail the cockpit."""
+    try:
+        set_session_tenant(db, tenant_id)
+        cache_size_repo.record(db, tenant_id, total_bytes)
+    except Exception:
+        db.rollback()
+        logger.exception("could not record the cache size point for tenant %s", tenant_id)
 
 
 def _cockpit_connected_tenant(db: Session, user_id: int, owner: str) -> int | None:
@@ -1124,6 +1153,11 @@ async def _build_cockpit(owner: str, user: UserOut, db: Session, token: str) -> 
         or not commit_activity_ok
         or recent_events_degraded
     )
+
+    # Before the audit tenant is re-pointed below: today's total, for the Overview's growth chart.
+    # Only a read that covered every repo is a comparable point.
+    if connected_tenant_id is not None and cache_bytes_ok and len(repo_names) <= _MAX_REPOS_FOR_AGGREGATES:
+        await anyio.to_thread.run_sync(lambda: _record_cache_size(db, connected_tenant_id, total_cache_size_bytes))
 
     # Last: audit_tenant re-points the RLS tenant context, which every read above has already finished with.
     has_automation_run = await anyio.to_thread.run_sync(lambda: _has_automation_run(db, user, owner))

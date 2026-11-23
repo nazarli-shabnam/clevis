@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, ConfigDict, SecretStr
 
 
 class AnalyticsInput(BaseModel):
@@ -34,6 +34,12 @@ class CheckResult(BaseModel):
     scored: bool | None = None
     status: Literal["pass", "fail", "error", "not_applicable"]
     value: bool | str | dict[str, int] | None = None
+
+
+class CacheSizePointOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    day: date
+    total_bytes: int
 
 
 class AnalyticsResponse(BaseModel):

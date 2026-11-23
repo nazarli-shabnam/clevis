@@ -29,6 +29,7 @@ _ACCEPTED_KEYS = {
     "scheduled_scan_poll_seconds",
     "pr_nudge_cadence",
     "dependabot_triage_cadence",
+    "stale_cache_clear_cadence",
     "automation_poll_seconds",
     "retention_webhook_deliveries_days",
     "retention_jobs_days",
