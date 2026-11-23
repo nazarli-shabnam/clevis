@@ -1064,6 +1064,17 @@ def test_dependabot_only_names_repos_with_critical_or_high_alerts():
     assert result["value"]["repos"] == ["bad"]
 
 
+def test_a_429_with_quota_left_ignores_a_past_reset_and_waits_the_full_cap():
+    # Secondary limit: Remaining > 0, no Retry-After. GitHub says wait at least a minute, not ~1s.
+    request = httpx.Request("GET", "https://x/y")
+    headers = {"X-RateLimit-Remaining": "5", "X-RateLimit-Reset": str(int(time.time() - 30))}
+    responses = iter([httpx.Response(429, headers=headers, request=request), httpx.Response(200, json={"ok": 1}, request=request)])
+
+    with patch("time.sleep") as mock_sleep, patch("httpx.Client.get", side_effect=lambda url, headers: next(responses)):
+        assert _get("https://x/y", "tok") == {"ok": 1}
+    mock_sleep.assert_called_once_with(60)
+
+
 def test_a_5xx_backs_off_exponentially_even_when_it_carries_a_rate_limit_reset_header():
     # GitHub sends the rate-limit headers on every response; a 502 must not wait until the reset.
     request = httpx.Request("GET", "https://x/y")

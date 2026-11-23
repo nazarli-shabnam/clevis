@@ -152,12 +152,15 @@ def update_destination(
     sent = body.model_fields_set
     key = settings.job_secret_key.get_secret_value()
     changed: list[str] = []
+    target_changed = False  # a new url/secret/recipients value, not a resubmission of the stored one
 
     if dest.kind == "email":
         if body.url is not None or body.secret is not None:
             raise HTTPException(status_code=422, detail="An email destination takes recipients, not a url or secret")
         if body.recipients is not None:
-            dest.encrypted_url = encrypt_job_token(_email_recipients_or_422(db, ctx, body.recipients), key)
+            new_recipients = _email_recipients_or_422(db, ctx, body.recipients)
+            target_changed |= new_recipients != decrypt_job_token(dest.encrypted_url, key)
+            dest.encrypted_url = encrypt_job_token(new_recipients, key)
             changed.append("recipients")
     else:
         if body.recipients is not None:
@@ -167,10 +170,15 @@ def update_destination(
         if body.secret is not None and not body.secret.get_secret_value():
             raise HTTPException(status_code=422, detail="A signing secret cannot be empty")
         if body.url is not None:
-            dest.encrypted_url = encrypt_job_token(body.url.get_secret_value(), key)
+            new_url = body.url.get_secret_value()
+            target_changed |= new_url != decrypt_job_token(dest.encrypted_url, key)
+            dest.encrypted_url = encrypt_job_token(new_url, key)
             changed.append("url")
         if body.secret is not None:
-            dest.encrypted_secret = encrypt_job_token(body.secret.get_secret_value(), key)
+            new_secret = body.secret.get_secret_value()
+            old_secret = decrypt_job_token(dest.encrypted_secret, key) if dest.encrypted_secret else None
+            target_changed |= new_secret != old_secret
+            dest.encrypted_secret = encrypt_job_token(new_secret, key)
             changed.append("secret")
 
     # `null` on these is "not provided", not "clear": they are NOT NULL columns.
@@ -190,7 +198,7 @@ def update_destination(
 
     # Delivery health describes the old target: after a fix (new URL/secret/recipients) or a re-enable it
     # would keep showing "failing" until some later send, which a rarely-triggered event may never make.
-    if re_enabled or {"url", "secret", "recipients"} & set(changed):
+    if re_enabled or target_changed:
         dest.last_status = None
         dest.last_error = None
         dest.consecutive_failures = 0

@@ -573,6 +573,7 @@ def _mark_failing(db, dest_id, times=3):
         ({"secret": "new-secret"}, True, True),
         ({"enabled": True}, False, True),
         ({"name": "renamed"}, True, False),
+        ({"name": "renamed", "url": HOOK, "secret": "old-secret"}, True, False),  # same target resubmitted
         ({"enabled": True}, True, False),  # already on: nothing was fixed
     ],
 )

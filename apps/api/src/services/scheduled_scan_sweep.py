@@ -112,8 +112,11 @@ def _scan_one(db: Session, org_id: int, tenant_id: int, org_login: str, cadence:
         return _record_failure(db, tenant_id, org_login, exc)
     # Read what the scan needs first: any SELECT after the marker commit would open a transaction that stays
     # idle (pinning the vacuum horizon, killable by idle_in_transaction_session_timeout) for the whole scan.
-    score_hygiene = org_scores_hygiene(org)
-    stored_identity = load_stored_identity(db, tenant_id)
+    try:
+        score_hygiene = org_scores_hygiene(org)
+        stored_identity = load_stored_identity(db, tenant_id)
+    except Exception as exc:
+        return _record_failure(db, tenant_id, org_login, exc)
     # Commit the marker (releasing the transaction-scoped lock) before the long GitHub work.
     audit_repo.write(db, actor=ACTOR, action="scan.scheduled_started", target=org_login, payload={}, tenant_id=tenant_id)
     try:

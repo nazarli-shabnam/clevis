@@ -38,7 +38,7 @@ def upgrade() -> None:
         RETURNS void
         LANGUAGE plpgsql
         SECURITY DEFINER
-        SET search_path = pg_catalog, public
+        SET search_path = pg_catalog, public, pg_temp
         AS $$
         BEGIN
             IF p_tenant_id IS DISTINCT FROM NULLIF(current_setting('app.tenant_id', true), '')::int THEN

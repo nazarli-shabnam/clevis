@@ -6,12 +6,17 @@ guarded by the event's received_at against the row's added_at/granted_at. Known 
 that late "added" (would need tombstones). The guards only compare against a row that exists, and a removal
 deletes it, so nothing is left to compare the late "added" with and it is inserted afresh.
 
-How likely and how it heals: the original "added" must have stayed unprocessed for over 30 minutes (the
-requeue sweep's stuck-queued window, or a consumer-group recreate) while the matching "removed" was
-processed, so it is rare. org_members is then corrected by the next membership reconcile (reconcile_org_members
-treats the GitHub roster as authoritative and drops logins that are not on it), within
-membership_reconcile_stale_hours (24 h by default). repo_collaborators has no such reconcile: a resurrected row
-stays until a later "removed" for the same login/repo (or the tenant's GitHub data is purged on uninstall).
+How likely and how it heals: with a single consumer, the original "added" must have stayed unprocessed for
+over 30 minutes (the requeue sweep's stuck-queued window, or a consumer-group recreate) while the matching
+"removed" was processed, so it is rare. With several consumers in the group (each keeps its own deferred
+queue; the tenant lock serializes work but does not order entries across processes) the window can shrink to
+the consumer lag, i.e. seconds. org_members is then corrected by the next membership reconcile
+(reconcile_org_members treats the GitHub roster as authoritative and drops logins that are not on it), within
+membership_reconcile_stale_hours (24 h by default). repo_collaborators is reconciled only conditionally: the
+reconcile prunes a resurrected row when the login is neither an org member nor an outside collaborator, the
+2FA overlay and outside-collaborator list are both available (so the roster is complete) and granted_at is
+earlier than synced_at. Any other resurrected row stays until a later "removed" for the same login/repo (or
+the tenant's GitHub data is purged on uninstall).
 Only the stored-identity scan checks and the per-member access review read it; the outside-collaborator list
 and permission audit are live GitHub calls and are not affected.
 """

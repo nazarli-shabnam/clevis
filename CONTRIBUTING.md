@@ -143,7 +143,9 @@ python -m pip install -e packages/checks
 python -m pip install -r requirements-test.txt
 ruff check .
 
-# Migrations, against the local Postgres (DATABASE_URL as the superuser, see `docker compose up db`)
+# Migrations, against a DISPOSABLE Postgres database as the superuser: `downgrade base` drops every table
+# (jobs, audit_logs, ...) and the upgrade does not restore rows, so never point this at your dev data.
+# e.g. create a scratch DB (`createdb clevis_migcheck`) and set DATABASE_URL to it for this block only.
 cd apps/api
 python -m alembic upgrade head
 python -m alembic check          # fails on model / migration drift

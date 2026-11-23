@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from src.core.auth import UserOut, require_auth
 from src.core.path_params import Owner, Repo
 from src.core.db import Org, RepoEventDailyCount, get_db
-from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role
+from src.core.rbac import OrgContext, assert_owner_matches_org, require_org_role, set_tenant_session_context
 from src.repositories import installation_repo, org_repo, tenant_repo
 from src.schemas.repos import (
     RepoListInput,
@@ -312,6 +312,9 @@ def personal_repo_stats(
     exactly as before: its installation token and stored push-event aggregate."""
     token = _owner_token(db, user, owner, payload)
     org = _member_org(db, user.id, owner)
+    if org is not None:
+        # Tenant-scoped RLS tables (repo_event_daily_counts, github_installations) read nothing without it.
+        set_tenant_session_context(db, org.tenant_id, user.id)
     connected = org is not None and _repo_org_connected(db, org.id, owner)
     try:
         return _cached_stats(owner, repo, token, db, org.tenant_id if org else _NO_TENANT, connected)

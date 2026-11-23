@@ -701,7 +701,7 @@ describe("RepoDetailPage", () => {
     renderPage();
     fireEvent.click(screen.getByRole("tab", { name: /security/i }));
 
-    fireEvent.click(screen.getByRole("link", { name: /org-wide report/i }));
+    fireEvent.click(await screen.findByRole("link", { name: /org-wide report/i }));
 
     expect(localStorage.getItem("active_scope")).toBe(JSON.stringify({ kind: "org", login: "acme" }));
   });
@@ -709,6 +709,7 @@ describe("RepoDetailPage", () => {
   it("does not switch a personal account into an org scope or offer the org-only links (#1239)", async () => {
     localStorage.clear();
     localStorage.setItem("active_scope", JSON.stringify({ kind: "personal", login: "acme" }));
+    orgsMineMock.mockResolvedValue([]); // acme is not one of the caller's orgs
     securityRepoRowMock.mockResolvedValue({ ...cleanRow, dependabot_critical_count: 2, dependabot_high_count: 1 });
     reposSecurityMock.mockResolvedValue({ repository: "acme/demo", branch_protection: "protected", secret_scanning: "enabled" });
     renderPage();

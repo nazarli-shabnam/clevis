@@ -852,7 +852,7 @@ def test_personal_repo_stats_works_for_an_account_with_no_org_row(repos_client):
 
 
 def test_personal_repo_stats_of_an_org_the_caller_belongs_to_uses_the_stored_aggregate(repos_client, db, acme_org_with_installation):
-    _insert_daily_count(db, acme_org_with_installation.tenant_id, repo="acme/demo", event_type="push", day=date.today(), count=3)
+    _insert_daily_count(db, acme_org_with_installation.tenant_id, repo="acme/demo", event_type="push", day=datetime.now(timezone.utc).date(), count=3)
 
     with patch("src.routers.repos.GitHubClient") as mock_client:
         mock_client.return_value.request.side_effect = _stats_side_effect(repo_meta=_REPO_META, release_error=_not_found())

@@ -804,6 +804,7 @@ function InstanceConfigSection() {
 
   function edit(key: string, value: string) {
     setValues((v) => ({ ...v, [key]: value }))
+    setErrors((e) => Object.fromEntries(Object.entries(e).filter(([k]) => k !== key)))
     setJustSaved((k) => (k === key ? null : k))
   }
 

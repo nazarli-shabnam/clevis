@@ -431,8 +431,10 @@ def _process_entry(
                             event_received_at=received_at,
                         )
                     else:
-                        # Same out-of-order gap as org members, but nothing reconciles repo_collaborators, so a
-                        # resurrected row persists until its next "removed" (see org_membership_store's docstring).
+                        # Same out-of-order gap as org members. A later reconcile prunes a resurrected row only when
+                        # the login is neither a member nor an outside collaborator, the roster is complete (2FA
+                        # overlay and outside-collaborator list both available) and granted_at < synced_at; otherwise
+                        # it persists until its next "removed" (see org_membership_store's docstring).
                         org_membership_store.upsert_repo_collaborator(cur, tenant_id=tenant_id, granted_at=received_at, **member_normalized)
                 else:  # organization
                     action = payload.get("action")

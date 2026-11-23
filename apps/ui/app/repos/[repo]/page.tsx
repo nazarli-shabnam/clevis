@@ -15,7 +15,7 @@ import { GitPullRequest, ArrowSquareOut, Star, GitFork, Eye, ShieldCheck, Shield
 import { api } from "@/lib/api/client"
 import type { CheckWaiver, RepoSecurityRow } from "@/lib/api/types"
 import { githubWebUrl } from "@/lib/github-web"
-import { setActiveScope, useActiveScope } from "@/lib/active-scope"
+import { setActiveScope } from "@/lib/active-scope"
 import { parseOwnerRepo } from "@/lib/repo-segment"
 import { AreaTimeChart } from "@/components/charts/area-time-chart"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
@@ -157,9 +157,10 @@ export default function RepoDetailPage() {
   const owner = parsed?.owner ?? ""
   const repo = parsed?.repo ?? ""
   // The org-wide report, burn-down and alerts pages are org-only, so a personal account is never switched into an
-  // org scope to reach them (and is not offered the links).
-  const { scope } = useActiveScope()
-  const personalOwner = scope?.kind === "personal" && scope.login.toLowerCase() === owner.toLowerCase()
+  // org scope to reach them (and is not offered the links). The owner's own type decides, not the active scope;
+  // until memberships load it is treated as personal so the links never appear for the wrong kind of owner.
+  const { data: memberships } = useQuery({ queryKey: ["my-orgs"], queryFn: () => api.orgs.mine() })
+  const personalOwner = !memberships?.some((m) => m.org_login.toLowerCase() === owner.toLowerCase())
 
   const [tab, setTab] = useState<Tab>("overview")
   // The API resolves the installation token server-side (falling back to a saved token for a workspace
