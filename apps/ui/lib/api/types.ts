@@ -777,6 +777,7 @@ export interface CockpitResponse {
   recent_events_stale: boolean
   activity_history_incomplete?: string | null
   degraded: boolean
+  aggregate_repo_limit?: number | null
 }
 
 export interface MyViewPRSummary {

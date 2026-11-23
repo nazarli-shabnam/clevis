@@ -212,6 +212,13 @@ export default function OverviewPage() {
         </div>
       )}
 
+      {org && !orgQueryIsError && cockpit?.aggregate_repo_limit != null && (
+        <p className="mb-4 text-xs text-muted-foreground" role="status">
+          Cache size, milestones, releases and (when read live from GitHub) commit activity cover the first{" "}
+          {cockpit.aggregate_repo_limit} of {cockpit.repo_count} repositories.
+        </p>
+      )}
+
       {/* Role-dependent steps: hold the checklist back until membership is known (and skip it if the lookup failed). */}
       {org && (scope?.kind !== "org" || membershipsLoaded) && (
         <FirstRunChecklist

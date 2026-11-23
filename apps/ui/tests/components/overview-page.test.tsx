@@ -319,6 +319,18 @@ describe("OverviewPage cockpit", () => {
     });
   });
 
+  it("notes that the aggregates cover only the first repositories when the org is larger than the cap", async () => {
+    localStorage.setItem("default_org", "acme");
+    tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
+    cockpitMock.mockResolvedValue({ ...EMPTY_COCKPIT, repo_count: 80, aggregate_repo_limit: 30 });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText(/cover the first 30 of 80 repositories/i)).toBeInTheDocument();
+    });
+  });
+
   it("does not show the degraded banner when the cockpit response is not degraded", async () => {
     localStorage.setItem("default_org", "acme");
     tokensResolveMock.mockResolvedValue({ token: "ghp_test" });
