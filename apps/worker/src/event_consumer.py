@@ -431,6 +431,8 @@ def _process_entry(
                             event_received_at=received_at,
                         )
                     else:
+                        # Same out-of-order gap as org members, but nothing reconciles repo_collaborators, so a
+                        # resurrected row persists until its next "removed" (see org_membership_store's docstring).
                         org_membership_store.upsert_repo_collaborator(cur, tenant_id=tenant_id, granted_at=received_at, **member_normalized)
                 else:  # organization
                     action = payload.get("action")
@@ -456,6 +458,8 @@ def _process_entry(
                             _mark_dropped(pg_conn, delivery_row_id)
                             redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
                             return
+                        # A late duplicate of an "added" whose "removed" was already processed re-inserts the row (no
+                        # tombstones; accepted, see org_membership_store's docstring): the next reconcile removes it.
                         org_membership_store.upsert_org_member(cur, tenant_id=tenant_id, added_at=received_at, **org_normalized)
                     else:
                         # member_invited/renamed/deleted don't affect org_members -- ack as a no-op.
