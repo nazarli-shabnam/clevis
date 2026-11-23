@@ -102,6 +102,7 @@ Key variables:
 
 **Deploy-time config (env vars, safe defaults in code):**
 - `NEXT_PUBLIC_API_BASE` — default `http://localhost:8080` (baked in at UI build time as a Next.js `NEXT_PUBLIC_*` var, not read at runtime; see `apps/ui/Dockerfile`'s `ARG`).
+- `FORWARDED_ALLOW_IPS` — default `*`; passed to uvicorn's `--forwarded-allow-ips` by `apps/api/entrypoint.sh` (the api service gets it through `env_file: .env`, so no compose entry is needed). It decides whose `X-Forwarded-For`/`-Proto` the API trusts, which sets the client IP used by the per-IP rate limits and recorded in `auth.*` audit and session rows; restrict it to the proxy's address/CIDR where the edge does not overwrite the header (see `docs/self-hosting.md` Security notes).
 - `CORS_ORIGINS` — JSON array of allowed origins; default `["http://localhost:3000"]`. Read once at API startup (a security boundary), so a change requires an API restart. Set your real UI domain in production.
 - `GITHUB_API_BASE` — default `https://api.github.com`; set for GitHub Enterprise (e.g. `https://github.yourco.com/api/v3`). Used by both the API and the worker. Not runtime-editable because it's where GitHub tokens are sent.
 - `NEXT_PUBLIC_GITHUB_WEB_BASE` — default `https://github.com`; GitHub's *web* origin for browser links (App install pages, member profiles). Set it alongside `GITHUB_API_BASE` on GitHub Enterprise (e.g. `https://github.yourco.com`). Baked in at UI build time.
