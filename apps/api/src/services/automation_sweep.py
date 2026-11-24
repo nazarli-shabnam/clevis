@@ -114,6 +114,7 @@ def _run_pr_nudges(db: Session, client: GitHubClient, tenant_id: int, org_login:
         except Exception:
             db.rollback()
             logger.exception("stale PR summary alert failed for %s", setting.repo)
+        db.commit()  # the destination lookup may have begun a transaction; don't hold it over the next repo's GitHub calls
     if failed:
         raise RuntimeError(f"{failed} of {len(repos)} repositories failed")
     return {"repos": len(repos), "nudged": nudged_total, "failed": failed, "stale": stale}
@@ -262,6 +263,10 @@ def _run_one(db: Session, auto: Automation, org_id: int, tenant_id: int, org_log
     if not repos:
         db.commit()
         return False
+    # Detach the loaded settings so the marker commit does not expire them: reading ``setting.repo`` afterwards
+    # would otherwise begin a transaction that sits idle through the GitHub work.
+    for setting in repos:
+        db.expunge(setting)
     # Commit the marker (releasing the transaction-scoped lock) before the long GitHub work.
     audit_repo.write(db, actor=auto.actor, action=f"{auto.name}.scheduled_started", target=org_login, payload={}, tenant_id=tenant_id)
     try:

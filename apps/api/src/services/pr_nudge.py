@@ -36,7 +36,7 @@ _MAX_PER_SWEEP = 20
 class NudgeResult:
     number: int
     title: str
-    # "commented" | "labeled" | "skipped-recent-nudge" | "skipped-not-stale" | "skipped-per-sweep-cap" | "error",
+    # "commented" | "labeled" | "skipped-recent-nudge" | "skipped-already-labeled" | "skipped-not-stale" | "skipped-per-sweep-cap" | "error",
     # or, in a dry run, "would-comment" | "would-label" for what a real run would post.
     action: str
 
@@ -96,7 +96,7 @@ def run_nudge_sweep(
     ``mode``:
       - ``"off"``     — return an empty list without calling GitHub's write API
       - ``"comment"`` — post a nudge comment (once; skips PRs already nudged)
-      - ``"label"``   — add the ``needs-review`` label (idempotent on GitHub's side)
+      - ``"label"``   — add the ``needs-review`` label (skips PRs that already carry it)
 
     ``dry_run`` reads exactly what a real run reads (open PRs and, in comment mode, each stale PR's comments, so
     the per-sweep cap and already-nudged rules apply identically) but posts nothing: the PRs a real run would
@@ -151,6 +151,11 @@ def _nudge_pr(
     number, title = pr["number"], pr.get("title", "")
     if not _is_stale(pr, cutoff):
         results.append(NudgeResult(number, title, "skipped-not-stale"))
+        return 0
+    # Label mode must be idempotent on Clevis's side too: an already-labelled PR is not an action (no audit row,
+    # no alert) and must not use up the per-sweep cap, or the same oldest PRs would starve the rest forever.
+    if mode == "label" and any(label.get("name") == _NUDGE_LABEL for label in pr.get("labels") or []):
+        results.append(NudgeResult(number, title, "skipped-already-labeled"))
         return 0
     if cap_reached:
         results.append(NudgeResult(number, title, "skipped-per-sweep-cap"))

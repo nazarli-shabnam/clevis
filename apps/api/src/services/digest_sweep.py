@@ -96,9 +96,10 @@ def _is_due(last_sent: datetime | None, now: datetime, interval_days: int) -> bo
         return True
     if last_sent.tzinfo is None:
         last_sent = last_sent.replace(tzinfo=timezone.utc)
-    # 12h grace so the digest doesn't drift a poll-interval later every period (timedelta.days floors;
-    # the send only lands on a poll tick).
-    return now - last_sent >= timedelta(days=interval_days, hours=-12)
+    # Compare UTC calendar days, not elapsed time. The send lands on a poll tick after the due moment, so an
+    # elapsed-time rule with a grace subtracts the grace again every cycle and the digest slides earlier
+    # (weekly -> ~6.5 days). A day count settles on the first poll of the due day and stays there.
+    return (now.astimezone(timezone.utc).date() - last_sent.astimezone(timezone.utc).date()).days >= interval_days
 
 
 def _delivery_state(

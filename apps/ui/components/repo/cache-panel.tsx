@@ -118,15 +118,18 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
   })
 
   const clearMutation = useMutation({
-    mutationFn: (dryRun: boolean) =>
+    // The target travels as a variable, not through the render closure: the Dry run button resets `clearTarget`
+    // in the same tick it fires, so a closure read could still see a stale single-key target.
+    mutationFn: ({ dryRun, target }: { dryRun: boolean; target: { key: string; ref: string } | null }) =>
       api.cache.clear(owner, repo, {
         token,
         dry_run: dryRun,
-        key: clearTarget?.key,
-        ref: clearTarget?.ref,
+        key: target?.key,
+        ref: target?.ref,
       }),
     onSuccess: (data) => {
       setConfirmOpen(false)
+      setClearTarget(null)
       if (data.dry_run) {
         toast.info("Dry run complete — no caches were deleted.")
       } else if (data.job_id) {
@@ -136,6 +139,7 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
     },
     onError: (error) => {
       setConfirmOpen(false)
+      setClearTarget(null)
       toast.error(error.message)
     },
   })
@@ -273,7 +277,7 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
                 variant="outline"
                 onClick={() => {
                   setClearTarget(null)
-                  clearMutation.mutate(true)
+                  clearMutation.mutate({ dryRun: true, target: null })
                   // The preview lists what a clear would delete, so fetch the current caches.
                   listMutation.mutate()
                 }}
@@ -485,7 +489,10 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
 
     <ConfirmDialog
       open={confirmOpen}
-      onOpenChange={setConfirmOpen}
+      onOpenChange={(open) => {
+        setConfirmOpen(open)
+        if (!open) setClearTarget(null)
+      }}
       title="Delete cache?"
       description={
         clearTarget
@@ -493,7 +500,7 @@ export function CachePanel({ owner, repo, active = true }: CachePanelProps) {
           : "This permanently deletes every Actions cache entry for this repo — this can't be undone."
       }
       confirmLabel="Delete"
-      onConfirm={() => clearMutation.mutate(false)}
+      onConfirm={() => clearMutation.mutate({ dryRun: false, target: clearTarget })}
       pending={clearMutation.isPending}
     />
     </>

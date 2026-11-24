@@ -34,10 +34,15 @@ function RegisterForm() {
 
   useEffect(() => {
     api.auth.setupRequired()
-      .then(({ registration_enabled }) => setRegistrationEnabled(registration_enabled !== false))
+      .then(({ setup_required, registration_enabled }) => {
+        // Not set up yet: the register call would only fail with an unexplained 409 (as the login page does).
+        if (setup_required) router.replace("/setup")
+        setRegistrationEnabled(registration_enabled !== false)
+      })
       .catch(() => {
         // API unreachable: keep the form; the register call reports its own error.
       })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function handleSubmit(e: React.FormEvent) {

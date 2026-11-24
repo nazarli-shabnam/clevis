@@ -251,3 +251,16 @@ def test_failed_attempts_use_the_per_tick_budget_too(db):
 
     get_overview, _ = _run(db, overview=boom)
     assert get_overview.call_count == MAX_SCANS_PER_TICK
+
+
+def test_no_transaction_is_open_while_the_scan_runs(db):
+    """Reads after the marker commit would leave a transaction idle for the whole GitHub run (#1248)."""
+    _org(db, "acme", override=True)
+    open_during = []
+
+    def overview(owner, **kwargs):
+        open_during.append(db.in_transaction())
+        return _result(owner)
+
+    _run(db, overview=overview)
+    assert open_during == [False]

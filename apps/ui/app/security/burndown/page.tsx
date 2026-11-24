@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
+import { useSearchParams } from "next/navigation"
 import { useQuery } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
 import { SectionError } from "@/components/section-error"
@@ -9,6 +10,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { AreaTimeChart } from "@/components/charts/area-time-chart"
 import { api } from "@/lib/api/client"
 import { useActiveScope } from "@/lib/active-scope"
+import { toCsv } from "@/lib/csv"
+import { downloadTextFile } from "@/lib/download"
 import { githubWebUrl } from "@/lib/github-web"
 import {
   BURNDOWN_WINDOWS,
@@ -28,16 +31,23 @@ export default function DependabotBurndownPage() {
   const org = scope?.kind === "org" ? scope.login : ""
 
   // Window, severity, sort and repo live in the URL so a view can be shared and notifications can deep-link.
-  // Read once after mount (no hydration mismatch), then mirrored with replaceState (no history entries).
+  // Read after mount (no hydration mismatch) and again whenever the search params change, so a notification link
+  // clicked while this page is already open moves the view too (Next keeps the page mounted). The view is mirrored
+  // back with replaceState (no history entries); a query this page wrote itself is skipped (`lastWritten`), so the
+  // lagging params update that follows our own replaceState can't overwrite newer state.
   const [view, setView] = useState<BurndownView>(DEFAULT_BURNDOWN_VIEW)
   const [restored, setRestored] = useState(false)
+  const lastWritten = useRef<string | null>(null)
+  const urlQuery = useSearchParams()?.toString() ?? ""
   useEffect(() => {
+    if (window.location.search.slice(1) === lastWritten.current) return
     setView(burndownViewFromParams(new URLSearchParams(window.location.search)))
     setRestored(true)
-  }, [])
+  }, [urlQuery])
   useEffect(() => {
     if (!restored) return
     const qs = burndownViewToParams(view).toString()
+    lastWritten.current = qs
     window.history.replaceState(null, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`)
   }, [restored, view])
   const update = (patch: Partial<BurndownView>) => setView((v) => ({ ...v, ...patch }))
@@ -52,6 +62,19 @@ export default function DependabotBurndownPage() {
   const repos = visibleBurndownRepos(data?.repos ?? [], view)
 
   const chart = (data?.trend ?? []).map((p) => ({ week: p.date.slice(5), value: p.critical + p.high }))
+  // The repositories table exactly as filtered and sorted above, for handing SLA performance to an auditor.
+  const exportCsv = () => {
+    const csv = toCsv(repos, [
+      { header: "repository", value: (r) => r.repo },
+      { header: "open_critical", value: (r) => r.open.critical ?? 0 },
+      { header: "open_high", value: (r) => r.open.high ?? 0 },
+      { header: "sla_breaches", value: (r) => r.breaches },
+      { header: "oldest_age_days", value: (r) => r.oldest_age_days },
+      { header: "oldest_alert_number", value: (r) => r.oldest_alert_number },
+    ])
+    const stamp = new Date().toISOString().slice(0, 10)
+    downloadTextFile(`clevis-dependabot-burndown-${org}-${view.days}d-${stamp}.csv`, csv, "text/csv")
+  }
   const totalBreaches = (data?.severities ?? []).reduce((sum, s) => sum + s.breaches, 0)
 
   return (
@@ -164,8 +187,13 @@ export default function DependabotBurndownPage() {
           </div>
 
           <div className="card">
-            <div className="px-4 py-3 border-b border-border">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
               <span className="section-label">Repositories</span>
+              {repos.length > 0 && (
+                <button type="button" onClick={exportCsv} className="text-xs text-primary hover:underline">
+                  Download CSV
+                </button>
+              )}
             </div>
             {data.repos.length === 0 ? (
               <p className="px-4 py-4 text-sm text-muted-foreground">No open Dependabot alerts.</p>

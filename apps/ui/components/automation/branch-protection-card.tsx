@@ -251,9 +251,11 @@ export function BranchProtectionCard({ org, token, repos, initialSelected = [] }
 
             {preview.isSuccess && !apply.data && (
               <p className="text-xs text-muted-foreground">
-                {changing.length === 0
-                  ? "Every selected repo already matches this preset."
-                  : `${changing.length} of ${diffs.length} selected repos would change.`}
+                {diffs.some((d) => d.error)
+                  ? `Preview incomplete: ${diffs.filter((d) => d.error).length} of ${diffs.length} selected repos could not be checked${changing.length ? `; ${changing.length} would change` : ""}.`
+                  : changing.length === 0
+                    ? "Every selected repo already matches this preset."
+                    : `${changing.length} of ${diffs.length} selected repos would change.`}
               </p>
             )}
           </>

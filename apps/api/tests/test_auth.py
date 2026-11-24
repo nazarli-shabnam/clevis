@@ -495,13 +495,29 @@ def test_resend_verification_regenerates_the_token(auth_client, db):
     user = db.query(User).filter(User.email == "member@example.com").first()
     original_token = user.email_verify_token
 
-    resp = auth_client.post("/auth/resend-verification", headers={"Authorization": f"Bearer {token}"})
+    with patch("src.routers.auth.smtp_configured", return_value=True):
+        resp = auth_client.post("/auth/resend-verification", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
     assert resp.json() == {"ok": True, "already_verified": False}
 
     db.refresh(user)
     assert user.email_verify_token is not None
     assert user.email_verify_token != original_token
+
+
+def test_resend_verification_is_a_409_when_the_server_has_no_smtp(auth_client, db):
+    _setup_owner(auth_client)
+    token = auth_client.post(
+        "/auth/register", json={"email": "member@example.com", "password": "supersecret1234"}
+    ).json()["access_token"]
+    user = db.query(User).filter(User.email == "member@example.com").first()
+    original_token = user.email_verify_token
+
+    with patch("src.routers.auth.smtp_configured", return_value=False):
+        resp = auth_client.post("/auth/resend-verification", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 409 and "isn't configured" in resp.json()["detail"]
+    db.refresh(user)
+    assert user.email_verify_token == original_token  # nothing was regenerated for a mail that cannot go out
 
 
 def test_resend_verification_is_a_noop_for_an_already_verified_account(auth_client):
@@ -671,6 +687,44 @@ def test_change_password_needs_the_current_password_and_keeps_only_the_callers_s
     assert auth_client.get("/auth/me", headers=headers).status_code == 401  # the old token of this very session
     assert auth_client.post("/auth/login", json={"email": "owner@example.com", "password": "a-brand-new-password"}).status_code == 200
     assert len(_auth_rows(db, "auth.password_changed")) == 1
+
+
+def _commit_concurrently(db, sql, **params):
+    """Stand in for another request committing between require_auth's read and the handler's locked read: a Core
+    UPDATE changes the row but leaves the already-loaded User object in the session as it was (#1257)."""
+    db.execute(text(sql), params)
+
+
+def test_change_password_checks_the_committed_password_not_a_stale_loaded_user(auth_client, db):
+    token = _setup_owner(auth_client)["access_token"]
+    user = db.query(User).filter(User.email == "owner@example.com").one()
+    old_version = user.token_version
+    # The victim resets the password after the stolen session passed require_auth.
+    from src.routers.auth import _hash_password
+
+    reset_hash = _hash_password("the-victims-new-password")
+    _commit_concurrently(
+        db, "UPDATE users SET password_hash = :h, token_version = :v WHERE id = :i",
+        h=reset_hash, v=old_version + 1, i=user.id,
+    )
+    resp = auth_client.post(
+        "/auth/me/password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"current_password": "supersecret1234", "new_password": "a-brand-new-password"},
+    )
+    assert resp.status_code == 400 and "incorrect" in resp.json()["detail"]
+    assert db.execute(text("SELECT password_hash FROM users WHERE id = :i"), {"i": user.id}).scalar() == reset_hash
+
+
+def test_revoke_sessions_builds_on_the_committed_token_version(auth_client, db):
+    token = _setup_owner(auth_client)["access_token"]
+    user = db.query(User).filter(User.email == "owner@example.com").one()
+    version = user.token_version
+    # Another request (a password change, say) bumped the version after this one was authenticated.
+    _commit_concurrently(db, f"UPDATE users SET token_version = {version + 1} WHERE id = {user.id}")
+    assert auth_client.post("/auth/me/revoke-sessions", headers={"Authorization": f"Bearer {token}"}).status_code == 200
+    # Written as N+1 from the stale copy it would equal the concurrent bump, and tokens issued after it would live.
+    assert db.execute(text("SELECT token_version FROM users WHERE id = :i"), {"i": user.id}).scalar() == version + 2
 
 
 def test_change_password_is_refused_for_an_account_without_a_password(auth_client, db):

@@ -49,17 +49,21 @@ export default function InviteAcceptPage() {
   // Known before accepting, so someone signed in with another address is told now rather than by a 403.
   const wrongAccount = !!user && !!preview?.email && !matchesMaskedEmail(preview.email, user.email)
 
-  // The backend 403s with this specific message for an unverified email -- distinct from an
-  // email mismatch (also 403, different wording), so only this case gets a resend affordance.
-  const needsVerification = accept.isError && accept.error.message.toLowerCase().includes("verify")
+  // The backend answers an unverified email with a 403 carrying code "email_unverified", distinct from an
+  // account mismatch (also 403), so only this case gets a resend affordance. Never decided from the message
+  // text: the mismatch message embeds the signed-in address, which may itself contain "verify".
+  const needsVerification =
+    accept.isError && (accept.error as { code?: string }).code === "email_unverified"
   const [resendState, setResendState] = useState<"idle" | "sending" | "sent" | "error">("idle")
+  const [resendError, setResendError] = useState("")
 
   async function resendVerification() {
     setResendState("sending")
     try {
       await api.auth.resendVerification()
       setResendState("sent")
-    } catch {
+    } catch (e) {
+      setResendError(e instanceof Error ? e.message : "")
       setResendState("error")
     }
   }
@@ -162,7 +166,9 @@ export default function InviteAcceptPage() {
                     )
                   )}
                   {resendState === "error" && (
-                    <p className="text-xs text-destructive">Couldn&rsquo;t resend the verification email. Try again shortly.</p>
+                    <p role="alert" className="text-xs text-destructive">
+                      Couldn&rsquo;t resend the verification email{resendError ? `: ${resendError}` : ". Try again shortly."}
+                    </p>
                   )}
                 </div>
               )}

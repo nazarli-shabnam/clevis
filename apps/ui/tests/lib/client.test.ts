@@ -103,6 +103,27 @@ describe("openActivityStream() 401 handling (#904)", () => {
   });
 });
 
+describe("error codes", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("exposes a machine-readable `code` from the error body on the thrown error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ detail: "Verify your email first", code: "email_unverified" }), { status: 403 }),
+        ),
+      ),
+    );
+    await expect(api.invitations.accept("tok")).rejects.toMatchObject({ status: 403, code: "email_unverified" });
+  });
+
+  it("leaves `code` undefined when the body has none", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({ detail: "no" }), { status: 403 }))));
+    await expect(api.invitations.accept("tok")).rejects.toMatchObject({ code: undefined });
+  });
+});
+
 describe("del() errors", () => {
   afterEach(() => vi.unstubAllGlobals());
 
@@ -814,27 +835,35 @@ describe("api.repos", () => {
     expect(result).toEqual({ org: "acme", total: 0, repos: [] });
   });
 
-  it("POSTs to /orgs/{org}/repos/{owner}/{repo}/stats", async () => {
+  it("POSTs to /me/repos/{owner}/{repo}/stats", async () => {
     stubOkJson({ repository: "acme/demo", commit_activity: [], participation: {}, contributors: [] });
-    await api.repos.stats("acme", "acme", "demo", "ghp_test");
+    await api.repos.stats("acme", "demo", "ghp_test");
     const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(String(url)).toContain("/orgs/acme/repos/acme/demo/stats");
+    expect(String(url)).toContain("/me/repos/acme/demo/stats");
     expect(JSON.parse(init.body as string)).toEqual({ token: "ghp_test" });
   });
 
-  it("POSTs to /orgs/{org}/repos/{owner}/{repo}/pulls", async () => {
+  it("POSTs to /me/repos/{owner}/{repo}/pulls", async () => {
     stubOkJson({ repository: "acme/demo", total: 0, pulls: [] });
-    await api.repos.pulls("acme", "acme", "demo", "");
+    await api.repos.pulls("acme", "demo", "");
     const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(String(url)).toContain("/orgs/acme/repos/acme/demo/pulls");
+    expect(String(url)).toContain("/me/repos/acme/demo/pulls");
     expect(JSON.parse(init.body as string)).toEqual({ token: undefined });
   });
 
-  it("POSTs to /orgs/{org}/repos/{owner}/{repo}/flow-metrics", async () => {
-    stubOkJson({ repository: "acme/demo" });
-    await api.repos.flowMetrics("acme", "acme", "demo", "ghp_test");
+  it("POSTs to /me/repos/{owner}/{repo}/security", async () => {
+    stubOkJson({ repository: "acme/demo", branch_protection: "protected", secret_scanning: "enabled" });
+    await api.repos.security("acme", "demo", "ghp_test");
     const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(String(url)).toContain("/orgs/acme/repos/acme/demo/flow-metrics");
+    expect(String(url)).toContain("/me/repos/acme/demo/security");
+    expect(JSON.parse(init.body as string)).toEqual({ token: "ghp_test" });
+  });
+
+  it("POSTs to /me/repos/{owner}/{repo}/flow-metrics", async () => {
+    stubOkJson({ repository: "acme/demo" });
+    await api.repos.flowMetrics("acme", "demo", "ghp_test");
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toContain("/me/repos/acme/demo/flow-metrics");
     expect(JSON.parse(init.body as string)).toEqual({ token: "ghp_test" });
   });
 });

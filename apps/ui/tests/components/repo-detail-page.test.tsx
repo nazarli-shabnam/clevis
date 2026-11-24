@@ -213,7 +213,7 @@ describe("RepoDetailPage", () => {
 
   it("shows the no-activity placeholder when commit_activity is empty", async () => {
     renderPage();
-    await waitFor(() => expect(reposStatsMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
+    await waitFor(() => expect(reposStatsMock).toHaveBeenCalledWith("acme", "demo", ""));
     expect(await screen.findByText(/no commit activity available yet/i)).toBeInTheDocument();
   });
 
@@ -230,6 +230,22 @@ describe("RepoDetailPage", () => {
 
     await waitFor(() => expect(screen.queryByText(/no commit activity available yet/i)).not.toBeInTheDocument());
     expect(screen.getByText(/top contributors/i)).toBeInTheDocument();
+  });
+
+  it("formats each week in UTC, since the week starts Sunday 00:00 UTC (#1240)", async () => {
+    const format = vi.spyOn(Date.prototype, "toLocaleDateString");
+    reposStatsMock.mockResolvedValue({
+      repository: "acme/demo",
+      commit_activity: [{ week: 1762646400, total: 3, days: [] }], // Sun 2025-11-09 00:00 UTC
+      participation: {},
+      contributors: [],
+    });
+
+    renderPage();
+
+    await waitFor(() => expect(format).toHaveBeenCalled());
+    expect(format).toHaveBeenCalledWith(undefined, expect.objectContaining({ month: "short", day: "numeric", timeZone: "UTC" }));
+    expect(new Date(1762646400 * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })).toBe("Nov 9");
   });
 
   it("labels the commit-activity chart and calendar as estimated when the source is an aggregate", async () => {
@@ -282,14 +298,14 @@ describe("RepoDetailPage", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: /security/i }));
 
-    await waitFor(() => expect(reposSecurityMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
+    await waitFor(() => expect(reposSecurityMock).toHaveBeenCalledWith("acme", "demo", ""));
   });
 
   it("opens the Security tab straight from ?tab=security", async () => {
     window.history.replaceState(null, "", "/repos/acme~demo?tab=security");
     try {
       renderPage();
-      await waitFor(() => expect(reposSecurityMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
+      await waitFor(() => expect(reposSecurityMock).toHaveBeenCalledWith("acme", "demo", ""));
       expect(screen.getByRole("tab", { name: /security/i })).toHaveAttribute("aria-selected", "true");
     } finally {
       window.history.replaceState(null, "", "/");
@@ -485,8 +501,8 @@ describe("RepoDetailPage", () => {
 
     renderPage();
 
-    await waitFor(() => expect(reposStatsMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
-    await waitFor(() => expect(reposPullsMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
+    await waitFor(() => expect(reposStatsMock).toHaveBeenCalledWith("acme", "demo", ""));
+    await waitFor(() => expect(reposPullsMock).toHaveBeenCalledWith("acme", "demo", ""));
     expect(reposStatsMock).toHaveBeenCalledTimes(1); // no second round trip once a token "settles"
     expect(tokensResolveMock).not.toHaveBeenCalled();
   });
@@ -524,7 +540,7 @@ describe("RepoDetailPage", () => {
     renderPage();
 
     fireEvent.click(await screen.findByRole("button", { name: "Load metrics" }));
-    await waitFor(() => expect(reposFlowMetricsMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
+    await waitFor(() => expect(reposFlowMetricsMock).toHaveBeenCalledWith("acme", "demo", ""));
     expect(reposFlowMetricsMock).toHaveBeenCalledTimes(1);
   });
 
@@ -685,9 +701,29 @@ describe("RepoDetailPage", () => {
     renderPage();
     fireEvent.click(screen.getByRole("tab", { name: /security/i }));
 
-    fireEvent.click(screen.getByRole("link", { name: /org-wide report/i }));
+    fireEvent.click(await screen.findByRole("link", { name: /org-wide report/i }));
 
     expect(localStorage.getItem("active_scope")).toBe(JSON.stringify({ kind: "org", login: "acme" }));
+  });
+
+  it("does not switch a personal account into an org scope or offer the org-only links (#1239)", async () => {
+    localStorage.clear();
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "personal", login: "acme" }));
+    orgsMineMock.mockResolvedValue([]); // acme is not one of the caller's orgs
+    securityRepoRowMock.mockResolvedValue({ ...cleanRow, dependabot_critical_count: 2, dependabot_high_count: 1 });
+    reposSecurityMock.mockResolvedValue({ repository: "acme/demo", branch_protection: "protected", secret_scanning: "enabled" });
+    renderPage();
+    await waitFor(() => expect(reposStatsMock).toHaveBeenCalledWith("acme", "demo", ""));
+    fireEvent.click(screen.getByRole("tab", { name: /security/i }));
+
+    await waitFor(() => expect(reposSecurityMock).toHaveBeenCalledWith("acme", "demo", ""));
+    expect(await screen.findByText("2 critical, 1 high")).toBeInTheDocument();
+    expect(await screen.findByText("Secret scanning")).toBeInTheDocument();
+    for (const name of [/org-wide report/i, "Burndown", "Alerts"]) {
+      expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
+    }
+    expect(localStorage.getItem("active_scope")).toBe(JSON.stringify({ kind: "personal", login: "acme" }));
+    localStorage.clear();
   });
 
   it("wires every tab to a panel that actually exists in the document, for all three tabs", () => {

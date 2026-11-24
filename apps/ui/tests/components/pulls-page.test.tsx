@@ -97,7 +97,7 @@ describe("PullRequestsPage", () => {
 
     renderPage();
 
-    await waitFor(() => expect(reposPullsMock).toHaveBeenCalledWith("acme", "acme", "demo", ""));
+    await waitFor(() => expect(reposPullsMock).toHaveBeenCalledWith("acme", "demo", ""));
     expect(await screen.findByText("No open pull requests")).toBeInTheDocument();
   });
 
@@ -123,7 +123,7 @@ describe("PullRequestsPage", () => {
         { name: "web", full_name: "acme/web", private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: "https://github.com/acme/web" },
       ],
     });
-    reposPullsMock.mockImplementation((_org: string, _owner: string, repo: string) => {
+    reposPullsMock.mockImplementation((_owner: string, repo: string) => {
       if (repo === "api") {
         return Promise.resolve({
           repository: "acme/api",
@@ -157,7 +157,7 @@ describe("PullRequestsPage", () => {
         { name: "web", full_name: "acme/web", private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: "https://github.com/acme/web" },
       ],
     });
-    reposPullsMock.mockImplementation((_org: string, _owner: string, repo: string) => {
+    reposPullsMock.mockImplementation((_owner: string, repo: string) => {
       if (repo === "api") return Promise.reject(new Error("GitHub API unreachable"));
       return Promise.resolve({ repository: "acme/web", total: 1, pulls: [pull({ title: "Still shows up" })] });
     });
@@ -178,7 +178,7 @@ describe("PullRequestsPage", () => {
         { name: "web", full_name: "acme/web", private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: "https://github.com/acme/web" },
       ],
     });
-    reposPullsMock.mockImplementation((_o: string, _w: string, repo: string) =>
+    reposPullsMock.mockImplementation((_w: string, repo: string) =>
       repo === "api" ? Promise.reject(new Error("boom")) : Promise.resolve({ repository: "acme/web", total: 0, pulls: [] }),
     );
 
@@ -196,7 +196,7 @@ describe("PullRequestsPage", () => {
       total: names.length,
       repos: names.map((name) => ({ name, full_name: `acme/${name}`, private: false, description: null, language: null, stargazers_count: 0, forks_count: 0, watchers_count: 0, open_issues_count: 0, pushed_at: null, default_branch: "main", html_url: `https://github.com/acme/${name}` })),
     });
-    reposPullsMock.mockImplementation((_o: string, _w: string, repo: string) =>
+    reposPullsMock.mockImplementation((_w: string, repo: string) =>
       repo === "ok" ? Promise.resolve({ repository: "acme/ok", total: 1, pulls: [pull({ title: "Survivor" })] }) : Promise.reject(new Error("boom")),
     );
 

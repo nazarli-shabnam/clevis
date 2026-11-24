@@ -219,7 +219,11 @@ def _handle_ingested_event(db: Session, event: str, delivery_id: str, raw_body: 
         # A transient Redis blip isn't GitHub's retry problem -- the payload is already
         # durably stored above. Mark it so the re-enqueue sweep can find it; still 200 to GitHub.
         logger.exception("Failed to enqueue webhook_deliveries row %s onto Redis stream %s", row.id, _WEBHOOK_STREAM_KEY)
-        row.status = "queue_failed"
+        # Conditional: if XADD raised after Redis accepted the entry (a client timeout), the worker may already
+        # have set the row to processed, and an unconditional write would send it through the requeue sweep again.
+        db.query(WebhookDelivery).filter(WebhookDelivery.id == row.id, WebhookDelivery.status == "queued").update(
+            {"status": "queue_failed"}, synchronize_session=False
+        )
         db.commit()
 
 

@@ -68,12 +68,15 @@ def _retry_delay_seconds(r: httpx.Response, attempt: int) -> float:
             pass
     # GitHub sends the rate-limit headers on every response, so a 5xx carries a reset time too; that must
     # not pace its retry (it would wait up to the cap instead of backing off exponentially).
-    reset_raw = r.headers.get("X-RateLimit-Reset") if (r.status_code == 429 or _is_secondary_rate_limit(r)) else None
+    # Only an exhausted quota (Remaining absent or 0) means the reset time is when to retry; a limit that fires
+    # with quota left is a secondary one, which GitHub says to wait at least a minute for.
+    exhausted = r.headers.get("X-RateLimit-Remaining") in (None, "0")
+    reset_raw = r.headers.get("X-RateLimit-Reset") if exhausted and (r.status_code == 429 or _is_secondary_rate_limit(r)) else None
     if reset_raw is not None:
         try:
-            delay = float(reset_raw) - time.time()
-            if delay > 0:
-                return min(delay, _MAX_RETRY_AFTER_SECONDS)
+            # A reset already in the past (clock skew, or the window rolled over) means the quota is
+            # back: retry almost at once rather than falling through to the full cap.
+            return min(max(float(reset_raw) - time.time(), 1.0), _MAX_RETRY_AFTER_SECONDS)
         except ValueError:
             pass
     if r.status_code == 429 or _is_secondary_rate_limit(r):
