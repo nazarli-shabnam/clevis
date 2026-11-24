@@ -248,6 +248,17 @@ def test_apply_puts_the_merged_body_per_repo(db, acme):
     assert len(puts) == 2 and puts[0].kwargs["json"]["allow_force_pushes"] is False
 
 
+def test_apply_skips_a_repo_whose_dry_run_diff_is_empty(db, acme):
+    client = _client(db, acme["admin"].id)
+    with patch("src.routers.branch_protection.GitHubClient") as mock:
+        inst = _fake_github(mock, protection=_protection())
+        resp = _post(client, {"repos": ["api"], "dry_run": False, "save_preset": True})
+    result = resp.json()["results"][0]
+    assert result["applied"] is False and result["unchanged"] is True and result["error"] is None
+    assert not [c for c in inst.request.call_args_list if c[0][0] == "PUT"]
+    assert automation_settings_repo.list_for_feature(db, acme["org"].tenant_id, "branch_protection") == []
+
+
 def test_apply_reports_one_repo_403_while_the_others_succeed(db, acme):
     client = _client(db, acme["admin"].id)
 

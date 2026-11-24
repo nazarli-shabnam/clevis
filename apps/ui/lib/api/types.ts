@@ -932,6 +932,7 @@ export interface BranchProtectionRepoDiff {
 export interface BranchProtectionRepoResult {
   repo: string
   applied: boolean
+  unchanged?: boolean
   error: string | null
 }
 
