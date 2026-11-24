@@ -15,9 +15,24 @@ from getpass import getpass
 from urllib.parse import quote
 
 
+# The files the `init-secrets` service writes and apps/api/entrypoint.sh reads when the variable is empty.
+_SECRET_FILES = {
+    "JOB_SECRET_KEY": "/run/clevis/job/job_secret",
+    "AUTH_SECRET": "/run/clevis/auth/auth_secret",
+}
+
+
 def _prepare_env() -> None:
     """The container entrypoint builds these for the server process only; rebuild them the same way here, before
-    the settings module reads them."""
+    the settings module reads them. A secret left empty in the environment comes from its init-secrets file,
+    like the entrypoint does (an environment value still wins)."""
+    for name, path in _SECRET_FILES.items():
+        if not os.environ.get(name):
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    os.environ[name] = handle.read().strip()
+            except OSError:
+                pass  # no file: the settings module reports the missing variable
     if not os.environ.get("DATABASE_URL"):
         user, password, name = (os.environ.get(k) for k in ("DB_USER", "DB_PASSWORD", "DB_NAME"))
         if not (user and password and name):

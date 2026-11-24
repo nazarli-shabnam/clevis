@@ -11,6 +11,7 @@ import {
   ResponsiveContainer,
 } from "recharts"
 import { CHART_COLORS, CHART_TOOLTIP_STYLE } from "@/lib/charts/theme"
+import { ChartA11y, describeSeries } from "./chart-a11y"
 
 interface AreaTimeChartProps {
   data: { week: string; value: number }[]
@@ -32,6 +33,7 @@ export function AreaTimeChart({
   // useId keeps the gradient id unique even with several charts on one page.
   const gradientId = `area-grad-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`
   return (
+    <ChartA11y summary={describeSeries(label, data.map((d) => ({ name: d.week, value: d.value })))}>
     <ResponsiveContainer width="100%" height={height}>
       <AreaChart
         data={data}
@@ -71,5 +73,6 @@ export function AreaTimeChart({
         />
       </AreaChart>
     </ResponsiveContainer>
+    </ChartA11y>
   )
 }

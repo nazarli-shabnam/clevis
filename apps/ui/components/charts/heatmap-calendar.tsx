@@ -1,4 +1,5 @@
 import { CHART_COLORS } from "@/lib/charts/theme"
+import { ChartA11y } from "./chart-a11y"
 
 interface HeatmapCalendarProps {
   data: number[] // weekly counts (e.g. 52 values)
@@ -16,7 +17,15 @@ export function HeatmapCalendar({ data, colorScale }: HeatmapCalendarProps) {
     return scale[idx]
   }
 
+  const peakIndex = data.indexOf(Math.max(...data))
+  const total = data.reduce((sum, v) => sum + v, 0)
+  const summary =
+    data.length === 0 || total === 0
+      ? "Activity heatmap: no activity."
+      : `Activity heatmap: ${data.length} weeks, ${total} in total, peak ${data[peakIndex]} in week ${peakIndex + 1} (week ${data.length} is the most recent).`
+
   return (
+    <ChartA11y summary={summary}>
     <div className="flex flex-wrap gap-1">
       {data.map((value, i) => (
         <div
@@ -27,5 +36,6 @@ export function HeatmapCalendar({ data, colorScale }: HeatmapCalendarProps) {
         />
       ))}
     </div>
+    </ChartA11y>
   )
 }

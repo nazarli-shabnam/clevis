@@ -21,6 +21,7 @@ import type {
   NotificationKind,
   NotificationPreferences,
   ActionsUsageResponse,
+  CacheSizePoint,
   AnalyticsHistoryResponse,
   AnalyticsOverviewResponse,
   LatestScanResponse,
@@ -498,6 +499,9 @@ export const api = {
         `/orgs/${encodeURIComponent(org)}/usage/actions`,
         githubTokenHeader(token),
       ),
+    // The org's recorded daily Actions cache totals (a point is written each time the Overview loads).
+    cacheHistory: (org: string, days = 30) =>
+      get<CacheSizePoint[]>(`/orgs/${encodeURIComponent(org)}/analytics/cache-history?days=${days}`),
     // Full scan history with per-check detail for an optional [since, until] window; caller renders CSV.
     exportHistory: (owner: string, since?: string, until?: string) => {
       const params = new URLSearchParams({ owner })
@@ -872,8 +876,16 @@ export const api = {
     automationSchedules: (orgLogin: string) =>
       get<AutomationSchedules>(`/orgs/${encodeURIComponent(orgLogin)}/automation-schedules`),
     // Only the fields passed change; null follows the instance cadence again.
-    setAutomationSchedules: (orgLogin: string, body: { pr_nudges?: boolean | null; dependabot_triage?: boolean | null }) =>
+    setAutomationSchedules: (
+      orgLogin: string,
+      body: { pr_nudges?: boolean | null; dependabot_triage?: boolean | null; stale_cache_clear?: boolean | null },
+    ) =>
       put<AutomationSchedules>(`/orgs/${encodeURIComponent(orgLogin)}/automation-schedules`, body),
+    setStaleCacheRepo: (orgLogin: string, owner: string, repo: string, enabled: boolean, idleDays: number) =>
+      put<{ enabled: boolean; idle_days: number }>(
+        `/orgs/${encodeURIComponent(orgLogin)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/automation/stale-cache-clear`,
+        { enabled, idle_days: idleDays },
+      ),
     setPrNudgeRepo: (orgLogin: string, owner: string, repo: string, enabled: boolean) =>
       put<{ enabled: boolean }>(
         `/orgs/${encodeURIComponent(orgLogin)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/automation/pr-nudge`,

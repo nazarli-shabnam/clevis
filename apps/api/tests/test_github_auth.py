@@ -404,6 +404,20 @@ def test_full_flow_succeeds_when_the_state_cookie_matches(gh_client, db, oauth_c
     assert "clevis_session" in resp.headers.get("set-cookie", "")
 
 
+def test_cancelling_on_githubs_authorize_page_is_reported_as_cancelled_not_expired(gh_client, db, oauth_configured):
+    login_resp = gh_client.get("/auth/github/login", follow_redirects=False)
+    state = _extract_state(login_resp)
+
+    resp = gh_client.get(f"/auth/github/callback?error=access_denied&state={state}", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"].endswith("/login?error=github_access_denied")
+    assert db.query(User).count() == 0
+
+    # Without a valid state it is still an invalid attempt.
+    resp = gh_client.get("/auth/github/callback?error=access_denied&state=bad", follow_redirects=False)
+    assert resp.headers["location"].endswith("/login?error=github_invalid_state")
+
+
 def test_replaying_a_captured_state_from_a_different_browser_is_rejected(gh_client, db, oauth_configured):
     # Simulates the attack this fix closes: an attacker captures a valid (code, state)
     # pair from their own OAuth flow and gets a victim to open the callback URL. The

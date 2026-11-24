@@ -111,7 +111,7 @@ export function BranchProtectionCard({ org, token, repos, initialSelected = [] }
     message =
       failed.length === 0
         ? `Applied branch protection to ${applied} repositor${applied === 1 ? "y" : "ies"}.`
-        : `Applied to ${applied}; ${failed.length} failed: ${failed.map((r) => r.repo).join(", ")}.`
+        : `Applied to ${applied}; ${failed.length} failed: ${failed.map((r) => (r.error ? `${r.repo} (${r.error})` : r.repo)).join("; ")}.`
   }
 
   const diffs = apply.data ? [] : preview.data?.diffs ?? []

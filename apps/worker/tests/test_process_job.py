@@ -472,6 +472,21 @@ def test_global_clear_lists_then_deletes_each_cache_by_id():
     assert result == {"ok": True, "deleted": 2}
 
 
+def test_a_ref_without_a_key_lists_only_that_refs_caches():
+    """ref alone must scope the bulk path to that ref, not delete every branch's caches."""
+    conn = _FakeConn()
+
+    get = MagicMock(return_value=_resp(200, {"actions_caches": [{"id": 7}]}))
+    delete = MagicMock(return_value=_resp(204))
+
+    with patch("worker.httpx.Client") as mock_client_cls:
+        mock_client_cls.return_value = _mock_client(get=get, delete=delete)
+        process_job(conn, 19, "github.clear_actions_cache", _global_payload(ref="refs/heads/feature-x"))
+
+    assert get.call_args.kwargs["params"]["ref"] == "refs/heads/feature-x"
+    assert [c.args[0] for c in delete.call_args_list] == ["https://api.github.com/repos/acme/demo/actions/caches/7"]
+
+
 def test_global_clear_with_no_caches_marks_done_with_zero_deleted():
     conn = _FakeConn()
 

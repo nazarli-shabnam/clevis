@@ -749,6 +749,17 @@ const CONFIG_FIELDS: {
       { value: "weekly", label: "Weekly" },
     ],
   },
+  {
+    key: "stale_cache_clear_cadence",
+    label: "Scheduled Stale-Cache Clear",
+    description: "Delete GitHub Actions caches that nobody has used for the number of days an org admin set, on every repository they enabled it for, using the org's GitHub App installation (never a pasted token). Org admins can switch it per organization. Off by default.",
+    type: "select",
+    options: [
+      { value: "off", label: "Off" },
+      { value: "daily", label: "Daily" },
+      { value: "weekly", label: "Weekly" },
+    ],
+  },
   { key: "automation_poll_seconds", label: "Scheduled Automation Check Interval", description: "Seconds between checks for a due scheduled nudge or triage run (default 3600).", type: "number" },
   { key: "digest_poll_seconds", label: "Digest Check Interval", description: "Seconds between checks for a due leadership digest.", type: "number" },
   {

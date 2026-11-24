@@ -45,6 +45,29 @@ def test_resolve_org_token_uses_installation_when_connected(db, app_configured):
     assert token == "minted-token"
 
 
+def test_a_scan_token_is_minted_with_a_scan_sized_minimum_lifetime(db, app_configured):
+    org = org_repo.get_or_create(db, github_login="acme")
+    user = _make_user(db, "scan@example.com")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=user.id, role="admin")
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id
+    )
+    with patch("src.services.token_resolution.github_app.get_installation_token", return_value="minted-token") as mint:
+        resolve_org_token(db, org_id=org.id, account_login="acme", client_token=None, for_scan=True)
+        resolve_owner_token(db, user_id=user.id, owner="acme", client_token=None, for_scan=True)
+    assert [c.args for c in mint.call_args_list] == [(42, github_app.SCAN_TOKEN_MIN_TTL_SECONDS)] * 2
+
+
+def test_a_personal_scan_token_is_minted_with_a_scan_sized_minimum_lifetime(db, app_configured):
+    user = _make_user(db, "personal-scan@example.com")
+    installation_repo.create(
+        db, account_login="octo", account_type="User", auth_mode="app", installation_id=7, owner_user_id=user.id
+    )
+    with patch("src.services.token_resolution.github_app.get_installation_token", return_value="minted-token") as mint:
+        resolve_owner_token(db, user_id=user.id, owner="octo", client_token=None, for_scan=True)
+    mint.assert_called_once_with(7, github_app.SCAN_TOKEN_MIN_TTL_SECONDS)
+
+
 def test_resolve_org_token_falls_back_to_client_token_when_no_installation(db, app_configured):
     org = org_repo.get_or_create(db, github_login="acme")
     token = resolve_org_token(db, org_id=org.id, account_login="acme", client_token="ghp_client")

@@ -50,6 +50,7 @@ _ENUM_KEYS = {
     "scheduled_scan_cadence": {"off", "daily", "weekly"},
     "pr_nudge_cadence": {"off", "daily", "weekly"},
     "dependabot_triage_cadence": {"off", "daily", "weekly"},
+    "stale_cache_clear_cadence": {"off", "daily", "weekly"},
 }
 
 

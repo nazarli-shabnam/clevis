@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, ConfigDict, SecretStr
 
 
 class AnalyticsInput(BaseModel):
@@ -33,7 +33,14 @@ class CheckResult(BaseModel):
     # scoring is on). None on scans stored before the stamp existed.
     scored: bool | None = None
     status: Literal["pass", "fail", "error", "not_applicable"]
-    value: bool | str | dict[str, int] | None = None
+    # Counters, plus the capped affected-repo names a failing repo-level check adds under "repos".
+    value: bool | str | dict[str, int | list[str]] | None = None
+
+
+class CacheSizePointOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    day: date
+    total_bytes: int
 
 
 class AnalyticsResponse(BaseModel):
@@ -201,6 +208,10 @@ class CockpitResponse(BaseModel):
     # zero/empty/partial value (see the _safe_* helpers below) -- lets the UI distinguish "this org
     # genuinely has none" from "we couldn't fully fetch this," which previously rendered identically.
     degraded: bool = False
+    # Set (to the cap) when the org has more repositories than the per-repo aggregates read: cache size,
+    # milestones and release cadence (and commit activity on the live GitHub path) cover only the first
+    # that-many repos, while repo_count counts them all. None when every repo was read.
+    aggregate_repo_limit: int | None = None
     # Whether any automation has really run for this account's tenant (onboarding checklist). None when it
     # couldn't be determined, so the UI hides that step rather than nagging.
     has_automation_run: bool | None = None

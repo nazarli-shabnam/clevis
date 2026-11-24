@@ -11,6 +11,7 @@ import {
   ResponsiveContainer,
 } from "recharts"
 import { CHART_COLORS, CHART_TOOLTIP_STYLE } from "@/lib/charts/theme"
+import { ChartA11y } from "./chart-a11y"
 
 interface BarGroupChartProps {
   data: { name: string; [key: string]: number | string }[]
@@ -20,7 +21,11 @@ interface BarGroupChartProps {
 
 /** Grouped bar chart — renders one Bar series per entry in `bars`. */
 export function BarGroupChart({ data, bars, height = 240 }: BarGroupChartProps) {
+  const summary = `Bar chart of ${bars.map((b) => b.key).join(", ")} across ${data.length} ${data.length === 1 ? "group" : "groups"}${
+    data.length ? `, from ${data[0].name} to ${data[data.length - 1].name}` : ""
+  }.`
   return (
+    <ChartA11y summary={summary}>
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data}>
         <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} />
@@ -37,5 +42,6 @@ export function BarGroupChart({ data, bars, height = 240 }: BarGroupChartProps) 
         ))}
       </BarChart>
     </ResponsiveContainer>
+    </ChartA11y>
   )
 }

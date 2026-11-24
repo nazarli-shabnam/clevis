@@ -180,6 +180,22 @@ def test_unpinned_actions_check_reads_workflow_files():
     assert out["status"] == "fail" and out["value"]["unpinned_uses"] == 1
 
 
+def test_unpinned_actions_reports_sampled_when_more_workflows_exist_than_are_read():
+    wf = base64.b64encode(b"steps:\n  - uses: actions/checkout@v4\n").decode()
+    names = [f".github/workflows/{c}.yml" for c in "abcdefg"]  # 7 files, only the first 5 are read
+
+    def get(url, token):
+        if "/git/trees/" in url:
+            return _tree(*names)
+        return {"content": wf}
+
+    out = _run(h.UnpinnedActions(), [_repo()], get)
+    assert out["status"] == "pass" and out["value"]["sampled"] == 1
+
+    few = _run(h.UnpinnedActions(), [_repo()], lambda u, t: _tree(*names[:5]) if "/git/trees/" in u else {"content": wf})
+    assert few["value"]["sampled"] == 0
+
+
 def test_unpinned_actions_quotes_special_characters_in_workflow_filenames():
     wf = base64.b64encode(b"steps:\n  - uses: thirdparty/tool@v2\n").decode()
     requested = []

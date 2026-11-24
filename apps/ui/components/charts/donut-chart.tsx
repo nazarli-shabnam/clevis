@@ -2,6 +2,7 @@
 
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts"
 import { CHART_COLORS, CHART_TOOLTIP_STYLE } from "@/lib/charts/theme"
+import { ChartA11y } from "./chart-a11y"
 
 interface DonutChartProps {
   data: { name: string; value: number; color: string }[]
@@ -13,6 +14,7 @@ interface DonutChartProps {
 export function DonutChart({ data, label, height = 200 }: DonutChartProps) {
   const total = data.reduce((sum, d) => sum + d.value, 0)
   return (
+    <ChartA11y summary={`${label}: ${total} in total${data.length ? ` (${data.map((d) => `${d.name} ${d.value}`).join(", ")})` : ""}.`}>
     <div className="relative" style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
@@ -37,5 +39,6 @@ export function DonutChart({ data, label, height = 200 }: DonutChartProps) {
         <span className="text-xs text-muted-foreground">{label}</span>
       </div>
     </div>
+    </ChartA11y>
   )
 }

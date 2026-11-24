@@ -50,8 +50,8 @@ function ScheduleSelect({
   )
 }
 
-/** Org admins choose whether stale-PR nudges and Dependabot auto-triage run on a schedule, overriding the
- * instance cadence, and which repositories get scheduled nudges. */
+/** Org admins choose whether stale-PR nudges, Dependabot auto-triage and the idle-cache clear run on a schedule,
+ * overriding the instance cadence, and which repositories each one acts on. */
 export function AutomationSchedulesCard({ orgLogin }: { orgLogin: string }) {
   const queryClient = useQueryClient()
   const queryKey = ["automation-schedules", orgLogin]
@@ -61,12 +61,14 @@ export function AutomationSchedulesCard({ orgLogin }: { orgLogin: string }) {
     retry: false,
   })
   const update = useMutation({
-    mutationFn: (body: { pr_nudges?: boolean | null; dependabot_triage?: boolean | null }) =>
+    mutationFn: (body: { pr_nudges?: boolean | null; dependabot_triage?: boolean | null; stale_cache_clear?: boolean | null }) =>
       api.orgs.setAutomationSchedules(orgLogin, body),
     onSuccess: (data) => queryClient.setQueryData(queryKey, data),
   })
   const [newRepo, setNewRepo] = useState("")
   const [newTriageRepo, setNewTriageRepo] = useState("")
+  const [newCacheRepo, setNewCacheRepo] = useState("")
+  const [newCacheDays, setNewCacheDays] = useState("7")
   const splitRepo = (repo: string): [string, string] => {
     const parts = repo.split("/")
     // Exactly `repo` or `owner/repo`: extra segments would otherwise be dropped and a different repo enabled.
@@ -92,6 +94,16 @@ export function AutomationSchedulesCard({ orgLogin }: { orgLogin: string }) {
     },
     onSuccess: () => {
       setNewTriageRepo("")
+      return queryClient.invalidateQueries({ queryKey })
+    },
+  })
+  const setCacheRepo = useMutation({
+    mutationFn: ({ repo, enabled, idleDays }: { repo: string; enabled: boolean; idleDays: number }) => {
+      const [owner, name] = splitRepo(repo)
+      return api.orgs.setStaleCacheRepo(orgLogin, owner, name, enabled, idleDays)
+    },
+    onSuccess: () => {
+      setNewCacheRepo("")
       return queryClient.invalidateQueries({ queryKey })
     },
   })
@@ -217,10 +229,75 @@ export function AutomationSchedulesCard({ orgLogin }: { orgLogin: string }) {
               A repository with no saved settings starts in approve-only mode; one that already has settings keeps its saved mode. Change it in the Dependabot triage card.
             </p>
           </div>
-          {(update.isError || setRepo.isError || setTriageRepo.isError) && (
-            <p role="alert" className="text-xs text-destructive">
-              {(update.error ?? setRepo.error ?? setTriageRepo.error)?.message}
-            </p>
+          <ScheduleSelect
+            id="schedule-stale-cache"
+            label="Clear idle Actions caches automatically"
+            setting={data.stale_cache_clear}
+            disabled={update.isPending}
+            onChange={(enabled) => update.mutate({ stale_cache_clear: enabled })}
+          />
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-foreground">Repositories with idle-cache clearing</span>
+            {Object.keys(data.stale_cache_repos).length === 0 ? (
+              <p className="text-xs text-muted-foreground">None yet: a scheduled run does nothing until a repository is added.</p>
+            ) : (
+              <ul className="flex flex-col gap-1">
+                {Object.entries(data.stale_cache_repos).map(([repo, idleDays]) => (
+                  <li key={repo} className="flex items-center gap-2 text-xs">
+                    <span className="font-mono">{repo}</span>
+                    <span className="text-muted-foreground">idle for {idleDays}+ days</span>
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:text-foreground"
+                      disabled={setCacheRepo.isPending}
+                      onClick={() => setCacheRepo.mutate({ repo, enabled: false, idleDays })}
+                      aria-label={`Stop clearing caches of ${repo}`}
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <form
+              className="flex items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault()
+                const idleDays = Number(newCacheDays)
+                if (newCacheRepo.trim() && Number.isInteger(idleDays) && idleDays >= 1 && idleDays <= 90) {
+                  setCacheRepo.mutate({ repo: newCacheRepo.trim(), enabled: true, idleDays })
+                }
+              }}
+            >
+              <Input
+                value={newCacheRepo}
+                onChange={(e) => setNewCacheRepo(e.target.value)}
+                placeholder={`repo or ${orgLogin}/repo`}
+                aria-label="Repository to clear caches of"
+                className="h-7 text-xs max-w-60"
+              />
+              <Input
+                type="number"
+                min={1}
+                max={90}
+                value={newCacheDays}
+                onChange={(e) => setNewCacheDays(e.target.value)}
+                aria-label="Idle days before a cache is cleared"
+                className="h-7 text-xs w-16"
+              />
+              <span className="text-xs text-muted-foreground">days idle</span>
+              <Button type="submit" size="sm" variant="outline" aria-label="Add cache repository" disabled={setCacheRepo.isPending || !newCacheRepo.trim()}>
+                Add
+              </Button>
+            </form>
+          </div>
+          {[update, setRepo, setTriageRepo, setCacheRepo].map(
+            (mutation, i) =>
+              mutation.isError && (
+                <p key={i} role="alert" className="text-xs text-destructive">
+                  {mutation.error?.message}
+                </p>
+              ),
           )}
         </div>
       )}
