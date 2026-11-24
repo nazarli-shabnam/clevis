@@ -139,6 +139,17 @@ def bulk_branch_protection(
         if _all_forbidden([r.error for r in results]):
             raise HTTPException(status_code=400, detail=_PERMISSION_HINT)
 
+        # The row written before the run only says what was asked for (and an async run's outcome lives only
+        # in a job row retention purges); this one records which repos were actually rewritten.
+        audit_repo.write(
+            session, user.email, "branch_protection.bulk_result", owner,
+            {
+                "applied": [r.repo for r in results if r.applied],
+                "failed": {r.repo: r.error for r in results if r.error},
+            },
+            tenant_id=tenant_id,
+        )
+
         if body.save_preset:
             preset = branch_protection_bulk.normalize_preset(body.preset)
             for r in results:

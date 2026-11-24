@@ -4,6 +4,7 @@ dry_run returns a per-repo diff; apply PUTs a body preserving rules the preset d
 Branches with push restrictions are reported as errors and left alone.
 """
 
+import json
 from unittest.mock import patch
 
 import httpx
@@ -272,6 +273,36 @@ def test_apply_reports_one_repo_403_while_the_others_succeed(db, acme):
     assert results["bad"]["applied"] is False and "403" in results["bad"]["error"]
 
 
+def test_apply_audits_which_repos_were_changed_and_which_failed(db, acme):
+    client = _client(db, acme["admin"].id)
+
+    def request(method, path, params=None, json=None):
+        if method == "GET" and path.count("/") == 3:
+            return {"default_branch": "main"}
+        if method == "PUT" and "/b/" in path:
+            raise httpx.HTTPStatusError(
+                "403", request=httpx.Request("PUT", "https://api.github.com"), response=httpx.Response(403)
+            )
+        if method == "PUT" and "/c/" in path:
+            raise httpx.HTTPStatusError(
+                "500", request=httpx.Request("PUT", "https://api.github.com"), response=httpx.Response(500)
+            )
+        if method == "GET" and path.endswith("/protection"):
+            raise httpx.HTTPStatusError(
+                "404", request=httpx.Request("GET", "https://api.github.com"), response=httpx.Response(404)
+            )
+        return {}
+
+    with patch("src.routers.branch_protection.GitHubClient") as mock:
+        mock.return_value.request.side_effect = request
+        _post(client, {"repos": ["a", "b", "c"], "dry_run": False})
+    row = db.query(AuditLog).filter(AuditLog.action == "branch_protection.bulk_result").one()
+    assert json.loads(row.payload) == {
+        "applied": ["a"],
+        "failed": {"b": "GitHub API error: 403", "c": "GitHub API error: 500"},
+    }
+
+
 def test_every_repo_403_becomes_a_400_with_the_permission_hint(db, acme):
     client = _client(db, acme["admin"].id)
     with patch("src.routers.branch_protection.GitHubClient") as mock:
@@ -412,6 +443,7 @@ def test_dry_run_writes_an_audit_row(db, acme):
         _fake_github(mock, protection_404=True)
         _post(client, {"repos": ["api"], "dry_run": True})
     assert db.query(AuditLog).filter(AuditLog.action == "branch_protection.bulk_dryrun").count() == 1
+    assert db.query(AuditLog).filter(AuditLog.action == "branch_protection.bulk_result").count() == 0
 
 
 def test_repo_name_rule_allows_dot_github_but_not_dot_segments():
