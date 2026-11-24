@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from src.core.auth import UserOut, require_auth
 from src.core.db import AuditLog, User, get_db
-from src.repositories import automation_settings_repo, org_membership_repo, org_repo
+from src.repositories import audit_repo, automation_settings_repo, org_membership_repo, org_repo
 from src.routers.dependabot_triage import router
 from src.services import dependabot_triage
 from src.services.dependabot_triage import triage
@@ -513,6 +513,29 @@ def test_run_audits_the_run_and_every_decision(db, acme):
     assert db.query(AuditLog).filter(AuditLog.action == "dependabot_triage.run").count() == 1
     assert db.query(AuditLog).filter(AuditLog.action == "dependabot_triage.approved").count() == 1
     assert db.query(AuditLog).filter(AuditLog.action == "dependabot_triage.skipped").count() == 1
+
+
+def test_a_dry_run_is_not_recorded_as_a_run(db, acme):
+    client = _client(db, acme["admin"].id)
+    automation_settings_repo.upsert(
+        db, acme["org"].tenant_id, "acme/api", "dependabot_triage", enabled=True, mode="approve_only"
+    )
+    db.commit()
+    with patch("src.routers.dependabot_triage.GitHubClient") as mock:
+        _wire(mock, prs=[_pr()])
+        resp = client.post(
+            "/orgs/acme/dependabot-triage", json={"token": "ghp_admin", "repos": ["acme/api"], "dry_run": True}
+        )
+    assert resp.status_code == 200
+    assert db.query(AuditLog).filter(AuditLog.action == "dependabot_triage.run").count() == 0
+    assert db.query(AuditLog).filter(AuditLog.action == "dependabot_triage.dryrun").count() == 1
+    assert not audit_repo.has_any_action(db, acme["org"].tenant_id, audit_repo.AUTOMATION_RUN_ACTIONS)
+
+
+def test_a_bulk_remediation_apply_counts_as_running_an_automation(db, acme):
+    tenant_id = acme["org"].tenant_id
+    audit_repo.write(db, "admin@e.com", "security.remediate.bulk_apply", "acme", {}, tenant_id=tenant_id)
+    assert audit_repo.has_any_action(db, tenant_id, audit_repo.AUTOMATION_RUN_ACTIONS)
 
 
 def test_run_uses_the_repos_configured_merge_method(db, acme):
