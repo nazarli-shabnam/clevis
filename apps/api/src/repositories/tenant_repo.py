@@ -131,6 +131,7 @@ def list_org_memberships_for_user(db: Session, user_id: int) -> list[tuple[Org, 
         .join(Tenant, Tenant.org_id == Org.id)
         .join(Membership, Membership.tenant_id == Tenant.id)
         .filter(Membership.user_id == user_id, Tenant.kind == "org")
+        .order_by(Tenant.id)
         .all()
     )
 
