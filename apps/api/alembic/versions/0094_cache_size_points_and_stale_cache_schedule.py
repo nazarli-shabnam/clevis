@@ -15,7 +15,7 @@ Two additive changes for the Actions-cache feature:
 Downgrade drops both: the recorded history and the per-org choices are lost.
 
 Revision ID: 0094
-Revises: 0091
+Revises: 0093
 Create Date: 2026-11-23
 """
 
@@ -23,7 +23,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0094"
-down_revision = "0091"
+down_revision = "0093"
 branch_labels = None
 depends_on = None
 
