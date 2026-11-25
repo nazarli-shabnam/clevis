@@ -12,6 +12,8 @@ vi.mock("next/navigation", () => ({
 const previewMock = vi.fn();
 const acceptMock = vi.fn();
 const resendVerificationMock = vi.fn();
+const unverifiedError = () =>
+  Object.assign(new Error("Verify your email before accepting this invitation"), { code: "email_unverified" });
 
 vi.mock("@/lib/api/client", () => ({
   api: {
@@ -192,7 +194,7 @@ describe("InviteAcceptPage", () => {
 
   it("shows a resend-verification button when accept fails because the email isn't verified", async () => {
     previewMock.mockResolvedValue({ org_login: "acme", status: "pending" });
-    acceptMock.mockRejectedValue(new Error("Verify your email before accepting this invitation"));
+    acceptMock.mockRejectedValue(unverifiedError());
 
     renderPage();
 
@@ -209,7 +211,7 @@ describe("InviteAcceptPage", () => {
 
   it("shows an error message when resending the verification email fails", async () => {
     previewMock.mockResolvedValue({ org_login: "acme", status: "pending" });
-    acceptMock.mockRejectedValue(new Error("Verify your email before accepting this invitation"));
+    acceptMock.mockRejectedValue(unverifiedError());
 
     renderPage();
 
@@ -222,6 +224,31 @@ describe("InviteAcceptPage", () => {
 
     await waitFor(() => expect(resendVerificationMock).toHaveBeenCalled());
     await screen.findByText(/couldn.t resend the verification email/i);
+  });
+
+  it("does not offer resend for an account mismatch whose message happens to contain 'verify' (#1236)", async () => {
+    previewMock.mockResolvedValue({ org_login: "acme", status: "pending" });
+    acceptMock.mockRejectedValue(new Error("This invitation was sent to d***@acme.com, but you are signed in as verify@corp.example."));
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: /accept invitation/i }));
+    await screen.findByText(/signed in as verify@corp\.example/);
+    expect(screen.queryByRole("button", { name: /resend verification email/i })).not.toBeInTheDocument();
+  });
+
+  it("shows the server's reason when resend is refused (e.g. no SMTP configured)", async () => {
+    previewMock.mockResolvedValue({ org_login: "acme", status: "pending" });
+    acceptMock.mockRejectedValue(unverifiedError());
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: /accept invitation/i }));
+    const resendButton = await screen.findByRole("button", { name: /resend verification email/i });
+    resendVerificationMock.mockRejectedValue(new Error("Email isn't configured on this server"));
+    fireEvent.click(resendButton);
+
+    await screen.findByText(/email isn.t configured on this server/i);
   });
 
   it("does not show a resend button for an unrelated accept failure", async () => {

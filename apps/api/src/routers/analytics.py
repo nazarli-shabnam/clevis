@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from src.core.path_params import Owner
 from src.core.app_config import get_config
 from src.core.auth import UserOut, require_auth
-from src.core.db import RepoEventDailyCount, User, get_db, release_connection, set_session_user
+from src.core.db import RepoEventDailyCount, User, get_db, release_connection, set_session_tenant, set_session_user
 from src.core.rbac import (
     OrgContext,
     assert_owner_matches_org,
@@ -24,12 +24,21 @@ from src.core.rbac import (
     require_org_role,
     set_tenant_session_context,
 )
-from src.repositories import audit_repo, installation_repo, job_repo, org_repo, scan_results_repo, tenant_repo
+from src.repositories import (
+    audit_repo,
+    cache_size_repo,
+    installation_repo,
+    job_repo,
+    org_repo,
+    scan_results_repo,
+    tenant_repo,
+)
 from src.routers.github import _cached_events, _fetch_events_from_repo_events
 from src.schemas.analytics import (
     ActionsUsageResponse,
     AnalyticsInput,
     AnalyticsResponse,
+    CacheSizePointOut,
     HygieneScoringSettings,
     HygieneScoringUpdate,
     AtRiskRepo,
@@ -328,6 +337,7 @@ async def org_analytics_overview(
                 # The scan is stored as the org's latest score (badge, score API, alerts). A member's own
                 # token could be deliberately under-privileged so checks error out and the score drops.
                 allow_client_token=ctx.membership.role == "admin",
+                for_scan=True,
             )
         )
     except InsufficientOrgRole as exc:
@@ -378,7 +388,12 @@ async def personal_analytics_overview(
     try:
         token = await anyio.to_thread.run_sync(
             lambda: resolve_owner_token(
-                db, user_id=user.id, owner=payload.owner, client_token=client_token, client_token_min_role="admin"
+                db,
+                user_id=user.id,
+                owner=payload.owner,
+                client_token=client_token,
+                client_token_min_role="admin",
+                for_scan=True,
             )
         )
     except InsufficientOrgRole as exc:
@@ -433,6 +448,16 @@ def org_analytics_history(
     return scan_results_repo.list_recent(
         db, owner=ctx.org.github_login, limit=30, org_tenant_id=ctx.org.tenant_id
     )
+
+
+@router.get("/orgs/{org_login}/analytics/cache-history", response_model=list[CacheSizePointOut])
+def org_cache_history(
+    days: int = Query(30, ge=1, le=365),
+    ctx: OrgContext = Depends(require_org_role(min_role="member")),
+    db: Session = Depends(get_db),
+):
+    """The org's recorded daily total of Actions cache bytes (a point is written each time the cockpit is read)."""
+    return cache_size_repo.list_points(db, ctx.org.tenant_id, days)
 
 
 @router.get("/orgs/{org_login}/analytics/latest-scan", response_model=LatestScanOut)
@@ -627,6 +652,16 @@ def _safe_member_count(owner: str, token: str, account_type: str = "Organization
         return 0, False
 
 
+def _record_cache_size(db: Session, tenant_id: int, total_bytes: int) -> None:
+    """Best effort: a failed write must not fail the cockpit."""
+    try:
+        set_session_tenant(db, tenant_id)
+        cache_size_repo.record(db, tenant_id, total_bytes)
+    except Exception:
+        db.rollback()
+        logger.exception("could not record the cache size point for tenant %s", tenant_id)
+
+
 def _cockpit_connected_tenant(db: Session, user_id: int, owner: str) -> int | None:
     # The cockpit is a personal endpoint (require_auth only), so `owner` may be any login the caller
     # has a token for. Without this membership check any caller could read another org's aggregate
@@ -761,7 +796,8 @@ def _safe_open_pr_count(owner: str, token: str, account_type: str = "Organizatio
         return 0, False
 
 
-def _safe_pr_merge_rate_4w(owner: str, token: str, account_type: str = "Organization") -> list[PrWeekBucket]:
+def _safe_pr_merge_rate_4w(owner: str, token: str, account_type: str = "Organization") -> tuple[list[PrWeekBucket], bool]:
+    """(buckets, ok): ok=False means a search call failed, so the empty list is a fallback, not "no PRs"."""
     try:
         client = GitHubClient(token)
         qualifier = _owner_search_qualifier(owner, account_type)
@@ -777,12 +813,13 @@ def _safe_pr_merge_rate_4w(owner: str, token: str, account_type: str = "Organiza
                 )
                 for start in week_starts
             ]
-            return [
+            buckets = [
                 PrWeekBucket(week=start.isoformat(), opened=opened_f.result(), merged=merged_f.result())
                 for start, opened_f, merged_f in futures
             ]
+            return buckets, True
     except (httpx.HTTPStatusError, httpx.RequestError):
-        return []
+        return [], False
 
 
 def _week_total(week: dict) -> int:
@@ -849,21 +886,21 @@ def _safe_total_cache_bytes(owner: str, token: str, repo_names: list[str]) -> tu
     ok = True
     with nullcontext(_GITHUB_FANOUT_POOL) as pool:
         futures = [
-            pool.submit(client.request, "GET", f"/repos/{owner}/{repo}/actions/caches")
+            pool.submit(client.request_paginated, f"/repos/{owner}/{repo}/actions/caches", None, "actions_caches")
             for repo in repo_names[:_MAX_REPOS_FOR_AGGREGATES]
         ]
         for future in futures:
             try:
-                data = future.result()
-            except (httpx.HTTPStatusError, httpx.RequestError):
+                caches = future.result()  # every page: a repo with more than one page of caches is not understated
+            except (httpx.HTTPStatusError, httpx.RequestError, TypeError, KeyError):
                 ok = False
                 continue
-            if not isinstance(data, dict):
+            if not isinstance(caches, list):
                 ok = False
                 continue
             # A malformed cache entry must degrade this one repo, not fail the whole cockpit.
             try:
-                total += sum(_cache_entry_bytes(c) for c in data.get("actions_caches", []))
+                total += sum(_cache_entry_bytes(c) for c in caches)
             except (AttributeError, TypeError):
                 ok = False
     return total, ok
@@ -884,21 +921,29 @@ def _milestone_state(due_on: str | None, progress_pct: float) -> str:
     return "on_track"
 
 
-def _safe_milestones(owner: str, token: str, repo_names: list[str]) -> tuple[list[MilestoneSummary], list[AtRiskRepo]]:
-    """Each repo's open milestones, best-effort per repo so one broken repo doesn't blank the rest."""
+def _safe_milestones(
+    owner: str, token: str, repo_names: list[str]
+) -> tuple[tuple[list[MilestoneSummary], list[AtRiskRepo]], bool]:
+    """Each repo's open milestones, best-effort per repo so one broken repo doesn't blank the rest.
+    Returns ((milestones, at_risk), ok); ok=False when any repo's read failed, so the result may be incomplete."""
     client = GitHubClient(token)
     milestones: list[MilestoneSummary] = []
+    ok = True
 
-    def _fetch(repo: str) -> list[dict]:
+    def _fetch(repo: str) -> list[dict] | None:
         try:
             return client.request("GET", f"/repos/{owner}/{repo}/milestones", params={"state": "open"})
         except (httpx.HTTPStatusError, httpx.RequestError):
-            return []
+            return None
 
     with nullcontext(_GITHUB_FANOUT_POOL) as pool:
         futures = {pool.submit(_fetch, repo): repo for repo in repo_names[:_MAX_REPOS_FOR_AGGREGATES]}
         for future, repo in futures.items():
-            for m in future.result():
+            fetched = future.result()
+            if fetched is None:
+                ok = False
+                continue
+            for m in fetched:
                 open_issues = m.get("open_issues", 0)
                 closed_issues = m.get("closed_issues", 0)
                 total = open_issues + closed_issues
@@ -937,7 +982,7 @@ def _safe_milestones(owner: str, token: str, repo_names: list[str]) -> tuple[lis
                 existing.severity = "critical"
 
     at_risk_repos = sorted(at_risk_by_repo.values(), key=lambda r: r.severity != "critical")
-    return milestones[:10], at_risk_repos[:10]
+    return (milestones[:10], at_risk_repos[:10]), ok
 
 
 def _week_pr_cycle_time(client: GitHubClient, owner: str, start: date, account_type: str = "Organization") -> PrCycleTimeWeek:
@@ -962,7 +1007,8 @@ def _week_pr_cycle_time(client: GitHubClient, owner: str, start: date, account_t
     return PrCycleTimeWeek(week=start.isoformat(), avg_days=avg_days)
 
 
-def _safe_pr_cycle_time_8w(owner: str, token: str, account_type: str = "Organization") -> list[PrCycleTimeWeek]:
+def _safe_pr_cycle_time_8w(owner: str, token: str, account_type: str = "Organization") -> tuple[list[PrCycleTimeWeek], bool]:
+    """(weeks, ok): ok=False means a search call failed and the empty list is a fallback."""
     try:
         client = GitHubClient(token)
         week_starts = [_week_start(weeks_ago) for weeks_ago in range(7, -1, -1)]
@@ -970,27 +1016,32 @@ def _safe_pr_cycle_time_8w(owner: str, token: str, account_type: str = "Organiza
             futures = [
                 pool.submit(_week_pr_cycle_time, client, owner, start, account_type) for start in week_starts
             ]
-            return [f.result() for f in futures]
+            return [f.result() for f in futures], True
     except (httpx.HTTPStatusError, httpx.RequestError):
-        return []
+        return [], False
 
 
-def _safe_release_cadence_4w(owner: str, token: str, repo_names: list[str]) -> list[int]:
-    """Weekly release counts across the org's repos for the last 4 weeks."""
+def _safe_release_cadence_4w(owner: str, token: str, repo_names: list[str]) -> tuple[list[int], bool]:
+    """Weekly release counts across the org's repos for the last 4 weeks, as (totals, ok); ok=False when any
+    repo's read failed, so the counts may be too low."""
     week_starts = [_week_start(weeks_ago) for weeks_ago in range(3, -1, -1)]
     totals = [0, 0, 0, 0]
+    ok = True
 
-    def _fetch(repo: str) -> list[dict]:
+    def _fetch(repo: str) -> list[dict] | None:
         try:
             client = GitHubClient(token)
             return client.request("GET", f"/repos/{owner}/{repo}/releases", params={"per_page": 20})
         except (httpx.HTTPStatusError, httpx.RequestError):
-            return []
+            return None
 
     with nullcontext(_GITHUB_FANOUT_POOL) as pool:
         futures = [pool.submit(_fetch, repo) for repo in repo_names[:_MAX_REPOS_FOR_AGGREGATES]]
         for future in futures:
             releases = future.result()
+            if releases is None:
+                ok = False
+                continue
             if not isinstance(releases, list):
                 continue
             for r in releases:
@@ -1005,7 +1056,7 @@ def _safe_release_cadence_4w(owner: str, token: str, repo_names: list[str]) -> l
                     if start <= published < start + timedelta(days=7):
                         totals[i] += 1
                         break
-    return totals
+    return totals, ok
 
 
 def _has_automation_run(db: Session, user: UserOut, owner: str) -> bool | None:
@@ -1036,7 +1087,7 @@ async def personal_analytics_cockpit(
 ):
     try:
         token = await anyio.to_thread.run_sync(
-            lambda: resolve_owner_token(db, user_id=user.id, owner=owner, client_token=x_github_token)
+            lambda: resolve_owner_token(db, user_id=user.id, owner=owner, client_token=x_github_token, for_scan=True)
         )
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -1099,11 +1150,11 @@ async def _build_cockpit(owner: str, user: UserOut, db: Session, token: str) -> 
         (member_count, member_count_ok),
         (recent_events, recent_events_degraded, recent_events_stale, (commit_activity_4w, commit_heatmap_52w, commit_activity_ok)),
         (open_pr_count, open_pr_count_ok),
-        pr_merge_rate_4w,
+        (pr_merge_rate_4w, pr_merge_rate_ok),
         (total_cache_size_bytes, cache_bytes_ok),
-        (milestones, at_risk_repos),
-        pr_cycle_time_8w,
-        release_cadence_4w,
+        ((milestones, at_risk_repos), milestones_ok),
+        (pr_cycle_time_8w, pr_cycle_time_ok),
+        (release_cadence_4w, release_cadence_ok),
     ) = await asyncio.gather(
         anyio.to_thread.run_sync(lambda: _safe_member_count(owner, token, account_type)),
         anyio.to_thread.run_sync(
@@ -1123,7 +1174,16 @@ async def _build_cockpit(owner: str, user: UserOut, db: Session, token: str) -> 
         or not cache_bytes_ok
         or not commit_activity_ok
         or recent_events_degraded
+        or not pr_merge_rate_ok
+        or not milestones_ok
+        or not pr_cycle_time_ok
+        or not release_cadence_ok
     )
+
+    # Before the audit tenant is re-pointed below: today's total, for the Overview's growth chart.
+    # Only a read that covered every repo is a comparable point.
+    if connected_tenant_id is not None and cache_bytes_ok and len(repo_names) <= _MAX_REPOS_FOR_AGGREGATES:
+        await anyio.to_thread.run_sync(lambda: _record_cache_size(db, connected_tenant_id, total_cache_size_bytes))
 
     # Last: audit_tenant re-points the RLS tenant context, which every read above has already finished with.
     has_automation_run = await anyio.to_thread.run_sync(lambda: _has_automation_run(db, user, owner))
@@ -1149,6 +1209,7 @@ async def _build_cockpit(owner: str, user: UserOut, db: Session, token: str) -> 
         recent_events_stale=recent_events_stale,
         activity_history_incomplete=activity_incomplete,
         degraded=degraded,
+        aggregate_repo_limit=_MAX_REPOS_FOR_AGGREGATES if len(repo_names) > _MAX_REPOS_FOR_AGGREGATES else None,
         has_automation_run=has_automation_run,
     )
 

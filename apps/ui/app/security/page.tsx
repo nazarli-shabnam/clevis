@@ -50,7 +50,7 @@ function ScoreGauge({ score, failed, total }: { score: number | null; failed: nu
   return (
     <div className="flex items-center gap-5 px-4 py-4 border-b border-border">
       <div className="relative shrink-0">
-        <svg width="96" height="96" className="-rotate-90" aria-label={score === null ? "Security score: not available" : `Security score: ${score} out of 100`}>
+        <svg width="96" height="96" className="-rotate-90" role="img" aria-label={score === null ? "Security score: not available" : `Security score: ${score} out of 100`}>
           <circle cx="48" cy="48" r={r} fill="none" stroke="var(--border)" strokeWidth="7" />
           <circle
             cx="48" cy="48" r={r} fill="none"

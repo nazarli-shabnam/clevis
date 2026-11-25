@@ -10,8 +10,9 @@ Safety rails, because this spends GitHub API quota nobody is watching:
 - a per-tenant advisory lock plus a re-check of "is it still due" after taking it, so two API replicas
   don't scan the same org twice;
 - a ``scan.scheduled_started`` marker is committed before the scan (the advisory lock is transaction-scoped
-  and the scan can take minutes, so no transaction stays open while it runs): other replicas see the org
-  as in progress for IN_PROGRESS_WINDOW;
+  and the scan can take minutes, so no transaction stays open while it runs; everything the scan needs is
+  read before that commit, since a read after it would begin a new transaction that idles through the whole
+  scan): other replicas see the org as in progress for IN_PROGRESS_WINDOW;
 - a scan in which every scored check errored (expired token, rate limit) counts as a failure and is not stored;
 - a failure of any kind after that is recorded (``scan.scheduled_failed``) and retried only after
   FAILURE_RETRY, so a broken org doesn't burn a slot on every tick;
@@ -102,11 +103,18 @@ def _scan_one(db: Session, org_id: int, tenant_id: int, org_login: str, cadence:
         return False
     org = db.get(Org, org_id)
     try:
-        token = resolve_org_token(db, org_id=org_id, account_login=org_login, client_token=None)
+        token = resolve_org_token(db, org_id=org_id, account_login=org_login, client_token=None, for_scan=True)
     except NoGitHubTokenAvailable:
         logger.info("scheduled scan: %s has no GitHub App installation token; skipping", org_login)
         db.commit()
         return False
+    except Exception as exc:
+        return _record_failure(db, tenant_id, org_login, exc)
+    # Read what the scan needs first: any SELECT after the marker commit would open a transaction that stays
+    # idle (pinning the vacuum horizon, killable by idle_in_transaction_session_timeout) for the whole scan.
+    try:
+        score_hygiene = org_scores_hygiene(org)
+        stored_identity = load_stored_identity(db, tenant_id)
     except Exception as exc:
         return _record_failure(db, tenant_id, org_login, exc)
     # Commit the marker (releasing the transaction-scoped lock) before the long GitHub work.
@@ -116,8 +124,8 @@ def _scan_one(db: Session, org_id: int, tenant_id: int, org_login: str, cadence:
             owner=org_login,
             token=token,
             account_type="Organization",
-            score_hygiene=org_scores_hygiene(org),
-            stored_identity=load_stored_identity(db, tenant_id),
+            score_hygiene=score_hygiene,
+            stored_identity=stored_identity,
         )
         scored = [c for c in result["checks"] if c.get("scored")]
         if scored and all(c["status"] == "error" for c in scored):

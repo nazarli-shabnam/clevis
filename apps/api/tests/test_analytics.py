@@ -81,6 +81,38 @@ def test_overview_returns_expected_shape(http):
     assert len(body["checks"]) == 1
 
 
+_OVERVIEW_WITH_REPOS = {
+    **MOCK_OVERVIEW,
+    "checks": [
+        {
+            **MOCK_OVERVIEW["checks"][0],
+            "id": "branch_protection_enabled",
+            "status": "fail",
+            "value": {"checked": 3, "protected": 1, "repos": ["a", "b"]},
+        }
+    ],
+}
+
+
+def test_personal_overview_serialises_a_failing_check_that_names_affected_repos(http):
+    with (
+        patch("src.routers.analytics.get_account_type", return_value="Organization"),
+        patch("src.routers.analytics.get_overview", return_value=_OVERVIEW_WITH_REPOS),
+    ):
+        resp = http.post("/me/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
+    assert resp.status_code == 200
+    assert resp.json()["checks"][0]["value"]["repos"] == ["a", "b"]
+
+
+def test_org_overview_serialises_a_failing_check_that_names_affected_repos(http, db, mock_user):
+    org = org_repo.get_or_create(db, github_login="acme")
+    org_membership_repo.get_or_create(db, org_id=org.id, user_id=mock_user.id, role="admin")
+    with patch("src.routers.analytics.get_overview", return_value=_OVERVIEW_WITH_REPOS):
+        resp = http.post("/orgs/acme/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
+    assert resp.status_code == 200
+    assert resp.json()["checks"][0]["value"]["repos"] == ["a", "b"]
+
+
 def test_overview_github_http_error_returns_400(http):
     import httpx
 

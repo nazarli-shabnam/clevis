@@ -15,7 +15,7 @@ import warnings
 from sqlalchemy import text, update
 from sqlalchemy.orm import Session
 
-from src.core.db import Base, Membership, ScanResult, User
+from src.core.db import Base, ScanResult, User
 from src.repositories import api_token_repo, audit_repo, tenant_repo
 
 
@@ -24,7 +24,7 @@ _SKIPPED = frozenset({
     "tenants", "orgs", "memberships", "github_installations",
     "security_alerts", "org_members", "repo_collaborators", "activity_sync_cursors", "org_membership_sync_cursors",
     "automation_repo_settings", "repo_event_daily_counts", "repo_events", "security_alert_syncs",
-    "repo_move_edges",
+    "repo_move_edges", "audit_logs",  # audit_logs: detached below, never deleted
 })
 
 
@@ -41,14 +41,11 @@ def blockers(db: Session, user: User) -> list[str]:
     for org, membership in tenant_repo.list_org_memberships_for_user(db, user.id):
         if membership.role != "admin":
             continue
-        admins = len(
-            db.query(Membership.id)
-            .filter(Membership.tenant_id == org.tenant_id, Membership.role == "admin")
-            .order_by(Membership.id)
-            .with_for_update()
-            .all()
-        )
-        if admins <= 1:
+        # The count reads every admin row of this org, which RLS only shows under its tenant context
+        # (require_auth sets only app.user_id, so without this the caller's own row is all that is visible). SET LOCAL,
+        # not set_session_tenant: the tenant must not outlive this transaction on the session.
+        _in_tenant(db, org.tenant_id)
+        if tenant_repo.count_admins_locked(db, org.tenant_id) <= 1:
             reasons.append(f"You are the only admin of {org.github_login}; make someone else an admin first")
     return reasons
 
@@ -91,6 +88,10 @@ def delete_account(db: Session, user: User) -> None:
     # (migrations 0069/0080), which only acts once the tenant has no installation left.
     db.execute(text("DELETE FROM github_installations WHERE tenant_id = :t"), {"t": personal_id})
     db.execute(text("SELECT purge_tenant_github_data(:t)"), {"t": personal_id})
+    # The audit trail is append-only: the rows stored under this tenant (sign-in history, actions taken with a
+    # pasted token outside any org) stay behind with no tenant, still visible to the workspace admin. Done by a
+    # SECURITY DEFINER function because audit_logs' RLS does not let clevis_api write a NULL tenant_id (0093).
+    db.execute(text("SELECT detach_tenant_audit_logs(:t)"), {"t": personal_id})
     with warnings.catch_warnings():
         # The orgs/tenants foreign-key cycle (both skipped below) makes SQLAlchemy warn about the sort order.
         warnings.simplefilter("ignore")

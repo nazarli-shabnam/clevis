@@ -317,6 +317,32 @@ describe("AuditPage", () => {
     expect(rowsAfterDesc[0]).toHaveTextContent("bravo@e.com");
   });
 
+  it("scrolls to the highlighted job's row once, not again when more rows load (#1242)", async () => {
+    mockSearchParams = new URLSearchParams("job_id=7");
+    const scroll = vi.mocked(Element.prototype.scrollIntoView);
+    scroll.mockClear();
+    const fullPage = Array.from({ length: 100 }, (_, i) => ({
+      id: 200 - i,
+      actor: "u@e.com",
+      action: "cache.clear.queued",
+      target: "acme",
+      payload: JSON.stringify({ job_id: i === 0 ? 7 : 1000 + i }),
+      created_at: "2026-01-01T00:00:00Z",
+    }));
+    auditListMock.mockResolvedValueOnce(fullPage);
+    auditListMock.mockResolvedValueOnce([
+      { id: 100, actor: "u@e.com", action: "older.event", target: "acme", payload: "{}", created_at: "2025-12-01T00:00:00Z" },
+    ]);
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText("100 entries")).toBeInTheDocument());
+    expect(scroll).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /load more/i }));
+    await waitFor(() => expect(screen.getByText("101 entries")).toBeInTheDocument());
+    expect(scroll).toHaveBeenCalledTimes(1);
+  });
+
   it("shows a Load more button on a full page and requests the next page below the last id seen", async () => {
     const fullPage = Array.from({ length: 100 }, (_, i) => ({
       id: 200 - i,

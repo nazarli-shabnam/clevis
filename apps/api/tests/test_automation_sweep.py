@@ -310,3 +310,19 @@ def test_org_controls_are_admin_only_audited_and_reflect_the_effective_schedule(
         {"t": org.tenant_id},
     ).scalars().all()
     assert sorted(actions) == ["pr_nudge.setting_saved", "pr_nudge_schedule.updated"]
+
+
+def test_no_transaction_is_open_while_the_github_work_runs(db, org):
+    """The marker commit expires loaded rows; reading them afterwards must not leave a transaction idle (#1248)."""
+    open_during = []
+
+    def _github(*args, **kwargs):
+        open_during.append(db.in_transaction())
+        return []
+
+    stack, _ = _sweep()
+    with stack, patch("src.services.automation_sweep.pr_nudge.run_nudge_sweep", side_effect=_github), patch(
+        "src.services.automation_sweep.dependabot_triage.triage", side_effect=_github
+    ):
+        run_automation_sweep(db)
+    assert open_during == [False, False]

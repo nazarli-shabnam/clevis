@@ -3,10 +3,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const burndownMock = vi.fn()
+const downloadMock = vi.fn()
+// What Next's useSearchParams would report: the router's view of the URL, which lags replaceState.
+let routerSearch = ""
+
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(routerSearch) }))
 
 vi.mock("@/lib/api/client", () => ({
   api: { security: { dependabotBurndown: (...a: unknown[]) => burndownMock(...a) } },
 }))
+vi.mock("@/lib/download", () => ({ downloadTextFile: (...a: unknown[]) => downloadMock(...a) }))
 vi.mock("@/components/charts/area-time-chart", () => ({
   AreaTimeChart: ({ data }: { data: unknown[] }) => <div data-testid="chart">{data.length} points</div>,
 }))
@@ -42,6 +48,8 @@ function renderPage() {
 
 beforeEach(() => {
   burndownMock.mockReset()
+  downloadMock.mockReset()
+  routerSearch = ""
   localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "acme" }))
 })
 afterEach(() => {
@@ -135,6 +143,31 @@ describe("DependabotBurndownPage", () => {
     expect(await screen.findByRole("link", { name: "acme/api" })).toBeInTheDocument()
   })
 
+  it("applies a notification deep link when the page is already open (#1237)", async () => {
+    burndownMock.mockResolvedValue({
+      ...DATA,
+      repos: [
+        ...DATA.repos,
+        { repo: "acme/web", open: { critical: 0, high: 1, medium: 0, low: 0 }, breaches: 0, oldest_age_days: 3, oldest_alert_number: 7 },
+      ],
+    })
+    const { rerender } = renderPage()
+    expect(await screen.findByRole("link", { name: "acme/web" })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "acme/api" })).toBeInTheDocument()
+
+    // The bell navigates to ?repo=... while this page stays mounted: only the router's search params change.
+    window.history.replaceState(null, "", "/security/burndown?repo=acme%2Fapi")
+    routerSearch = "repo=acme%2Fapi"
+    rerender(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <DependabotBurndownPage />
+      </QueryClientProvider>,
+    )
+
+    await waitFor(() => expect(screen.queryByRole("link", { name: "acme/web" })).not.toBeInTheDocument())
+    expect(screen.getByRole("link", { name: "acme/api" })).toBeInTheDocument()
+  })
+
   it("filters by severity and sorts from the controls, and says when nothing matches", async () => {
     burndownMock.mockResolvedValue({
       ...DATA,
@@ -170,5 +203,39 @@ describe("DependabotBurndownPage", () => {
     fireEvent.change(screen.getByLabelText("Severity"), { target: { value: "critical" } })
 
     expect(await screen.findByText("No repositories match these filters.")).toBeInTheDocument()
+  })
+
+  it("downloads the repositories as currently filtered and sorted as a CSV (#1170)", async () => {
+    burndownMock.mockResolvedValue({
+      ...DATA,
+      repos: [
+        { repo: "acme/api", open: { critical: 3, high: 1 }, breaches: 1, oldest_age_days: 10, oldest_alert_number: 42 },
+        { repo: "acme/web", open: { critical: 0, high: 2 }, breaches: 0, oldest_age_days: 25, oldest_alert_number: 7 },
+      ],
+    })
+    renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "Download CSV" }))
+    const [name, csv, mime] = downloadMock.mock.calls[0]
+    expect(name).toMatch(/^clevis-dependabot-burndown-acme-30d-\d{4}-\d{2}-\d{2}\.csv$/)
+    expect(mime).toBe("text/csv")
+    expect(csv.split(/\r?\n/)).toEqual([
+      "repository,open_critical,open_high,sla_breaches,oldest_age_days,oldest_alert_number",
+      "acme/web,0,2,0,25,7",
+      "acme/api,3,1,1,10,42",
+    ])
+
+    // Narrowing to critical drops the repo with none, and the export follows the view.
+    fireEvent.change(screen.getByLabelText("Severity"), { target: { value: "critical" } })
+    fireEvent.click(screen.getByRole("button", { name: "Download CSV" }))
+    expect(downloadMock.mock.calls[1][1].split(/\r?\n/).slice(1)).toEqual(["acme/api,3,1,1,10,42"])
+  })
+
+  it("offers no download when there is nothing to export", async () => {
+    burndownMock.mockResolvedValue({ ...DATA, repos: [] })
+    renderPage()
+
+    await screen.findByText("No open Dependabot alerts.")
+    expect(screen.queryByRole("button", { name: "Download CSV" })).not.toBeInTheDocument()
   })
 })

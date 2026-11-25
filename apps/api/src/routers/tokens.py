@@ -9,6 +9,7 @@ The GET /tokens endpoint intentionally never returns raw tokens — only metadat
 from datetime import datetime
 from typing import Annotated
 
+from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel, ConfigDict, SecretStr
 from sqlalchemy import func, text
@@ -176,10 +177,17 @@ def resolve_token(
     row = _find_saved_token(db, body.org)
     if not row:
         raise HTTPException(status_code=404, detail="No saved token for this org")
-    raw = decrypt_job_token(
-        row.encrypted_token,
-        settings.job_secret_key.get_secret_value(),
-    )
+    try:
+        raw = decrypt_job_token(
+            row.encrypted_token,
+            settings.job_secret_key.get_secret_value(),
+        )
+    except InvalidToken:
+        # Saved under a different JOB_SECRET_KEY (rotated, or a restored database): say so instead of a bare 500.
+        raise HTTPException(
+            status_code=409,
+            detail="The saved token cannot be decrypted with the current JOB_SECRET_KEY. Save the token again.",
+        )
     # row.tenant_id is best-effort -- falls back to the acting admin's own personal tenant
     # when the saved token predates a matching Org, so this write always has a real tenant_id.
     tenant_id = row.tenant_id or tenant_repo.ensure_personal_tenant(db, user.id).id

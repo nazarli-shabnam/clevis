@@ -112,13 +112,13 @@ class Job(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     job_type: Mapped[str] = mapped_column(String, nullable=False)
     payload: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
+    status: Mapped[str] = mapped_column(String, nullable=False, default="queued", server_default=text("'queued'"))
     result: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The tenant the job was enqueued for, so an org's admins can see their own jobs. Nullable: jobs
     # that predate the column can only be attributed when their payload names the tenant or owner.
     tenant_id: Mapped[int | None] = mapped_column(ForeignKey("tenants.id"), nullable=True)
     # One shared cap for crash-reclaims and transient-failure requeues, so a job can't retry forever.
-    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     # Touched by the worker's _JobHeartbeat every ~10s so _reclaim_stale_jobs can tell slow-but-alive
@@ -151,7 +151,7 @@ class WebhookDelivery(Base):
     # (past max retry age, never retried again) | processed (handled by the worker's event consumer) |
     # dropped (the consumer gave up on it: malformed or missing required fields, or too many failed
     # attempts; never re-queued).
-    status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
+    status: Mapped[str] = mapped_column(String, nullable=False, default="queued", server_default=text("'queued'"))
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -261,6 +261,17 @@ class RepoMoveEdge(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class CacheSizePoint(Base):
+    """An org's total Actions cache bytes on one day (migration 0094), recorded by the cockpit read."""
+
+    __tablename__ = "cache_size_points"
+
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), primary_key=True)
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class OrgMember(Base):
     """Current org membership (row deleted on member_removed), populated from `organization` webhooks.
 
@@ -366,9 +377,11 @@ class User(Base):
     name: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Null for users who only sign in with GitHub (no email/password credential).
     password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
-    is_workspace_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_workspace_admin: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     # Bumped by POST /auth/me/revoke-sessions to invalidate all previously issued JWTs.
-    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     # GitHub identity (set when the user links / signs in via GitHub OAuth).
     github_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, unique=True)
     github_login: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -376,7 +389,9 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # True for accounts created by GitHub sign-in or first-run setup (email trusted); self-registered
     # accounts start False until they click the verification link.
-    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     email_verify_token: Mapped[str | None] = mapped_column(Text, nullable=True, unique=True)
     email_verify_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -420,6 +435,8 @@ class Org(Base):
     # True = run on a schedule, False = never, NULL = follow the instance.
     pr_nudge_schedule: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     dependabot_triage_schedule: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Same override pattern for the scheduled stale-cache clear (migration 0094).
+    stale_cache_clear_schedule: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # Stays nullable: a new Org and its Tenant reference each other, and NOT NULL can't be deferred
     # like a FK can. org_repo.get_or_create self-heals missing values.
     tenant_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -526,7 +543,9 @@ class Invitation(Base):
     org_id: Mapped[int] = mapped_column(ForeignKey("orgs.id"), nullable=False)
     email: Mapped[str] = mapped_column(Text, nullable=False)
     token: Mapped[str] = mapped_column(String, nullable=False, unique=True)
-    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")  # pending|accepted|revoked
+    status: Mapped[str] = mapped_column(
+        String, nullable=False, default="pending", server_default=text("'pending'")
+    )  # pending|accepted|revoked
     invited_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

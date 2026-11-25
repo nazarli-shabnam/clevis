@@ -49,12 +49,16 @@ class InsufficientOrgRole(RuntimeError):
     ("admin") on privileged org actions)."""
 
 
-def _from_installation(installation: GitHubInstallation | None, for_job: bool = False) -> str | None:
+def _from_installation(
+    installation: GitHubInstallation | None, for_job: bool = False, for_scan: bool = False
+) -> str | None:
     if installation is None or installation.installation_id is None:
         return None
     try:
         if for_job:
             return github_app.get_installation_token(installation.installation_id, github_app.JOB_TOKEN_MIN_TTL_SECONDS)
+        if for_scan:
+            return github_app.get_installation_token(installation.installation_id, github_app.SCAN_TOKEN_MIN_TTL_SECONDS)
         return github_app.get_installation_token(installation.installation_id)
     except github_app.GitHubAppNotConfigured:
         # Deployment-wide: the App isn't set up at all -- worth a log line since every
@@ -126,11 +130,13 @@ def resolve_org_token(
     client_token: str | None,
     allow_client_token: bool = True,
     for_job: bool = False,
+    for_scan: bool = False,
 ) -> str:
     """Installation token first; else the caller's own token.
 
     `for_job=True` is for a token that will be stored in a background job payload: an installation
-    token is then guaranteed enough remaining lifetime to outlast the worker's retries.
+    token is then guaranteed enough remaining lifetime to outlast the worker's retries. `for_scan=True`
+    does the same for a security scan, which uses one token for minutes (see SCAN_TOKEN_MIN_TTL_SECONDS).
 
     `allow_client_token=False` refuses that fallback with InsufficientOrgRole (callers map it to 403)
     instead of silently using a token the caller isn't trusted to supply: a client token is attacker-
@@ -141,7 +147,7 @@ def resolve_org_token(
         if _github_app_configured()
         else None
     )
-    token = _from_installation(installation, for_job)
+    token = _from_installation(installation, for_job, for_scan)
     if token:
         return token
     if client_token:
@@ -158,14 +164,20 @@ def resolve_org_token(
 
 
 def resolve_personal_token(
-    db: Session, *, owner_user_id: int, account_login: str, client_token: str | None, for_job: bool = False
+    db: Session,
+    *,
+    owner_user_id: int,
+    account_login: str,
+    client_token: str | None,
+    for_job: bool = False,
+    for_scan: bool = False,
 ) -> str:
     installation = (
         installation_repo.get_for_user(db, owner_user_id=owner_user_id, account_login=account_login)
         if _github_app_configured()
         else None
     )
-    token = _from_installation(installation, for_job)
+    token = _from_installation(installation, for_job, for_scan)
     if token:
         return token
     if client_token:
@@ -202,6 +214,7 @@ def resolve_owner_token(
     client_token: str | None,
     min_role: Literal["member", "admin"] = "member",
     client_token_min_role: Literal["member", "admin"] = "member",
+    for_scan: bool = False,
 ) -> str:
     """Resolve a token for the "/me/*" endpoints, which accept an arbitrary `owner` (not
     necessarily the caller's own account). If `owner` is a Clevis org the caller has at
@@ -235,5 +248,8 @@ def resolve_owner_token(
                 account_login=owner,
                 client_token=client_token,
                 allow_client_token=_ROLE_RANK.get(membership.role, -1) >= _ROLE_RANK[client_token_min_role],
+                for_scan=for_scan,
             )
-    return resolve_personal_token(db, owner_user_id=user_id, account_login=owner, client_token=client_token)
+    return resolve_personal_token(
+        db, owner_user_id=user_id, account_login=owner, client_token=client_token, for_scan=for_scan
+    )

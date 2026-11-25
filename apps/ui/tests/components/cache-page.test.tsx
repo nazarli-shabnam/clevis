@@ -540,6 +540,34 @@ describe("CachePage", () => {
     expect(await screen.findByRole("button", { name: /^clear$/i })).toBeInTheDocument();
   });
 
+  it("does not scope a Dry run to the key of an earlier single-key clear (#1238)", async () => {
+    cacheListMock.mockResolvedValue({
+      actions_caches: [
+        { id: 1, key: "api-cache-key", ref: "refs/heads/main", size_in_bytes: 1024, created_at: "2026-01-01T00:00:00Z", last_accessed_at: "2026-01-01T00:00:00Z" },
+      ],
+    });
+    cacheClearMock
+      .mockResolvedValueOnce({ queued: true, dry_run: false, job_id: 9 })
+      .mockResolvedValueOnce({ queued: false, dry_run: true });
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: /load caches/i }));
+    const clearKeyButton = await screen.findByRole("button", { name: /^clear key$/i });
+    await waitFor(() => expect(clearKeyButton).not.toBeDisabled());
+    fireEvent.click(clearKeyButton);
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: /^delete$/i }));
+    await waitFor(() => expect(cacheClearMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+
+    const dryRunButton = screen.getByRole("button", { name: /dry run/i });
+    await waitFor(() => expect(dryRunButton).not.toBeDisabled());
+    fireEvent.click(dryRunButton);
+
+    await waitFor(() => expect(cacheClearMock).toHaveBeenCalledTimes(2));
+    expect(cacheClearMock.mock.calls[1][2]).toEqual({ token: "", dry_run: true, key: undefined, ref: undefined });
+  });
+
   it("clears the stale cache table and clear result when navigating to a different repo under the same owner", async () => {
     cacheListMock.mockResolvedValue({
       actions_caches: [

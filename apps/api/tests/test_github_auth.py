@@ -404,6 +404,20 @@ def test_full_flow_succeeds_when_the_state_cookie_matches(gh_client, db, oauth_c
     assert "clevis_session" in resp.headers.get("set-cookie", "")
 
 
+def test_cancelling_on_githubs_authorize_page_is_reported_as_cancelled_not_expired(gh_client, db, oauth_configured):
+    login_resp = gh_client.get("/auth/github/login", follow_redirects=False)
+    state = _extract_state(login_resp)
+
+    resp = gh_client.get(f"/auth/github/callback?error=access_denied&state={state}", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"].endswith("/login?error=github_access_denied")
+    assert db.query(User).count() == 0
+
+    # Without a valid state it is still an invalid attempt.
+    resp = gh_client.get("/auth/github/callback?error=access_denied&state=bad", follow_redirects=False)
+    assert resp.headers["location"].endswith("/login?error=github_invalid_state")
+
+
 def test_replaying_a_captured_state_from_a_different_browser_is_rejected(gh_client, db, oauth_configured):
     # Simulates the attack this fix closes: an attacker captures a valid (code, state)
     # pair from their own OAuth flow and gets a victim to open the callback URL. The
@@ -745,3 +759,29 @@ def test_denying_authorization_on_github_returns_to_settings_not_login(gh_client
     state = _link_state(_start_link(gh_client, user))
     resp = gh_client.get(f"/auth/github/callback?error=access_denied&state={state}", follow_redirects=False)
     assert resp.headers["location"].endswith("/settings?github_link_error=oauth")
+
+
+def test_signing_out_everywhere_during_the_github_exchange_cancels_the_link(gh_client, db, oauth_configured):
+    """require_auth loads the user from the session cookie before the (slow) token exchange; a revoke that commits
+    during it must still be seen by the locked version check (#1257)."""
+    from sqlalchemy import text
+
+    user = _password_user(db)
+    token = _session(user)
+    state = _link_state(_start_link(gh_client, user, token))
+    gh_client.cookies.set("clevis_session", token)
+
+    def revoke_everywhere(*args, **kwargs):
+        db.execute(text(f"UPDATE users SET token_version = token_version + 1 WHERE id = {user.id}"))
+        return "gho_x"
+
+    with (
+        patch("src.routers.github_auth.github_oauth.exchange_code_for_token", side_effect=revoke_everywhere),
+        patch("src.routers.github_auth.github_oauth.fetch_identity", return_value=_identity()),
+        patch("src.routers.github_auth.org_provisioning.sync_org_admin_memberships") as sync,
+    ):
+        resp = gh_client.get(f"/auth/github/callback?code=c&state={state}", follow_redirects=False)
+
+    assert resp.headers["location"].endswith("/settings?github_link_error=session")
+    sync.assert_not_called()
+    assert db.execute(text("SELECT github_user_id FROM users WHERE id = :i"), {"i": user.id}).scalar() is None

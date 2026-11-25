@@ -459,3 +459,25 @@ def test_dry_run_read_error_after_a_planned_action_is_raised_not_truncated():
     with pytest.raises(httpx.HTTPStatusError):
         pr_nudge.run_nudge_sweep(fake, "o", "r", stale_days=3, mode="comment", dry_run=True)
     assert fake.writes == []
+
+
+def test_label_mode_skips_already_labelled_prs_and_they_do_not_use_the_cap():
+    now = datetime.now(timezone.utc)
+    old = (now - timedelta(days=30)).isoformat()
+    total = pr_nudge._MAX_PER_SWEEP + 5
+    prs = [
+        {
+            "number": n,
+            "title": f"PR {n}",
+            "draft": False,
+            "created_at": old,
+            "updated_at": old,
+            # The oldest `_MAX_PER_SWEEP` were labelled by an earlier run.
+            "labels": [{"name": "needs-review"}] if n < pr_nudge._MAX_PER_SWEEP else [],
+        }
+        for n in range(total)
+    ]
+    results = pr_nudge.run_nudge_sweep(_FakeClient(prs), "o", "r", stale_days=3, mode="label")
+    actions = [r.action for r in results]
+    assert actions[: pr_nudge._MAX_PER_SWEEP] == ["skipped-already-labeled"] * pr_nudge._MAX_PER_SWEEP
+    assert actions[pr_nudge._MAX_PER_SWEEP :] == ["labeled"] * 5

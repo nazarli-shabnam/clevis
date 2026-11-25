@@ -322,6 +322,8 @@ def register(body: RegisterRequest, request: Request, db: Session = Depends(get_
             status_code=422,
             detail=f"Password must be at most {_MAX_PASSWORD_LEN} bytes",
         )
+    # Deliberately distinguishable (409), unlike login and forgot-password: a sign-up form has to say why it failed.
+    # Accepted enumeration tradeoff, limited by the per-IP rate limit; see AGENTS.md (#1258).
     if db.query(User).filter(func.lower(User.email) == body.email.lower()).first():
         raise HTTPException(status_code=409, detail="An account with this email already exists")
     user = User(
@@ -483,7 +485,10 @@ def change_password(
     caller gets a fresh token so this one stays signed in."""
     # A stolen session must not be able to guess the current password at full speed.
     check_account_rate_limit(f"change-password:{current_user.id}")
-    user = db.query(User).filter(User.id == current_user.id).with_for_update().first()
+    # populate_existing: require_auth already loaded this row into the session, and a plain locked re-query
+    # would hand back that possibly stale object, so a password change or sign-out-everywhere that committed
+    # while this request waited for the lock would be checked against and overwritten from old values.
+    user = db.query(User).filter(User.id == current_user.id).with_for_update().populate_existing().first()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     if not user.password_hash:
@@ -634,6 +639,12 @@ def resend_verification(
         raise HTTPException(status_code=404, detail="User not found")
     if user.email_verified:
         return {"ok": True, "already_verified": True}
+    if not smtp_configured():
+        # Same answer as /auth/me/email: the mail can never arrive, so don't say it was sent.
+        raise HTTPException(
+            status_code=409,
+            detail="Email isn't configured on this server, so a verification link can't be sent. Ask an administrator to verify your email",
+        )
     check_account_rate_limit(f"resend-verification:{user.email.lower()}")
     _generate_verification_token(user)
     db.commit()
@@ -739,7 +750,9 @@ def revoke_sessions(
     db: Session = Depends(get_db),
 ):
     """Invalidate every previously issued JWT for the caller (log out everywhere)."""
-    user = db.query(User).filter(User.id == current_user.id).first()
+    # Locked and refreshed (see change_password): the bump is read-modify-write, so it must start from the
+    # committed value or a concurrent bump would be overwritten with the same number and a new token survive.
+    user = db.query(User).filter(User.id == current_user.id).with_for_update().populate_existing().first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     user.token_version += 1

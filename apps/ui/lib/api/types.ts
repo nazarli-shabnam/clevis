@@ -777,6 +777,7 @@ export interface CockpitResponse {
   recent_events_stale: boolean
   activity_history_incomplete?: string | null
   degraded: boolean
+  aggregate_repo_limit?: number | null
 }
 
 export interface MyViewPRSummary {
@@ -1094,8 +1095,16 @@ export interface AutomationScheduleSetting {
 export interface AutomationSchedules {
   pr_nudges: AutomationScheduleSetting
   dependabot_triage: AutomationScheduleSetting
+  stale_cache_clear: AutomationScheduleSetting
   pr_nudge_repos: string[]
   triage_repos: string[]
+  /** Repositories whose idle Actions caches are cleared on the schedule, with each one's idle-days threshold. */
+  stale_cache_repos: Record<string, number>
+}
+
+export interface CacheSizePoint {
+  day: string
+  total_bytes: number
 }
 
 export interface DigestSettings {

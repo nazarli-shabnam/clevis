@@ -809,3 +809,112 @@ def test_non_member_forbidden(db):
 def test_list_pulls_rejects_an_unknown_state_with_422(repos_client):
     resp = repos_client.post("/orgs/acme/repos/acme/demo/pulls", json={"state": "everything"})
     assert resp.status_code == 422
+
+
+# --- /me/repos/{owner}/{repo}/stats|flow-metrics|pulls|security (#1239) ---
+# The Repositories list works for a personal account (#1024), but its per-repo cells and the detail page used the
+# org-scoped routes above, which answer 404 for an owner with no Clevis org row.
+
+_FLOW_PAYLOAD = {
+    "repository": "octocat/dotfiles",
+    "window_days": 30,
+    "prs": {
+        "merged_count": 0, "median_cycle_hours": None, "median_first_review_hours": None,
+        "review_sample_size": 0, "merged_without_review": 0,
+    },
+    "workflows": [],
+}
+
+
+def _personal_stats_side_effect(method, path, **kwargs):
+    if path == "/repos/octocat/dotfiles":
+        return _REPO_META
+    if path == "/repos/octocat/dotfiles/releases/latest":
+        raise _not_found()
+    if path.endswith("/stats/commit_activity"):
+        return [{"week": 1700000000, "total": 4, "days": [0, 1, 1, 1, 1, 0, 0]}]
+    if path.endswith("/stats/participation"):
+        return {"all": [1], "owner": [1]}
+    if path.endswith("/stats/contributors"):
+        return []
+    raise AssertionError(f"unexpected path {path!r}")
+
+
+def test_personal_repo_stats_works_for_an_account_with_no_org_row(repos_client):
+    with patch("src.routers.repos.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = _personal_stats_side_effect
+        resp = repos_client.post("/me/repos/octocat/dotfiles/stats", json={"token": _PAT})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["repository"] == "octocat/dotfiles" and body["commit_activity_source"] == "github"
+    assert body["commit_activity"][0]["total"] == 4 and body["stargazers_count"] == 24
+
+
+def test_personal_repo_stats_of_an_org_the_caller_belongs_to_uses_the_stored_aggregate(repos_client, db, acme_org_with_installation):
+    _insert_daily_count(db, acme_org_with_installation.tenant_id, repo="acme/demo", event_type="push", day=datetime.now(timezone.utc).date(), count=3)
+
+    with patch("src.routers.repos.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = _stats_side_effect(repo_meta=_REPO_META, release_error=_not_found())
+        resp = repos_client.post("/me/repos/acme/demo/stats", json={"token": _PAT})
+
+    assert resp.status_code == 200
+    assert resp.json()["commit_activity_source"] == "aggregate"
+    assert resp.json()["commit_activity"][-1]["total"] == 3
+
+
+def test_personal_repo_stats_maps_a_github_failure(repos_client):
+    with patch("src.routers.repos.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = httpx.ConnectError("down")
+        resp = repos_client.post("/me/repos/octocat/dotfiles/stats", json={"token": _PAT})
+    assert resp.status_code == 503
+
+
+def test_personal_repo_flow_metrics_works_for_an_account_with_no_org_row(repos_client):
+    from src.routers.repos import _flow_cache
+
+    _flow_cache.clear()
+    with patch("src.routers.repos.flow_metrics.compute", return_value=_FLOW_PAYLOAD) as compute:
+        resp = repos_client.post("/me/repos/octocat/dotfiles/flow-metrics", json={"token": _PAT})
+        again = repos_client.post("/me/repos/octocat/dotfiles/flow-metrics", json={"token": _PAT})
+
+    assert resp.status_code == 200 and resp.json()["repository"] == "octocat/dotfiles"
+    assert again.status_code == 200 and compute.call_count == 1  # cached per token
+    _flow_cache.clear()
+
+
+def test_personal_repo_pulls_works_for_an_account_with_no_org_row(repos_client):
+    pull = {"number": 7, "title": "Fix", "user": {"login": "octocat"}, "created_at": "2026-07-01T00:00:00Z", "html_url": "https://github.com/octocat/dotfiles/pull/7"}
+    with patch("src.routers.repos.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.return_value = [pull]
+        resp = repos_client.post("/me/repos/octocat/dotfiles/pulls", json={"token": _PAT, "state": "open"})
+
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 1 and resp.json()["pulls"][0]["number"] == 7
+    mock_client.return_value.request_paginated.assert_called_once_with("/repos/octocat/dotfiles/pulls", params={"state": "open"})
+
+
+def test_personal_repo_security_works_for_an_account_with_no_org_row(repos_client):
+    with (
+        patch("src.routers.repos.GitHubClient") as mock_client,
+        patch("checks.github_checks.BranchProtectionEnabled.run", return_value={"status": "pass", "value": {"protected": 1, "unknown": 0}}),
+        patch("checks.github_checks.SecretScanningEnabled.run", return_value={"status": "pass", "value": {"enabled": 1, "total": 1}}),
+    ):
+        mock_client.return_value.request.return_value = {
+            "name": "dotfiles", "default_branch": "main", "security_and_analysis": {"secret_scanning": {"status": "enabled"}},
+        }
+        resp = repos_client.post("/me/repos/octocat/dotfiles/security", json={"token": _PAT})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"repository": "octocat/dotfiles", "branch_protection": "protected", "secret_scanning": "enabled"}
+
+
+@pytest.mark.parametrize("route", ["stats", "flow-metrics", "pulls", "security"])
+def test_personal_repo_routes_need_a_token_and_respect_the_org_role_gate(repos_client, route):
+    from src.services.token_resolution import InsufficientOrgRole
+
+    url = f"/me/repos/octocat/dotfiles/{route}"
+    assert repos_client.post(url, json={}).status_code == 400  # no installation, no pasted token
+    with patch("src.routers.repos.resolve_owner_token", side_effect=InsufficientOrgRole("admin role required")):
+        resp = repos_client.post(url, json={"token": _PAT})
+    assert resp.status_code == 403 and "admin role required" in resp.json()["detail"]

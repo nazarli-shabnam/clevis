@@ -72,6 +72,9 @@ def create_destination(
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
+    if body.kind == "generic" and body.secret is not None and not body.secret.get_secret_value():
+        # Same rule as PATCH: an empty secret would otherwise create an unsigned webhook that looks signed.
+        raise HTTPException(status_code=422, detail="A signing secret cannot be empty")
     if body.kind == "email":
         stored = _email_recipients_or_422(db, ctx, body.recipients)
     else:
@@ -149,12 +152,15 @@ def update_destination(
     sent = body.model_fields_set
     key = settings.job_secret_key.get_secret_value()
     changed: list[str] = []
+    target_changed = False  # a new url/secret/recipients value, not a resubmission of the stored one
 
     if dest.kind == "email":
         if body.url is not None or body.secret is not None:
             raise HTTPException(status_code=422, detail="An email destination takes recipients, not a url or secret")
         if body.recipients is not None:
-            dest.encrypted_url = encrypt_job_token(_email_recipients_or_422(db, ctx, body.recipients), key)
+            new_recipients = _email_recipients_or_422(db, ctx, body.recipients)
+            target_changed |= new_recipients != decrypt_job_token(dest.encrypted_url, key)
+            dest.encrypted_url = encrypt_job_token(new_recipients, key)
             changed.append("recipients")
     else:
         if body.recipients is not None:
@@ -164,13 +170,19 @@ def update_destination(
         if body.secret is not None and not body.secret.get_secret_value():
             raise HTTPException(status_code=422, detail="A signing secret cannot be empty")
         if body.url is not None:
-            dest.encrypted_url = encrypt_job_token(body.url.get_secret_value(), key)
+            new_url = body.url.get_secret_value()
+            target_changed |= new_url != decrypt_job_token(dest.encrypted_url, key)
+            dest.encrypted_url = encrypt_job_token(new_url, key)
             changed.append("url")
         if body.secret is not None:
-            dest.encrypted_secret = encrypt_job_token(body.secret.get_secret_value(), key)
+            new_secret = body.secret.get_secret_value()
+            old_secret = decrypt_job_token(dest.encrypted_secret, key) if dest.encrypted_secret else None
+            target_changed |= new_secret != old_secret
+            dest.encrypted_secret = encrypt_job_token(new_secret, key)
             changed.append("secret")
 
     # `null` on these is "not provided", not "clear": they are NOT NULL columns.
+    re_enabled = "enabled" in sent and body.enabled is True and not dest.enabled
     for field in ("name", "enabled", "min_score_drop"):
         if field in sent and getattr(body, field) is not None:
             setattr(dest, field, getattr(body, field))
@@ -183,6 +195,13 @@ def update_destination(
         current = [e for e in dest.events if e not in removed]
         dest.events = current + [e for e in dict.fromkeys(body.add_events or []) if e not in current]
         changed.append("events")
+
+    # Delivery health describes the old target: after a fix (new URL/secret/recipients) or a re-enable it
+    # would keep showing "failing" until some later send, which a rarely-triggered event may never make.
+    if re_enabled or target_changed:
+        dest.last_status = None
+        dest.last_error = None
+        dest.consecutive_failures = 0
 
     audit_repo.write(
         db,

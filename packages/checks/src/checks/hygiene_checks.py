@@ -241,9 +241,13 @@ class UnpinnedActions(_PerRepoCheck):
         found = _repo_paths(base_url, owner, repo, token)
         if found is None:
             return True, 0
-        files = sorted(
+        workflows = sorted(
             p for p in found[0] if p.startswith(".github/workflows/") and p.endswith((".yml", ".yaml"))
-        )[:_MAX_WORKFLOW_FILES]
+        )
+        # Only the first few files are read (one call each); say so when others were left out.
+        if len(workflows) > _MAX_WORKFLOW_FILES:
+            repo[_PARTIAL_KEY + self.metadata.check_id] = True
+        files = workflows[:_MAX_WORKFLOW_FILES]
         unpinned = 0
         for path in files:
             body = _gh._get(f"{base_url}/repos/{owner}/{repo['name']}/contents/{quote(path, safe='/')}", token)

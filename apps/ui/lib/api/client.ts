@@ -21,6 +21,7 @@ import type {
   NotificationKind,
   NotificationPreferences,
   ActionsUsageResponse,
+  CacheSizePoint,
   AnalyticsHistoryResponse,
   AnalyticsOverviewResponse,
   LatestScanResponse,
@@ -190,7 +191,8 @@ async function downloadFile(
 
 // An Error that also carries the HTTP status, so a caller can treat one specific status as data.
 class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  // `code`: a stable machine-readable reason some endpoints add next to `detail` (branch on it, not on the text).
+  constructor(message: string, readonly status: number, readonly code?: string) {
     super(message)
   }
 }
@@ -205,7 +207,10 @@ function notifyUnauthorized() {
 async function handleResponse<T>(res: Response): Promise<T> {
   const json = await res.json().catch(() => null)
   if (res.status === 401) notifyUnauthorized()
-  if (!res.ok) throw new ApiError(errorDetail(json, `Request failed: ${res.status}`), res.status)
+  if (!res.ok) {
+    const code = (json as { code?: unknown } | null)?.code
+    throw new ApiError(errorDetail(json, `Request failed: ${res.status}`), res.status, typeof code === "string" ? code : undefined)
+  }
   return json as T
 }
 
@@ -494,6 +499,9 @@ export const api = {
         `/orgs/${encodeURIComponent(org)}/usage/actions`,
         githubTokenHeader(token),
       ),
+    // The org's recorded daily Actions cache totals (a point is written each time the Overview loads).
+    cacheHistory: (org: string, days = 30) =>
+      get<CacheSizePoint[]>(`/orgs/${encodeURIComponent(org)}/analytics/cache-history?days=${days}`),
     // Full scan history with per-check detail for an optional [since, until] window; caller renders CSV.
     exportHistory: (owner: string, since?: string, until?: string) => {
       const params = new URLSearchParams({ owner })
@@ -598,26 +606,15 @@ export const api = {
     // Clevis org row for /orgs/{org}/repos to resolve.
     list: (owner: string, token: string) =>
       post<RepoListResponse>(`/me/repos/${encodeURIComponent(owner)}`, { token: token || undefined }),
-    stats: (org: string, owner: string, repo: string, token: string) =>
-      post<RepoStatsResponse>(
-        `/orgs/${encodeURIComponent(org)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/stats`,
-        { token: token || undefined },
-      ),
-    flowMetrics: (org: string, owner: string, repo: string, token: string) =>
-      post<RepoFlowMetricsResponse>(
-        `/orgs/${encodeURIComponent(org)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/flow-metrics`,
-        { token: token || undefined },
-      ),
-    pulls: (org: string, owner: string, repo: string, token: string) =>
-      post<RepoPullsResponse>(
-        `/orgs/${encodeURIComponent(org)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`,
-        { token: token || undefined },
-      ),
-    security: (org: string, owner: string, repo: string, token: string) =>
-      post<RepoSecurityResponse>(
-        `/orgs/${encodeURIComponent(org)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/security`,
-        { token: token || undefined },
-      ),
+    // The per-repo routes are /me too, for the same reason: the org-scoped ones 404 for a personal account.
+    stats: (owner: string, repo: string, token: string) =>
+      post<RepoStatsResponse>(`/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/stats`, { token: token || undefined }),
+    flowMetrics: (owner: string, repo: string, token: string) =>
+      post<RepoFlowMetricsResponse>(`/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/flow-metrics`, { token: token || undefined }),
+    pulls: (owner: string, repo: string, token: string) =>
+      post<RepoPullsResponse>(`/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`, { token: token || undefined }),
+    security: (owner: string, repo: string, token: string) =>
+      post<RepoSecurityResponse>(`/me/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/security`, { token: token || undefined }),
   },
   jobs: {
     list: () => get<JobOut[]>("/jobs"),
@@ -879,8 +876,16 @@ export const api = {
     automationSchedules: (orgLogin: string) =>
       get<AutomationSchedules>(`/orgs/${encodeURIComponent(orgLogin)}/automation-schedules`),
     // Only the fields passed change; null follows the instance cadence again.
-    setAutomationSchedules: (orgLogin: string, body: { pr_nudges?: boolean | null; dependabot_triage?: boolean | null }) =>
+    setAutomationSchedules: (
+      orgLogin: string,
+      body: { pr_nudges?: boolean | null; dependabot_triage?: boolean | null; stale_cache_clear?: boolean | null },
+    ) =>
       put<AutomationSchedules>(`/orgs/${encodeURIComponent(orgLogin)}/automation-schedules`, body),
+    setStaleCacheRepo: (orgLogin: string, owner: string, repo: string, enabled: boolean, idleDays: number) =>
+      put<{ enabled: boolean; idle_days: number }>(
+        `/orgs/${encodeURIComponent(orgLogin)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/automation/stale-cache-clear`,
+        { enabled, idle_days: idleDays },
+      ),
     setPrNudgeRepo: (orgLogin: string, owner: string, repo: string, enabled: boolean) =>
       put<{ enabled: boolean }>(
         `/orgs/${encodeURIComponent(orgLogin)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/automation/pr-nudge`,

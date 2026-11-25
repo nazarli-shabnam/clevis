@@ -290,7 +290,9 @@ def _complete_link(
 
     # Locked from here to the commit, so two callbacks for one account (two tabs) are serialized: the second
     # re-reads the first's link and takes the other_account branch instead of overwriting it.
-    user = db.query(User).filter(User.id == uid).with_for_update().first()
+    # populate_existing: the session cookie check above may have loaded this row already, and the version
+    # compared below must be the committed one, not a copy from before the GitHub token exchange.
+    user = db.query(User).filter(User.id == uid).with_for_update().populate_existing().first()
     # Signing out everywhere (token_version) or ending the session that started the flow cancels it.
     if user is None or user.token_version != token_version:
         return _ui_settings_redirect("github_link_error=session")
@@ -338,8 +340,12 @@ def github_callback(
         if not code:  # e.g. the user denied access on GitHub (error=access_denied)
             return _ui_settings_redirect("github_link_error=oauth")
         return _complete_link(request, db, code, state, session)
-    if not code or not state or not github_oauth.verify_state(state, cookie_nonce=cookie_nonce):
+    if not state or not github_oauth.verify_state(state, cookie_nonce=cookie_nonce):
         error_response = _ui_login_error_redirect("github_invalid_state")
+        _clear_state_cookie(error_response)
+        return error_response
+    if not code:  # a valid state with no code: the user cancelled on GitHub's authorize page (error=access_denied)
+        error_response = _ui_login_error_redirect("github_access_denied")
         _clear_state_cookie(error_response)
         return error_response
     next_path = github_oauth.decode_state_next(state)

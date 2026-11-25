@@ -1,7 +1,7 @@
 """Identity checks built from data Clevis already stores, not from GitHub calls.
 
-``org_members.two_factor_enabled`` and ``repo_collaborators`` are kept up to date by the worker (the hourly
-membership reconcile and the ``member``/``organization`` webhooks), so these checks cost no GitHub requests.
+``org_members.two_factor_enabled`` and ``repo_collaborators`` are kept up to date by the worker (the periodic
+membership reconcile, every 24 hours by default, and the ``member``/``organization`` webhooks), so these checks cost no GitHub requests.
 The checks package has no database access, so the caller (the API's scan) reads those rows and hands them in.
 
 Both are informational, like the hygiene checks: shown with the results, but only scored for an org that

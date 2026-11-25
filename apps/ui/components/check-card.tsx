@@ -312,7 +312,20 @@ function FixThisButton({
   })
 
   if (mutation.isSuccess) {
-    return <p className="mt-2 text-xs text-accent">{onRemediated ? "Applied — re-scanning to confirm…" : "Applied — re-run the scan to confirm."}</p>
+    // The card survives a rescan (same key), and a multi-repo check usually still fails after one fix, so
+    // offer the form again rather than leaving the card stuck on the success text.
+    return (
+      <div className="mt-2 flex items-center gap-3 text-xs">
+        <p className="text-accent">{onRemediated ? "Applied — re-scanning to confirm…" : "Applied — re-run the scan to confirm."}</p>
+        <button
+          type="button"
+          onClick={() => { mutation.reset(); setRepo(""); setArmed(false) }}
+          className="font-medium text-muted-foreground hover:text-foreground transition-colors"
+        >
+          Fix another repository
+        </button>
+      </div>
+    )
   }
 
   return (

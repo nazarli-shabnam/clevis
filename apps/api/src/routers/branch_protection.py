@@ -64,8 +64,10 @@ class BulkApplyResponse(BaseModel):
 
 
 def _all_forbidden(errors: list[str | None]) -> bool:
+    # More than one repo, as in remediation_bulk: a single 403 is as likely an archived or ungranted repo as a
+    # missing App permission, and the per-repo result is more useful than the "re-approve" hint.
     real = [e for e in errors if e]
-    return bool(real) and len(real) == len(errors) and all("403" in e for e in real)
+    return len(errors) > 1 and len(real) == len(errors) and all("403" in e for e in real)
 
 
 @router.get("/orgs/{org_login}/branch-protection/preset")
@@ -137,6 +139,17 @@ def bulk_branch_protection(
         results = branch_protection_bulk.apply_bulk(client, owner, body.repos, body.preset)
         if _all_forbidden([r.error for r in results]):
             raise HTTPException(status_code=400, detail=_PERMISSION_HINT)
+
+        # The row written before the run only says what was asked for (and an async run's outcome lives only
+        # in a job row retention purges); this one records which repos were actually rewritten.
+        audit_repo.write(
+            session, user.email, "branch_protection.bulk_result", owner,
+            {
+                "applied": [r.repo for r in results if r.applied],
+                "failed": {r.repo: r.error for r in results if r.error},
+            },
+            tenant_id=tenant_id,
+        )
 
         if body.save_preset:
             preset = branch_protection_bulk.normalize_preset(body.preset)

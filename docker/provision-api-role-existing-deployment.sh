@@ -138,6 +138,17 @@ BEGIN
 END
 $do$;
 
+-- cache_size_points (migration 0094): one row per (tenant, day) with the org's Actions cache bytes. The API reads
+-- and upserts it from the cockpit and deletes by tenant on account deletion; composite primary key, so no sequence;
+-- the worker never touches it.
+DO $do$
+BEGIN
+  IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'cache_size_points') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON cache_size_points TO clevis_api;
+  END IF;
+END
+$do$;
+
 -- github_app_credentials (migration 0087): the GitHub App's encrypted credentials when it was created from
 -- Settings. The API reads them to mint tokens and verify webhooks and writes them once at creation; the primary key
 -- is the constant 1 (no sequence) and the worker role deliberately gets nothing, so it can never read the App key.
@@ -308,6 +319,10 @@ BEGIN
   -- Migration 0069's uninstall purge (clevis_api has no DELETE on several of the tables it clears).
   IF EXISTS (SELECT FROM pg_proc WHERE proname = 'purge_tenant_github_data') THEN
     GRANT EXECUTE ON FUNCTION purge_tenant_github_data(integer) TO clevis_api;
+  END IF;
+  -- Migration 0093's account-deletion detach of a personal tenant's audit rows (audit_logs' RLS rejects a NULL tenant).
+  IF EXISTS (SELECT FROM pg_proc WHERE proname = 'detach_tenant_audit_logs') THEN
+    GRANT EXECUTE ON FUNCTION detach_tenant_audit_logs(integer) TO clevis_api;
   END IF;
 END
 $do$;

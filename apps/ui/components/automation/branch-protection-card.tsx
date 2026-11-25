@@ -113,7 +113,7 @@ export function BranchProtectionCard({ org, token, repos, initialSelected = [] }
     message =
       failed.length === 0
         ? `Applied branch protection to ${applied} repositor${applied === 1 ? "y" : "ies"}.${kept}`
-        : `Applied to ${applied}; ${failed.length} failed: ${failed.map((r) => r.repo).join(", ")}.${kept}`
+        : `Applied to ${applied}; ${failed.length} failed: ${failed.map((r) => (r.error ? `${r.repo} (${r.error})` : r.repo)).join("; ")}.${kept}`
   }
 
   const diffs = apply.data ? [] : preview.data?.diffs ?? []
@@ -253,9 +253,11 @@ export function BranchProtectionCard({ org, token, repos, initialSelected = [] }
 
             {preview.isSuccess && !apply.data && (
               <p className="text-xs text-muted-foreground">
-                {changing.length === 0
-                  ? "Every selected repo already matches this preset."
-                  : `${changing.length} of ${diffs.length} selected repos would change.`}
+                {diffs.some((d) => d.error)
+                  ? `Preview incomplete: ${diffs.filter((d) => d.error).length} of ${diffs.length} selected repos could not be checked${changing.length ? `; ${changing.length} would change` : ""}.`
+                  : changing.length === 0
+                    ? "Every selected repo already matches this preset."
+                    : `${changing.length} of ${diffs.length} selected repos would change.`}
               </p>
             )}
           </>

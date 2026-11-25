@@ -53,6 +53,13 @@ describe("RegisterPage", () => {
     expect(screen.getByRole("link", { name: "Sign in" })).toBeInTheDocument();
   });
 
+  it("sends a visitor to /setup when the instance has not been set up yet (#1234)", async () => {
+    setupRequiredMock.mockResolvedValue({ setup_required: true, registration_enabled: true, github_oauth_enabled: true });
+    renderPage();
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/setup"));
+  });
+
   it("keeps the form and sends the invitation token when sign-ups are closed but the user came from an invite (#1011)", async () => {
     setupRequiredMock.mockResolvedValue({ setup_required: false, registration_enabled: false, github_oauth_enabled: true });
     searchParams = new URLSearchParams({ next: "/invite/tok_123-abc" });

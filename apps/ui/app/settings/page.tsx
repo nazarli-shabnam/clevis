@@ -58,7 +58,7 @@ function ProfileSection() {
 
   useEffect(() => {
     setName(user?.name || "")
-  }, [user])
+  }, [user?.name])
 
   async function save() {
     setIsSaving(true)
@@ -749,6 +749,17 @@ const CONFIG_FIELDS: {
       { value: "weekly", label: "Weekly" },
     ],
   },
+  {
+    key: "stale_cache_clear_cadence",
+    label: "Scheduled Stale-Cache Clear",
+    description: "Delete GitHub Actions caches that nobody has used for the number of days an org admin set, on every repository they enabled it for, using the org's GitHub App installation (never a pasted token). Org admins can switch it per organization. Off by default.",
+    type: "select",
+    options: [
+      { value: "off", label: "Off" },
+      { value: "daily", label: "Daily" },
+      { value: "weekly", label: "Weekly" },
+    ],
+  },
   { key: "automation_poll_seconds", label: "Scheduled Automation Check Interval", description: "Seconds between checks for a due scheduled nudge or triage run (default 3600).", type: "number" },
   { key: "digest_poll_seconds", label: "Digest Check Interval", description: "Seconds between checks for a due leadership digest.", type: "number" },
   {
@@ -782,6 +793,8 @@ function InstanceConfigSection() {
   const [saving, setSaving] = useState<string | null>(null)
   const [values, setValues] = useState<Record<string, string>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
+  // The key whose last save succeeded and has not been edited since ("Saved" beside its button).
+  const [justSaved, setJustSaved] = useState<string | null>(null)
 
   useEffect(() => {
     if (config) setValues((prev) => initialConfigValues(prev, config))
@@ -793,8 +806,22 @@ function InstanceConfigSection() {
     return values[field.key] ?? field.defaultValue ?? field.options?.[0]?.value ?? ""
   }
 
+  // What the server has stored for the key, if anything. Save is only useful when the shown value differs from
+  // it; a key never stored stays savable so an admin can pin the default it displays.
+  function isUnchanged(field: (typeof CONFIG_FIELDS)[number], shown: string): boolean {
+    const stored = config?.[field.key]
+    return stored !== undefined && stored === shown
+  }
+
+  function edit(key: string, value: string) {
+    setValues((v) => ({ ...v, [key]: value }))
+    setErrors((e) => Object.fromEntries(Object.entries(e).filter(([k]) => k !== key)))
+    setJustSaved((k) => (k === key ? null : k))
+  }
+
   async function saveKey(key: string, value: string) {
     setSaving(key)
+    setJustSaved(null)
     setErrors((prev) => ({ ...prev, [key]: "" }))
     try {
       // PUT answers with the fresh map; use it (and refresh the cache) rather than refetching, because
@@ -804,6 +831,7 @@ function InstanceConfigSection() {
       // slower, older response would revert a key another save has since changed.
       qc.setQueryData<Record<string, string>>(["config"], (cached) => mergeSavedConfigValue(cached ?? updated, updated, key))
       setValues((prev) => mergeSavedConfigValue(prev, updated, key))
+      setJustSaved(key)
     } catch (err) {
       setErrors((prev) => ({ ...prev, [key]: err instanceof Error ? err.message : "Save failed" }))
     } finally {
@@ -854,9 +882,11 @@ function InstanceConfigSection() {
       <div className="divide-y divide-border">
         {CONFIG_FIELDS.map((field) => {
           const isSavingField = saving === field.key
-          const saveContent: React.ReactNode = isSavingField ? <CircleNotch className="size-3 animate-spin" /> : "Save"
+          const saveContent: React.ReactNode = isSavingField ? <CircleNotch className="size-3 animate-spin" aria-hidden="true" /> : "Save"
           const fieldId = `cfg-${field.key}`
           const shown = visibleValue(field)
+          const errorId = `${fieldId}-error`
+          const describedBy = errors[field.key] ? errorId : undefined
 
           return (
           <div key={field.key} className="p-4 max-w-lg">
@@ -866,7 +896,8 @@ function InstanceConfigSection() {
                 <select
                   id={fieldId}
                   value={shown}
-                  onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
+                  onChange={(e) => edit(field.key, e.target.value)}
+                  aria-describedby={describedBy}
                   className="h-8 border border-border bg-transparent px-2 font-mono text-xs"
                 >
                   <option value="true">Enabled</option>
@@ -876,7 +907,8 @@ function InstanceConfigSection() {
                 <select
                   id={fieldId}
                   value={shown}
-                  onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
+                  onChange={(e) => edit(field.key, e.target.value)}
+                  aria-describedby={describedBy}
                   className="h-8 border border-border bg-transparent px-2 font-mono text-xs"
                 >
                   {field.options?.map((o) => (
@@ -887,7 +919,8 @@ function InstanceConfigSection() {
                 <Input
                   id={fieldId}
                   value={shown}
-                  onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
+                  onChange={(e) => edit(field.key, e.target.value)}
+                  aria-describedby={describedBy}
                   type={field.type === "number" ? "number" : "text"}
                   className="font-mono text-xs"
                 />
@@ -896,13 +929,17 @@ function InstanceConfigSection() {
                 size="sm"
                 variant="outline"
                 onClick={() => saveKey(field.key, shown)}
-                disabled={isSavingField}
+                disabled={isSavingField || isUnchanged(field, shown)}
+                aria-label={`Save ${field.label}`}
               >
                 {saveContent}
               </Button>
+              {justSaved === field.key && (
+                <span role="status" className="text-xs text-primary">Saved</span>
+              )}
             </div>
             {errors[field.key] && (
-              <p className="text-xs text-destructive mt-1">{errors[field.key]}</p>
+              <p id={errorId} role="alert" className="text-xs text-destructive mt-1">{errors[field.key]}</p>
             )}
             <p className="text-xs text-muted-foreground mt-1">{field.description}</p>
           </div>

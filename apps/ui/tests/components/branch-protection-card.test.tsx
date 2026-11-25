@@ -170,7 +170,7 @@ describe("BranchProtectionCard", () => {
     await screen.findByRole("button", { name: "Apply to 2 repos" })
     fireEvent.click(screen.getByRole("button", { name: "Apply to 2 repos" }))
     fireEvent.click(await screen.findByRole("button", { name: "Click again to confirm" }))
-    await waitFor(() => expect(screen.getByText(/1 failed: web\./)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/1 failed: web \(GitHub API error: 403\)\./)).toBeInTheDocument())
   })
   it("prefills the knobs from the last saved preset and sends block-deletion", async () => {
     mockSavedPreset.mockResolvedValue({

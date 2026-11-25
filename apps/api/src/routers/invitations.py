@@ -16,6 +16,7 @@ from pydantic import EmailStr, TypeAdapter, ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from src.core.coded_errors import CodedHTTPException
 from src.core.auth import UserOut, require_auth
 from src.core.config import settings
 from src.core.db import Org, User, get_db
@@ -467,9 +468,8 @@ def accept_invitation(
     # self-registered accounts must click the emailed verification link first.
     db_user = db.query(User).filter(User.id == user.id).first()
     if db_user is None or not db_user.email_verified:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Verify your email before accepting this invitation",
+        raise CodedHTTPException(
+            status.HTTP_403_FORBIDDEN, "Verify your email before accepting this invitation", "email_unverified"
         )
 
     # An existing membership (e.g. a GitHub-verified admin) is kept as-is: accepting a member
