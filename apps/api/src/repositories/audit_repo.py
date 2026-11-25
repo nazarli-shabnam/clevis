@@ -106,6 +106,7 @@ AUTOMATION_RUN_ACTIONS = (
     "dependabot_triage.run",
     "cache.clear.queued",
     "security.remediate",
+    "security.remediate.bulk_apply",
     "workflow_lint.autofix_pr",
     "pr_nudge.sweep",
 )

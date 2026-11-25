@@ -154,8 +154,9 @@ def run_triage(
     else:
         seen: set[str] = set()
         target = [r for r in body.repos if not (r.lower() in seen or seen.add(r.lower()))]
+    # A dry run touches nothing on GitHub, so it must not count as a run (the onboarding step reads this action).
     audit_repo.write(
-        db, user.email, "dependabot_triage.run", ctx.org.github_login,
+        db, user.email, "dependabot_triage.dryrun" if body.dry_run else "dependabot_triage.run", ctx.org.github_login,
         {"repos": target, "dry_run": body.dry_run}, tenant_id=ctx.org.tenant_id,
     )
 
