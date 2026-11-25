@@ -59,26 +59,27 @@
   --radius-4xl: calc(var(--radius) * 6);
 }
 
-:root {
-  /* Surfaces — 4-stop depth system, Ember Terminal (near-black, warm) */
-  --background:  #0b0a08;   /* page bg */
-  --card:        #161310;   /* primary card surface */
-  --elevated:    #1e1a15;   /* inputs, hover states */
-  --overlay:     #241f18;   /* modals, dropdowns */
+:root,
+[data-theme="dark"] {
+  /* Surfaces — 4-stop depth system, Graphite (cool neutral near-black) */
+  --background:  #0e0f11;   /* page bg */
+  --card:        #16181b;   /* primary card surface */
+  --elevated:    #1d2023;   /* inputs, hover states */
+  --overlay:     #24272b;   /* modals, dropdowns */
 
   /* Text */
-  --foreground:         #f2ede4;
-  --muted-foreground:   #948a7a;
-  --subtle-foreground:  #5c5546;
+  --foreground:         #ecedee;
+  --muted-foreground:   #9aa0a8;
+  --subtle-foreground:  #6b7078;
 
   /* Borders */
-  --border:       #2c261c;
-  --border-muted: #201b14;
+  --border:       #2a2d32;
+  --border-muted: #202327;
 
-  /* Brand accent — ember amber, used for primary actions + active states */
-  --primary:            #e2932f;
-  --primary-foreground: #1a1006;
-  --ring:               #e2932f;
+  /* Brand accent — blue, used for primary actions + active states */
+  --primary:            #5b9dff;
+  --primary-foreground: #06101f;
+  --ring:               #5b9dff;
 
   /* Semantic — separate from the brand accent above */
   --accent:             #6fae8c;
@@ -88,203 +89,91 @@
   --alert:              var(--destructive);
 
   /* Sidebar */
-  --sidebar:                    #080705;
-  --sidebar-foreground:         #f2ede4;
-  --sidebar-primary:            #e2932f;
-  --sidebar-primary-foreground: #1a1006;
-  --sidebar-accent:             #1e1a15;
-  --sidebar-accent-foreground:  #f2ede4;
-  --sidebar-border:             #2c261c;
-  --sidebar-ring:               #e2932f;
+  --sidebar:                    #0a0b0d;
+  --sidebar-foreground:         #ecedee;
+  --sidebar-primary:            #5b9dff;
+  --sidebar-primary-foreground: #06101f;
+  --sidebar-accent:             #1d2023;
+  --sidebar-accent-foreground:  #ecedee;
+  --sidebar-border:             #2a2d32;
+  --sidebar-ring:               #5b9dff;
 
   /* Popover / card foreground */
-  --card-foreground:      #f2ede4;
-  --popover:              #161310;
-  --popover-foreground:   #f2ede4;
-  --secondary:            #1e1a15;
-  --secondary-foreground: #f2ede4;
-  --muted:                #1e1a15;
-  --input:                #161310;
+  --card-foreground:      #ecedee;
+  --popover:              #16181b;
+  --popover-foreground:   #ecedee;
+  --secondary:            #1d2023;
+  --secondary-foreground: #ecedee;
+  --muted:                #1d2023;
+  --input:                #16181b;
 
   /* Charts */
-  --chart-1: #e2932f;   /* ember  — primary data */
+  --chart-1: #5b9dff;   /* blue   — primary data */
   --chart-2: #6fae8c;   /* sage   — positive */
   --chart-3: #c9a227;   /* gold   — secondary */
   --chart-4: #d1453b;   /* red    — negative */
   --chart-5: #9c8aa5;   /* violet — tertiary (charts only, not UI) */
 
-  /* Sharp radius — one scale for the whole app (cards, buttons, inputs alike);
-     borders do the separating, not soft corners or shadow (Ember Terminal). */
-  --radius: 0.125rem;
+  /* One radius scale for the whole app (cards, buttons, inputs alike). */
+  --radius: 0.375rem;
 
   /* Motion — strong custom easing curves (emil-design-eng / impeccable: exponential ease-out) */
   --ease-out:    cubic-bezier(0.23, 1, 0.32, 1);     /* enter/exit, press release */
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);    /* on-screen morph (sidebar collapse) */
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);     /* drawer / sheet slide */
 
+  /* Headings use the body face (Geist); weight/tracking come from .macro-heading */
+  --font-heading: var(--font-sans);
+
   /* Mono stack — JetBrains Mono (loaded in layout) with system fallbacks */
   --font-mono: var(--font-jetbrains-mono), ui-monospace, "SF Mono", "Cascadia Code", "Fira Code", Consolas, "Courier New", monospace;
 }
 
 /*
- * Themes — neutral "shade/vibe" palettes selected via [data-theme] on <html>.
- * :root above is the default (Ember Terminal, key "midnight"), so
- * data-theme="midnight" needs no block. Each block overrides the surface /
- * text / border / sidebar tokens; --radius, --font-mono and chart colors are
- * inherited from :root.
+ * Themes — selected via [data-theme] on <html>. :root above is the dark theme (Graphite), so
+ * data-theme="dark" needs no block. "system" is resolved to dark|light in lib/theme.ts and the
+ * inline script in layout.tsx, so only a light override is needed. --radius and --font-* are inherited.
  */
 
-/* Carbon — neutral dark gray, a touch lighter and warmer than Ember Terminal */
-[data-theme="carbon"] {
-  --background: #141414;
-  --card: #1c1c1c;
-  --elevated: #242424;
-  --overlay: #2c2c2c;
-  --foreground: #ededed;
-  --muted-foreground: #8a8a8a;
-  --subtle-foreground: #4d4d4d;
-  --border: #2a2a2a;
-  --border-muted: #202020;
-  --card-foreground: #ededed;
-  --popover: #1c1c1c;
-  --popover-foreground: #ededed;
-  --secondary: #242424;
-  --secondary-foreground: #ededed;
-  --muted: #242424;
-  --input: #1c1c1c;
-  --sidebar: #0f0f0f;
-  --sidebar-foreground: #ededed;
-  --sidebar-accent: #1f1f1f;
-  --sidebar-accent-foreground: #ededed;
-  --sidebar-border: #262626;
-}
-
-/* Slate — cool blue-gray dark */
-[data-theme="slate"] {
-  --background: #0b0f14;
-  --card: #111722;
-  --elevated: #18202c;
-  --overlay: #1f2937;
-  --foreground: #e8eef6;
-  --muted-foreground: #7d8da3;
-  --subtle-foreground: #3b4654;
-  --border: #1e2733;
-  --border-muted: #161d27;
-  --primary: #5b9dff;
-  --ring: #5b9dff;
-  --card-foreground: #e8eef6;
-  --popover: #111722;
-  --popover-foreground: #e8eef6;
-  --secondary: #18202c;
-  --secondary-foreground: #e8eef6;
-  --muted: #18202c;
-  --input: #111722;
-  --sidebar: #080c11;
-  --sidebar-foreground: #e8eef6;
-  --sidebar-primary: #5b9dff;
-  --sidebar-accent: #16202c;
-  --sidebar-accent-foreground: #e8eef6;
-  --sidebar-border: #1d2630;
-  --sidebar-ring: #5b9dff;
-}
-
-/* Dim — muted desaturated dark (GitHub-dim vibe) */
-[data-theme="dim"] {
-  --background: #1c2128;
-  --card: #22272e;
-  --elevated: #2d333b;
-  --overlay: #373e47;
-  --foreground: #cdd9e5;
-  --muted-foreground: #768390;
-  --subtle-foreground: #545d68;
-  --border: #373e47;
-  --border-muted: #2d333b;
-  --primary: #6cb6ff;
-  --ring: #6cb6ff;
-  --card-foreground: #cdd9e5;
-  --popover: #22272e;
-  --popover-foreground: #cdd9e5;
-  --secondary: #2d333b;
-  --secondary-foreground: #cdd9e5;
-  --muted: #2d333b;
-  --input: #22272e;
-  --sidebar: #161b22;
-  --sidebar-foreground: #cdd9e5;
-  --sidebar-primary: #6cb6ff;
-  --sidebar-accent: #2d333b;
-  --sidebar-accent-foreground: #cdd9e5;
-  --sidebar-border: #373e47;
-  --sidebar-ring: #6cb6ff;
-}
-
-/* Paper — Ember Terminal's light companion: same ember/sage hues, warm ivory ground */
-[data-theme="paper"] {
-  --background: #f7f3ec;
+/* Light — the same cool neutral structure as Graphite, inverted */
+[data-theme="light"] {
+  --background: #f6f7f9;
   --card: #ffffff;
-  --elevated: #efe8db;
+  --elevated: #eef0f3;
   --overlay: #ffffff;
-  --foreground: #201f1d;
-  --muted-foreground: #746a55;
-  --subtle-foreground: #b0a48c;
-  --border: #e2d9c5;
-  --border-muted: #ede6d7;
-  --primary: #c17d1f;
-  --primary-foreground: #fffaf2;
-  --ring: #c17d1f;
-  --accent: #3f7d63;
-  --accent-foreground: #f0f7f3;
-  --destructive: #c0392b;
-  --warning: #b5811f;
-  --card-foreground: #201f1d;
-  --popover: #ffffff;
-  --popover-foreground: #201f1d;
-  --secondary: #efe8db;
-  --secondary-foreground: #201f1d;
-  --muted: #efe8db;
-  --input: #ffffff;
-  --sidebar: #efe8db;
-  --sidebar-foreground: #201f1d;
-  --sidebar-primary: #c17d1f;
-  --sidebar-primary-foreground: #fffaf2;
-  --sidebar-accent: #e2d9c5;
-  --sidebar-accent-foreground: #201f1d;
-  --sidebar-border: #ded3ba;
-  --sidebar-ring: #c17d1f;
-}
-
-/* Ash — cool light gray */
-[data-theme="ash"] {
-  --background: #eef1f4;
-  --card: #f8fafc;
-  --elevated: #e7ebf0;
-  --overlay: #ffffff;
-  --foreground: #1e2630;
-  --muted-foreground: #647082;
-  --subtle-foreground: #94a0b0;
-  --border: #d4dae1;
-  --border-muted: #e2e7ec;
-  --primary: #2563eb;
+  --foreground: #14161a;
+  --muted-foreground: #5b626c;
+  --subtle-foreground: #8a919b;
+  --border: #d9dde3;
+  --border-muted: #e8ebef;
+  --primary: #2f6fe0;
   --primary-foreground: #ffffff;
-  --ring: #2563eb;
-  --accent: #16a34a;
+  --ring: #2f6fe0;
+  --accent: #1f8a5b;
   --accent-foreground: #ffffff;
-  --destructive: #e61919;
-  --warning: #d97706;
-  --card-foreground: #1e2630;
-  --popover: #f8fafc;
-  --popover-foreground: #1e2630;
-  --secondary: #e7ebf0;
-  --secondary-foreground: #1e2630;
-  --muted: #e7ebf0;
-  --input: #f8fafc;
-  --sidebar: #e7ebf0;
-  --sidebar-foreground: #1e2630;
-  --sidebar-primary: #2563eb;
+  --destructive: #d1332a;
+  --warning: #b7791f;
+  --card-foreground: #14161a;
+  --popover: #ffffff;
+  --popover-foreground: #14161a;
+  --secondary: #eef0f3;
+  --secondary-foreground: #14161a;
+  --muted: #eef0f3;
+  --input: #ffffff;
+  --sidebar: #eef0f3;
+  --sidebar-foreground: #14161a;
+  --sidebar-primary: #2f6fe0;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #dadfe6;
-  --sidebar-accent-foreground: #1e2630;
-  --sidebar-border: #cdd4dc;
-  --sidebar-ring: #2563eb;
+  --sidebar-accent: #e1e5ea;
+  --sidebar-accent-foreground: #14161a;
+  --sidebar-border: #d9dde3;
+  --sidebar-ring: #2f6fe0;
+
+  --chart-1: #2f6fe0;
+  --chart-2: #1f8a5b;
+  --chart-3: #b7791f;
+  --chart-4: #d1332a;
+  --chart-5: #7c6a96;
 }
 
 @layer base {
@@ -320,13 +209,13 @@
 @layer utilities {
   /*
    * Typography usage rules:
-   *   font-sans  (Inter):         page titles, body text, labels, navigation
-   *   font-mono  (system mono):   stat values, code, cache keys, IDs, timestamps
+   *   font-sans  (Geist):         page titles, body text, labels, navigation, stat values
+   *   font-mono  (JetBrains Mono): code, cache keys, IDs, timestamps
    */
 
-  /* Monospace numeric values — used on stat cards, table cells, badges */
+  /* Numeric values — sans with tabular figures; used on stat cards, table cells, badges */
   .data-value {
-    font-family: var(--font-mono);
+    font-family: var(--font-sans);
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.02em;
   }
@@ -348,7 +237,7 @@
   }
 
   .stat-chip {
-    @apply inline-flex items-center gap-1 rounded-md text-xs border border-border px-1.5 py-0.5 text-muted-foreground font-mono;
+    @apply inline-flex items-center gap-1 rounded-md text-xs border border-border px-1.5 py-0.5 text-muted-foreground;
   }
 
   /* Muted caption label — used on stat cards below the section-label register. */
@@ -359,10 +248,10 @@
     color: var(--muted-foreground);
   }
 
-  /* Page-title register — a distinct heading face at a calm scale, not massive/uppercase. */
+  /* Page-title register — calm weight and tight tracking, not massive/uppercase. */
   .macro-heading {
     font-family: var(--font-heading);
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: -0.02em;
     line-height: 1.2;
     text-wrap: balance;
