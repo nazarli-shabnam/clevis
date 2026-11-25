@@ -15,7 +15,7 @@ import warnings
 from sqlalchemy import text, update
 from sqlalchemy.orm import Session
 
-from src.core.db import Base, Membership, ScanResult, User
+from src.core.db import Base, ScanResult, User
 from src.repositories import api_token_repo, audit_repo, tenant_repo
 
 
@@ -41,14 +41,11 @@ def blockers(db: Session, user: User) -> list[str]:
     for org, membership in tenant_repo.list_org_memberships_for_user(db, user.id):
         if membership.role != "admin":
             continue
-        admins = len(
-            db.query(Membership.id)
-            .filter(Membership.tenant_id == org.tenant_id, Membership.role == "admin")
-            .order_by(Membership.id)
-            .with_for_update()
-            .all()
-        )
-        if admins <= 1:
+        # The count reads every admin row of this org, which RLS only shows under its tenant context
+        # (require_auth sets only app.user_id, so without this the caller's own row is all that is visible). SET LOCAL,
+        # not set_session_tenant: the tenant must not outlive this transaction on the session.
+        _in_tenant(db, org.tenant_id)
+        if tenant_repo.count_admins_locked(db, org.tenant_id) <= 1:
             reasons.append(f"You are the only admin of {org.github_login}; make someone else an admin first")
     return reasons
 
