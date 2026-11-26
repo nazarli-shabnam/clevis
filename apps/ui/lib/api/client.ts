@@ -531,8 +531,11 @@ export const api = {
       ),
   },
   security: {
-    dependabotBurndown: (orgLogin: string, days = 30) =>
-      get<DependabotBurndown>(`/orgs/${encodeURIComponent(orgLogin)}/security/dependabot-burndown?days=${days}`),
+    /** Open alerts by severity against the SLA; `kind` picks Dependabot (default), code scanning or both. */
+    dependabotBurndown: (orgLogin: string, days = 30, kind: "dependabot" | "code_scanning" | "all" = "dependabot") =>
+      get<DependabotBurndown>(
+        `/orgs/${encodeURIComponent(orgLogin)}/security/dependabot-burndown?days=${days}&kind=${kind}`,
+      ),
     matrix: (owner: string, token?: string) =>
       get<SecurityMatrixResponse>(
         `/me/analytics/security-matrix/${encodeURIComponent(owner)}`,

@@ -24,6 +24,8 @@ _ACCEPTED_KEYS = {
     "webhook_requeue_poll_seconds",
     "dependabot_sla_critical_days",
     "dependabot_sla_high_days",
+    "code_scanning_sla_critical_days",
+    "code_scanning_sla_high_days",
     "score_hygiene_checks",
     "scheduled_scan_cadence",
     "scheduled_scan_poll_seconds",
