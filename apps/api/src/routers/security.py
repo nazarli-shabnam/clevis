@@ -369,7 +369,9 @@ def personal_secret_scanning(
     # hold alerts whose webhooks arrived after install and would under-report (and hide resolved ones).
     client = GitHubClient(token)
     try:
-        raw = client.request_paginated(f"/repos/{owner}/{repo}/secret-scanning/alerts")
+        raw = client.request_paginated(
+            f"/repos/{owner}/{repo}/secret-scanning/alerts", max_items=_MAX_SECRET_ALERTS + 1
+        )
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise _github_error(exc) from exc
 
