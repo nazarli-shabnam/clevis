@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from src.core._sanitize import sanitize_error
 from src.core.auth import UserOut, require_auth
-from src.core.db import ApiToken, CheckWaiver, Job, ScanResult, SecurityAlert, get_db
+from src.core.db import ApiToken, CheckWaiver, Job, ScanResult, SecurityAlert, WaiverRequest, get_db
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import (
     api_token_repo,
@@ -29,6 +29,7 @@ from src.repositories import (
     notification_read_repo,
     scan_results_repo,
     waiver_repo,
+    waiver_request_repo,
 )
 from src.schemas.notification_feed import NotificationFeed, NotificationItem, NotificationKind, NotificationPreferences
 from src.services import app_permissions, dependabot_burndown
@@ -46,7 +47,7 @@ MAX_LIMIT = 200
 _PER_SOURCE = 40
 # The stable ids the feed hands out: a kind plus the source row's integer id.
 _MAX_SCANS_IN_WINDOW = 1000
-_ITEM_ID = re.compile(r"^(critical_alert|score_drop|job_failed|permission_drift|waiver_expired|waiver_expiring|sla_breach|api_token_expiring):[0-9]{1,18}$")
+_ITEM_ID = re.compile(r"^(critical_alert|score_drop|job_failed|permission_drift|waiver_expired|waiver_expiring|waiver_request|sla_breach|api_token_expiring):[0-9]{1,18}$")
 
 
 def _aware(value: datetime) -> datetime:
@@ -267,6 +268,22 @@ def _waiver_expiring_items(db: Session, org_login: str, tenant_id: int) -> list[
     return items
 
 
+def _waiver_request_items(db: Session, org_login: str, tenant_id: int) -> list[dict]:
+    """Waiver requests still waiting for an admin. A standing item (not cut by the feed's ``days``), dated by when it
+    was made; it disappears once approved or denied."""
+    return [
+        {
+            "id": f"waiver_request:{r.id}",
+            "kind": "waiver_request",
+            "at": _aware(r.created_at),
+            "title": f"{r.requested_by} asked to waive {r.check_id}",
+            "detail": r.reason[:140],
+            "href": f"/settings/org/{quote(org_login, safe='')}/settings?waiver_request={r.id}",
+        }
+        for r in waiver_request_repo.list_for_tenant(db, tenant_id, status="pending")
+    ]
+
+
 def _api_token_expiring_items(db: Session, org_login: str, tenant_id: int) -> list[dict]:
     """Active API tokens that expire within the warning window. Dated by the moment each entered the
     window (expiry minus WINDOW_DAYS), so marking the feed read clears it and it does not reappear;
@@ -464,6 +481,8 @@ def get_notifications(
         raw += _waiver_expired_items(db, org_login, tenant_id, since)
     if is_admin and "waiver_expiring" not in muted:
         raw += _waiver_expiring_items(db, org_login, tenant_id)
+    if is_admin and "waiver_request" not in muted:
+        raw += _waiver_request_items(db, org_login, tenant_id)
     if is_admin and "api_token_expiring" not in muted:
         raw += _api_token_expiring_items(db, org_login, tenant_id)
     if "sla_breach" not in muted:
@@ -553,6 +572,10 @@ def _item_exists(db: Session, ctx: OrgContext, org_login: str, kind: str, row_id
         return install is not None and install.id == row_id
     elif kind == "api_token_expiring":
         model = ApiToken
+    elif kind == "waiver_request":
+        return db.query(WaiverRequest.id).filter(
+            WaiverRequest.id == row_id, WaiverRequest.tenant_id == tenant_id, WaiverRequest.status == "pending"
+        ).first() is not None
     else:  # waiver_expired, waiver_expiring: the only kinds left, both admin-only
         model = CheckWaiver
     return db.query(model.id).filter(model.id == row_id, model.tenant_id == tenant_id).first() is not None

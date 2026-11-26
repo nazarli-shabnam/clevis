@@ -17,6 +17,8 @@ import type {
   MemberAccess,
   CheckWaiver,
   CheckWaiverInput,
+  WaiverRequest,
+  WaiverRequestInput,
   NotificationFeed,
   NotificationKind,
   NotificationPreferences,
@@ -832,6 +834,19 @@ export const api = {
     update: (orgLogin: string, id: number, body: CheckWaiverInput) =>
       put<CheckWaiver>(`/orgs/${encodeURIComponent(orgLogin)}/waivers/${id}`, body),
     revoke: (orgLogin: string, id: number) => del(`/orgs/${encodeURIComponent(orgLogin)}/waivers/${id}`),
+  },
+  // A member asks the org admins for a waiver; an admin approves (which creates it) or denies.
+  waiverRequests: {
+    list: (orgLogin: string, status?: WaiverRequest["status"]) =>
+      get<WaiverRequest[]>(
+        `/orgs/${encodeURIComponent(orgLogin)}/waiver-requests${status ? `?status=${status}` : ""}`,
+      ),
+    create: (orgLogin: string, body: WaiverRequestInput) =>
+      post<WaiverRequest>(`/orgs/${encodeURIComponent(orgLogin)}/waiver-requests`, body),
+    approve: (orgLogin: string, id: number, body: { owner?: string; expires_at?: string } = {}) =>
+      post<WaiverRequest>(`/orgs/${encodeURIComponent(orgLogin)}/waiver-requests/${id}/approve`, body),
+    deny: (orgLogin: string, id: number, note?: string) =>
+      post<WaiverRequest>(`/orgs/${encodeURIComponent(orgLogin)}/waiver-requests/${id}/deny`, { note: note || null }),
   },
   notificationDestinations: {
     list: (orgLogin: string) =>
