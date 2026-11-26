@@ -64,6 +64,14 @@ def test_personal_overview_requires_auth(db):
     assert resp.status_code == 401
 
 
+@pytest.mark.parametrize("bad_owner", ["x?foo=1", "a/../b", "a#b", "a%2Fb", "", "x" * 40])
+def test_personal_overview_rejects_an_owner_that_is_not_a_github_login(http, bad_owner):
+    with patch("src.routers.analytics.get_account_type") as account_type:
+        resp = http.post("/me/analytics/overview", json={"owner": bad_owner, "token": "ghp_test"})
+    assert resp.status_code == 422
+    account_type.assert_not_called()
+
+
 def test_overview_returns_expected_shape(http):
     # Mock get_overview directly; anyio.to_thread.run_sync runs the lambda for real
     with (
