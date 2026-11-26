@@ -437,6 +437,7 @@ function ConnectedOrgsSection() {
                         variant="destructive"
                         size="sm"
                         disabled={disconnect.isPending}
+                        aria-label={`Disconnect ${row.account_login}`}
                         onClick={() => setConfirmRow(row)}
                       >
                         {isThisRowMutating ? (
