@@ -192,3 +192,14 @@ def test_the_feed_shows_pending_requests_to_admins_only_until_decided(db, world)
     assert not [i for i in admin.get("/orgs/acme-wr/notifications").json()["items"] if i["kind"] == "waiver_request"]
     # A decided request is no longer a real feed item, so it cannot be dismissed.
     assert admin.post(f"/orgs/acme-wr/notifications/waiver_request:{rid}/dismiss").status_code == 404
+
+
+def test_a_very_long_requester_email_still_approves_with_a_trimmed_owner(db, world):
+    rid = _ask(db, world).json()["id"]
+    db.query(WaiverRequest).filter(WaiverRequest.id == rid).update({"requested_by": "x" * 150 + "@wr.com"})
+    db.commit()
+
+    resp = _client(db, world["users"]["admin"]).post(f"/orgs/acme-wr/waiver-requests/{rid}/approve", json={})
+
+    assert resp.status_code == 200, resp.text
+    assert len(db.query(CheckWaiver).one().owner) == 100

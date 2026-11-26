@@ -279,7 +279,8 @@ def approve_waiver_request(
             check_id=request.check_id,
             repos=request.repos,
             reason=request.reason,
-            owner=adjust.owner or request.requested_by,
+            # An email can be longer than an owner name may be.
+            owner=adjust.owner or request.requested_by[:100],
             expires_at=expires_at,
         ),
         now,
