@@ -1429,15 +1429,16 @@ async def _my_items_list(
     login = await anyio.to_thread.run_sync(lambda: _my_login(client, token, db.query(User.github_user_id).filter(User.id == user.id).scalar()))
     if login is None:
         return response_cls(page=page, per_page=per_page, identity_unresolved=True)
-    if page * per_page > _MAX_SEARCH_RESULTS:
-        # Beyond the reachable window: report the capped total (not 0) so page math stays consistent.
-        return response_cls(total_count=_MAX_SEARCH_RESULTS, page=page, per_page=per_page, truncated=True)
-
     query = query_template.format(login=login)
+    # Beyond the reachable window GitHub rejects the page, so ask for the first result only: its total_count
+    # still tells us whether the 1000 cap truncated anything, and page math stays consistent.
+    in_window = page * per_page <= _MAX_SEARCH_RESULTS
     try:
         items_raw, total_count = await anyio.to_thread.run_sync(
-            lambda: _search_items_page(client, query, page, per_page, sort_oldest)
+            lambda: _search_items_page(client, query, page if in_window else 1, per_page if in_window else 1, sort_oldest)
         )
+        if not in_window:
+            items_raw = []
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise _github_error(exc) from exc
     # Cap the reported total to what's reachable so the UI's Next button disables at the true boundary.

@@ -322,6 +322,44 @@ class TestRequestPaginated:
         assert result == [{"id": 1}, {"id": 2}]
         assert mock_ctx.get.call_count == 1
 
+    def test_max_items_cuts_a_first_page_that_alone_exceeds_it(self, client):
+        page1 = _make_response(
+            200, [{"id": 1}, {"id": 2}, {"id": 3}], link='<https://api.github.com/repos/acme/x?page=2>; rel="next"'
+        )
+
+        with patch("src.services.github_client.httpx.Client") as mock_client_cls:
+            mock_ctx = MagicMock()
+            mock_ctx.__enter__ = MagicMock(return_value=mock_ctx)
+            mock_ctx.__exit__ = MagicMock(return_value=False)
+            mock_ctx.get.side_effect = [page1]
+            mock_client_cls.return_value = mock_ctx
+
+            result = client.request_paginated("/repos/acme/x", max_items=2)
+
+        assert result == [{"id": 1}, {"id": 2}]
+        assert mock_ctx.get.call_count == 1
+
+    def test_max_items_reached_on_a_later_page_stops_there(self, client):
+        page1 = _make_response(
+            200, [{"id": 1}], link='<https://api.github.com/repos/acme/x?page=2>; rel="next"'
+        )
+        page2 = _make_response(
+            200, [{"id": 2}, {"id": 3}], link='<https://api.github.com/repos/acme/x?page=3>; rel="next"'
+        )
+        page3 = _make_response(200, [{"id": 4}])
+
+        with patch("src.services.github_client.httpx.Client") as mock_client_cls:
+            mock_ctx = MagicMock()
+            mock_ctx.__enter__ = MagicMock(return_value=mock_ctx)
+            mock_ctx.__exit__ = MagicMock(return_value=False)
+            mock_ctx.get.side_effect = [page1, page2, page3]
+            mock_client_cls.return_value = mock_ctx
+
+            result = client.request_paginated("/repos/acme/x", max_items=2)
+
+        assert result == [{"id": 1}, {"id": 2}]
+        assert mock_ctx.get.call_count == 2
+
     def test_retries_on_429_then_succeeds(self, client):
         resp_429 = _make_response(429)
         resp_429.raise_for_status = MagicMock()

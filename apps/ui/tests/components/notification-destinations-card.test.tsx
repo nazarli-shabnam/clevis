@@ -118,6 +118,19 @@ describe("NotificationDestinationsCard", () => {
     expect(await screen.findByText("Sent 3 open alerts.")).toBeInTheDocument()
   })
 
+  it("does not offer it while the destination list has not loaded, since existing ones are unknown", async () => {
+    listMock.mockReturnValue(new Promise(() => {}))
+    createMock.mockResolvedValue(dest())
+    renderCard()
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "#sec" } })
+    fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: "https://hooks.slack.com/x" } })
+    fireEvent.click(screen.getByLabelText("New critical/high alert"))
+    fireEvent.click(screen.getByRole("button", { name: "Add destination" }))
+    await waitFor(() => expect(createMock).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByLabelText("Webhook URL")).toHaveValue(""))
+    expect(screen.queryByRole("button", { name: "Announce open alerts" })).not.toBeInTheDocument()
+  })
+
   it("does not offer it when the destination ignores new critical alerts, or is not the first", async () => {
     listMock.mockResolvedValue([])
     createMock.mockResolvedValue(dest())

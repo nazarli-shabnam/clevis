@@ -270,21 +270,36 @@ def test_a_search_with_more_than_1000_matches_is_marked_truncated(http):
     assert body["total_count"] == 1000 and body["truncated"] is True
 
 
-def test_page_times_per_page_over_1000_returns_empty_without_calling_github(http):
+def _out_of_window_body(http, total_count):
+    calls = []
+
+    def request(method, path, params=None):
+        if path == "/user":
+            return {"login": "octocat"}
+        calls.append(params)
+        return {"items": [{"ignored": True}], "total_count": total_count}
+
     with (
         patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
         patch("src.routers.analytics.GitHubClient") as mock_client,
     ):
-        mock_client.return_value.request.side_effect = lambda method, path, params=None: (
-            {"login": "octocat"} if path == "/user" else pytest.fail("should not call /search/issues")
-        )
+        mock_client.return_value.request.side_effect = request
         resp = http.get("/me/github/my-prs?owner=acme&page=11&per_page=100")
-
     assert resp.status_code == 200
-    body = resp.json()
+    return resp.json(), calls
+
+
+def test_page_times_per_page_over_1000_asks_github_only_for_the_count(http):
+    body, calls = _out_of_window_body(http, 4321)
     # total_count is capped at the reachable max (not 0) so page/lastPage math on the
     # client stays consistent instead of regressing once paging crosses GitHub's window.
     assert body == {"items": [], "total_count": 1000, "page": 11, "per_page": 100, "identity_unresolved": False, "truncated": True}
+    assert [(c["page"], c["per_page"]) for c in calls] == [(1, 1)]
+
+
+def test_an_out_of_window_page_is_not_marked_truncated_when_few_items_match(http):
+    body, _ = _out_of_window_body(http, 3)
+    assert body["items"] == [] and body["total_count"] == 3 and body["truncated"] is False
 
 
 def test_search_failure_is_a_github_error_not_an_empty_list(http):

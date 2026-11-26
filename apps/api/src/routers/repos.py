@@ -187,7 +187,8 @@ def _fetch_stats(owner: str, repo: str, token: str, db: Session, tenant_id: int,
         "default_branch": repo_meta.get("default_branch", ""),
         "latest_release": latest_release,
     }
-    stats["stats_ready"] = not _stats_not_ready(stats)
+    # A pending /stats/contributors (202, empty body) comes back as {}; a finished empty one is [].
+    stats["stats_ready"] = not _stats_not_ready(stats) and isinstance(contributors, list)
     return stats
 
 

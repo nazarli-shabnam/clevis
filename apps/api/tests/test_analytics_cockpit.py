@@ -1341,10 +1341,12 @@ def test_safe_pr_cycle_time_8w_marks_weeks_with_more_merges_than_it_averaged_as_
     item = {"created_at": "2026-01-01T00:00:00Z", "closed_at": "2026-01-03T00:00:00Z"}
     with patch("src.routers.analytics.GitHubClient") as mock_client:
         mock_client.return_value.request.return_value = {"items": [item] * 30, "total_count": 75}
-        buckets, _ = _safe_pr_cycle_time_8w("acme", "ghp_test")
+        buckets, ok = _safe_pr_cycle_time_8w("acme", "ghp_test")
+        assert ok is True and len(buckets) == 8
         assert all(b.partial for b in buckets)
         mock_client.return_value.request.return_value = {"items": [item] * 2, "total_count": 2}
-        buckets, _ = _safe_pr_cycle_time_8w("acme", "ghp_test")
+        buckets, ok = _safe_pr_cycle_time_8w("acme", "ghp_test")
+        assert ok is True and len(buckets) == 8
         assert not any(b.partial for b in buckets)
 
 

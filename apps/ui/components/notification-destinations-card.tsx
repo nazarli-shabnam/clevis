@@ -324,7 +324,7 @@ export function NotificationDestinationsCard({ orgLogin }: { orgLogin: string })
           : { url: url.trim(), ...(kind === "generic" && secret ? { secret } : {}) }),
       }),
     onSuccess: () => {
-      if ((query.data?.length ?? 0) === 0 && events.includes("new_critical_alert")) {
+      if (query.isSuccess && query.data.length === 0 && events.includes("new_critical_alert")) {
         announce.reset()
         setOfferAnnounce(true)
       }

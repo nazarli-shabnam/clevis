@@ -224,6 +224,7 @@ jobs:
       # CREATE ROLE (the api_tokens lookup-flag bypass guard) always skips there. Run it here with the
       # job-level superuser DATABASE_URL, and fail if it skips instead of passing.
       - name: Run RLS tests that need a superuser connection
+        shell: bash  # pipefail, so a failing pytest is not masked by tee
         run: |
           python -m pytest -q -rs "apps/api/tests/test_api_tokens.py::test_a_non_owner_session_cannot_unlock_api_tokens_by_setting_the_old_lookup_flag" | tee rls-superuser.txt
           grep -q "1 passed" rls-superuser.txt

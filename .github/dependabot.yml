@@ -37,5 +37,9 @@ updates:
   - package-ecosystem: docker-compose
     directory: /
     schedule: { interval: weekly }
+    # A PostgreSQL major bump cannot start on existing data; do it as a planned migration.
+    ignore:
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]
     groups:
       compose-images: { patterns: ["*"] }

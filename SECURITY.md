@@ -6,7 +6,7 @@ take vulnerability reports seriously and will respond promptly.
 ## Supported versions
 
 Clevis is self-hosted. Security fixes go to the latest commit on `main` and to the latest `v*`
-release tag (the `:latest` images). Older tags and older checkouts are not supported — update
+release tag (the `:latest` images; `:latest` follows the newest stable `vX.Y.Z` tag only). Older tags and older checkouts are not supported — update
 before reporting an issue that may already be fixed.
 
 ## Reporting a vulnerability
