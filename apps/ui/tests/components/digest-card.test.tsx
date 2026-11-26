@@ -147,6 +147,22 @@ describe("DigestCard", () => {
     await waitFor(() => expect(setDigestMock).toHaveBeenCalledWith("acme", { recipients: null }));
   });
 
+  it("disables the reset button while an update is pending (#1551)", async () => {
+    digestMock.mockResolvedValue(settings({ recipients: ["dev@acme.com"], resolved_recipients: ["dev@acme.com"] }));
+    let finish: (v: unknown) => void = () => {};
+    setDigestMock.mockReturnValue(new Promise((r) => (finish = r)));
+    renderCard();
+
+    const reset = await screen.findByRole("button", { name: "Reset to every verified admin" });
+    fireEvent.click(reset);
+    await waitFor(() => expect(setDigestMock).toHaveBeenCalledTimes(1));
+
+    expect(reset).toBeDisabled();
+    fireEvent.click(reset);
+    expect(setDigestMock).toHaveBeenCalledTimes(1);
+    finish(settings());
+  });
+
   it("flags an empty preview and shows the busy labels while building and sending", async () => {
     let finishPreview: (v: unknown) => void = () => {};
     let finishTest: (v: unknown) => void = () => {};
