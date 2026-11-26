@@ -378,6 +378,8 @@ export interface RepoStatsResponse {
   commit_activity: CommitActivityWeek[]
   // "aggregate" when commit_activity is estimated from stored push-event counts instead of GitHub's stats.
   commit_activity_source: "github" | "aggregate"
+  // false while GitHub is still computing the stats (empty charts mean "not yet", not "no activity").
+  stats_ready?: boolean
   participation: { all?: number[]; owner?: number[] }
   contributors: { author?: { login?: string }; total: number }[]
   stargazers_count: number

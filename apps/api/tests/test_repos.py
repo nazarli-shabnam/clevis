@@ -409,6 +409,7 @@ def test_repo_stats_does_not_cache_a_not_ready_202_response(repos_client):
         )
         second = repos_client.post("/orgs/acme/repos/acme/demo/stats", json=body)
     assert second.json()["commit_activity"] == [{"week": 1, "total": 5}]
+    assert first.json()["stats_ready"] is False and second.json()["stats_ready"] is True
 
 
 def test_repo_stats_evicts_expired_entries_from_the_cache(repos_client):
