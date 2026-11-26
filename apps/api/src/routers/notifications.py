@@ -169,6 +169,11 @@ def update_destination(
             raise HTTPException(status_code=422, detail="Only a generic webhook destination takes a signing secret")
         if body.secret is not None and not body.secret.get_secret_value():
             raise HTTPException(status_code=422, detail="A signing secret cannot be empty")
+        if body.remove_secret:
+            if dest.kind != "generic":
+                raise HTTPException(status_code=422, detail="Only a generic webhook destination takes a signing secret")
+            if body.secret is not None:
+                raise HTTPException(status_code=422, detail="Send either secret or remove_secret, not both")
         if body.url is not None:
             new_url = body.url.get_secret_value()
             target_changed |= new_url != decrypt_job_token(dest.encrypted_url, key)
@@ -180,6 +185,10 @@ def update_destination(
             target_changed |= new_secret != old_secret
             dest.encrypted_secret = encrypt_job_token(new_secret, key)
             changed.append("secret")
+        elif body.remove_secret and dest.encrypted_secret is not None:
+            dest.encrypted_secret = None
+            target_changed = True
+            changed.append("secret_removed")
 
     # `null` on these is "not provided", not "clear": they are NOT NULL columns.
     re_enabled = "enabled" in sent and body.enabled is True and not dest.enabled

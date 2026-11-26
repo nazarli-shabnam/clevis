@@ -54,6 +54,9 @@ class DestinationUpdate(BaseModel):
     url: SecretStr | None = None
     recipients: list[EmailStr] | None = Field(default=None, min_length=1, max_length=10)
     secret: SecretStr | None = None
+    # Explicit clear for a generic webhook's signing secret: `null` here means "not provided", so a
+    # secret can't be removed by sending one.
+    remove_secret: bool | None = None
 
 
 class DestinationOut(BaseModel):

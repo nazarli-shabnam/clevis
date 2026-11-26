@@ -308,6 +308,21 @@ describe("NotificationDestinationsCard", () => {
       )
     })
 
+    it("removes a webhook's signing secret only through the explicit checkbox", async () => {
+      updateMock.mockResolvedValue(dest())
+      const form = await openEdit({ kind: "generic", signed: true })
+      expect(within(form).getByRole("button", { name: "Save changes" })).toBeDisabled()
+      fireEvent.click(within(form).getByLabelText("Remove the signing secret (send unsigned)"))
+      expect(within(form).getByLabelText("New signing secret")).toBeDisabled()
+      fireEvent.click(within(form).getByRole("button", { name: "Save changes" }))
+      await waitFor(() => expect(updateMock).toHaveBeenCalledWith("acme", 1, { remove_secret: true }))
+    })
+
+    it("offers no remove-secret option for an unsigned webhook", async () => {
+      const form = await openEdit({ kind: "generic", signed: false })
+      expect(within(form).queryByLabelText("Remove the signing secret (send unsigned)")).not.toBeInTheDocument()
+    })
+
     it("edits an email destination's recipients and rejects an empty list", async () => {
       updateMock.mockResolvedValue(dest())
       const form = await openEdit({ kind: "email", recipients: ["a@e.com", "b@e.com"] })
