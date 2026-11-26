@@ -1046,6 +1046,7 @@ export interface SecretScanningResponse {
   repository: string
   alerts: SecretAlert[]
   source: "github" | "aggregate"
+  truncated?: boolean
 }
 
 // Response from POST /me/repos/{owner}/{repo}/issues.
