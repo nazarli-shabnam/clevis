@@ -107,11 +107,13 @@ export function BranchProtectionCard({ org, token, repos, initialSelected = [] }
   if (!message && apply.data) {
     const results = (apply.data as BranchProtectionBulkResponse).results ?? []
     const applied = results.filter((r) => r.applied).length
-    const failed = results.filter((r) => !r.applied)
+    const unchanged = results.filter((r) => r.unchanged).length
+    const failed = results.filter((r) => !r.applied && !r.unchanged)
+    const kept = unchanged > 0 ? ` ${unchanged} already matched.` : ""
     message =
       failed.length === 0
-        ? `Applied branch protection to ${applied} repositor${applied === 1 ? "y" : "ies"}.`
-        : `Applied to ${applied}; ${failed.length} failed: ${failed.map((r) => (r.error ? `${r.repo} (${r.error})` : r.repo)).join("; ")}.`
+        ? `Applied branch protection to ${applied} repositor${applied === 1 ? "y" : "ies"}.${kept}`
+        : `Applied to ${applied}; ${failed.length} failed: ${failed.map((r) => (r.error ? `${r.repo} (${r.error})` : r.repo)).join("; ")}.${kept}`
   }
 
   const diffs = apply.data ? [] : preview.data?.diffs ?? []

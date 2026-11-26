@@ -49,6 +49,7 @@ class RepoDiffOut(BaseModel):
 class RepoResultOut(BaseModel):
     repo: str
     applied: bool
+    unchanged: bool = False
     error: str | None = None
 
 
@@ -161,7 +162,7 @@ def bulk_branch_protection(
             session.commit()
 
         return BulkApplyResponse(
-            results=[RepoResultOut(repo=r.repo, applied=r.applied, error=r.error) for r in results]
+            results=[RepoResultOut(repo=r.repo, applied=r.applied, unchanged=r.unchanged, error=r.error) for r in results]
         )
 
     if run_async:

@@ -66,6 +66,7 @@ class RepoResult:
     repo: str
     applied: bool
     error: str | None = None
+    unchanged: bool = False  # the repo already matched the preset, so nothing was PUT
 
 
 _MAX_APPROVALS = 6
@@ -205,7 +206,7 @@ def plan_bulk(client: GitHubClient, owner: str, repos: list[str], preset: dict |
 
 
 def apply_bulk(client: GitHubClient, owner: str, repos: list[str], preset: dict | None) -> list[RepoResult]:
-    """PUT the computed body to each repo's default branch. Per-repo try/except so a
+    """PUT the computed body to each repo's default branch, skipping repos the preview shows as no change. Per-repo try/except so a
     partial failure doesn't abort the rest."""
     knobs = normalize_preset(preset)
     results: list[RepoResult] = []
@@ -214,7 +215,11 @@ def apply_bulk(client: GitHubClient, owner: str, repos: list[str], preset: dict 
             results.append(RepoResult(repo, applied=False, error="invalid repository name"))
             continue
         try:
-            branch, _protection, body = _prepare(client, owner, repo, knobs)
+            branch, protection, body = _prepare(client, owner, repo, knobs)
+            if not _diff(protection, body):
+                # Same test the preview uses, so Apply never rewrites what the dry run called a no-op.
+                results.append(RepoResult(repo, applied=False, unchanged=True))
+                continue
             client.request("PUT", _protection_path(owner, repo, branch), json=body)
             results.append(RepoResult(repo, applied=True))
         except RemediationConflict as exc:
