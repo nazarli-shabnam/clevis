@@ -128,7 +128,7 @@ def _summarize(event_type: str, payload: dict) -> str:
 
     if event_type == "release":
         release = payload.get("release") or {}
-        return f"published release {release.get('tag_name', '')}"
+        return f"created release {release.get('tag_name', '')}"
 
     if event_type == "create":
         ref_type = payload.get("ref_type", "")

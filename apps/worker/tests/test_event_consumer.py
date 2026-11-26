@@ -169,7 +169,7 @@ def test_normalizes_a_push_event(pg_conn, tenant_id):
         (
             "release",
             {"action": "published", "release": {"tag_name": "v1.2.3"}},
-            "published release v1.2.3",
+            "created release v1.2.3",
         ),
         (
             "create",
