@@ -24,7 +24,8 @@ class DestinationCreate(BaseModel):
     recipients: list[EmailStr] | None = Field(default=None, max_length=10)
     # HMAC-SHA256 signing secret; only meaningful for `generic`.
     secret: SecretStr | None = None
-    events: list[EventName] = ["score_drop"]
+    # At least one: a destination with no events is "Active" yet never fires.
+    events: list[EventName] = Field(default=["score_drop"], min_length=1)
     min_score_drop: int = Field(default=10, ge=1, le=100)
 
     @model_validator(mode="after")
