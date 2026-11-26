@@ -31,3 +31,11 @@ updates:
     schedule: { interval: weekly }
     groups:
       docker: { patterns: ["*"] }
+
+  # The images in docker-compose.yml (postgres, redis, busybox) are pinned by digest; the docker ecosystem
+  # above only reads Dockerfiles, so without this nothing would ever propose a newer one.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      compose-images: { patterns: ["*"] }

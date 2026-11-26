@@ -14,7 +14,8 @@ services:
   # host's RAM budget changes.
   db:
     container_name: db
-    image: postgres:17
+    # Pinned by digest (the tag stays for readability); Dependabot's docker-compose ecosystem bumps both.
+    image: postgres:17@sha256:87c8b42f423b45d5247e6aa8fdb2e7762fec164c68a50fe3eb07e7bfcaf4dbcf
     mem_limit: 1g
     environment:
       POSTGRES_USER: ${DB_USER}
@@ -47,7 +48,7 @@ services:
   # required, mirroring DB_PASSWORD.
   redis:
     container_name: redis
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
     mem_limit: 256m
     command: ["sh", "-c", "redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
     environment:
@@ -71,7 +72,7 @@ services:
   # the auth secret is mounted into the api only, so the worker still never receives AUTH_SECRET.
   init-secrets:
     container_name: init-secrets
-    image: busybox:1.37
+    image: busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
     mem_limit: 32m
     restart: "no"
     volumes:
