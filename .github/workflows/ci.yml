@@ -192,6 +192,17 @@ jobs:
           POSTGRES_DB: clevis
         run: sh docker/provision-api-role-existing-deployment.sh
 
+      # The script's docs promise it is safe to run again on an existing deployment: prove it, since a second
+      # run would fail on a duplicate role or grant if it were not.
+      - name: Provision clevis_api role again (the script must be idempotent)
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGPASSWORD: clevis
+          POSTGRES_USER: clevis
+          POSTGRES_DB: clevis
+        run: sh docker/provision-api-role-existing-deployment.sh
+
       # Global floor (.coveragerc / --cov-fail-under) is a regression guard measured against
       # the current baseline (~87%), not an aspirational target. New/changed lines are held
       # to a much higher bar by the diff coverage step below.
@@ -367,39 +378,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Dummy credentials -- this stack is thrown away at the end of the job, nothing here is a real one.
-      # JOB_SECRET_KEY and AUTH_SECRET are deliberately left unset: this job runs the README Quickstart's
-      # zero-config path (the `init-secrets` service generates them onto named volumes and the entrypoints
-      # read them from there), which the e2e job, setting both explicitly, does not exercise.
-      - name: Write CI env file
+      # The README Quickstart as written: `cp .env.example .env`, fill the four required variables, then bring the
+      # stack up with docker-compose.local.yml. Dummy credentials -- this stack is thrown away at the end of the job.
+      # JOB_SECRET_KEY and AUTH_SECRET are deliberately left empty: this job runs the Quickstart's zero-config path
+      # (the `init-secrets` service generates them onto named volumes and the entrypoints read them from there),
+      # which the e2e job, setting both explicitly, does not exercise. A change that breaks the shipped template
+      # (a renamed or newly required variable, a value Compose can't parse) fails here.
+      - name: Create .env from .env.example
         run: |
-          cat > .env <<'EOF'
-          DB_USER=clevis
-          DB_PASSWORD=clevis
-          DB_NAME=clevis
-          NEXT_PUBLIC_API_BASE=http://localhost:8080
-          NEXT_PUBLIC_GITHUB_APP_SLUG=
-          REDIS_PASSWORD=ci-docker-redis-password-not-for-production-00
-          EOF
+          cp .env.example .env
+          sed -i             -e 's|^DB_USER=.*|DB_USER=clevis|'             -e 's|^DB_PASSWORD=.*|DB_PASSWORD=clevis|'             -e 's|^DB_NAME=.*|DB_NAME=clevis|'             -e 's|^REDIS_PASSWORD=.*|REDIS_PASSWORD=ci-docker-redis-password-not-for-production-00|'             .env
 
       # `--wait` blocks until every service's own healthcheck (defined in docker-compose.yml --
       # API hits /healthz, worker checks its heartbeat files, UI checks /api/health via Node's
       # http client, not curl) reports healthy, or fails the job if one doesn't -- proving each
       # image actually runs the way it runs in production, not just that it builds.
       - name: Build and start the full stack
-        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml up --build -d --wait
+        run: docker compose -f docker-compose.yml -f docker-compose.local.yml up --build -d --wait
 
       # With both variables unset the api could only have started from the generated files (its entrypoint
       # exits otherwise); check them directly anyway so a broken fallback fails here with a clear message.
       - name: Check the generated secrets were used
         run: |
-          docker compose -f docker-compose.yml -f docker-compose.ci.yml exec -T api test -s /run/clevis/job/job_secret
-          docker compose -f docker-compose.yml -f docker-compose.ci.yml exec -T api test -s /run/clevis/auth/auth_secret
+          docker compose -f docker-compose.yml -f docker-compose.local.yml exec -T api test -s /run/clevis/job/job_secret
+          docker compose -f docker-compose.yml -f docker-compose.local.yml exec -T api test -s /run/clevis/auth/auth_secret
 
       - name: Stack logs (on failure)
         if: failure()
-        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml logs
+        run: docker compose -f docker-compose.yml -f docker-compose.local.yml logs
 
       - name: Tear down stack
         if: always()
-        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml down -v
+        run: docker compose -f docker-compose.yml -f docker-compose.local.yml down -v
