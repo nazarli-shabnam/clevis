@@ -182,6 +182,40 @@ def _alert(db, org, number, *, kind="dependabot", severity="critical", state="op
     db.commit()
 
 
+def test_announce_open_alerts_sends_the_open_critical_backlog_without_restamping(db, acme):
+    org = acme["org"]
+    _alert(db, org, 1, notified=True)  # already stamped by the sweep before any destination existed
+    _alert(db, org, 2, severity="high")
+    _alert(db, org, 3, kind="secret_scanning", severity=None)
+    _alert(db, org, 4, severity="medium")
+    _alert(db, org, 5, state="dismissed")
+    hit = _dest(db, org, events=("new_critical_alert",))
+    _dest(db, org, events=("score_drop",))
+    admin = _client(db, acme["admin"])
+
+    with patch("src.services.notifications.send", return_value=(True, "HTTP 200")) as send:
+        resp = admin.post("/orgs/acme/notification-destinations/announce-open-alerts")
+
+    assert resp.status_code == 200 and resp.json() == {"announced": 3, "truncated": False}
+    assert [c.args[0].id for c in send.call_args_list] == [hit.id]
+    assert "3 new critical/high security alerts" in send.call_args.args[2]
+    db.execute(text(f"SET app.tenant_id = {int(org.tenant_id)}"))
+    stamps = dict(
+        db.execute(text("SELECT number, alert_notified_at IS NOT NULL FROM security_alerts WHERE tenant_id = :t"), {"t": org.tenant_id}).all()
+    )
+    assert stamps == {1: True, 2: False, 3: False, 4: False, 5: False}  # nothing re-stamped, nothing cleared
+    assert db.query(AuditLog).filter(AuditLog.action == "notification.open_alerts_announced").count() == 1
+
+
+def test_announce_open_alerts_is_admin_only_and_empty_sends_nothing(db, acme):
+    assert _client(db, acme["member"]).post("/orgs/acme/notification-destinations/announce-open-alerts").status_code == 403
+    _dest(db, acme["org"], events=("new_critical_alert",))
+    with patch("src.services.notifications.send") as send:
+        resp = _client(db, acme["admin"]).post("/orgs/acme/notification-destinations/announce-open-alerts")
+    assert resp.json() == {"announced": 0, "truncated": False}
+    send.assert_not_called()
+
+
 def test_sweep_announces_each_new_critical_alert_once(db, acme):
     org = acme["org"]
     _alert(db, org, 1)

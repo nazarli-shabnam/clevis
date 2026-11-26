@@ -7,6 +7,7 @@ const createMock = vi.fn()
 const updateMock = vi.fn()
 const removeMock = vi.fn()
 const testMock = vi.fn()
+const announceMock = vi.fn()
 
 vi.mock("@/lib/api/client", () => ({
   api: {
@@ -16,6 +17,7 @@ vi.mock("@/lib/api/client", () => ({
       update: (...a: unknown[]) => updateMock(...a),
       remove: (...a: unknown[]) => removeMock(...a),
       test: (...a: unknown[]) => testMock(...a),
+      announceOpenAlerts: (...a: unknown[]) => announceMock(...a),
     },
   },
 }))
@@ -45,7 +47,7 @@ function renderCard() {
 }
 
 beforeEach(() => {
-  for (const m of [listMock, createMock, updateMock, removeMock, testMock]) m.mockReset()
+  for (const m of [listMock, createMock, updateMock, removeMock, testMock, announceMock]) m.mockReset()
 })
 afterEach(cleanup)
 
@@ -97,6 +99,46 @@ describe("NotificationDestinationsCard", () => {
       min_score_drop: 10,
     })
     await waitFor(() => expect(screen.getByLabelText("Webhook URL")).toHaveValue(""))
+  })
+
+  it("offers to announce the open critical alerts after the first destination that listens for them", async () => {
+    listMock.mockResolvedValue([])
+    createMock.mockResolvedValue(dest())
+    announceMock.mockResolvedValue({ announced: 3, truncated: false })
+    renderCard()
+    await screen.findByText(/No destinations yet/)
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "#sec" } })
+    fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: "https://hooks.slack.com/x" } })
+    fireEvent.click(screen.getByLabelText("New critical/high alert"))
+    fireEvent.click(screen.getByRole("button", { name: "Add destination" }))
+
+    fireEvent.click(await screen.findByRole("button", { name: "Announce open alerts" }))
+
+    await waitFor(() => expect(announceMock).toHaveBeenCalledWith("acme"))
+    expect(await screen.findByText("Sent 3 open alerts.")).toBeInTheDocument()
+  })
+
+  it("does not offer it when the destination ignores new critical alerts, or is not the first", async () => {
+    listMock.mockResolvedValue([])
+    createMock.mockResolvedValue(dest())
+    renderCard()
+    await screen.findByText(/No destinations yet/)
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "#sec" } })
+    fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: "https://hooks.slack.com/x" } })
+    fireEvent.click(screen.getByRole("button", { name: "Add destination" }))
+    await waitFor(() => expect(createMock).toHaveBeenCalled())
+    expect(screen.queryByRole("button", { name: "Announce open alerts" })).not.toBeInTheDocument()
+    cleanup()
+
+    listMock.mockResolvedValue([dest()])
+    renderCard()
+    await screen.findByText("#alerts")
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "#second" } })
+    fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: "https://hooks.slack.com/y" } })
+    fireEvent.click(within(screen.getByLabelText("Name").closest("form")!).getByLabelText("New critical/high alert"))
+    fireEvent.click(screen.getByRole("button", { name: "Add destination" }))
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole("button", { name: "Announce open alerts" })).not.toBeInTheDocument()
   })
 
   it("won't add a destination with no events selected", async () => {
