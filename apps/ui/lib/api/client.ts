@@ -1031,7 +1031,8 @@ export const api = {
     sessions: () => get<UserSessionOut[]>("/auth/me/sessions"),
     // Ends one other session; 204. The current session is refused (use logout).
     revokeSession: (id: string) => del(`/auth/me/sessions/${encodeURIComponent(id)}`),
-    verifyEmail: (token: string) => post<{ ok: boolean }>("/auth/verify-email", { token }),
+    /** Also sets the account password and ends every earlier session, so a squatter's password stops working. */
+    verifyEmail: (token: string, password: string) => post<{ ok: boolean }>("/auth/verify-email", { token, password }),
     /** Workspace admin only: mark an account's email verified without the emailed link (for no-SMTP deployments). */
     adminVerifyEmail: (email: string) =>
       post<{ ok: boolean; already_verified: boolean }>("/auth/admin/verify-email", { email }),

@@ -1278,12 +1278,12 @@ describe("api.auth email verification (issue #217)", () => {
     );
   }
 
-  it("POSTs the token to /auth/verify-email", async () => {
+  it("POSTs the token and the new password to /auth/verify-email", async () => {
     stubOkJson({ ok: true });
-    const result = await api.auth.verifyEmail("a-token");
+    const result = await api.auth.verifyEmail("a-token", "a-long-password");
     const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(String(url)).toContain("/auth/verify-email");
-    expect(JSON.parse(init.body as string)).toEqual({ token: "a-token" });
+    expect(JSON.parse(init.body as string)).toEqual({ token: "a-token", password: "a-long-password" });
     expect(result).toEqual({ ok: true });
   });
 

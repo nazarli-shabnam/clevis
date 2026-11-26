@@ -204,6 +204,7 @@ class SetupRequiredResponse(BaseModel):
 
 class VerifyEmailRequest(BaseModel):
     token: str
+    password: str
 
 
 class VerifyEmailResponse(BaseModel):
@@ -363,7 +364,8 @@ def register(body: RegisterRequest, request: Request, db: Session = Depends(get_
 
 @router.post("/verify-email", response_model=VerifyEmailResponse, dependencies=[Depends(rate_limit())])
 def verify_email(body: VerifyEmailRequest, request: Request, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email_verify_token == body.token).first()
+    # Locked like reset_password so a concurrent login cannot keep a session this change is meant to end.
+    user = db.query(User).filter(User.email_verify_token == body.token).with_for_update().first()
     if user is None:
         raise HTTPException(status_code=400, detail="Invalid or expired verification link")
     if (
@@ -371,6 +373,12 @@ def verify_email(body: VerifyEmailRequest, request: Request, db: Session = Depen
         or user.email_verify_token_expires_at < datetime.now(timezone.utc)
     ):
         raise HTTPException(status_code=400, detail="Invalid or expired verification link")
+    _check_new_password(body.password)
+    # Anyone can register an unverified account for someone else's address with a password they chose (#1322),
+    # so the mailbox owner sets the password here and every earlier password and session stops working.
+    user.password_hash = _hash_password(body.password)
+    user.token_version += 1
+    session_repo.forget_all(db, user.id)
     user.email_verified = True
     user.email_verify_token = None
     user.email_verify_token_expires_at = None
