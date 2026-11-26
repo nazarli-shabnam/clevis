@@ -3,9 +3,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, SecretStr
 
+from src.core.path_params import Owner
+
 
 class AnalyticsInput(BaseModel):
-    owner: str
+    owner: Owner
     # Optional: falls back to a GitHub App installation token when one is connected
     # for this owner (see src.services.token_resolution).
     token: SecretStr | None = None
