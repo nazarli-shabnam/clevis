@@ -1,5 +1,5 @@
 import "@/app/globals.css"
-import { Geist, Archivo, JetBrains_Mono } from "next/font/google"
+import { Geist, JetBrains_Mono } from "next/font/google"
 import { cn } from "@/lib/utils"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { Toaster } from "@/components/ui/toast"
@@ -16,14 +16,7 @@ const geist = Geist({
   variable: "--font-sans",
 })
 
-// Display headers
-const archivo = Archivo({
-  subsets: ["latin"],
-  weight: ["500", "600", "700", "800", "900"],
-  variable: "--font-heading",
-})
-
-// Data / telemetry: stat values, IDs, timestamps, code.
+// Code, IDs, cache keys, timestamps. Headings reuse Geist (--font-heading aliases --font-sans in globals.css).
 const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
   variable: "--font-jetbrains-mono",
@@ -34,8 +27,9 @@ export const metadata = {
   description: "GitHub analytics and cache management",
 }
 
-// Applied before paint to avoid a theme flash. Keep in sync with lib/theme.ts (default + dark theme list).
-const themeScript = `(function(){try{var t=localStorage.getItem('clevis:theme')||'midnight';var dark=['midnight','carbon','slate','dim'].indexOf(t)!==-1;var r=document.documentElement;r.setAttribute('data-theme',t);r.classList.toggle('dark',dark);r.classList.toggle('light',!dark);}catch(e){}})();`
+// Applied before paint to avoid a theme flash, and re-applied when the OS scheme changes while the
+// preference is "system". Keep in sync with normalizeTheme/resolveTheme in lib/theme.ts.
+const themeScript = `(function(){var m=window.matchMedia('(prefers-color-scheme: dark)'),r=document.documentElement;function pref(){try{var t=localStorage.getItem('clevis:theme');return t==='light'||t==='system'||t==='dark'?t:(t==='paper'||t==='ash'?'light':'dark')}catch(e){return'dark'}}function paint(){var p=pref(),d=p==='system'?m.matches:p==='dark';r.setAttribute('data-theme',d?'dark':'light');r.classList.toggle('dark',d);r.classList.toggle('light',!d)}paint();m.addEventListener('change',function(){if(pref()==='system')paint()})})();`
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -44,10 +38,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       className={cn(
         "dark font-sans",
         geist.variable,
-        archivo.variable,
         jetbrainsMono.variable
       )}
-      data-theme="midnight"
+      data-theme="dark"
       suppressHydrationWarning
     >
       <head>

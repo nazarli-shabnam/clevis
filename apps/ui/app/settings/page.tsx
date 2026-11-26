@@ -156,6 +156,20 @@ function ProfileSection() {
 }
 
 
+// Miniature app (sidebar, card, button) painted with the real tokens of one resolved theme.
+function ThemeMiniPreview({ theme }: { theme: "dark" | "light" }) {
+  return (
+    <span data-theme={theme} aria-hidden className="absolute inset-0 flex bg-background">
+      <span className="w-1/4 border-r border-sidebar-border bg-sidebar" />
+      <span className="flex flex-1 flex-col gap-1.5 p-2">
+        <span className="h-1.5 w-1/2 rounded-sm bg-foreground/80" />
+        <span className="h-6 rounded-sm border border-border bg-card" />
+        <span className="h-2 w-1/3 rounded-sm bg-primary" />
+      </span>
+    </span>
+  )
+}
+
 function AppearanceSection() {
   const { theme, setTheme } = useTheme()
 
@@ -163,9 +177,11 @@ function AppearanceSection() {
     <div className="card">
       <div className="px-4 py-3 border-b border-border">
         <span className="section-label">Appearance</span>
-        <p className="text-xs text-muted-foreground mt-0.5">Theme is saved to this browser.</p>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          System follows your device. The choice is saved to this browser.
+        </p>
       </div>
-      <div className="p-4 grid grid-cols-2 sm:grid-cols-3 gap-2">
+      <div className="p-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
         {THEMES.map((t) => {
           const active = theme === t.name
           return (
@@ -174,20 +190,29 @@ function AppearanceSection() {
               onClick={() => setTheme(t.name)}
               aria-pressed={active}
               className={[
-                "flex items-center gap-2.5 px-3 py-2.5 border text-left transition-colors",
+                "flex flex-col gap-2 p-2 border rounded-md text-left transition-colors",
                 active ? "border-primary bg-primary/10" : "border-border hover:bg-elevated",
               ].join(" ")}
             >
-              <span
-                data-theme={t.name}
-                className="flex shrink-0 overflow-hidden rounded-md border border-border/60"
-              >
-                <span className="size-3.5 bg-background" />
-                <span className="size-3.5 bg-card" />
-                <span className="size-3.5 bg-primary" />
+              <span className="relative block h-20 overflow-hidden rounded-sm border border-border">
+                {t.name === "system" ? (
+                  <>
+                    <ThemeMiniPreview theme="dark" />
+                    <span className="absolute inset-0" style={{ clipPath: "polygon(100% 0, 100% 100%, 0 100%)" }}>
+                      <ThemeMiniPreview theme="light" />
+                    </span>
+                  </>
+                ) : (
+                  <ThemeMiniPreview theme={t.name} />
+                )}
               </span>
-              <span className="flex-1 text-xs font-medium text-foreground">{t.label}</span>
-              {active && <Check className="size-3.5 text-primary shrink-0" />}
+              <span className="flex items-center gap-2 px-0.5">
+                <span className="flex-1">
+                  <span className="block text-xs font-medium text-foreground">{t.label}</span>
+                  <span className="block text-xs text-muted-foreground">{t.description}</span>
+                </span>
+                {active && <Check className="size-3.5 text-primary shrink-0" />}
+              </span>
             </button>
           )
         })}
