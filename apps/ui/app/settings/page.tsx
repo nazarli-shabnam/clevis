@@ -97,6 +97,7 @@ function ProfileSection() {
           <FieldLabel>Display name</FieldLabel>
           <Input
             placeholder="Your name"
+            maxLength={100}
             value={name}
             onChange={(e) => setName(e.target.value)}
           />

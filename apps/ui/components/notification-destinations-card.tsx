@@ -38,6 +38,10 @@ const KIND_LABELS: Record<DestinationKind, string> = {
 
 const splitRecipients = (text: string) => text.split(/[,\s]+/).filter(Boolean)
 
+// The API rejects more than 10 recipients with a 422.
+const MAX_RECIPIENTS = 10
+const TOO_MANY_RECIPIENTS = `At most ${MAX_RECIPIENTS} recipients.`
+
 /**
  * Edits a destination in place with the existing partial PATCH. The webhook URL and signing secret are
  * write-only (the API never returns them), so leaving them blank keeps the stored value. Only changed
@@ -72,7 +76,7 @@ function EditForm({
     if (url.trim()) body.url = url.trim()
     if (dest.kind === "generic" && secret) body.secret = secret
   }
-  const valid = name.trim() !== "" && dropValid && (!isEmail || recipientList.length > 0)
+  const valid = name.trim() !== "" && dropValid && (!isEmail || (recipientList.length > 0 && recipientList.length <= MAX_RECIPIENTS))
   const canSave = valid && Object.keys(body).length > 0 && !saving
 
   async function save(e: React.FormEvent) {
@@ -110,6 +114,7 @@ function EditForm({
             value={recipients}
             onChange={(e) => setRecipients(e.target.value)}
           />
+          {recipientList.length > MAX_RECIPIENTS && <p role="alert" className="text-destructive mt-1">{TOO_MANY_RECIPIENTS}</p>}
         </div>
       ) : (
         <>
@@ -298,7 +303,7 @@ export function NotificationDestinationsCard({ orgLogin }: { orgLogin: string })
         events,
         min_score_drop: Number(minDrop),
         ...(kind === "email"
-          ? { recipients: recipients.split(/[,\s]+/).filter(Boolean) }
+          ? { recipients: splitRecipients(recipients) }
           : { url: url.trim(), ...(kind === "generic" && secret ? { secret } : {}) }),
       }),
     onSuccess: () => {
@@ -314,7 +319,8 @@ export function NotificationDestinationsCard({ orgLogin }: { orgLogin: string })
     onError: () => queryClient.invalidateQueries({ queryKey }),
   })
 
-  const hasTarget = kind === "email" ? recipients.split(/[,\s]+/).filter(Boolean).length > 0 : url.trim() !== ""
+  const recipientCount = splitRecipients(recipients).length
+  const hasTarget = kind === "email" ? recipientCount > 0 && recipientCount <= MAX_RECIPIENTS : url.trim() !== ""
   const dropValid = Number.isInteger(Number(minDrop)) && Number(minDrop) >= 1 && Number(minDrop) <= 100
   const canSubmit = name.trim() !== "" && hasTarget && dropValid && !create.isPending
 
@@ -405,6 +411,7 @@ export function NotificationDestinationsCard({ orgLogin }: { orgLogin: string })
               value={recipients}
               onChange={(e) => setRecipients(e.target.value)}
             />
+            {recipientCount > MAX_RECIPIENTS && <p role="alert" className="text-xs text-destructive mt-1">{TOO_MANY_RECIPIENTS}</p>}
           </div>
         ) : (
           <>
