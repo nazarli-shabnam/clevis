@@ -128,7 +128,7 @@ def _summarize(event_type: str, payload: dict) -> str:
 
     if event_type == "release":
         release = payload.get("release") or {}
-        return f"created release {release.get('tag_name', '')}"
+        return f"published release {release.get('tag_name', '')}"
 
     if event_type == "create":
         ref_type = payload.get("ref_type", "")
@@ -492,6 +492,15 @@ def _process_entry(
             # Session context for RLS; see the repo_events branch below.
             cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
             security_alerts_store.upsert_security_alert(cur, tenant_id=tenant_id, **alert_normalized)
+            cur.execute("UPDATE webhook_deliveries SET status = 'processed' WHERE id = %s", (delivery_row_id,))
+        pg_conn.commit()
+        redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
+        return
+
+    if event_type == "release" and payload.get("action") != "published":
+        # GitHub sends created/published/released/edited/deleted separately, so one publish arrives as
+        # several deliveries; only "published" is recorded so a release is counted once.
+        with pg_conn.cursor() as cur:
             cur.execute("UPDATE webhook_deliveries SET status = 'processed' WHERE id = %s", (delivery_row_id,))
         pg_conn.commit()
         redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
