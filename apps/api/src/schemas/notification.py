@@ -80,3 +80,9 @@ class DestinationOut(BaseModel):
 class TestSendResult(BaseModel):
     ok: bool
     detail: str
+
+
+class AnnounceOpenAlertsResult(BaseModel):
+    announced: int
+    # More than the per-announcement cap are open; only the oldest `announced` were listed.
+    truncated: bool = False

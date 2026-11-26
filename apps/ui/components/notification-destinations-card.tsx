@@ -290,6 +290,14 @@ export function NotificationDestinationsCard({ orgLogin }: { orgLogin: string })
   const [minDrop, setMinDrop] = useState("10")
   const [events, setEvents] = useState<AlertEvent[]>(["score_drop"])
 
+  // Offered once, right after the first destination that listens for new critical alerts is added: alerts that
+  // were already open before it existed were never announced (the sweep marks them handled with no destination).
+  const [offerAnnounce, setOfferAnnounce] = useState(false)
+  const announce = useMutation({
+    mutationFn: () => api.notificationDestinations.announceOpenAlerts(orgLogin),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["audit"] }),
+  })
+
   const create = useMutation({
     mutationFn: () =>
       api.notificationDestinations.create(orgLogin, {
@@ -302,6 +310,10 @@ export function NotificationDestinationsCard({ orgLogin }: { orgLogin: string })
           : { url: url.trim(), ...(kind === "generic" && secret ? { secret } : {}) }),
       }),
     onSuccess: () => {
+      if ((query.data?.length ?? 0) === 0 && events.includes("new_critical_alert")) {
+        announce.reset()
+        setOfferAnnounce(true)
+      }
       // The URL and secret are credentials: drop them from the form as soon as they are stored.
       setName("")
       setUrl("")
@@ -370,6 +382,35 @@ export function NotificationDestinationsCard({ orgLogin }: { orgLogin: string })
           ))}
         </ul>
         </>
+      )}
+
+      {offerAnnounce && (
+        <div role="status" className="border-t border-border px-4 py-3 text-xs flex flex-wrap items-center gap-3">
+          {announce.isSuccess ? (
+            <>
+              <span>
+                {announce.data.announced === 0
+                  ? "No critical or high alerts are open right now."
+                  : `Sent ${announce.data.announced} open alert${announce.data.announced === 1 ? "" : "s"}${announce.data.truncated ? " (the oldest; more are open)" : ""}.`}
+              </span>
+              <Button type="button" variant="outline" size="sm" onClick={() => setOfferAnnounce(false)}>Done</Button>
+            </>
+          ) : (
+            <>
+              <span className="text-muted-foreground">
+                Alerts that were already open before this destination existed were never announced. Send the currently
+                open critical/high alerts once now?
+              </span>
+              <Button type="button" size="sm" disabled={announce.isPending} onClick={() => announce.mutate()}>
+                {announce.isPending ? "Sending…" : "Announce open alerts"}
+              </Button>
+              <Button type="button" variant="outline" size="sm" disabled={announce.isPending} onClick={() => setOfferAnnounce(false)}>
+                No thanks
+              </Button>
+              {announce.isError && <span role="alert" className="text-destructive">Couldn&apos;t send: {announce.error.message}</span>}
+            </>
+          )}
+        </div>
       )}
 
       <form
