@@ -230,6 +230,39 @@ def test_a_dropped_delivery_is_acked_without_writing_an_event(pg_conn, tenant_id
         assert cur.fetchone()[0] == "dropped"
 
 
+@pytest.mark.parametrize(
+    "event_type,payload,table",
+    [
+        ("create", {"ref_type": "tag", "ref": "v1"}, "repo_events"),
+        ("dependabot_alert", {"action": "created", "alert": {"number": 1, "state": "open"}}, "security_alerts"),
+        ("organization", {"action": "member_added", "membership": {"user": {"login": "octocat", "id": 5}}}, "org_members"),
+    ],
+)
+def test_a_delivery_dropped_between_the_read_and_the_write_writes_nothing(
+    pg_conn, tenant_id, monkeypatch, event_type, payload, table
+):
+    # The uninstall purge can drop a delivery after the consumer read it as queued (#1324); the write step
+    # re-checks under a row lock.
+    conn, state = pg_conn
+    monkeypatch.setattr(event_consumer, "_delivery_is_live", lambda cur, row_id: False)
+    payload = {**payload, "repository": {"full_name": "acme/widgets"}, "sender": {"login": "octocat", "avatar_url": ""}}
+    row_id = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id=f"d-race-{event_type}", event_type=event_type, payload=payload)
+    def count():
+        with conn.cursor() as cur:
+            cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+            cur.execute(f"SELECT count(*) FROM {table} WHERE tenant_id = %s", (tenant_id,))
+            return cur.fetchone()[0]
+
+    before = count()
+
+    event_consumer._process_entry(conn, _FakeRedis(), "1-0", _entry_fields(row_id, event_type, tenant_id))
+
+    assert count() == before
+    with conn.cursor() as cur:
+        cur.execute("SELECT status FROM webhook_deliveries WHERE id = %s", (row_id,))
+        assert cur.fetchone()[0] == "queued"
+
+
 def test_processing_the_same_delivery_twice_is_idempotent(pg_conn, tenant_id):
     conn, state = pg_conn
     payload = {"repository": {"full_name": "acme/widgets"}, "sender": {"login": "octocat", "avatar_url": ""}, "ref_type": "tag", "ref": "v1"}
