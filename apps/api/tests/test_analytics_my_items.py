@@ -69,7 +69,7 @@ def test_degrades_to_empty_when_login_unresolvable(http, path):
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body == {"items": [], "total_count": 0, "page": 1, "per_page": 25, "identity_unresolved": True}
+    assert body == {"items": [], "total_count": 0, "page": 1, "per_page": 25, "identity_unresolved": True, "truncated": False}
 
 
 @pytest.mark.parametrize("path", ["/me/github/my-prs", "/me/github/my-reviews", "/me/github/my-issues"])
@@ -257,6 +257,19 @@ def test_pagination_params_are_validated(http, path, params):
     assert resp.status_code == 422
 
 
+def test_a_search_with_more_than_1000_matches_is_marked_truncated(http):
+    def request(method, path, params=None):
+        return {"login": "octocat"} if path == "/user" else {"items": [], "total_count": 4321}
+
+    with (
+        patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
+        patch("src.routers.analytics.GitHubClient") as mock_client,
+    ):
+        mock_client.return_value.request.side_effect = request
+        body = http.get("/me/github/my-prs?owner=acme").json()
+    assert body["total_count"] == 1000 and body["truncated"] is True
+
+
 def test_page_times_per_page_over_1000_returns_empty_without_calling_github(http):
     with (
         patch("src.routers.analytics.resolve_owner_token", return_value="ghp_test"),
@@ -271,7 +284,7 @@ def test_page_times_per_page_over_1000_returns_empty_without_calling_github(http
     body = resp.json()
     # total_count is capped at the reachable max (not 0) so page/lastPage math on the
     # client stays consistent instead of regressing once paging crosses GitHub's window.
-    assert body == {"items": [], "total_count": 1000, "page": 11, "per_page": 100, "identity_unresolved": False}
+    assert body == {"items": [], "total_count": 1000, "page": 11, "per_page": 100, "identity_unresolved": False, "truncated": True}
 
 
 def test_search_failure_is_a_github_error_not_an_empty_list(http):

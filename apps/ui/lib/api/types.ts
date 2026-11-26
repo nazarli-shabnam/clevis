@@ -752,6 +752,8 @@ export interface MilestoneSummary {
 export interface PrCycleTimeWeek {
   week: string
   avg_days: number
+  // the week had more merged PRs than the 30 the average covers
+  partial?: boolean
 }
 
 export interface CockpitResponse {
@@ -821,6 +823,8 @@ export interface MyPrListResponse {
   page: number
   per_page: number
   identity_unresolved: boolean
+  // GitHub search reaches only the first 1000 results
+  truncated?: boolean
 }
 
 export interface MyIssueListResponse {
@@ -829,6 +833,8 @@ export interface MyIssueListResponse {
   page: number
   per_page: number
   identity_unresolved: boolean
+  // GitHub search reaches only the first 1000 results
+  truncated?: boolean
 }
 
 export interface DependabotBurndown {
