@@ -66,6 +66,11 @@ def _create(client, **overrides):
         return client.post("/orgs/acme/notification-destinations", json=body)
 
 
+def test_create_rejects_a_destination_with_no_events(db, acme):
+    resp = _create(_client(db, acme["admin"]), events=[])
+    assert resp.status_code == 422
+
+
 # --- PATCH ---
 
 def test_patch_updates_enabled_events_threshold_and_audits_without_secrets(db, acme):

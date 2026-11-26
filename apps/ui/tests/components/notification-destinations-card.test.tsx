@@ -99,6 +99,17 @@ describe("NotificationDestinationsCard", () => {
     await waitFor(() => expect(screen.getByLabelText("Webhook URL")).toHaveValue(""))
   })
 
+  it("won't add a destination with no events selected", async () => {
+    listMock.mockResolvedValue([])
+    renderCard()
+    await screen.findByText(/No destinations yet/)
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "#sec" } })
+    fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: "https://hooks.slack.com/x" } })
+    expect(screen.getByRole("button", { name: "Add destination" })).toBeEnabled()
+    fireEvent.click(screen.getByLabelText("Security score drops"))
+    expect(screen.getByRole("button", { name: "Add destination" })).toBeDisabled()
+  })
+
   it("sends recipients for an email destination and shows the API's validation message", async () => {
     listMock.mockResolvedValue([])
     createMock.mockRejectedValue(new Error("Recipients must be verified members of this organization: x@e.com"))

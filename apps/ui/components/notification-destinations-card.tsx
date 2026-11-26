@@ -316,7 +316,7 @@ export function NotificationDestinationsCard({ orgLogin }: { orgLogin: string })
 
   const hasTarget = kind === "email" ? recipients.split(/[,\s]+/).filter(Boolean).length > 0 : url.trim() !== ""
   const dropValid = Number.isInteger(Number(minDrop)) && Number(minDrop) >= 1 && Number(minDrop) <= 100
-  const canSubmit = name.trim() !== "" && hasTarget && dropValid && !create.isPending
+  const canSubmit = name.trim() !== "" && hasTarget && dropValid && events.length > 0 && !create.isPending
 
   return (
     <div className="card mt-4">
