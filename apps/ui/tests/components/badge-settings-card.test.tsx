@@ -99,7 +99,7 @@ describe("BadgeSettingsCard", () => {
     setMock.mockRejectedValue(new Error("Forbidden"))
     renderCard()
     fireEvent.click(await screen.findByRole("checkbox"))
-    expect(await screen.findByText("Forbidden")).toBeInTheDocument()
+    expect(await screen.findByRole("alert")).toHaveTextContent("Forbidden")
 
     cleanup()
     getMock.mockRejectedValue(new Error("boom"))
