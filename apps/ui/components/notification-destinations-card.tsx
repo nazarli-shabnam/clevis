@@ -58,6 +58,7 @@ function EditForm({
   const [recipients, setRecipients] = useState((dest.recipients ?? []).join(", "))
   const [url, setUrl] = useState("")
   const [secret, setSecret] = useState("")
+  const [removeSecret, setRemoveSecret] = useState(false)
   const [error, setError] = useState("")
   const [saving, setSaving] = useState(false)
 
@@ -70,7 +71,8 @@ function EditForm({
     if (recipientList.join(",") !== (dest.recipients ?? []).join(",")) body.recipients = recipientList
   } else {
     if (url.trim()) body.url = url.trim()
-    if (dest.kind === "generic" && secret) body.secret = secret
+    if (dest.kind === "generic" && secret && !removeSecret) body.secret = secret
+    if (dest.kind === "generic" && dest.signed && removeSecret) body.remove_secret = true
   }
   const valid = name.trim() !== "" && dropValid && (!isEmail || recipientList.length > 0)
   const canSave = valid && Object.keys(body).length > 0 && !saving
@@ -133,8 +135,15 @@ function EditForm({
                 autoComplete="off"
                 placeholder={dest.signed ? "Leave blank to keep the current secret" : "Leave blank to stay unsigned"}
                 value={secret}
+                disabled={removeSecret}
                 onChange={(e) => setSecret(e.target.value)}
               />
+              {dest.signed && (
+                <label className="flex items-center gap-1.5 mt-1.5">
+                  <input type="checkbox" checked={removeSecret} onChange={(e) => setRemoveSecret(e.target.checked)} />
+                  Remove the signing secret (send unsigned)
+                </label>
+              )}
             </div>
           )}
         </>
