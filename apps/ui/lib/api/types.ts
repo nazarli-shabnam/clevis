@@ -126,7 +126,7 @@ export interface NotificationDestinationInput {
 
 export type NotificationDestinationPatch = Partial<
   Pick<NotificationDestinationInput, "name" | "events" | "min_score_drop" | "url" | "secret" | "recipients">
-> & { enabled?: boolean; add_events?: AlertEvent[]; remove_events?: AlertEvent[] }
+> & { enabled?: boolean; add_events?: AlertEvent[]; remove_events?: AlertEvent[]; remove_secret?: boolean }
 
 export interface ApiToken {
   id: number
@@ -378,6 +378,8 @@ export interface RepoStatsResponse {
   commit_activity: CommitActivityWeek[]
   // "aggregate" when commit_activity is estimated from stored push-event counts instead of GitHub's stats.
   commit_activity_source: "github" | "aggregate"
+  // false while GitHub is still computing the stats (empty charts mean "not yet", not "no activity").
+  stats_ready?: boolean
   participation: { all?: number[]; owner?: number[] }
   contributors: { author?: { login?: string }; total: number }[]
   stargazers_count: number
@@ -752,6 +754,8 @@ export interface MilestoneSummary {
 export interface PrCycleTimeWeek {
   week: string
   avg_days: number
+  // the week had more merged PRs than the 30 the average covers
+  partial?: boolean
 }
 
 export interface CockpitResponse {
@@ -821,6 +825,8 @@ export interface MyPrListResponse {
   page: number
   per_page: number
   identity_unresolved: boolean
+  // GitHub search reaches only the first 1000 results
+  truncated?: boolean
 }
 
 export interface MyIssueListResponse {
@@ -829,6 +835,8 @@ export interface MyIssueListResponse {
   page: number
   per_page: number
   identity_unresolved: boolean
+  // GitHub search reaches only the first 1000 results
+  truncated?: boolean
 }
 
 export interface DependabotBurndown {
@@ -1045,6 +1053,7 @@ export interface SecretScanningResponse {
   repository: string
   alerts: SecretAlert[]
   source: "github" | "aggregate"
+  truncated?: boolean
 }
 
 // Response from POST /me/repos/{owner}/{repo}/issues.

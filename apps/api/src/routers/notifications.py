@@ -3,24 +3,33 @@
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from src.core._crypto import decrypt_job_token, encrypt_job_token
 from src.core.auth import UserOut, require_auth
 from src.core.config import settings
-from src.core.db import NotificationDestination, get_db
+from src.core.db import NotificationDestination, SecurityAlert, get_db
 from src.core.path_params import RowId
 from src.core.rate_limit import check_account_rate_limit
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import audit_repo, notification_repo
-from src.schemas.notification import DestinationCreate, DestinationOut, DestinationUpdate, TestSendResult
+from src.schemas.notification import (
+    AnnounceOpenAlertsResult,
+    DestinationCreate,
+    DestinationOut,
+    DestinationUpdate,
+    TestSendResult,
+)
 from src.services import email, notifications
 
 router = APIRouter()
 
 _MAX_DESTINATIONS_PER_ORG = 10
 _TEST_SENDS_PER_MINUTE = 5
+_ANNOUNCES_PER_MINUTE = 2
+# One message lists at most this many alerts (the first five by name); the rest are only counted.
+_MAX_ANNOUNCED_ALERTS = 200
 
 
 def _out(dest: NotificationDestination) -> DestinationOut:
@@ -169,6 +178,11 @@ def update_destination(
             raise HTTPException(status_code=422, detail="Only a generic webhook destination takes a signing secret")
         if body.secret is not None and not body.secret.get_secret_value():
             raise HTTPException(status_code=422, detail="A signing secret cannot be empty")
+        if body.remove_secret:
+            if dest.kind != "generic":
+                raise HTTPException(status_code=422, detail="Only a generic webhook destination takes a signing secret")
+            if body.secret is not None:
+                raise HTTPException(status_code=422, detail="Send either secret or remove_secret, not both")
         if body.url is not None:
             new_url = body.url.get_secret_value()
             target_changed |= new_url != decrypt_job_token(dest.encrypted_url, key)
@@ -180,6 +194,10 @@ def update_destination(
             target_changed |= new_secret != old_secret
             dest.encrypted_secret = encrypt_job_token(new_secret, key)
             changed.append("secret")
+        elif body.remove_secret and dest.encrypted_secret is not None:
+            dest.encrypted_secret = None
+            target_changed = True
+            changed.append("secret_removed")
 
     # `null` on these is "not provided", not "clear": they are NOT NULL columns.
     re_enabled = "enabled" in sent and body.enabled is True and not dest.enabled
@@ -237,6 +255,47 @@ def delete_destination(
         commit=False,
     )
     db.commit()
+
+
+@router.post(
+    "/orgs/{org_login}/notification-destinations/announce-open-alerts", response_model=AnnounceOpenAlertsResult
+)
+def announce_open_alerts(
+    ctx: OrgContext = Depends(require_org_role(min_role="admin")),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Send the currently open critical/high alerts once, to destinations subscribed to new critical alerts.
+
+    The security-alert sweep stamps `alert_notified_at` whether or not a destination existed, so alerts that were
+    already open when the first destination was added are never announced. This sends that backlog on request
+    and deliberately leaves every stamp alone: it is a one-off message, not the sweep's "announced once" ledger."""
+    check_account_rate_limit(f"notification-announce:{ctx.org.tenant_id}", max_requests=_ANNOUNCES_PER_MINUTE)
+    rows = db.execute(
+        select(SecurityAlert.repo, SecurityAlert.kind, SecurityAlert.number, SecurityAlert.severity)
+        .where(
+            SecurityAlert.tenant_id == ctx.org.tenant_id,
+            SecurityAlert.state == "open",
+            (SecurityAlert.kind == "secret_scanning") | SecurityAlert.severity.in_(("critical", "high")),
+        )
+        .order_by(SecurityAlert.ingested_at, SecurityAlert.id)
+        .limit(_MAX_ANNOUNCED_ALERTS + 1)
+    ).all()
+    truncated = len(rows) > _MAX_ANNOUNCED_ALERTS
+    alerts = [
+        {"repo": r.repo, "kind": r.kind, "number": r.number, "severity": r.severity}
+        for r in rows[:_MAX_ANNOUNCED_ALERTS]
+    ]
+    notifications.notify_new_critical_alerts(db, ctx.org.tenant_id, ctx.org.github_login, alerts, actor=user.email)
+    audit_repo.write(
+        db,
+        actor=user.email,
+        action="notification.open_alerts_announced",
+        target=ctx.org.github_login,
+        payload={"count": len(alerts), "truncated": truncated},
+        tenant_id=ctx.org.tenant_id,
+    )
+    return AnnounceOpenAlertsResult(announced=len(alerts), truncated=truncated)
 
 
 @router.post("/orgs/{org_login}/notification-destinations/{destination_id}/test", response_model=TestSendResult)

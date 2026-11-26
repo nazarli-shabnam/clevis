@@ -349,6 +349,9 @@ def personal_repo_security_row(
         raise _github_error(exc) from exc
 
 
+_MAX_SECRET_ALERTS = 500
+
+
 @router.get("/me/repos/{owner}/{repo}/secret-scanning", response_model=SecretScanningResponse)
 def personal_secret_scanning(
     owner: Owner,
@@ -366,10 +369,14 @@ def personal_secret_scanning(
     # hold alerts whose webhooks arrived after install and would under-report (and hide resolved ones).
     client = GitHubClient(token)
     try:
-        raw = client.request("GET", f"/repos/{owner}/{repo}/secret-scanning/alerts", params={"per_page": 50})
+        raw = client.request_paginated(
+            f"/repos/{owner}/{repo}/secret-scanning/alerts", max_items=_MAX_SECRET_ALERTS + 1
+        )
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise _github_error(exc) from exc
 
+    # GitHub returns alerts of every state, so a long-lived repo can have many; cap the response and say so.
+    truncated = len(raw) > _MAX_SECRET_ALERTS
     alerts = [
         SecretAlert(
             number=a["number"],
@@ -383,10 +390,10 @@ def personal_secret_scanning(
             repo=f"{owner}/{repo}",
             url=a.get("html_url", ""),
         )
-        for a in raw
+        for a in raw[:_MAX_SECRET_ALERTS]
         if isinstance(a, dict) and "number" in a and "created_at" in a
     ]
-    return SecretScanningResponse(repository=f"{owner}/{repo}", alerts=alerts, source="github")
+    return SecretScanningResponse(repository=f"{owner}/{repo}", alerts=alerts, source="github", truncated=truncated)
 
 
 @router.get("/orgs/{org_login}/security/dependabot-burndown", response_model=DependabotBurndownResponse)

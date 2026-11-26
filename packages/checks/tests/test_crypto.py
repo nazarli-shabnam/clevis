@@ -3,7 +3,8 @@
 import base64
 import hashlib
 
-from cryptography.fernet import Fernet
+import pytest
+from cryptography.fernet import Fernet, InvalidToken
 
 from checks.crypto import decrypt_job_token, encrypt_job_token
 
@@ -29,8 +30,10 @@ def test_decrypts_legacy_unprefixed_ciphertext():
 
 def test_wrong_key_fails_new_format():
     encrypted = encrypt_job_token("ghp_supersecret", _KEY)
-    try:
+    with pytest.raises(InvalidToken):
         decrypt_job_token(encrypted, "wrong-key")
-        assert False, "expected decryption to fail with the wrong key"
-    except Exception:
-        pass
+
+
+def test_wrong_key_fails_legacy_format():
+    with pytest.raises(InvalidToken):
+        decrypt_job_token(_legacy_encrypt("ghp_oldtoken", _KEY), "wrong-key")

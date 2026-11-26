@@ -68,10 +68,14 @@ class GitHubClient:
                 return resp.json() if resp.text else {}
         raise RuntimeError("request loop exhausted without returning")
 
-    def request_paginated(self, path: str, params: dict | None = None, items_key: str | None = None) -> list:
+    def request_paginated(
+        self, path: str, params: dict | None = None, items_key: str | None = None, max_items: int | None = None
+    ) -> list:
         """GET every page of a list endpoint, following the `Link: rel="next"` header.
         `items_key` is for endpoints like /installation/repositories that nest the
-        array under a field instead of returning it bare."""
+        array under a field instead of returning it bare. `max_items` stops following
+        pages once that many items are collected (the result is cut to it), so a caller
+        that caps its response doesn't fetch what it will discard."""
         results: list = []
         url: str | None = f"{self.base}{path}"
         next_params = dict(params or {})
@@ -95,6 +99,8 @@ class GitHubClient:
                     break
                 body = resp.json()
                 results.extend(body[items_key] if items_key else body)
+                if max_items is not None and len(results) >= max_items:
+                    return results[:max_items]
                 next_params = {}
                 url = None
                 for part in resp.headers.get("Link", "").split(","):

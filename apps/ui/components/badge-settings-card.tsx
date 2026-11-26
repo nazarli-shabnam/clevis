@@ -60,7 +60,7 @@ export function BadgeSettingsCard({ orgLogin }: { orgLogin: string }) {
             see it. The score is cached for up to 5 minutes, and requests to the badge URL are rate-limited per client. It
             is off until you turn it on; turning it off makes the URL return 404.
           </p>
-          {update.isError && <p className="text-xs text-destructive">{update.error.message}</p>}
+          {update.isError && <p role="alert" className="text-xs text-destructive">{update.error.message}</p>}
           {query.data.enabled && (
             <>
               <div>

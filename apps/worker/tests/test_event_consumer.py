@@ -2,7 +2,8 @@
 
 import json
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import psycopg
 import pytest
@@ -10,6 +11,8 @@ import redis
 
 import event_consumer
 import org_membership_store
+import worker
+from _crypto import encrypt_job_token
 from config import settings
 
 _DB_URL = settings.database_url.get_secret_value().replace("postgresql+psycopg://", "postgresql://")
@@ -1532,3 +1535,142 @@ def test_consumer_name_is_unique_per_process():
         importlib.reload(event_consumer)
     assert first.startswith("worker-") and second.startswith("worker-")
     assert first != second
+
+
+# --- ordering contract between the reconcile job and the consumer (#1553) ---
+
+
+def _reconcile_payload(tenant_id: int) -> str:
+    token = encrypt_job_token("secret", settings.job_secret_key.get_secret_value())
+    return json.dumps({"tenant_id": tenant_id, "org_login": "ordering-org", "token": token})
+
+
+def test_a_reconcile_that_raises_after_taking_the_lock_releases_it_and_the_deferred_entry_proceeds(pg_conn, tenant_id, monkeypatch):
+    conn, state = pg_conn
+    monkeypatch.setattr(event_consumer, "_TENANT_LOCK_WAIT_SECONDS", 0.1)
+    event_consumer._deferred.clear()
+    payload = {"action": "member_added", "membership": {"role": "member", "user": {"login": "after-crash-user"}}}
+    row_id = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-crash-after-lock", event_type="organization", payload=payload)
+    fake_redis = _FakeRedis()
+
+    def fetch_then_crash(*_args, **_kwargs):
+        # The webhook arrives while the reconcile holds the lock: the consumer defers it ...
+        event_consumer._dispatch(conn, fake_redis, "1-0", _entry_fields(row_id, "organization", tenant_id))
+        assert [e for e, _ in event_consumer._deferred[str(tenant_id)]] == ["1-0"]
+        assert not _tenant_lock_is_free(tenant_id)
+        # ... and then the handler blows up with something that is not a handled GitHub/DB error.
+        raise RuntimeError("boom")
+
+    job_conn = psycopg.connect(_DB_URL, autocommit=False)
+    try:
+        with patch("worker.membership_reconcile.fetch_org_roster", side_effect=fetch_then_crash), patch("worker.httpx.Client"):
+            with pytest.raises(RuntimeError, match="boom"):
+                worker._handle_reconcile_org_membership(job_conn, 9001, _reconcile_payload(tenant_id), 0)
+        assert _tenant_lock_is_free(tenant_id)  # the try/finally released it
+
+        event_consumer._retry_deferred(conn, fake_redis)
+    finally:
+        job_conn.close()
+        event_consumer._deferred.clear()
+
+    assert [a[2] for a in fake_redis.acked] == ["1-0"]
+    assert _org_member(conn, tenant_id, "after-crash-user") is not None
+
+
+def test_a_reconcile_connection_that_dies_while_holding_the_lock_frees_it_for_the_consumer(pg_conn, tenant_id):
+    job_conn = psycopg.connect(_DB_URL, autocommit=False)
+    org_membership_store.acquire_tenant_lock(job_conn, tenant_id)
+    assert not _tenant_lock_is_free(tenant_id)
+
+    job_conn.close()  # session-level advisory locks go with the connection
+
+    assert _tenant_lock_is_free(tenant_id)
+
+
+def test_a_poison_deferred_head_is_dropped_after_the_attempt_limit_and_the_next_entry_runs(pg_conn, tenant_id, monkeypatch):
+    conn, state = pg_conn
+    payload = {"action": "member_added", "membership": {"role": "member", "user": {"login": "poison-head-user"}}}
+    head_row = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-poison-head", event_type="organization", payload=payload)
+    clock = [1000.0]
+    monkeypatch.setattr(event_consumer, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    processed = []
+
+    def fake_process(_conn, _redis, entry_id, _fields, lock_wait_s=None):
+        processed.append(entry_id)
+        if entry_id == "1-0":
+            raise RuntimeError("poison")
+
+    monkeypatch.setattr(event_consumer, "_process_entry", fake_process)
+    event_consumer._deferred.clear()
+    event_consumer._deferred_failures.clear()
+    event_consumer._deferred_retry_at.clear()
+    key = str(tenant_id)
+    event_consumer._deferred[key] = event_consumer.deque(
+        [("1-0", {"tenant_id": key, "delivery_row_id": str(head_row)}), ("2-0", {"tenant_id": key})]
+    )
+    fake_redis = _FakeRedis()
+    backoff = event_consumer._DEFERRED_FAILURE_BACKOFF_S
+
+    try:
+        event_consumer._retry_deferred(conn, fake_redis)  # failure 1
+        assert processed == ["1-0"]
+        clock[0] += backoff / 2
+        event_consumer._retry_deferred(conn, fake_redis)  # still backing off: not even tried
+        assert processed == ["1-0"]
+        for _ in range(event_consumer._MAX_DELIVERY_ATTEMPTS - 2):  # failures 2 .. limit-1
+            clock[0] += backoff
+            event_consumer._retry_deferred(conn, fake_redis)
+        assert fake_redis.acked == []  # the head is still held back, and so is 2-0 behind it
+        assert "2-0" not in processed
+
+        clock[0] += backoff
+        event_consumer._retry_deferred(conn, fake_redis)  # the limit: dropped, then 2-0 runs in the same call
+    finally:
+        leftover = dict(event_consumer._deferred)
+        event_consumer._deferred.clear()
+        event_consumer._deferred_failures.clear()
+        event_consumer._deferred_retry_at.clear()
+
+    assert processed.count("1-0") == event_consumer._MAX_DELIVERY_ATTEMPTS
+    assert processed[-1] == "2-0"
+    assert [a[2] for a in fake_redis.acked] == ["1-0"]  # 2-0 is acked by _process_entry itself, which is faked here
+    assert leftover == {}
+    with conn.cursor() as cur:
+        cur.execute("SELECT status FROM webhook_deliveries WHERE id = %s", (head_row,))
+        assert cur.fetchone() == ("dropped",)
+
+
+def test_a_webhook_received_during_the_roster_fetch_is_stamped_after_the_snapshot_time(pg_conn, tenant_id):
+    # The org_membership_store ordering contract: a removal webhook that arrives while the reconcile fetches
+    # the roster has received_at > synced_at, so it is applied as newer than the members the reconcile inserts.
+    conn, state = pg_conn
+    seen = {}
+    real_acquire = org_membership_store.acquire_tenant_lock
+
+    def recording_acquire(c, t):
+        seen["synced_at"] = real_acquire(c, t)
+        return seen["synced_at"]
+
+    def fetch(*_args, **_kwargs):
+        seen["row_id"] = _make_delivery(
+            conn, state, tenant_id=tenant_id, delivery_id="d-during-fetch", event_type="organization",
+            payload={"action": "member_removed", "membership": {"user": {"login": "during-fetch-user"}}},
+        )
+        with conn.cursor() as cur:
+            cur.execute("SELECT received_at FROM webhook_deliveries WHERE id = %s", (seen["row_id"],))
+            seen["received_at"] = cur.fetchone()[0]
+        conn.commit()
+        return {"members": [], "two_factor_disabled_logins": set(), "outside_logins": set()}
+
+    job_conn = psycopg.connect(_DB_URL, autocommit=False)
+    try:
+        with (
+            patch("worker.org_membership_store.acquire_tenant_lock", side_effect=recording_acquire),
+            patch("worker.membership_reconcile.fetch_org_roster", side_effect=fetch),
+            patch("worker.httpx.Client"),
+        ):
+            worker._handle_reconcile_org_membership(job_conn, 9002, _reconcile_payload(tenant_id), 0)
+    finally:
+        job_conn.close()
+
+    assert seen["received_at"] > seen["synced_at"]
