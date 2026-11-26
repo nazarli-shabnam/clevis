@@ -209,6 +209,15 @@ jobs:
           --cov=apps/api/src --cov=apps/worker/src --cov=packages/checks/src
           --cov-report=xml --cov-report=term --cov-fail-under=85
 
+      # The test above runs as clevis_api, which is not a superuser, so the one RLS test that needs
+      # CREATE ROLE (the api_tokens lookup-flag bypass guard) always skips there. Run it here with the
+      # job-level superuser DATABASE_URL, and fail if it skips instead of passing.
+      - name: Run RLS tests that need a superuser connection
+        run: |
+          out=$(python -m pytest -q -rs "apps/api/tests/test_api_tokens.py::test_a_non_owner_session_cannot_unlock_api_tokens_by_setting_the_old_lookup_flag")
+          echo "$out"
+          echo "$out" | grep -q "1 passed"
+
       - name: Diff coverage (new/changed Python lines must be tested)
         run: diff-cover coverage.xml --compare-branch=origin/main --fail-under=90
 
