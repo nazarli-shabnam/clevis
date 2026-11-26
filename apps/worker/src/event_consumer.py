@@ -371,7 +371,7 @@ def _process_entry(
 
     with pg_conn.cursor() as cur:
         cur.execute(
-            "SELECT tenant_id, delivery_id, event_type, payload, received_at FROM webhook_deliveries WHERE id = %s",
+            "SELECT tenant_id, delivery_id, event_type, payload, received_at, status FROM webhook_deliveries WHERE id = %s",
             (delivery_row_id,),
         )
         row = cur.fetchone()
@@ -381,7 +381,12 @@ def _process_entry(
         redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
         return
 
-    tenant_id, delivery_id, event_type, payload_bytes, received_at = row
+    tenant_id, delivery_id, event_type, payload_bytes, received_at, status = row
+    if status == "dropped":
+        # Dropped after enqueueing (the tenant uninstalled the App, #1324): the stream entry outlived the decision.
+        log.info("webhook_deliveries row %s was dropped, skipping", delivery_row_id)
+        redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
+        return
     if tenant_id is None:
         # No tenant to scope a normalized row to. Ack so it doesn't sit pending forever;
         # the raw payload stays in webhook_deliveries.

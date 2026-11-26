@@ -212,6 +212,24 @@ def test_release_actions_other_than_published_are_acked_without_an_event(pg_conn
         assert cur.fetchone()[0] == "processed"
 
 
+def test_a_dropped_delivery_is_acked_without_writing_an_event(pg_conn, tenant_id):
+    conn, state = pg_conn
+    payload = {"repository": {"full_name": "acme/widgets"}, "sender": {"login": "octocat", "avatar_url": ""}, "ref_type": "tag", "ref": "v1"}
+    row_id = _make_delivery(conn, state, tenant_id=tenant_id, delivery_id="d-dropped-1", event_type="create", payload=payload)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE webhook_deliveries SET status = 'dropped' WHERE id = %s", (row_id,))
+    conn.commit()
+
+    event_consumer._process_entry(conn, _FakeRedis(), "1-0", _entry_fields(row_id, "create", tenant_id))
+
+    with conn.cursor() as cur:
+        cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        cur.execute("SELECT count(*) FROM repo_events WHERE delivery_id = 'd-dropped-1'")
+        assert cur.fetchone()[0] == 0
+        cur.execute("SELECT status FROM webhook_deliveries WHERE id = %s", (row_id,))
+        assert cur.fetchone()[0] == "dropped"
+
+
 def test_processing_the_same_delivery_twice_is_idempotent(pg_conn, tenant_id):
     conn, state = pg_conn
     payload = {"repository": {"full_name": "acme/widgets"}, "sender": {"login": "octocat", "avatar_url": ""}, "ref_type": "tag", "ref": "v1"}

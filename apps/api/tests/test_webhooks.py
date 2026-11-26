@@ -137,6 +137,23 @@ def test_installation_deleted_removes_matching_rows_and_writes_audit_log(db, web
     assert logs[0].target == "42"
 
 
+def test_installation_deleted_drops_the_tenants_waiting_deliveries(db, webhook_client):
+    org = org_repo.ensure_tenant_linked(db, org_repo.get_or_create(db, github_login="acme"))
+    installation_repo.create(
+        db, account_login="acme", account_type="Organization", auth_mode="app", installation_id=42, org_id=org.id
+    )
+    tenant_id = org.tenant_id
+    other = org_repo.ensure_tenant_linked(db, org_repo.get_or_create(db, github_login="other"))
+    for status, tenant in (("queued", tenant_id), ("queue_failed", tenant_id), ("processed", tenant_id), ("queued", other.tenant_id)):
+        db.add(WebhookDelivery(tenant_id=tenant, delivery_id=f"d-{status}-{tenant}", event_type="push", payload=b"{}", status=status))
+    db.commit()
+
+    assert _post(webhook_client, "installation", {"action": "deleted", "installation": {"id": 42}}).status_code == 200
+
+    statuses = {(d.tenant_id, d.status) for d in db.query(WebhookDelivery).filter(WebhookDelivery.delivery_id.like("d-%")).all()}
+    assert statuses == {(tenant_id, "dropped"), (tenant_id, "processed"), (other.tenant_id, "queued")}
+
+
 def test_installation_deleted_only_removes_matching_installation_id(db, webhook_client):
     org = org_repo.get_or_create(db, github_login="acme")
     installation_repo.create(

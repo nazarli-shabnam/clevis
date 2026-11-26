@@ -246,6 +246,16 @@ def purge_tenant_github_data_if_disconnected(db: Session, tenant_id: int) -> Non
     _lock_tenant_installs(db, tenant_id)
     if db.query(GitHubInstallation).filter(GitHubInstallation.tenant_id == tenant_id).first() is None:
         db.execute(text("SELECT purge_tenant_github_data(:t)"), {"t": tenant_id})
+        # Deliveries still waiting (consumer backlog, or queue_failed rows for the sweep) would otherwise be
+        # processed after the purge and re-create alerts, events and collaborators for the disconnected tenant
+        # (#1324). 'dropped' makes the consumer skip them and the requeue sweep ignore them.
+        db.execute(
+            text(
+                "UPDATE webhook_deliveries SET status = 'dropped' "
+                "WHERE tenant_id = :t AND status IN ('queued', 'queue_failed')"
+            ),
+            {"t": tenant_id},
+        )
     db.commit()  # also releases the lock
 
 
