@@ -133,6 +133,8 @@ Key variables:
 
 The full accepted-key list lives in `apps/api/src/core/app_config.py`'s `_ACCEPTED_KEYS` — treat that as the source of truth over this doc if they ever drift.
 
+Three API background loops run on a fixed interval and are deliberately **not** editable: retention (every 6 h, `services/retention_loop.py`), the security-alert sweep (every 5 min, `security_alert_loop.py`) and waiver expiry (hourly, `waiver_expiry_loop.py`). Each passes a `config_key` (`retention_poll_seconds`, `security_alert_poll_seconds`, `waiver_expiry_poll_seconds`) to `run_sweep_loop`, but none is in `_ACCEPTED_KEYS` and the loop's min and max both equal its default, so the key is only a hook and the in-code interval always applies.
+
 ## Running locally
 
 Each command runs in a separate terminal from the repo root:
