@@ -189,6 +189,13 @@ def _fetch_stats(owner: str, repo: str, token: str, db: Session, tenant_id: int,
     }
 
 
+def _stats_not_ready(stats: RepoStatsResponse) -> bool:
+    # GitHub answers 202 + empty body while it computes these stats; _fetch_stats maps that to
+    # [] / {}. commit_activity from our own aggregate is legitimately empty-able, so only the
+    # GitHub-sourced one counts.
+    return not stats["participation"] or (stats["commit_activity_source"] == "github" and not stats["commit_activity"])
+
+
 def _evict_expired_stats(now: float) -> None:
     # Installation tokens rotate hourly, adding a new key each time -- without this sweep
     # the dict grows without bound for a long-running instance.
@@ -209,7 +216,9 @@ def _cached_stats(owner: str, repo: str, token: str, db: Session, tenant_id: int
     if cached and now - cached[0] < _STATS_CACHE_TTL_SECONDS:
         return cached[1]
     stats = _fetch_stats(owner, repo, token, db, tenant_id, connected)
-    _stats_cache[key] = (now, stats)
+    # Don't cache "GitHub is still computing": the next refresh should ask GitHub again.
+    if not _stats_not_ready(stats):
+        _stats_cache[key] = (now, stats)
     _evict_expired_stats(now)
     return stats
 
