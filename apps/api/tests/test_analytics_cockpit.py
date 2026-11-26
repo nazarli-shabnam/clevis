@@ -1348,6 +1348,9 @@ def test_safe_pr_cycle_time_8w_marks_weeks_with_more_merges_than_it_averaged_as_
         buckets, ok = _safe_pr_cycle_time_8w("acme", "ghp_test")
         assert ok is True and len(buckets) == 8
         assert not any(b.partial for b in buckets)
+        mock_client.return_value.request.return_value = {"items": [item] * 2, "total_count": 2, "incomplete_results": True}
+        buckets, _ = _safe_pr_cycle_time_8w("acme", "ghp_test")
+        assert all(b.partial for b in buckets)
 
 
 def test_safe_pr_cycle_time_8w_zero_when_no_merges():

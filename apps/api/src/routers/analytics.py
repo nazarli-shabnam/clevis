@@ -996,6 +996,7 @@ def _week_pr_cycle_time(client: GitHubClient, owner: str, start: date, account_t
     )
     items = result.get("items", []) if isinstance(result, dict) else []
     total = result.get("total_count", 0) if isinstance(result, dict) else 0
+    incomplete = bool(result.get("incomplete_results")) if isinstance(result, dict) else False
     days: list[float] = []
     for item in items:
         try:
@@ -1005,7 +1006,7 @@ def _week_pr_cycle_time(client: GitHubClient, owner: str, start: date, account_t
             continue
         days.append((closed - created).total_seconds() / 86400)
     avg_days = round(sum(days) / len(days), 1) if days else 0.0
-    return PrCycleTimeWeek(week=start.isoformat(), avg_days=avg_days, partial=total > len(items))
+    return PrCycleTimeWeek(week=start.isoformat(), avg_days=avg_days, partial=incomplete or total > len(items))
 
 
 def _safe_pr_cycle_time_8w(owner: str, token: str, account_type: str = "Organization") -> tuple[list[PrCycleTimeWeek], bool]:
