@@ -110,6 +110,20 @@ describe("NotificationDestinationsCard", () => {
     expect(screen.getByRole("button", { name: "Add destination" })).toBeDisabled()
   })
 
+  it("blocks an email destination with more than 10 recipients", async () => {
+    listMock.mockResolvedValue([])
+    renderCard()
+    await screen.findByText(/No destinations yet/)
+    fireEvent.change(screen.getByLabelText("Type"), { target: { value: "email" } })
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "mail" } })
+    const many = (n: number) => Array.from({ length: n }, (_, i) => `u${i}@e.com`).join(", ")
+    fireEvent.change(screen.getByLabelText("Recipients"), { target: { value: many(10) } })
+    expect(screen.getByRole("button", { name: "Add destination" })).toBeEnabled()
+    fireEvent.change(screen.getByLabelText("Recipients"), { target: { value: many(11) } })
+    expect(screen.getByRole("button", { name: "Add destination" })).toBeDisabled()
+    expect(screen.getByRole("alert")).toHaveTextContent("At most 10 recipients")
+  })
+
   it("sends recipients for an email destination and shows the API's validation message", async () => {
     listMock.mockResolvedValue([])
     createMock.mockRejectedValue(new Error("Recipients must be verified members of this organization: x@e.com"))
