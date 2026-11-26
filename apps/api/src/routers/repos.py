@@ -174,7 +174,7 @@ def _fetch_stats(owner: str, repo: str, token: str, db: Session, tenant_id: int,
         contributors = contributors_f.result()
         latest_release = latest_release_f.result()
 
-    return {
+    stats: RepoStatsResponse = {
         "repository": f"{owner}/{repo}",
         "commit_activity": commit_activity,
         "commit_activity_source": commit_activity_source,
@@ -187,6 +187,8 @@ def _fetch_stats(owner: str, repo: str, token: str, db: Session, tenant_id: int,
         "default_branch": repo_meta.get("default_branch", ""),
         "latest_release": latest_release,
     }
+    stats["stats_ready"] = not _stats_not_ready(stats)
+    return stats
 
 
 def _stats_not_ready(stats: RepoStatsResponse) -> bool:
@@ -217,7 +219,7 @@ def _cached_stats(owner: str, repo: str, token: str, db: Session, tenant_id: int
         return cached[1]
     stats = _fetch_stats(owner, repo, token, db, tenant_id, connected)
     # Don't cache "GitHub is still computing": the next refresh should ask GitHub again.
-    if not _stats_not_ready(stats):
+    if stats["stats_ready"]:
         _stats_cache[key] = (now, stats)
     _evict_expired_stats(now)
     return stats
