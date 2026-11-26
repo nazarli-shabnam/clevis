@@ -1459,12 +1459,14 @@ describe("waivers, notification preferences and evidence endpoints", () => {
     await run(() => api.notificationDestinations.update("acme", 3, { enabled: false }), { id: 3 })
     await run(() => api.notificationDestinations.test("acme", 3), { ok: true, detail: "" })
     await run(() => api.notificationDestinations.remove("acme", 3), null, 204)
+    await run(() => api.notificationDestinations.announceOpenAlerts("acme"), { announced: 0, truncated: false })
     expect(calls.map(([u, i]) => `${i?.method ?? "GET"} ${u.replace(/^.*\/orgs\//, "")}`)).toEqual([
       "GET a%2Fb/notification-destinations",
       "POST acme/notification-destinations",
       "PATCH acme/notification-destinations/3",
       "POST acme/notification-destinations/3/test",
       "DELETE acme/notification-destinations/3",
+      "POST acme/notification-destinations/announce-open-alerts",
     ])
   })
 

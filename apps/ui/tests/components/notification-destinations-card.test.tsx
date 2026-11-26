@@ -118,6 +118,45 @@ describe("NotificationDestinationsCard", () => {
     expect(await screen.findByText("Sent 3 open alerts.")).toBeInTheDocument()
   })
 
+  it("words the announce result for one alert and for a truncated batch, and for none", async () => {
+    const addFirst = async () => {
+      listMock.mockResolvedValue([])
+      createMock.mockResolvedValue(dest())
+      renderCard()
+      await screen.findByText(/No destinations yet/)
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "#sec" } })
+      fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: "https://hooks.slack.com/x" } })
+      fireEvent.click(screen.getByLabelText("New critical/high alert"))
+      fireEvent.click(screen.getByRole("button", { name: "Add destination" }))
+      fireEvent.click(await screen.findByRole("button", { name: "Announce open alerts" }))
+    }
+    announceMock.mockResolvedValue({ announced: 1, truncated: true })
+    await addFirst()
+    expect(await screen.findByText("Sent 1 open alert (the oldest; more are open).")).toBeInTheDocument()
+    cleanup()
+    announceMock.mockResolvedValue({ announced: 0, truncated: false })
+    await addFirst()
+    expect(await screen.findByText("No critical or high alerts are open right now.")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Done" }))
+    expect(screen.queryByRole("status")).not.toBeInTheDocument()
+  })
+
+  it("shows why the announce failed and lets the offer be dismissed", async () => {
+    listMock.mockResolvedValue([])
+    createMock.mockResolvedValue(dest())
+    announceMock.mockRejectedValue(new Error("GitHub API error: 403"))
+    renderCard()
+    await screen.findByText(/No destinations yet/)
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "#sec" } })
+    fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: "https://hooks.slack.com/x" } })
+    fireEvent.click(screen.getByLabelText("New critical/high alert"))
+    fireEvent.click(screen.getByRole("button", { name: "Add destination" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Announce open alerts" }))
+    expect(await screen.findByText(/Couldn.t send: GitHub API error: 403/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "No thanks" }))
+    expect(screen.queryByRole("button", { name: "Announce open alerts" })).not.toBeInTheDocument()
+  })
+
   it("does not offer it while the destination list has not loaded, since existing ones are unknown", async () => {
     listMock.mockReturnValue(new Promise(() => {}))
     createMock.mockResolvedValue(dest())
@@ -389,6 +428,14 @@ describe("NotificationDestinationsCard", () => {
       fireEvent.change(recipients, { target: { value: "a@e.com c@e.com" } })
       fireEvent.click(within(form).getByRole("button", { name: "Save changes" }))
       await waitFor(() => expect(updateMock).toHaveBeenCalledWith("acme", 1, { recipients: ["a@e.com", "c@e.com"] }))
+    })
+
+    it("blocks saving an email destination with more than 10 recipients", async () => {
+      const form = await openEdit({ kind: "email", recipients: ["a@e.com"] })
+      const many = Array.from({ length: 11 }, (_, i) => `u${i}@e.com`).join(", ")
+      fireEvent.change(within(form).getByLabelText("Recipients"), { target: { value: many } })
+      expect(within(form).getByRole("button", { name: "Save changes" })).toBeDisabled()
+      expect(within(form).getByRole("alert")).toHaveTextContent("At most 10 recipients")
     })
 
     it("blocks an out-of-range threshold or empty name", async () => {
