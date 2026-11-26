@@ -214,9 +214,8 @@ jobs:
       # job-level superuser DATABASE_URL, and fail if it skips instead of passing.
       - name: Run RLS tests that need a superuser connection
         run: |
-          out=$(python -m pytest -q -rs "apps/api/tests/test_api_tokens.py::test_a_non_owner_session_cannot_unlock_api_tokens_by_setting_the_old_lookup_flag")
-          echo "$out"
-          echo "$out" | grep -q "1 passed"
+          python -m pytest -q -rs "apps/api/tests/test_api_tokens.py::test_a_non_owner_session_cannot_unlock_api_tokens_by_setting_the_old_lookup_flag" | tee rls-superuser.txt
+          grep -q "1 passed" rls-superuser.txt
 
       - name: Diff coverage (new/changed Python lines must be tested)
         run: diff-cover coverage.xml --compare-branch=origin/main --fail-under=90
