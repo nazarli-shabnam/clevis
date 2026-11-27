@@ -1,4 +1,5 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 let mockSearchParams = new URLSearchParams();
@@ -8,29 +9,32 @@ vi.mock("next/navigation", () => ({
 }));
 
 const verifyEmailMock = vi.fn();
-const mineMock = vi.fn();
-let mockUser: { id: number } | null = null;
 
 vi.mock("@/lib/api/client", () => ({
-  api: {
-    auth: {
-      verifyEmail: (...args: unknown[]) => verifyEmailMock(...args),
-    },
-    invitations: { mine: (...args: unknown[]) => mineMock(...args) },
-  },
+  api: { auth: { verifyEmail: (...args: unknown[]) => verifyEmailMock(...args) } },
 }));
 
-vi.mock("@/lib/auth-context", () => ({ useAuth: () => ({ user: mockUser }) }));
-
 import VerifyEmailPage from "@/app/verify-email/page";
+
+function renderPage() {
+  const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <VerifyEmailPage />
+    </QueryClientProvider>,
+  );
+}
+
+function fill(password: string, confirm = password) {
+  fireEvent.change(screen.getByPlaceholderText("At least 12 characters"), { target: { value: password } });
+  fireEvent.change(screen.getByPlaceholderText("Repeat password"), { target: { value: confirm } });
+  fireEvent.click(screen.getByRole("button", { name: "Verify email" }));
+}
 
 describe("VerifyEmailPage", () => {
   beforeEach(() => {
     verifyEmailMock.mockReset();
-    mineMock.mockReset();
-    mineMock.mockResolvedValue([]);
-    mockUser = null;
-    mockSearchParams = new URLSearchParams();
+    mockSearchParams = new URLSearchParams({ token: "good-token" });
   });
 
   afterEach(() => {
@@ -38,94 +42,59 @@ describe("VerifyEmailPage", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows a success message once verification succeeds", async () => {
-    mockSearchParams = new URLSearchParams({ token: "good-token" });
-    verifyEmailMock.mockResolvedValue({ ok: true });
+  it("does not verify on load: the emailed link only opens the password form", () => {
+    renderPage();
 
-    render(<VerifyEmailPage />);
-
-    await screen.findByText(/your email is verified/i);
-    expect(verifyEmailMock).toHaveBeenCalledWith("good-token");
-    // A logged-in user landing here from the email has no shell/sidebar, so the page must lead back.
-    expect(screen.getByRole("link", { name: "Continue" })).toHaveAttribute("href", "/");
     expect(screen.getByRole("main")).toBeInTheDocument();
-  });
-
-  it("offers an accept link for each pending invitation once a signed-in user is verified", async () => {
-    mockSearchParams = new URLSearchParams({ token: "good-token" });
-    verifyEmailMock.mockResolvedValue({ ok: true });
-    mockUser = { id: 7 };
-    mineMock.mockResolvedValue([{ org_login: "acme", token: "inv-tok", expires_at: "2030-01-01T00:00:00Z" }]);
-
-    render(<VerifyEmailPage />);
-
-    const link = await screen.findByRole("link", { name: "Accept invitation to acme" });
-    expect(link).toHaveAttribute("href", "/invite/inv-tok");
-  });
-
-  it("does not look up invitations when nobody is signed in", async () => {
-    mockSearchParams = new URLSearchParams({ token: "good-token" });
-    verifyEmailMock.mockResolvedValue({ ok: true });
-
-    render(<VerifyEmailPage />);
-
-    await screen.findByText(/your email is verified/i);
-    expect(mineMock).not.toHaveBeenCalled();
-  });
-
-  it("shows the server's error message when verification fails", async () => {
-    mockSearchParams = new URLSearchParams({ token: "bad-token" });
-    verifyEmailMock.mockRejectedValue(new Error("Invalid or expired verification link"));
-
-    render(<VerifyEmailPage />);
-
-    await screen.findByText(/invalid or expired verification link/i);
-    expect(screen.getByRole("link", { name: "Back to Clevis" })).toHaveAttribute("href", "/");
-  });
-
-  it("shows an error immediately when the URL has no token", async () => {
-    render(<VerifyEmailPage />);
-
-    await screen.findByText(/missing its token/i);
     expect(verifyEmailMock).not.toHaveBeenCalled();
   });
 
-  it("submits the new token when the URL token changes", async () => {
-    mockSearchParams = new URLSearchParams({ token: "first-token" });
+  it("submits the token with the chosen password and then leads to sign in", async () => {
     verifyEmailMock.mockResolvedValue({ ok: true });
+    renderPage();
 
-    const { rerender } = render(<VerifyEmailPage />);
+    fill("a-long-enough-password");
+
     await screen.findByText(/your email is verified/i);
-    expect(verifyEmailMock).toHaveBeenCalledWith("first-token");
-
-    mockSearchParams = new URLSearchParams({ token: "second-token" });
-    rerender(<VerifyEmailPage />);
-
-    await vi.waitFor(() => expect(verifyEmailMock).toHaveBeenCalledWith("second-token"));
+    expect(verifyEmailMock).toHaveBeenCalledWith("good-token", "a-long-enough-password");
+    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/login");
   });
 
-  it("submits once a token appears after initially being absent", async () => {
-    verifyEmailMock.mockResolvedValue({ ok: true });
+  it("shows Verifying… and disables the button while the request is in flight", async () => {
+    verifyEmailMock.mockReturnValue(new Promise(() => {}));
+    renderPage();
 
-    const { rerender } = render(<VerifyEmailPage />);
-    await screen.findByText(/missing its token/i);
+    fill("a-long-enough-password");
 
-    mockSearchParams = new URLSearchParams({ token: "late-token" });
-    rerender(<VerifyEmailPage />);
-
-    await vi.waitFor(() => expect(verifyEmailMock).toHaveBeenCalledWith("late-token"));
+    expect(await screen.findByRole("button", { name: /Verifying…/ })).toBeDisabled();
   });
 
-  it("does not resubmit the same token on re-render (Strict Mode replay)", async () => {
-    mockSearchParams = new URLSearchParams({ token: "stable-token" });
-    verifyEmailMock.mockResolvedValue({ ok: true });
+  it("rejects a short or mismatched password without calling the API", async () => {
+    renderPage();
 
-    const { rerender } = render(<VerifyEmailPage />);
-    await screen.findByText(/your email is verified/i);
+    fill("short");
+    expect(await screen.findByText(/at least 12 characters/i, { selector: "p[role=alert]" })).toBeInTheDocument();
 
-    rerender(<VerifyEmailPage />);
-    rerender(<VerifyEmailPage />);
+    fill("a-long-enough-password", "a-different-password");
+    expect(await screen.findByText(/do not match/i)).toBeInTheDocument();
+    expect(verifyEmailMock).not.toHaveBeenCalled();
+  });
 
-    expect(verifyEmailMock).toHaveBeenCalledTimes(1);
+  it("shows the server's error message when verification fails", async () => {
+    verifyEmailMock.mockRejectedValue(new Error("Invalid or expired verification link"));
+    renderPage();
+
+    fill("a-long-enough-password");
+
+    await screen.findByText(/invalid or expired verification link/i);
+  });
+
+  it("shows an error and no form when the URL has no token", () => {
+    mockSearchParams = new URLSearchParams();
+    renderPage();
+
+    expect(screen.getByText(/missing its token/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to Clevis" })).toHaveAttribute("href", "/");
+    expect(screen.queryByPlaceholderText("Repeat password")).not.toBeInTheDocument();
   });
 });

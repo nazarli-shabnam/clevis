@@ -17,6 +17,8 @@ import type {
   MemberAccess,
   CheckWaiver,
   CheckWaiverInput,
+  WaiverRequest,
+  WaiverRequestInput,
   NotificationFeed,
   NotificationKind,
   NotificationPreferences,
@@ -531,8 +533,11 @@ export const api = {
       ),
   },
   security: {
-    dependabotBurndown: (orgLogin: string, days = 30) =>
-      get<DependabotBurndown>(`/orgs/${encodeURIComponent(orgLogin)}/security/dependabot-burndown?days=${days}`),
+    /** Open alerts by severity against the SLA; `kind` picks Dependabot (default), code scanning or both. */
+    dependabotBurndown: (orgLogin: string, days = 30, kind: "dependabot" | "code_scanning" | "all" = "dependabot") =>
+      get<DependabotBurndown>(
+        `/orgs/${encodeURIComponent(orgLogin)}/security/dependabot-burndown?days=${days}&kind=${kind}`,
+      ),
     matrix: (owner: string, token?: string) =>
       get<SecurityMatrixResponse>(
         `/me/analytics/security-matrix/${encodeURIComponent(owner)}`,
@@ -830,6 +835,19 @@ export const api = {
       put<CheckWaiver>(`/orgs/${encodeURIComponent(orgLogin)}/waivers/${id}`, body),
     revoke: (orgLogin: string, id: number) => del(`/orgs/${encodeURIComponent(orgLogin)}/waivers/${id}`),
   },
+  // A member asks the org admins for a waiver; an admin approves (which creates it) or denies.
+  waiverRequests: {
+    list: (orgLogin: string, status?: WaiverRequest["status"]) =>
+      get<WaiverRequest[]>(
+        `/orgs/${encodeURIComponent(orgLogin)}/waiver-requests${status ? `?status=${status}` : ""}`,
+      ),
+    create: (orgLogin: string, body: WaiverRequestInput) =>
+      post<WaiverRequest>(`/orgs/${encodeURIComponent(orgLogin)}/waiver-requests`, body),
+    approve: (orgLogin: string, id: number, body: { owner?: string; expires_at?: string } = {}) =>
+      post<WaiverRequest>(`/orgs/${encodeURIComponent(orgLogin)}/waiver-requests/${id}/approve`, body),
+    deny: (orgLogin: string, id: number, note?: string) =>
+      post<WaiverRequest>(`/orgs/${encodeURIComponent(orgLogin)}/waiver-requests/${id}/deny`, { note: note || null }),
+  },
   notificationDestinations: {
     list: (orgLogin: string) =>
       get<NotificationDestination[]>(`/orgs/${encodeURIComponent(orgLogin)}/notification-destinations`),
@@ -1037,7 +1055,8 @@ export const api = {
     sessions: () => get<UserSessionOut[]>("/auth/me/sessions"),
     // Ends one other session; 204. The current session is refused (use logout).
     revokeSession: (id: string) => del(`/auth/me/sessions/${encodeURIComponent(id)}`),
-    verifyEmail: (token: string) => post<{ ok: boolean }>("/auth/verify-email", { token }),
+    /** Also sets the account password and ends every earlier session, so a squatter's password stops working. */
+    verifyEmail: (token: string, password: string) => post<{ ok: boolean }>("/auth/verify-email", { token, password }),
     /** Workspace admin only: mark an account's email verified without the emailed link (for no-SMTP deployments). */
     adminVerifyEmail: (email: string) =>
       post<{ ok: boolean; already_verified: boolean }>("/auth/admin/verify-email", { email }),

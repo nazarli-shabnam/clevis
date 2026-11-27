@@ -74,6 +74,29 @@ export interface CheckWaiver {
   active: boolean
 }
 
+export interface WaiverRequest {
+  id: number
+  check_id: string
+  /** null = the whole org. */
+  repos: string[] | null
+  reason: string
+  requested_expires_at: string
+  requested_by: string
+  status: "pending" | "approved" | "denied"
+  decided_by: string | null
+  decided_at: string | null
+  decision_note: string | null
+  waiver_id: number | null
+  created_at: string
+}
+
+export interface WaiverRequestInput {
+  check_id: string
+  repos: string[] | null
+  reason: string
+  expires_at: string
+}
+
 export type DestinationKind = "slack" | "teams" | "generic" | "email"
 
 export type AlertEvent =
@@ -1069,6 +1092,7 @@ export type NotificationKind =
   | "permission_drift"
   | "waiver_expired"
   | "waiver_expiring"
+  | "waiver_request"
   | "sla_breach"
   | "api_token_expiring"
 

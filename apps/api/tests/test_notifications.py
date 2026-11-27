@@ -136,6 +136,16 @@ def test_post_connects_to_the_pinned_ip_but_verifies_and_names_the_hostname():
     assert kwargs["extensions"] == {"sni_hostname": "hooks.slack.com"}
 
 
+def test_post_sends_an_idn_hostname_as_punycode_in_host_and_sni():
+    client_cm = _client_cm(200)
+    with patch("src.services.notifications.httpx.Client", return_value=client_cm):
+        notifications._post("https://bücher.de:8443/hook", "8.8.8.8", b"{}", {})
+    _, kwargs = client_cm.__enter__.return_value.stream.call_args
+    assert kwargs["headers"]["Host"] == "xn--bcher-kva.de:8443"
+    assert kwargs["extensions"] == {"sni_hostname": "xn--bcher-kva.de"}
+    kwargs["headers"]["Host"].encode("ascii")
+
+
 def test_pin_prefers_ipv4_over_an_earlier_ipv6_record():
     infos = [(socket.AF_INET6, 1, 6, "", ("2001:4860::1", 443, 0, 0)), (socket.AF_INET, 1, 6, "", ("8.8.8.8", 443))]
     with patch("src.services.notifications.socket.getaddrinfo", return_value=infos):

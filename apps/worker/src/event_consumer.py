@@ -356,6 +356,24 @@ def _retry_deferred(pg_conn: psycopg.Connection, redis_client: redis.Redis) -> N
             break
 
 
+def _delivery_is_live(cur, delivery_row_id) -> bool:
+    """Lock the delivery row until the surrounding commit and report whether it is still to be processed.
+
+    Run inside the write transaction, right before the writes: the API drops a tenant's waiting deliveries when
+    its last installation is removed (#1324), and that UPDATE blocks on this lock, so a write already under way
+    commits before the purge deletes it, while one that starts later sees 'dropped'."""
+    cur.execute("SELECT status FROM webhook_deliveries WHERE id = %s FOR UPDATE", (delivery_row_id,))
+    row = cur.fetchone()
+    return row is not None and row[0] != "dropped"
+
+
+def _skip_dropped(pg_conn: psycopg.Connection, redis_client: redis.Redis, entry_id: str, delivery_row_id) -> None:
+    """Ack a delivery that was dropped after it was queued (the tenant uninstalled the App); writes nothing."""
+    pg_conn.rollback()
+    log.info("webhook_deliveries row %s was dropped, skipping", delivery_row_id)
+    redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
+
+
 def _process_entry(
     pg_conn: psycopg.Connection,
     redis_client: redis.Redis,
@@ -371,7 +389,7 @@ def _process_entry(
 
     with pg_conn.cursor() as cur:
         cur.execute(
-            "SELECT tenant_id, delivery_id, event_type, payload, received_at FROM webhook_deliveries WHERE id = %s",
+            "SELECT tenant_id, delivery_id, event_type, payload, received_at, status FROM webhook_deliveries WHERE id = %s",
             (delivery_row_id,),
         )
         row = cur.fetchone()
@@ -381,7 +399,9 @@ def _process_entry(
         redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
         return
 
-    tenant_id, delivery_id, event_type, payload_bytes, received_at = row
+    tenant_id, delivery_id, event_type, payload_bytes, received_at, status = row
+    if status == "dropped":
+        return _skip_dropped(pg_conn, redis_client, entry_id, delivery_row_id)
     if tenant_id is None:
         # No tenant to scope a normalized row to. Ack so it doesn't sit pending forever;
         # the raw payload stays in webhook_deliveries.
@@ -417,6 +437,8 @@ def _process_entry(
         try:
             with pg_conn.cursor() as cur:
                 cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+                if not _delivery_is_live(cur, delivery_row_id):
+                    return _skip_dropped(pg_conn, redis_client, entry_id, delivery_row_id)
                 if event_type == "member":
                     member_normalized = _normalize_member_event(payload)
                     action = payload.get("action")
@@ -491,7 +513,18 @@ def _process_entry(
         with pg_conn.cursor() as cur:
             # Session context for RLS; see the repo_events branch below.
             cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+            if not _delivery_is_live(cur, delivery_row_id):
+                return _skip_dropped(pg_conn, redis_client, entry_id, delivery_row_id)
             security_alerts_store.upsert_security_alert(cur, tenant_id=tenant_id, **alert_normalized)
+            cur.execute("UPDATE webhook_deliveries SET status = 'processed' WHERE id = %s", (delivery_row_id,))
+        pg_conn.commit()
+        redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
+        return
+
+    if event_type == "release" and payload.get("action") != "published":
+        # GitHub sends created/published/released/edited/deleted separately, so one publish arrives as
+        # several deliveries; only "published" is recorded so a release is counted once.
+        with pg_conn.cursor() as cur:
             cur.execute("UPDATE webhook_deliveries SET status = 'processed' WHERE id = %s", (delivery_row_id,))
         pg_conn.commit()
         redis_client.xack(_STREAM_KEY, _GROUP_NAME, entry_id)
@@ -508,6 +541,8 @@ def _process_entry(
         # Plain SET (not SET LOCAL) read by this table's RLS policy, scoped to this
         # connection -- narrower than granting clevis_worker BYPASSRLS.
         cur.execute(f"SET app.tenant_id = {int(tenant_id)}")
+        if not _delivery_is_live(cur, delivery_row_id):
+            return _skip_dropped(pg_conn, redis_client, entry_id, delivery_row_id)
         repo_events_store.insert_event_and_upsert_daily_count(cur, tenant_id=tenant_id, delivery_id=delivery_id, **normalized)
         cur.execute("UPDATE webhook_deliveries SET status = 'processed' WHERE id = %s", (delivery_row_id,))
     pg_conn.commit()

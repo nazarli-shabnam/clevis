@@ -647,6 +647,11 @@ export default function SecurityPage() {
                       memberships.find((m) => m.role === "admin" && m.org_login.toLowerCase() === shownOwner.toLowerCase())
                         ?.org_login
                     }
+                    // A member of a connected org who is not an admin can ask an admin for the waiver instead.
+                    requestWaiverOrg={
+                      memberships.find((m) => m.role !== "admin" && m.org_login.toLowerCase() === shownOwner.toLowerCase())
+                        ?.org_login
+                    }
                     token={token}
                     onRemediated={() => runScan()}
                   />

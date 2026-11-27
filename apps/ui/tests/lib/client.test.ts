@@ -1260,8 +1260,14 @@ describe("api.security.dependabotBurndown", () => {
     await api.security.dependabotBurndown("ac me");
     await api.security.dependabotBurndown("acme", 90);
     const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls;
-    expect(String(calls[0][0])).toContain("/orgs/ac%20me/security/dependabot-burndown?days=30");
-    expect(String(calls[1][0])).toContain("/orgs/acme/security/dependabot-burndown?days=90");
+    expect(String(calls[0][0])).toContain("/orgs/ac%20me/security/dependabot-burndown?days=30&kind=dependabot");
+    expect(String(calls[1][0])).toContain("/orgs/acme/security/dependabot-burndown?days=90&kind=dependabot");
+  });
+
+  it("passes the alert kind", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("{}", { status: 200 }))));
+    await api.security.dependabotBurndown("acme", 30, "code_scanning");
+    expect(String((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0])).toContain("days=30&kind=code_scanning");
   });
 });
 
@@ -1278,12 +1284,12 @@ describe("api.auth email verification (issue #217)", () => {
     );
   }
 
-  it("POSTs the token to /auth/verify-email", async () => {
+  it("POSTs the token and the new password to /auth/verify-email", async () => {
     stubOkJson({ ok: true });
-    const result = await api.auth.verifyEmail("a-token");
+    const result = await api.auth.verifyEmail("a-token", "a-long-password");
     const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(String(url)).toContain("/auth/verify-email");
-    expect(JSON.parse(init.body as string)).toEqual({ token: "a-token" });
+    expect(JSON.parse(init.body as string)).toEqual({ token: "a-token", password: "a-long-password" });
     expect(result).toEqual({ ok: true });
   });
 
@@ -1445,6 +1451,41 @@ describe("waivers, notification preferences and evidence endpoints", () => {
     await api.waivers.revoke("acme", 7);
     expect(revoke()[0]).toMatch(/\/orgs\/acme\/waivers\/7$/);
     expect(revoke()[1].method).toBe("DELETE");
+  });
+
+  it("waiver requests hit the org-scoped routes with the filter, body and note they are given (#1274)", async () => {
+    const all = stub([])
+    await api.waiverRequests.list("acme");
+    expect(all()[0]).toMatch(/\/orgs\/acme\/waiver-requests$/);
+
+    const pending = stub([])
+    await api.waiverRequests.list("a/b", "pending");
+    expect(pending()[0]).toMatch(/\/orgs\/a%2Fb\/waiver-requests\?status=pending$/);
+
+    const create = stub({ id: 3 }, 201)
+    const body = { check_id: "c", repos: ["r"], reason: "why", expires_at: "2030-01-01T00:00:00Z" }
+    await api.waiverRequests.create("acme", body);
+    expect(create()[0]).toMatch(/\/orgs\/acme\/waiver-requests$/);
+    expect(create()[1].method).toBe("POST");
+    expect(JSON.parse(String(create()[1].body))).toEqual(body);
+
+    const approveDefault = stub({ id: 3 })
+    await api.waiverRequests.approve("acme", 3);
+    expect(approveDefault()[0]).toMatch(/\/orgs\/acme\/waiver-requests\/3\/approve$/);
+    expect(JSON.parse(String(approveDefault()[1].body))).toEqual({});
+
+    const approveAdjusted = stub({ id: 3 })
+    await api.waiverRequests.approve("acme", 3, { owner: "platform", expires_at: "2030-02-01T00:00:00Z" });
+    expect(JSON.parse(String(approveAdjusted()[1].body))).toEqual({ owner: "platform", expires_at: "2030-02-01T00:00:00Z" });
+
+    const denyNote = stub({ id: 3 })
+    await api.waiverRequests.deny("acme", 3, "not now");
+    expect(denyNote()[0]).toMatch(/\/orgs\/acme\/waiver-requests\/3\/deny$/);
+    expect(JSON.parse(String(denyNote()[1].body))).toEqual({ note: "not now" });
+
+    const denyBare = stub({ id: 3 })
+    await api.waiverRequests.deny("acme", 3);
+    expect(JSON.parse(String(denyBare()[1].body))).toEqual({ note: null });
   });
 
   it("notification destinations use the org-scoped routes", async () => {
