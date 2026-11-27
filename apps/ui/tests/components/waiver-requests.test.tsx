@@ -98,6 +98,13 @@ describe("WaiverRequestsCard", () => {
     expect(document.getElementById("waiver-request-1")).not.toHaveAttribute("aria-current")
   })
 
+  it("says whole organization for a request that is not limited to repositories", async () => {
+    listMock.mockResolvedValue([request({ repos: null })])
+    wrap(<WaiverRequestsCard orgLogin="acme" />)
+
+    expect(await screen.findByText("whole organization")).toBeInTheDocument()
+  })
+
   it("shows the server's error when a decision fails", async () => {
     listMock.mockResolvedValue([request()])
     approveMock.mockRejectedValue(new Error("This request was already denied"))
@@ -137,5 +144,28 @@ describe("WaiverForm as a request", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send request" }))
 
     await screen.findByText(/send the request: You already have 5 requests/)
+  })
+
+  it("shows Sending… while the request is in flight", async () => {
+    createMock.mockReturnValue(new Promise(() => {}))
+    wrap(<WaiverForm orgLogin="acme" fixedCheckId="repository_default_branch_protection_enabled" compact asRequest />)
+
+    fireEvent.change(await screen.findByLabelText("Reason"), { target: { value: "x" } })
+    fireEvent.click(screen.getByRole("button", { name: "Send request" }))
+
+    expect(await screen.findByRole("button", { name: "Sending…" })).toBeDisabled()
+  })
+})
+
+describe("WaiverForm as a waiver", () => {
+  it("shows Adding… while the waiver is being saved", async () => {
+    waiversCreateMock.mockReturnValue(new Promise(() => {}))
+    wrap(<WaiverForm orgLogin="acme" fixedCheckId="repository_default_branch_protection_enabled" compact />)
+
+    fireEvent.change(await screen.findByLabelText("Reason"), { target: { value: "x" } })
+    fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "me" } })
+    fireEvent.click(screen.getByRole("button", { name: "Add waiver" }))
+
+    expect(await screen.findByRole("button", { name: "Adding…" })).toBeDisabled()
   })
 })
