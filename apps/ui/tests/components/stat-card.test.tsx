@@ -37,4 +37,21 @@ describe("StatCard", () => {
     const { container: one } = render(<StatCard label="Score" value={87} trend={[87]} />);
     expect(one.querySelector(".recharts-responsive-container")).not.toBeInTheDocument();
   });
-});
+
+  it("shows how the score moved since the last scan, or why it cannot say", () => {
+    const { rerender } = render(<StatCard label="Score" value={85} change={{ points: 5 }} />)
+    expect(screen.getByText("+5 vs last scan")).toHaveClass("text-accent")
+
+    rerender(<StatCard label="Score" value={85} change={{ points: -2 }} />)
+    expect(screen.getByText("-2 vs last scan")).toHaveClass("text-destructive")
+
+    rerender(<StatCard label="Score" value={85} change={{ points: 0 }} />)
+    expect(screen.getByText("No change vs last scan")).toHaveClass("text-muted-foreground")
+
+    rerender(<StatCard label="Score" value={85} change={{ note: "Not comparable with the previous scan" }} />)
+    expect(screen.getByText("Not comparable with the previous scan")).toBeInTheDocument()
+
+    rerender(<StatCard label="Score" value={85} change={null} />)
+    expect(screen.queryByText(/vs last scan|Not comparable/)).not.toBeInTheDocument()
+  })
+})

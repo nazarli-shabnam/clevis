@@ -1223,7 +1223,11 @@ async def _build_cockpit(owner: str, user: UserOut, db: Session, token: str) -> 
 
     scans, cache_job_success_rate = await anyio.to_thread.run_sync(_scans_and_cache_job_rate)
     latest_score = scans[0]["score"] if scans else None
-    score_trend = [s["score"] for s in reversed(scans) if s["score"] is not None]
+    scored_scans = [s for s in reversed(scans) if s["score"] is not None]
+    score_trend = [s["score"] for s in scored_scans]
+    score_trend_dates = [datetime.fromisoformat(s["created_at"]) for s in scored_scans if s["created_at"]]
+    if len(score_trend_dates) != len(score_trend):  # a row without a timestamp: better no dates than misaligned ones
+        score_trend_dates = []
 
     account_type = await _get_account_type(owner, token)
     try:
@@ -1280,6 +1284,7 @@ async def _build_cockpit(owner: str, user: UserOut, db: Session, token: str) -> 
         member_count=member_count,
         latest_score=latest_score,
         score_trend=score_trend,
+        score_trend_dates=score_trend_dates,
         recent_events=recent_events,
         open_pr_count=open_pr_count,
         pr_merge_rate_4w=pr_merge_rate_4w,

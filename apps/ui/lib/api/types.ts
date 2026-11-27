@@ -818,6 +818,8 @@ export interface CockpitResponse {
   member_count: number | null
   latest_score: number | null
   score_trend: number[]
+  /** When each score_trend point was scanned (same length, oldest first); absent from an older API. */
+  score_trend_dates?: string[]
   recent_events: OrgEvent[]
   open_pr_count: number
   pr_merge_rate_4w: PrWeekBucket[]
