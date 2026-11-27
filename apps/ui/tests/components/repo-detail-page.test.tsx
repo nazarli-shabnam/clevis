@@ -220,6 +220,24 @@ describe("RepoDetailPage", () => {
     expect(await screen.findByText(/no commit activity available yet/i)).toBeInTheDocument();
   });
 
+  it("says GitHub is still computing the stats, and Retry refetches", async () => {
+    reposStatsMock.mockResolvedValueOnce({
+      repository: "acme/demo",
+      commit_activity: [],
+      stats_ready: false,
+      participation: {},
+      contributors: [],
+    });
+    renderPage();
+    expect(await screen.findByRole("status")).toHaveTextContent("still computing these statistics");
+    const calls = reposStatsMock.mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(reposStatsMock.mock.calls.length).toBe(calls + 1));
+    await waitFor(() => expect(screen.queryByText(/still computing these statistics/)).not.toBeInTheDocument());
+  });
+
   it("renders the commit-activity chart once stats resolve with data", async () => {
     reposStatsMock.mockResolvedValue({
       repository: "acme/demo",

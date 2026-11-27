@@ -112,6 +112,7 @@ export function DigestCard({ orgLogin }: { orgLogin: string }) {
               <button
                 type="button"
                 className="self-start text-xs text-muted-foreground hover:text-foreground"
+                disabled={update.isPending}
                 onClick={() => update.mutate({ recipients: null })}
               >
                 Reset to every verified admin

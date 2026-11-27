@@ -749,6 +749,8 @@ describe("SettingsPage", () => {
     expect(installationsListForOrgMock).toHaveBeenCalledWith("acme");
 
     const disconnectButtons = screen.getAllByRole("button", { name: /disconnect/i });
+    // Each button names its account, so a screen reader can tell them apart.
+    expect(disconnectButtons.map((b) => b.getAttribute("aria-label"))).toEqual(["Disconnect shabnam", "Disconnect acme"]);
 
     fireEvent.click(disconnectButtons[0]);
     expect(installationsRemoveMock).not.toHaveBeenCalled();
@@ -842,7 +844,7 @@ describe("SettingsPage", () => {
       expect(installationsRemoveMock).toHaveBeenCalled();
     });
     // Row button reverts to "Disconnect" while the dialog shows the busy state.
-    expect(screen.queryByRole("button", { name: "Disconnect" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Disconnect shabnam" })).not.toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: /working/i })).toBeDisabled();
 
     await act(async () => {
@@ -871,7 +873,7 @@ describe("SettingsPage", () => {
     });
     // Row is still there and retryable; the dialog closed on error rather than sticking open.
     expect(screen.getByText("shabnam")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Disconnect" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Disconnect shabnam" })).toBeInTheDocument();
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 

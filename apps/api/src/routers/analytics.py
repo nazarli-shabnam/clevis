@@ -1080,6 +1080,8 @@ def _week_pr_cycle_time(client: GitHubClient, owner: str, start: date, account_t
         params={"q": f"{qualifier} type:pr merged:{start}..{start + timedelta(days=6)}", "per_page": 30},
     )
     items = result.get("items", []) if isinstance(result, dict) else []
+    total = result.get("total_count", 0) if isinstance(result, dict) else 0
+    incomplete = bool(result.get("incomplete_results")) if isinstance(result, dict) else False
     days: list[float] = []
     for item in items:
         try:
@@ -1089,7 +1091,7 @@ def _week_pr_cycle_time(client: GitHubClient, owner: str, start: date, account_t
             continue
         days.append((closed - created).total_seconds() / 86400)
     avg_days = round(sum(days) / len(days), 1) if days else 0.0
-    return PrCycleTimeWeek(week=start.isoformat(), avg_days=avg_days)
+    return PrCycleTimeWeek(week=start.isoformat(), avg_days=avg_days, partial=incomplete or total > len(items))
 
 
 def _safe_pr_cycle_time_8w(owner: str, token: str, account_type: str = "Organization") -> tuple[list[PrCycleTimeWeek], bool]:
@@ -1513,20 +1515,25 @@ async def _my_items_list(
     login = await anyio.to_thread.run_sync(lambda: _my_login(client, token, db.query(User.github_user_id).filter(User.id == user.id).scalar()))
     if login is None:
         return response_cls(page=page, per_page=per_page, identity_unresolved=True)
-    if page * per_page > _MAX_SEARCH_RESULTS:
-        # Beyond the reachable window: report the capped total (not 0) so page math stays consistent.
-        return response_cls(total_count=_MAX_SEARCH_RESULTS, page=page, per_page=per_page)
-
     query = query_template.format(login=login)
+    # Beyond the reachable window GitHub rejects the page, so ask for the first result only: its total_count
+    # still tells us whether the 1000 cap truncated anything, and page math stays consistent.
+    in_window = page * per_page <= _MAX_SEARCH_RESULTS
     try:
         items_raw, total_count = await anyio.to_thread.run_sync(
-            lambda: _search_items_page(client, query, page, per_page, sort_oldest)
+            lambda: _search_items_page(client, query, page if in_window else 1, per_page if in_window else 1, sort_oldest)
         )
+        if not in_window:
+            items_raw = []
     except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         raise _github_error(exc) from exc
     # Cap the reported total to what's reachable so the UI's Next button disables at the true boundary.
     return response_cls(
-        items=mapper(items_raw), total_count=min(total_count, _MAX_SEARCH_RESULTS), page=page, per_page=per_page
+        items=mapper(items_raw),
+        total_count=min(total_count, _MAX_SEARCH_RESULTS),
+        page=page,
+        per_page=per_page,
+        truncated=total_count > _MAX_SEARCH_RESULTS,
     )
 
 

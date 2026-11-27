@@ -585,6 +585,11 @@ export default function OverviewPage() {
         <div className="card">
           <div className="px-4 py-3 border-b border-border">
             <span className="section-label">PR Cycle Time (8w, avg days)</span>
+            {cockpit?.pr_cycle_time_8w?.some((w) => w.partial) && (
+              <p className="text-[0.6875rem] text-muted-foreground mt-1">
+                Busy weeks average a sample of 30 merged PRs.
+              </p>
+            )}
           </div>
           <div className="p-4">
             {cycleTimeData.some((d) => d.value > 0) ? (

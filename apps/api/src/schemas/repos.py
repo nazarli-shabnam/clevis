@@ -50,6 +50,9 @@ class RepoStatsResponse(BaseModel):
     # live GitHub call -- push-event counts, not actual commit counts, so the UI must
     # label this as an estimate. See src.routers.repos._repo_commit_activity_from_aggregate.
     commit_activity_source: Literal["github", "aggregate"] = "github"
+    # False while GitHub is still computing the stats (it answers 202 with an empty body): the charts
+    # are empty because the data isn't there yet, not because the repo has no activity.
+    stats_ready: bool = True
     participation: dict
     contributors: list[dict]
     stargazers_count: int
