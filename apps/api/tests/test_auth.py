@@ -438,13 +438,44 @@ def test_register_still_succeeds_when_cors_origins_is_misconfigured_empty(auth_c
     assert resp.status_code == 201
 
 
+_NEW_PW = "brand-new-password-1"
+
+
+def test_verify_email_replaces_the_password_and_ends_earlier_sessions(auth_client, db):
+    # #1322: an attacker pre-registers the victim's address with their own password and keeps the session.
+    _setup_owner(auth_client)
+    reg = auth_client.post("/auth/register", json={"email": "member@example.com", "password": "attackers-password-1"})
+    attacker_token = reg.json()["access_token"]
+    user = db.query(User).filter(User.email == "member@example.com").first()
+    token = user.email_verify_token
+
+    assert auth_client.post("/auth/verify-email", json={"token": token, "password": _NEW_PW}).status_code == 200
+
+    assert auth_client.get("/auth/me", headers={"Authorization": f"Bearer {attacker_token}"}).status_code == 401
+    old = auth_client.post("/auth/login", json={"email": "member@example.com", "password": "attackers-password-1"})
+    assert old.status_code == 401
+    assert auth_client.post("/auth/login", json={"email": "member@example.com", "password": _NEW_PW}).status_code == 200
+
+
+def test_verify_email_rejects_a_short_password_and_keeps_the_token(auth_client, db):
+    _setup_owner(auth_client)
+    auth_client.post("/auth/register", json={"email": "member@example.com", "password": "supersecret1234"})
+    user = db.query(User).filter(User.email == "member@example.com").first()
+    token = user.email_verify_token
+
+    assert auth_client.post("/auth/verify-email", json={"token": token, "password": "short"}).status_code == 422
+
+    db.refresh(user)
+    assert user.email_verified is False and user.email_verify_token == token
+
+
 def test_verify_email_marks_the_account_verified_and_clears_the_token(auth_client, db):
     _setup_owner(auth_client)
     auth_client.post("/auth/register", json={"email": "member@example.com", "password": "supersecret1234"})
     user = db.query(User).filter(User.email == "member@example.com").first()
     token = user.email_verify_token
 
-    resp = auth_client.post("/auth/verify-email", json={"token": token})
+    resp = auth_client.post("/auth/verify-email", json={"token": token, "password": _NEW_PW})
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
 
@@ -459,17 +490,17 @@ def test_verify_email_is_audited(auth_client, db):
     auth_client.post("/auth/register", json={"email": "member@example.com", "password": "supersecret1234"})
     token = db.query(User).filter(User.email == "member@example.com").first().email_verify_token
 
-    assert auth_client.post("/auth/verify-email", json={"token": token}).status_code == 200
+    assert auth_client.post("/auth/verify-email", json={"token": token, "password": _NEW_PW}).status_code == 200
 
     rows = db.query(AuditLog).filter(AuditLog.action == "auth.email_verified").all()
     assert [r.actor for r in rows] == ["member@example.com"]
     # A rejected link leaves no row.
-    auth_client.post("/auth/verify-email", json={"token": "not-a-real-token"})
+    auth_client.post("/auth/verify-email", json={"token": "not-a-real-token", "password": _NEW_PW})
     assert db.query(AuditLog).filter(AuditLog.action == "auth.email_verified").count() == 1
 
 
 def test_verify_email_rejects_an_unknown_token(auth_client):
-    resp = auth_client.post("/auth/verify-email", json={"token": "not-a-real-token"})
+    resp = auth_client.post("/auth/verify-email", json={"token": "not-a-real-token", "password": _NEW_PW})
     assert resp.status_code == 400
 
 
@@ -480,7 +511,7 @@ def test_verify_email_rejects_an_expired_token(auth_client, db):
     user.email_verify_token_expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
     db.commit()
 
-    resp = auth_client.post("/auth/verify-email", json={"token": user.email_verify_token})
+    resp = auth_client.post("/auth/verify-email", json={"token": user.email_verify_token, "password": _NEW_PW})
     assert resp.status_code == 400
     db.refresh(user)
     assert user.email_verified is False

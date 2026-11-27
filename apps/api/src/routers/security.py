@@ -9,6 +9,7 @@ token resolution goes through `resolve_owner_token` rather than `require_org_rol
 import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -392,18 +393,23 @@ def personal_secret_scanning(
 @router.get("/orgs/{org_login}/security/dependabot-burndown", response_model=DependabotBurndownResponse)
 def org_dependabot_burndown(
     days: int = 30,
+    kind: Literal["dependabot", "code_scanning", "all"] = "dependabot",
     ctx: OrgContext = Depends(require_org_role(min_role="member")),
     db: Session = Depends(get_db),
 ):
+    """Burn-down of open alerts by severity. ``kind`` picks Dependabot (the default, as before), code scanning,
+    or both together; each kind is measured against its own SLA windows."""
     # Open alerts always count; a closed one only matters while it can still show in the trend window (a
     # closed alert whose close day is before the window contributes nothing), so older closed rows are
     # not loaded.
     window = max(1, min(days, dependabot_burndown.TREND_MAX_DAYS))
     now = datetime.now(timezone.utc)
+    kinds = dependabot_burndown.KINDS if kind == "all" else (kind,)
     rows = (
         db.query(
             SecurityAlert.repo,
             SecurityAlert.number,
+            SecurityAlert.kind,
             SecurityAlert.state,
             SecurityAlert.severity,
             SecurityAlert.created_at,
@@ -411,9 +417,11 @@ def org_dependabot_burndown(
         )
         .filter(
             SecurityAlert.tenant_id == ctx.org.tenant_id,
-            SecurityAlert.kind == "dependabot",
+            SecurityAlert.kind.in_(kinds),
             or_(SecurityAlert.state == "open", SecurityAlert.updated_at >= now - timedelta(days=window + 1)),
         )
         .all()
     )
-    return dependabot_burndown.compute(rows, now, days, dependabot_burndown.sla_days())
+    by_kind = dependabot_burndown.sla_by_kind(kinds)
+    shown = dependabot_burndown.shared_windows(by_kind)
+    return dependabot_burndown.compute(rows, now, days, shown, by_kind)

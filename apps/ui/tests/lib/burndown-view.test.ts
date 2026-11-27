@@ -23,12 +23,12 @@ const REPOS = [
 describe("burndown view <-> URL", () => {
   it("keeps defaults out of the query string and round-trips the rest", () => {
     expect(burndownViewToParams(DEFAULT_BURNDOWN_VIEW).toString()).toBe("")
-    const view = { days: 90, severity: "critical" as const, sort: "breaches" as const, repo: "acme/api" }
+    const view = { days: 90, severity: "critical" as const, sort: "breaches" as const, repo: "acme/api", kind: "code_scanning" as const }
     expect(burndownViewFromParams(new URLSearchParams(burndownViewToParams(view).toString()))).toEqual(view)
   })
 
   it("falls back to defaults for unsupported values", () => {
-    expect(burndownViewFromParams(new URLSearchParams("days=45&severity=low&sort=x"))).toEqual(DEFAULT_BURNDOWN_VIEW)
+    expect(burndownViewFromParams(new URLSearchParams("days=45&severity=low&sort=x&kind=secret_scanning"))).toEqual(DEFAULT_BURNDOWN_VIEW)
   })
 })
 

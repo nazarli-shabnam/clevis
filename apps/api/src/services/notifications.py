@@ -100,14 +100,20 @@ def _post(url: str, ip: str, body: bytes, headers: dict) -> tuple[int, bool]:
     host = f"[{ip}]" if ":" in ip else ip
     netloc = f"{host}:{parts.port}" if parts.port else host
     pinned = urlunsplit(("https", netloc, parts.path, parts.query, ""))
+    # httpx encodes header values as ASCII, and SNI must be ASCII too, so an IDN host (https://bücher.de/x) is
+    # sent in its punycode form (#1323). A host already ASCII, including an IP literal, is unchanged.
+    hostname = parts.hostname.encode("idna").decode("ascii")
+    host_header = f"[{hostname}]" if ":" in hostname else hostname
+    if parts.port:
+        host_header = f"{host_header}:{parts.port}"
     # stream(): only the status is needed, so a hostile endpoint can't make us buffer a huge body.
     with httpx.Client(timeout=_TIMEOUT_SECONDS, follow_redirects=False) as client:
         with client.stream(
             "POST",
             pinned,
             content=body,
-            headers={**headers, "Host": parts.netloc},
-            extensions={"sni_hostname": parts.hostname},
+            headers={**headers, "Host": host_header},
+            extensions={"sni_hostname": hostname},
         ) as resp:
             return resp.status_code, resp.is_success
 
@@ -402,17 +408,20 @@ def notify_new_critical_alerts(
 def notify_sla_breaches(
     db: Session, tenant_id: int, org_login: str, breaches: list[dict], *, actor: str = "system"
 ) -> None:
-    """``breaches`` is a list of ``{"repo", "number", "severity", "sla_days"}`` dicts for open Dependabot
-    alerts that have just passed their SLA window."""
+    """``breaches`` is a list of ``{"repo", "number", "severity", "sla_days"}`` dicts (plus ``"kind"``:
+    ``dependabot`` when absent, or ``code_scanning``) for open alerts that have just passed their SLA window."""
     if not breaches:
         return
+    kinds = {b.get("kind", "dependabot") for b in breaches}
+    noun = "Dependabot" if kinds == {"dependabot"} else "code scanning" if kinds == {"code_scanning"} else "security"
+
     def render(safe) -> str:
         shown = "; ".join(
             f"{safe(b['repo'])} #{int(b['number'])} ({safe(str(b['severity']))}, SLA {b['sla_days']}d)" for b in breaches[:5]
         )
         more = f" and {len(breaches) - 5} more" if len(breaches) > 5 else ""
         return (
-            f"Clevis: {len(breaches)} Dependabot alert{'s' if len(breaches) != 1 else ''} in {org_login} "
+            f"Clevis: {len(breaches)} {noun} alert{'s' if len(breaches) != 1 else ''} in {org_login} "
             f"{'have' if len(breaches) != 1 else 'has'} passed the remediation SLA: {shown}{more}."
         )
 
