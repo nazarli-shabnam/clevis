@@ -86,7 +86,8 @@ export type RepoCheckState = "fail" | "pass" | "unknown"
  * How one scan saw one repository for one check, from the repos the check named when it failed. `null` when the
  * check is not per-repository (org-wide MFA, text values), so it has no place on a repo's timeline.
  * "unknown" when the scan cannot say: the check errored or did not apply, or it failed without naming repos
- * (older scans) or with a list that hit the storage cap and does not include this repo.
+ * (older scans), with a list that hit the storage cap and does not include this repo, or when the scan could not
+ * read some repositories at all (they are counted in `unknown`, never named), so "not named" is not "passing".
  */
 export function repoCheckState(check: StoredCheck, repo: string): RepoCheckState | null {
   const value = check.value
@@ -94,6 +95,7 @@ export function repoCheckState(check: StoredCheck, repo: string): RepoCheckState
   if (check.status === "error" || check.status === "not_applicable" || !check.status) return "unknown"
   const named = (value.repos ?? []).map((r) => r.toLowerCase())
   if (check.status === "fail" && named.includes(repo.toLowerCase())) return "fail"
+  if (value.type === "ratio" && (value.unknown ?? 0) > 0) return "unknown"
   if (check.status === "pass") return "pass"
   return named.length > 0 && named.length < AFFECTED_REPOS_CAP ? "pass" : "unknown"
 }

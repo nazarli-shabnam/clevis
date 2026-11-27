@@ -11,17 +11,18 @@ import { repoCheckHistory, type RepoCheckHistory, type RepoCheckState, type Stor
 const WINDOW_DAYS = 180
 const SHOWN_SCANS = 30
 
+// "Not assessed" is hollow (dashed outline), so the three states differ by shape as well as colour.
 const STATE_STYLE: Record<RepoCheckState, { box: string; word: string }> = {
   fail: { box: "bg-destructive", word: "failing" },
   pass: { box: "bg-emerald-500", word: "passing" },
-  unknown: { box: "bg-muted-foreground/30", word: "not assessed" },
+  unknown: { box: "border border-dashed border-muted-foreground/60", word: "not assessed" },
 }
 
 const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
 
 function Timeline({ item }: { item: RepoCheckHistory }) {
   const shown = item.points.slice(-SHOWN_SCANS)
-  const label = `${item.title}: ${shown.map((p) => STATE_STYLE[p.state].word).join(", ")} across the last ${shown.length} scans, oldest first`
+  const label = `${item.title}: ${shown.map((p) => STATE_STYLE[p.state].word).join(", ")} across the ${shown.length} scans from ${day(shown[0].at)} to ${day(shown[shown.length - 1].at)}, oldest first`
   const { word } = STATE_STYLE[item.current]
   return (
     <li className="px-4 py-2.5 text-xs">
@@ -77,16 +78,25 @@ export function RepoCheckHistoryCard({ owner, repo, enabled }: { owner: string; 
         <Skeleton className="h-16 w-full" />
       ) : query.isError ? (
         <SectionError message={query.error.message} onRetry={() => query.refetch()} retrying={query.isFetching} />
-      ) : items.length === 0 ? (
-        <p className="text-xs text-muted-foreground">
-          {query.data?.truncated ? "The scan history is too long to show here." : "No stored scan shows this repository failing a check."}
-        </p>
       ) : (
-        <ul className="divide-y divide-border rounded-md border border-border">
-          {items.map((item) => (
-            <Timeline key={item.id} item={item} />
-          ))}
-        </ul>
+        <>
+          {query.data?.truncated && (
+            <p className="mb-2 text-xs text-amber-500">
+              The scan history is too long to read in full, so only the newest scans are shown and a start date may be later than the real one.
+            </p>
+          )}
+          {items.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              {query.data?.truncated ? "None of the newest scans show" : "No stored scan shows"} this repository failing a check.
+            </p>
+          ) : (
+            <ul className="divide-y divide-border rounded-md border border-border">
+              {items.map((item) => (
+                <Timeline key={item.id} item={item} />
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </div>
   )

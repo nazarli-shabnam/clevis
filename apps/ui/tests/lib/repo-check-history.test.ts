@@ -19,6 +19,19 @@ describe("repoCheckState", () => {
     expect(repoCheckState(ratio("fail", ["other"]), "legacy")).toBe("pass")
   })
 
+  it("is unknown for a repo the scan could not read, even though it names other failing repos", () => {
+    const unreadable: StoredCheck = { id: "bp", status: "fail", value: { type: "ratio", numerator: 8, denominator: 10, unknown: 1, repos: ["a"] } }
+    expect(repoCheckState(unreadable, "b")).toBe("unknown")
+    expect(repoCheckState(unreadable, "a")).toBe("fail")
+    expect(repoCheckState({ ...unreadable, status: "pass" }, "b")).toBe("unknown")
+  })
+
+  it("reads severity-count checks too", () => {
+    const alerts = (repos: string[]): StoredCheck => ({ id: "d", status: "fail", value: { type: "severity_counts", critical: 1, high: 0, medium: 0, low: 0, repos } })
+    expect(repoCheckState(alerts(["legacy"]), "legacy")).toBe("fail")
+    expect(repoCheckState(alerts(["other"]), "legacy")).toBe("pass")
+  })
+
   it("is unknown when the scan cannot say", () => {
     expect(repoCheckState(ratio("fail"), "legacy")).toBe("unknown") // no names recorded
     expect(repoCheckState(ratio("fail", names(25)), "legacy")).toBe("unknown") // list hit the storage cap

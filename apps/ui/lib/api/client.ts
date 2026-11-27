@@ -414,7 +414,12 @@ function normalizeCheckValueShape(id: string, raw: unknown): CheckValue {
       return { type: "ratio", numerator: Number(r.checked) - Number(r.missing), denominator: Number(r.checked) }
     }
     if ("checked" in r && "protected" in r) {
-      return { type: "ratio", numerator: Number(r.protected), denominator: Number(r.checked) }
+      return {
+        type: "ratio",
+        numerator: Number(r.protected),
+        denominator: Number(r.checked),
+        ...(Number(r.unknown) > 0 && { unknown: Number(r.unknown) }),
+      }
     }
     if ("enabled" in r && "total" in r) {
       return {

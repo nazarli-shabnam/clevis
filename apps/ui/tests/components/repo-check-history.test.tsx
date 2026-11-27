@@ -47,7 +47,7 @@ describe("RepoCheckHistoryCard", () => {
 
     expect(await screen.findByText("Branch protection")).toBeInTheDocument()
     expect(screen.getByText(/failing since/)).toBeInTheDocument()
-    expect(screen.getByRole("img", { name: /passing, failing, failing across the last 3 scans, oldest first/ })).toBeInTheDocument()
+    expect(screen.getByRole("img", { name: /passing, failing, failing across the 3 scans from .* to .*, oldest first/ })).toBeInTheDocument()
   })
 
   it("says so when no stored scan shows the repo failing", async () => {
@@ -61,7 +61,16 @@ describe("RepoCheckHistoryCard", () => {
     exportMock.mockResolvedValue({ truncated: true, row_count: 0, entries: [] })
     wrap()
 
-    expect(await screen.findByText(/too long to show/)).toBeInTheDocument()
+    expect(await screen.findByText(/too long to read in full/)).toBeInTheDocument()
+    expect(screen.getByText(/None of the newest scans show/)).toBeInTheDocument()
+  })
+
+  it("warns that a truncated history may start later than the real start, while still showing the timelines", async () => {
+    exportMock.mockResolvedValue({ truncated: true, row_count: 1, entries: [scan(1, 1, "fail", ["legacy"])] })
+    wrap()
+
+    expect(await screen.findByText("Branch protection")).toBeInTheDocument()
+    expect(screen.getByText(/too long to read in full/)).toBeInTheDocument()
   })
 
   it("does not fetch while the Security tab is closed", () => {
