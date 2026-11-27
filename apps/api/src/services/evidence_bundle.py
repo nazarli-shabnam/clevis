@@ -3,6 +3,8 @@
 Contents (all scoped to one org's tenant, over an optional date range):
 - ``scan_history.csv`` and ``failed_checks.csv``: every scan, and per scan each failing/erroring check
   (with any waiver that excluded it from the score);
+- ``control_mapping.csv``: which SOC 2, CIS v8 and ISO 27001 controls each check gives evidence for (a static table,
+  ``services/control_mapping.py``); ``failed_checks.csv`` carries the same controls per failing check;
 - ``members.csv`` and ``outside_collaborators.csv``: the org roster with role and 2FA status, and the
   repository access held by outside collaborators;
 - ``waivers.csv``: the waiver (accepted-risk) register as it stands, whether or not a waiver currently masks a
@@ -29,6 +31,7 @@ from sqlalchemy.orm import Session
 from src.core.version import VERSION
 from src.core.db import OrgMember, OrgMembershipSyncCursor, RepoCollaborator
 from src.repositories import audit_repo, scan_results_repo, waiver_repo
+from src.services import control_mapping
 
 SCAN_LIMIT = 5000
 AUDIT_LIMIT = 10000
@@ -79,12 +82,13 @@ def _scan_files(scans: list[dict]) -> tuple[str, str, int]:
                 s["id"], s["created_at"], c.get("id"), c.get("title"), c.get("severity"), c.get("status"),
                 c.get("scored"), "; ".join(str(r) for r in repos) if isinstance(repos, list) else "",
                 waived.get("until"), waived.get("owner"), waived.get("reason"),
+                "; ".join(control_mapping.control_label(r) for r in control_mapping.controls_for(str(c.get("id")))),
             ])
     return (
         to_csv(["scan_id", "scanned_at", "owner", "score", "total_checks", "failed_checks"], history),
         to_csv(
             ["scan_id", "scanned_at", "check_id", "title", "severity", "status", "scored", "repos",
-             "waived_until", "waived_owner", "waived_reason"],
+             "waived_until", "waived_owner", "waived_reason", "controls"],
             failing,
         ),
         len(failing),
@@ -114,6 +118,14 @@ def build_bundle(
     contents["scan_history.csv"], contents["failed_checks.csv"], failing_rows = _scan_files(scans)
     files["scan_history.csv"] = {"rows": len(scans), "truncated": scans_truncated}
     files["failed_checks.csv"] = {"rows": failing_rows, "truncated": scans_truncated}
+
+    mapping_rows = [
+        [cid, control_mapping.framework_name(r["framework"]), r["id"], r["name"]]
+        for cid in control_mapping.CHECK_CONTROLS
+        for r in control_mapping.controls_for(cid)
+    ]
+    contents["control_mapping.csv"] = to_csv(["check_id", "framework", "control_id", "control_name"], mapping_rows)
+    files["control_mapping.csv"] = {"rows": len(mapping_rows), "truncated": False}
 
     members = (
         db.query(OrgMember).filter(OrgMember.tenant_id == tenant_id).order_by(OrgMember.login).limit(ROSTER_LIMIT + 1).all()
@@ -173,6 +185,9 @@ def build_bundle(
 
     cursor = db.get(OrgMembershipSyncCursor, tenant_id)
     notes = [
+        "control_mapping.csv is Clevis's static, indicative mapping of checks to SOC 2 (2017 TSC), CIS Controls v8 and "
+        "ISO/IEC 27001:2022 Annex A controls: evidence toward a control, not proof that it is met. Checks with no "
+        "clear counterpart are not listed.",
         "members.csv and outside_collaborators.csv are Clevis's ingested copy (GitHub webhooks plus the "
         "membership reconciliation poll), not a live GitHub read; see roster_last_synced_at.",
         "two_factor_enabled is empty when the reconciliation poll has not read it yet (unknown, not off).",

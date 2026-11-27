@@ -59,6 +59,7 @@ import type {
   InvitationPreview,
   JobOut,
   HygieneScoringSettings,
+  ControlMapping,
   ScoringExclusions,
   MyOrgMembership,
   MyIssueListResponse,
@@ -444,6 +445,10 @@ function normalizeCheckValueShape(id: string, raw: unknown): CheckValue {
 
 
 export const api = {
+  compliance: {
+    // Static check-to-control table (SOC 2, CIS, ISO 27001) for the compliance matrix.
+    controls: () => get<ControlMapping>("/compliance/controls"),
+  },
   notifications: {
     // `days` widens the window past the bell's default (14 days); `before` (the `at` of the last item
     // already loaded, with `before_id` its id so items sharing that time are not skipped) pages to older items. The server then reports `unread_count` 0.

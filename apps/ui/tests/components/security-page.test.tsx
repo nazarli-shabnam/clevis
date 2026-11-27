@@ -11,6 +11,7 @@ const analyticsExportMock = vi.fn();
 const analyticsChangesMock = vi.fn();
 const analyticsLatestScanMock = vi.fn();
 const downloadTextFileMock = vi.fn();
+const complianceControlsMock = vi.fn();
 
 vi.mock("@/lib/download", () => ({
   downloadTextFile: (...args: unknown[]) => downloadTextFileMock(...args),
@@ -62,6 +63,7 @@ vi.mock("@/lib/api/client", () => ({
       changes: (...args: unknown[]) => analyticsChangesMock(...args),
       latestScan: (...args: unknown[]) => analyticsLatestScanMock(...args),
     },
+    compliance: { controls: (...args: unknown[]) => complianceControlsMock(...args) },
     security: {
       matrix: (...args: unknown[]) => securityMatrixMock(...args),
       secretScanning: (...args: unknown[]) => secretScanningMock(...args),
@@ -126,6 +128,7 @@ describe("SecurityPage", () => {
     tokensResolveMock.mockReset();
     tokensUpsertMock.mockReset();
     analyticsOverviewMock.mockReset();
+    complianceControlsMock.mockReset();
     analyticsHistoryMock.mockReset();
     securityMatrixMock.mockReset();
     secretScanningMock.mockReset();
@@ -474,6 +477,32 @@ describe("SecurityPage", () => {
 
     await waitFor(() => expect(securityMatrixMock).toHaveBeenCalledTimes(2));
     expect(screen.getByText("Fix many repos at once")).toBeInTheDocument();
+  });
+
+  it("adds a controls-at-risk column to the matrix from the control mapping (#1277)", async () => {
+    complianceControlsMock.mockResolvedValue({
+      frameworks: [{ id: "soc2", name: "SOC 2", version: "2017" }],
+      checks: { repository_default_branch_protection_enabled: [{ framework: "soc2", id: "CC8.1", name: "Change management" }] },
+    });
+    analyticsOverviewMock.mockResolvedValue({ owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 1, checks: [] });
+    securityMatrixMock.mockResolvedValue({
+      owner: "acme",
+      repos: [{
+        repo: "acme-repo", branch_protection: false, secret_scanning: true, dependabot_enabled: true,
+        dependabot_critical_count: 0, dependabot_high_count: 0, code_scanning: true, force_push_allowed: false,
+        score: 80, unknown_dimensions: [], alerts_source: "github",
+      }],
+      summary: { fully_compliant_count: 0, critical_risk_count: 0, secret_hits_count: 0, vuln_by_severity: { critical: 0, high: 0, medium: 0, low: 0 } },
+    });
+
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+
+    expect(await screen.findByText("Controls at risk")).toBeInTheDocument();
+    expect(screen.getByText("CC8.1")).toBeInTheDocument();
   });
 
   it("refreshes the cockpit (Overview score, sidebar dot) when a scan finishes", async () => {
