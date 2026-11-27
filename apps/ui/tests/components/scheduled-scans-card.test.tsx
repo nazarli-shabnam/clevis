@@ -79,7 +79,7 @@ describe("ScheduledScansCard", () => {
     setMock.mockRejectedValue(new Error("not an admin"))
     wrap(<ScheduledScansCard orgLogin="acme" />)
     fireEvent.change(await screen.findByLabelText(/Scan this organization automatically/), { target: { value: "on" } })
-    await waitFor(() => expect(screen.getByText("not an admin")).toBeInTheDocument())
+    expect(await screen.findByRole("alert")).toHaveTextContent("not an admin")
   })
 })
 

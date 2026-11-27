@@ -18,6 +18,8 @@ interface MyItemsListProps {
   onPageChange: (page: number) => void
   /** Backend couldn't resolve the user's GitHub login; render a distinct message, not "zero items". */
   identityUnresolved?: boolean
+  /** More matches exist than GitHub search can return (first 1000). */
+  truncated?: boolean
 }
 
 // Full-page version of the Overview's MyViewRow, with Prev/Next paging.
@@ -34,6 +36,7 @@ export function MyItemsList({
   perPage,
   onPageChange,
   identityUnresolved = false,
+  truncated = false,
 }: MyItemsListProps) {
   const lastPage = Math.max(1, Math.ceil(totalCount / perPage))
 
@@ -80,7 +83,7 @@ export function MyItemsList({
           </div>
           <div className="px-4 py-3 border-t border-border flex items-center justify-between">
             <span className="text-xs text-muted-foreground">
-              Page {page} of {lastPage} · {totalCount} total
+              Page {page} of {lastPage} · {truncated ? `first ${totalCount} reachable (GitHub search limit)` : `${totalCount} total`}
             </span>
             <div className="flex gap-2">
               <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>

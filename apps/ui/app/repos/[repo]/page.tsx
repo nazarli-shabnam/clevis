@@ -465,6 +465,19 @@ export default function RepoDetailPage() {
         {statsQuery.isError && (
           <p className="text-xs text-destructive lg:col-span-2">{statsQuery.error.message}</p>
         )}
+        {statsQuery.data?.stats_ready === false && (
+          <p role="status" className="text-xs text-muted-foreground lg:col-span-2">
+            GitHub is still computing these statistics. Check back in a minute.{" "}
+            <button
+              type="button"
+              className="underline underline-offset-2 hover:text-foreground"
+              onClick={() => statsQuery.refetch()}
+              disabled={statsQuery.isFetching}
+            >
+              Retry
+            </button>
+          </p>
+        )}
       </div>
 
       <div
