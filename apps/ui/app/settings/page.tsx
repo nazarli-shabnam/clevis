@@ -978,10 +978,10 @@ export default function SettingsPage() {
       )}
       <SectionNav sections={sections} />
       <div className="flex flex-col gap-6">
-        <SectionAnchor id="profile" label="Profile">
+        <SectionAnchor id="profile">
           <ProfileSection />
         </SectionAnchor>
-        <SectionAnchor id="password-email" label="Password and email">
+        <SectionAnchor id="password-email">
           {user?.has_password === false ? (
             <div className="card">
               <div className="px-4 py-3 border-b border-border">
@@ -998,35 +998,35 @@ export default function SettingsPage() {
             </>
           )}
         </SectionAnchor>
-        <SectionAnchor id="sessions" label="Sessions">
+        <SectionAnchor id="sessions">
           <SessionsCard />
         </SectionAnchor>
-        <SectionAnchor id="appearance" label="Appearance">
+        <SectionAnchor id="appearance">
           <AppearanceSection />
         </SectionAnchor>
-        <SectionAnchor id="organizations" label="Organizations">
+        <SectionAnchor id="organizations">
           <OrgMembershipsSection />
           <PendingInstallationsCard />
         </SectionAnchor>
         {admin && (
-          <SectionAnchor id="github-app" label="GitHub App">
+          <SectionAnchor id="github-app">
             <GithubAppSetupCard />
           </SectionAnchor>
         )}
-        <SectionAnchor id="connected" label="Connected accounts">
+        <SectionAnchor id="connected">
           <ConnectedOrgsSection />
         </SectionAnchor>
         {admin && (
-          <SectionAnchor id="tokens" label="Saved tokens">
+          <SectionAnchor id="tokens">
             <SavedTokensSection />
           </SectionAnchor>
         )}
         {admin && (
-          <SectionAnchor id="instance" label="Instance configuration">
+          <SectionAnchor id="instance">
             <InstanceConfigSection />
           </SectionAnchor>
         )}
-        <SectionAnchor id="delete-account" label="Delete account">
+        <SectionAnchor id="delete-account">
           <DeleteAccountCard />
         </SectionAnchor>
       </div>

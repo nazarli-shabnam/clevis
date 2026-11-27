@@ -509,7 +509,7 @@ describe("SettingsPage", () => {
         ["Delete account", "#delete-account"],
       ]);
       for (const [, href] of navLinks()) expect(document.getElementById(String(href).slice(1))).not.toBeNull();
-      expect(screen.getByRole("region", { name: "Instance configuration" })).toContainElement(screen.getByLabelText("Worker Poll Interval"));
+      expect(document.getElementById("instance")).toContainElement(screen.getByLabelText("Worker Poll Interval"));
     });
 
     it("leaves out the admin-only sections, links and anchors for anyone else", async () => {
@@ -521,17 +521,68 @@ describe("SettingsPage", () => {
       for (const id of ["github-app", "tokens", "instance"]) expect(document.getElementById(id)).toBeNull();
     });
 
-    it("scrolls to the section named in the address once the page is up", async () => {
-      const scrollIntoView = vi.fn();
-      Element.prototype.scrollIntoView = scrollIntoView;
-      window.location.hash = "#sessions";
-      arrange(true);
+    describe("deep links", () => {
+      const originalScroll = Element.prototype.scrollIntoView
+      let scrollIntoView: ReturnType<typeof vi.fn>
+      beforeEach(() => {
+        scrollIntoView = vi.fn()
+        Element.prototype.scrollIntoView = scrollIntoView as unknown as typeof Element.prototype.scrollIntoView
+      })
+      afterEach(() => {
+        Element.prototype.scrollIntoView = originalScroll
+        window.location.hash = ""
+      })
 
-      await screen.findByRole("button", { name: "Save profile" });
-      expect(scrollIntoView).toHaveBeenCalledTimes(1);
-      expect(scrollIntoView.mock.contexts[0]).toBe(document.getElementById("sessions"));
-      window.location.hash = "";
-    });
+      it("scrolls to the section named in the address once the page is up", async () => {
+        window.location.hash = "#sessions"
+        arrange(true)
+
+        await screen.findByRole("button", { name: "Save profile" })
+        expect(scrollIntoView).toHaveBeenCalled()
+        expect(scrollIntoView.mock.contexts[0]).toBe(document.getElementById("sessions"))
+      })
+
+      it("ignores a malformed or unknown fragment instead of crashing", async () => {
+        for (const hash of ["#%E0%A4%A", "#%", "#nope"]) {
+          window.location.hash = hash
+          arrange(true)
+          await screen.findByRole("button", { name: "Save profile" })
+          cleanup()
+        }
+        expect(scrollIntoView).not.toHaveBeenCalled()
+      })
+
+      it("keeps the section in view while the page grows, until the person scrolls", async () => {
+        let resize: () => void = () => {}
+        const observed: unknown[] = []
+        vi.stubGlobal(
+          "ResizeObserver",
+          class {
+            constructor(cb: () => void) {
+              resize = cb
+            }
+            observe(el: unknown) {
+              observed.push(el)
+            }
+            disconnect() {}
+          },
+        )
+        window.location.hash = "#sessions"
+        arrange(true)
+        await screen.findByRole("button", { name: "Save profile" })
+        expect(observed.length).toBeGreaterThan(0)
+        expect(observed.every((el) => el === document.body)).toBe(true)
+
+        const before = scrollIntoView.mock.calls.length
+        resize() // a card above finished loading and grew
+        expect(scrollIntoView.mock.calls.length).toBe(before + 1)
+
+        fireEvent.wheel(window) // the person takes over: stop following
+        resize()
+        expect(scrollIntoView.mock.calls.length).toBe(before + 1)
+        vi.unstubAllGlobals()
+      })
+    })
   });
 
   it("saves a chosen leadership-digest cadence", async () => {

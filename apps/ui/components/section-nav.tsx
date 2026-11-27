@@ -7,15 +7,51 @@ export interface NavSection {
   label: string
 }
 
+/** The section id named by the address bar's #fragment, or null (none, malformed, or not one of these). */
+function hashTarget(ids: readonly string[]): string | null {
+  let id: string
+  try {
+    id = decodeURIComponent(window.location.hash.slice(1))
+  } catch {
+    return null // a hand-edited or truncated escape such as #%E0%A4
+  }
+  return ids.includes(id) ? id : null
+}
+
+// How long a deep link keeps following the section while the cards above it load and grow.
+const SETTLE_MS = 4000
+
 /** A sticky row of in-page links, one per section; the ids are the anchors (`/settings#sessions`). */
 export function SectionNav({ sections, label = "Settings sections" }: { sections: readonly NavSection[]; label?: string }) {
-  // The anchors are in the first render, but the cards above them fill in later; scroll to the one in the URL
-  // once the page is up, because the browser's own jump on load ran before there was anything to land on.
+  const idsKey = sections.map((s) => s.id).join(",")
+
+  // The anchors are in the first render, but the cards above them fill in later, and the browser's own jump on load
+  // ran before there was anything to land on. So scroll to the section named in the URL, then keep it in view
+  // while the page's height changes, until it has settled or the person scrolls themselves.
   useEffect(() => {
-    const id = decodeURIComponent(window.location.hash.slice(1))
-    if (id && sections.some((s) => s.id === id)) document.getElementById(id)?.scrollIntoView?.()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    const id = hashTarget(idsKey.split(","))
+    const el = id ? document.getElementById(id) : null
+    if (!el) return
+    let following = true
+    const scroll = () => {
+      if (following) el.scrollIntoView?.()
+    }
+    scroll()
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scroll)
+    observer?.observe(document.body)
+    const stop = () => {
+      following = false
+      observer?.disconnect()
+    }
+    const timer = window.setTimeout(stop, SETTLE_MS)
+    const takeOver = ["wheel", "touchstart", "keydown", "pointerdown"] as const
+    for (const type of takeOver) window.addEventListener(type, stop, { passive: true })
+    return () => {
+      window.clearTimeout(timer)
+      for (const type of takeOver) window.removeEventListener(type, stop)
+      stop()
+    }
+  }, [idsKey])
 
   return (
     <nav aria-label={label} className="sticky top-0 z-10 -mx-1 mb-4 flex flex-wrap gap-1.5 bg-background/90 px-1 py-2 backdrop-blur">
@@ -32,11 +68,12 @@ export function SectionNav({ sections, label = "Settings sections" }: { sections
   )
 }
 
-/** The target of one nav link: the section's cards, with room above them for the sticky nav. */
-export function SectionAnchor({ id, label, children }: { id: string; label: string; children: React.ReactNode }) {
+/** The target of one nav link: the section's cards (which carry their own headings), with room above them for the
+ * sticky nav, which wraps to several rows on a narrow screen. */
+export function SectionAnchor({ id, children }: { id: string; children: React.ReactNode }) {
   return (
-    <section id={id} aria-label={label} className="scroll-mt-20 flex flex-col gap-4">
+    <div id={id} className="scroll-mt-32 sm:scroll-mt-20 flex flex-col gap-4">
       {children}
-    </section>
+    </div>
   )
 }
