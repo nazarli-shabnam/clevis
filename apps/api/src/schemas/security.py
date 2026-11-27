@@ -68,6 +68,8 @@ class SecretScanningResponse(BaseModel):
     repository: str
     alerts: list[SecretAlert]
     source: Literal["github", "aggregate"] = "github"
+    # True when the repo has more alerts than the response carries (all states, newest first).
+    truncated: bool = False
 
 
 class BurndownSeverity(BaseModel):

@@ -37,6 +37,26 @@ describe("MyItemsList", () => {
     expect(screen.getByRole("link", { name: /Fix bug/ })).toHaveAttribute("href", ITEM.html_url);
   });
 
+  it("says so when GitHub search could not return every match", () => {
+    render(
+      <MyItemsList
+        items={[ITEM]}
+        isLoading={false}
+        isError={false}
+        errorMessage=""
+        onRetry={() => {}}
+        retrying={false}
+        emptyNoun="pull requests"
+        totalCount={1000}
+        page={1}
+        perPage={25}
+        onPageChange={() => {}}
+        truncated
+      />,
+    );
+    expect(screen.getByText(/first 1000 reachable \(GitHub search limit\)/)).toBeInTheDocument();
+  });
+
   it("shows the empty state only when there are genuinely no items", () => {
     render(
       <MyItemsList

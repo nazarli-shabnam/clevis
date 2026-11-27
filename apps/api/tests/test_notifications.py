@@ -571,6 +571,31 @@ def test_event_deltas_apply_to_the_stored_set_not_a_stale_copy(db, acme):
     assert client.patch(url, json={"events": ["score_drop"], "add_events": ["waiver_expired"]}).status_code == 422
 
 
+def test_remove_secret_makes_a_signed_webhook_unsigned_and_is_audited(db, acme):
+    client = _client(db, acme["admin"])
+    dest_id = _create(client, kind="generic", secret="old-secret").json()["id"]
+    url = f"/orgs/acme/notification-destinations/{dest_id}"
+    assert client.get("/orgs/acme/notification-destinations").json()[0]["signed"] is True
+
+    resp = client.patch(url, json={"remove_secret": True})
+
+    assert resp.status_code == 200 and resp.json()["signed"] is False
+    assert db.get(NotificationDestination, dest_id).encrypted_secret is None
+    log = db.query(AuditLog).filter(AuditLog.action == "notification.destination_updated").one()
+    assert json.loads(log.payload)["changed"] == ["secret_removed"]
+    # Already unsigned: a repeat is a no-op, not an error.
+    assert client.patch(url, json={"remove_secret": True}).json()["signed"] is False
+
+
+def test_remove_secret_is_refused_with_a_new_secret_or_on_a_non_generic_destination(db, acme):
+    client = _client(db, acme["admin"])
+    generic = _create(client, kind="generic", secret="s").json()["id"]
+    slack = _create(client, kind="slack").json()["id"]
+    assert client.patch(f"/orgs/acme/notification-destinations/{generic}", json={"remove_secret": True, "secret": "n"}).status_code == 422
+    assert client.patch(f"/orgs/acme/notification-destinations/{slack}", json={"remove_secret": True}).status_code == 422
+    assert client.patch(f"/orgs/acme/notification-destinations/{slack}", json={"remove_secret": False}).status_code == 200
+
+
 def _mark_failing(db, dest_id, times=3):
     for _ in range(times):
         notification_repo.record_delivery(db, dest_id, False, "HTTP 404")

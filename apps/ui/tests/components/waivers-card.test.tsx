@@ -417,6 +417,17 @@ describe("CheckCard waived badge", () => {
     expect(await screen.findByRole("button", { name: "Add waiver" })).toBeInTheDocument()
   })
 
+  it("shows Saving… on the button while an edit is being saved", async () => {
+    listMock.mockResolvedValue([waiver()])
+    updateMock.mockReturnValue(new Promise(() => {}))
+    renderCard()
+    fireEvent.click(await screen.findByRole("button", { name: /Renew or edit waiver for/ }))
+
+    fireEvent.click(screen.getByRole("button", { name: "Save waiver" }))
+
+    expect(await screen.findByRole("button", { name: "Saving…" })).toBeDisabled()
+  })
+
   it("renews an expired waiver, defaulting its new expiry to 30 days out, and can be cancelled", async () => {
     vi.useFakeTimers({ toFake: ["Date"] })
     vi.setSystemTime(new Date(2026, 5, 15, 12, 0, 0))
