@@ -230,6 +230,8 @@ class CockpitResponse(BaseModel):
     member_count: int | None
     latest_score: int | None
     score_trend: list[int]
+    # When each score_trend point was scanned (same length and order), so a chart can label them with dates.
+    score_trend_dates: list[datetime] = []
     recent_events: list[OrgEventSummary]
     open_pr_count: int
     pr_merge_rate_4w: list[PrWeekBucket]

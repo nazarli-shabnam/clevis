@@ -6,7 +6,8 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { PageHeader } from "@/components/page-header"
-import { ScanChangesCard } from "@/components/scan-changes-card"
+import { ScanChangesCard, scanChangesKey } from "@/components/scan-changes-card"
+import { scoreChangeFrom, scoreChangeText, type ScoreChange } from "@/lib/score-change"
 import { ScanExplorer } from "@/components/scan-explorer"
 import { EmptyStateNoAccount } from "@/components/empty-state"
 import { CheckCard } from "@/components/check-card"
@@ -42,7 +43,7 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"]
 
-function ScoreGauge({ score, failed, total }: { score: number | null; failed: number; total: number }) {
+function ScoreGauge({ score, failed, total, change }: { score: number | null; failed: number; total: number; change?: ScoreChange | null }) {
   const r = 38
   const circumference = 2 * Math.PI * r
   const progress = ((score ?? 0) / 100) * circumference
@@ -68,6 +69,11 @@ function ScoreGauge({ score, failed, total }: { score: number | null; failed: nu
       </div>
       <div>
         <p className="text-sm font-semibold text-foreground">Security Score</p>
+        {change && (
+          <p className={`text-xs mt-0.5 ${"points" in change && change.points > 0 ? "text-accent" : "points" in change && change.points < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+            {"points" in change ? scoreChangeText(change) : change.note}
+          </p>
+        )}
         <div className="flex items-center gap-2 mt-2">
           {total === 0 && <span className="stat-chip">No checks were scored</span>}
           <span className="stat-chip">{total - failed} passed</span>
@@ -240,6 +246,15 @@ export default function SecurityPage() {
   })
   const target = targetQuery.data?.target ?? undefined
 
+  // The two latest scans compared, for "+3 vs last scan" under the score. Shared with the "changed since the last
+  // scan" card (same key), and only used while the gauge shows the scan the comparison ends at.
+  const changesQuery = useQuery({
+    queryKey: scanChangesKey(scopeOrgLogin),
+    queryFn: () => api.analytics.changes(scopeOrgLogin),
+    enabled: scopeOrgLogin !== "" && owner === scopeOrgLogin,
+    retry: false,
+  })
+
   const historyQuery = useQuery({
     queryKey: ["analytics.history", lookupOwner],
     queryFn: () => api.analytics.history(lookupOwner),
@@ -315,6 +330,7 @@ export default function SecurityPage() {
   const shown = scanIsForOwner && scan.data ? scan.data : storedScan
   const shownScannedAt = scanIsForOwner && scan.data ? null : (storedScan?.scanned_at ?? null)
   const shownOwner = shown?.owner ?? ""
+  const scoreChange = shown && shownOwner.toLowerCase() === scopeOrgLogin.toLowerCase() ? scoreChangeFrom(changesQuery.data, shown.score) : null
   const matrixIsForOwner = matrixMutation.variables === owner
 
   // Results belong to the owner they were scanned for: drop them (and the repo picked from them)
@@ -583,6 +599,7 @@ export default function SecurityPage() {
                   score={shown.score}
                   failed={shown.failed_checks}
                   total={shown.total_checks}
+                  change={scoreChange}
                 />
                 {statusBreakdown.length > 0 && (
                   <div className="px-4 py-4 sm:border-l border-border">

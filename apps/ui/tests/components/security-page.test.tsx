@@ -183,6 +183,37 @@ describe("SecurityPage", () => {
     expect(analyticsChangesMock).toHaveBeenCalledWith("acme");
   });
 
+  it("shows the score's change since the previous scan under the gauge (#1285)", async () => {
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "acme" }));
+    analyticsOverviewMock.mockResolvedValue({ owner: "acme", score: 85, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [] });
+    analyticsChangesMock.mockResolvedValue({
+      org: "acme", has_previous: true, previous_scanned_at: "2026-11-26T00:00:00Z", scanned_at: "2026-11-27T00:00:00Z",
+      previous_score: 90, score: 85, comparable: true, changes: [],
+    });
+    renderPage();
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+
+    expect(await screen.findByText("-5 vs last scan")).toBeInTheDocument();
+  });
+
+  it("leaves the change out when the gauge shows a different scan than the comparison ends at", async () => {
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "acme" }));
+    analyticsOverviewMock.mockResolvedValue({ owner: "acme", score: 60, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [] });
+    analyticsChangesMock.mockResolvedValue({
+      org: "acme", has_previous: true, previous_scanned_at: "2026-11-26T00:00:00Z", scanned_at: "2026-11-27T00:00:00Z",
+      previous_score: 90, score: 85, comparable: true, changes: [],
+    });
+    renderPage();
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+
+    await screen.findByText(/Results — acme/);
+    expect(screen.queryByText(/vs last scan/)).not.toBeInTheDocument();
+  });
+
   it("does not show the changed-since-last-scan panel without an org scope", async () => {
     renderPage();
     await waitFor(() => expect(analyticsHistoryMock).not.toHaveBeenCalled());

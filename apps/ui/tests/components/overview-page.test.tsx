@@ -12,6 +12,7 @@ const installationsListForOrgMock = vi.fn();
 const installationsListMock = vi.fn();
 const activitySummaryMock = vi.fn();
 const latestScanMock = vi.fn();
+const changesMock = vi.fn();
 
 let authUser: { id: number } | null = { id: 1 };
 vi.mock("@/lib/auth-context", () => ({
@@ -29,6 +30,7 @@ vi.mock("@/lib/api/client", () => ({
       actionsUsage: (...args: unknown[]) => actionsUsageMock(...args),
       cacheHistory: (...args: unknown[]) => cacheHistoryMock(...args),
       latestScan: (...args: unknown[]) => latestScanMock(...args),
+      changes: (...args: unknown[]) => changesMock(...args),
     },
     orgs: {
       mine: (...args: unknown[]) => orgsMineMock(...args),
@@ -93,6 +95,8 @@ describe("OverviewPage cockpit", () => {
     cockpitMock.mockReset();
     latestScanMock.mockReset();
     latestScanMock.mockRejectedValue(new Error("none"));
+    changesMock.mockReset();
+    changesMock.mockRejectedValue(new Error("none"));
     myViewMock.mockReset();
     actionsUsageMock.mockReset();
     cacheHistoryMock.mockReset();
@@ -900,5 +904,32 @@ describe("OverviewPage cockpit", () => {
       await waitFor(() => expect(cockpitMock).toHaveBeenCalledTimes(3));
       expect(screen.queryByLabelText("Getting started")).toBeNull();
     });
+  });
+
+  it("shows the score's change since the previous scan on its card (#1285)", async () => {
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "org", login: "acme" }));
+    tokensResolveMock.mockRejectedValue(new Error("No saved token for this org"));
+    cockpitMock.mockResolvedValue({ ...EMPTY_COCKPIT, latest_score: 85, score_trend: [70, 80, 85] });
+    changesMock.mockResolvedValue({
+      org: "acme", has_previous: true, previous_scanned_at: "2026-11-26T00:00:00Z", scanned_at: "2026-11-27T00:00:00Z",
+      previous_score: 80, score: 85, comparable: true, changes: [],
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("+5 vs last scan")).toBeInTheDocument();
+    expect(changesMock).toHaveBeenCalledWith("acme");
+  });
+
+  it("does not guess a change when the scan comparison is not available, or for a personal scope", async () => {
+    localStorage.setItem("active_scope", JSON.stringify({ kind: "personal", login: "octocat" }));
+    tokensResolveMock.mockRejectedValue(new Error("No saved token for this org"));
+    cockpitMock.mockResolvedValue({ ...EMPTY_COCKPIT, latest_score: 85, score_trend: [70, 80, 85] });
+
+    renderPage();
+
+    await screen.findByText("85");
+    expect(screen.queryByText(/vs last scan/)).not.toBeInTheDocument();
+    expect(changesMock).not.toHaveBeenCalled();
   });
 });

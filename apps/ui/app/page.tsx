@@ -10,6 +10,9 @@ import { StatCard } from "@/components/stat-card"
 import { EventActivityList } from "@/components/event-activity-list"
 import { ActivityByRepoCard } from "@/components/activity-by-repo-card"
 import { AreaTimeChart } from "@/components/charts/area-time-chart"
+import { scanChangesKey } from "@/components/scan-changes-card"
+import { scanLabels } from "@/lib/scan-labels"
+import { scoreChangeFrom, type ScoreChange } from "@/lib/score-change"
 import { BarGroupChart } from "@/components/charts/bar-group-chart"
 import { ArrowRight, Warning } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
@@ -60,13 +63,14 @@ const quickActions = [
   { label: "View Collaborators", href: "/collaborators" },
 ]
 
-function LiveStatCard({ label, href, loading, configured, value, trend }: {
+function LiveStatCard({ label, href, loading, configured, value, trend, change }: {
   label: string
   href: string
   loading: boolean
   configured: boolean
   value: number | undefined
   trend?: number[]
+  change?: ScoreChange | null
 }) {
   if (!configured) {
     return (
@@ -81,7 +85,7 @@ function LiveStatCard({ label, href, loading, configured, value, trend }: {
     )
   }
 
-  return <StatCard label={label} value={loading ? "…" : (value ?? "—")} trend={trend} />
+  return <StatCard label={label} value={loading ? "…" : (value ?? "—")} trend={trend} change={change} />
 }
 
 export default function OverviewPage() {
@@ -122,6 +126,14 @@ export default function OverviewPage() {
     refetchInterval: 30_000,
   })
   const scannedAt = latestScanQuery.data?.scanned_at
+  // The two latest scans compared (org scopes only), for "+3 vs last scan" on the score card. The same key and fetch
+  // as the Security page's "changed since the last scan" card.
+  const scanChangesQuery = useQuery({
+    queryKey: scanChangesKey(org),
+    queryFn: () => api.analytics.changes(org),
+    enabled: scope?.kind === "org" && org.trim().length > 0,
+    retry: false,
+  })
   // "Configure →" means there is no data source. The cockpit loading or having loaded proves there is one
   // (App installation or saved PAT); only a failed (or never-started) cockpit leaves the cards unconfigured.
   // Keyed on the data, not isSuccess: a failed background refetch keeps the previous data but flips the status
@@ -166,8 +178,9 @@ export default function OverviewPage() {
     week: `W${i + 1}`,
     value,
   }))
+  const scoreTrendLabels = scanLabels(cockpit?.score_trend.length ?? 0, cockpit?.score_trend_dates)
   const scoreTrendData = (cockpit?.score_trend ?? []).map((value, i) => ({
-    week: `Scan ${i + 1}`,
+    week: scoreTrendLabels[i],
     value,
   }))
   const prMergeRateData = (cockpit?.pr_merge_rate_4w ?? []).map((b) => ({
@@ -272,6 +285,7 @@ export default function OverviewPage() {
           configured={configured}
           value={cockpit?.latest_score ?? undefined}
           trend={cockpit?.score_trend}
+          change={scoreChangeFrom(scanChangesQuery.data, cockpit?.latest_score)}
         />
         <LiveStatCard
           label="Team Members"

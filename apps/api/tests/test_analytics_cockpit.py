@@ -137,6 +137,8 @@ def test_cockpit_success_all_sources(http, db, mock_user):
     assert body["total_cache_size_bytes"] == 123456
     assert body["latest_score"] == 85
     assert body["score_trend"] == [70, 85]
+    # One date per point, oldest first, so the Overview chart can label them.
+    assert len(body["score_trend_dates"]) == 2 and body["score_trend_dates"][0] <= body["score_trend_dates"][1]
     assert body["cache_job_success_rate"] == 0.75
     assert body["degraded"] is False
 
@@ -188,6 +190,7 @@ def test_cockpit_no_scans_yet(http, db, mock_user):
     body = resp.json()
     assert body["latest_score"] is None
     assert body["score_trend"] == []
+    assert body["score_trend_dates"] == []
 
 
 def test_cockpit_hides_score_trend_from_a_non_member_byo_pat_caller(http, db, mock_user):
