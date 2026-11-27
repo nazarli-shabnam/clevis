@@ -2,7 +2,7 @@ import re
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictInt, field_validator
 
 from src.core.path_params import Owner
 
@@ -92,6 +92,18 @@ class ScoringExclusions(BaseModel):
             if p not in out:
                 out.append(p)
         return out
+
+
+class TargetScore(BaseModel):
+    """The org's target score; ``target`` None = no target."""
+
+    target: int | None = None
+
+
+class TargetScoreUpdate(BaseModel):
+    # Required (no default): a body that misses or misspells the field must not silently clear the target.
+    # Strict: ``true`` is not a score.
+    target: StrictInt | None = Field(ge=1, le=100)
 
 
 class ScheduledScanUpdate(BaseModel):

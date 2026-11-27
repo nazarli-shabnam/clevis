@@ -8,6 +8,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
+  ReferenceLine,
   ResponsiveContainer,
 } from "recharts"
 import { CHART_COLORS, CHART_TOOLTIP_STYLE } from "@/lib/charts/theme"
@@ -20,6 +21,8 @@ interface AreaTimeChartProps {
   height?: number
   /** Makes the points clickable; called with the index into `data` of the point under the click. */
   onPointClick?: (index: number) => void
+  /** A horizontal goal line (e.g. an org's target score); the y axis is widened to include it. */
+  target?: number
 }
 
 /** Time-series area chart with gradient fill (commit activity, velocity trends). */
@@ -29,11 +32,12 @@ export function AreaTimeChart({
   color = CHART_COLORS.primary,
   height = 240,
   onPointClick,
+  target,
 }: AreaTimeChartProps) {
   // useId keeps the gradient id unique even with several charts on one page.
   const gradientId = `area-grad-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`
   return (
-    <ChartA11y summary={describeSeries(label, data.map((d) => ({ name: d.week, value: d.value })))}>
+    <ChartA11y summary={describeSeries(label, data.map((d) => ({ name: d.week, value: d.value }))) + (target === undefined ? "" : ` Target ${target}.`)}>
     <ResponsiveContainer width="100%" height={height}>
       <AreaChart
         data={data}
@@ -57,12 +61,20 @@ export function AreaTimeChart({
         </defs>
         <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} />
         <XAxis dataKey="week" stroke={CHART_COLORS.axis} fontSize={11} tickLine={false} />
-        <YAxis stroke={CHART_COLORS.axis} fontSize={11} tickLine={false} width={36} />
+        <YAxis stroke={CHART_COLORS.axis} fontSize={11} tickLine={false} width={36} domain={target === undefined ? undefined : [(min: number) => Math.min(min, target), (max: number) => Math.max(max, target)]} />
         <Tooltip
           contentStyle={CHART_TOOLTIP_STYLE}
           labelStyle={{ color: CHART_COLORS.axis }}
           cursor={{ stroke: CHART_COLORS.grid }}
         />
+        {target !== undefined && (
+          <ReferenceLine
+            y={target}
+            stroke={CHART_COLORS.axis}
+            strokeDasharray="4 4"
+            label={{ value: `Target ${target}`, position: "insideTopRight", fill: CHART_COLORS.axis, fontSize: 11 }}
+          />
+        )}
         <Area
           type="monotone"
           dataKey="value"

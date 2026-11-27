@@ -59,6 +59,7 @@ import type {
   InvitationPreview,
   JobOut,
   HygieneScoringSettings,
+  TargetScore,
   ControlMapping,
   ScoringExclusions,
   MyOrgMembership,
@@ -903,6 +904,9 @@ export const api = {
     // enabled: null clears the org's override so it follows the instance setting again.
     setHygieneScoring: (orgLogin: string, enabled: boolean | null) =>
       put<HygieneScoringSettings>(`/orgs/${encodeURIComponent(orgLogin)}/hygiene-scoring`, { enabled }),
+    targetScore: (orgLogin: string) => get<TargetScore>(`/orgs/${encodeURIComponent(orgLogin)}/target-score`),
+    setTargetScore: (orgLogin: string, target: number | null) =>
+      put<TargetScore>(`/orgs/${encodeURIComponent(orgLogin)}/target-score`, { target }),
     scoringExclusions: (orgLogin: string) =>
       get<ScoringExclusions>(`/orgs/${encodeURIComponent(orgLogin)}/scoring-exclusions`),
     setScoringExclusions: (orgLogin: string, patterns: string[]) =>

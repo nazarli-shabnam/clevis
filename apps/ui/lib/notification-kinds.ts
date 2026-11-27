@@ -9,6 +9,7 @@ export const KIND_LABEL = {
   waiver_expired: "Waiver expired",
   waiver_expiring: "Waiver expiring",
   waiver_request: "Waiver request",
+  below_target: "Below target",
   sla_breach: "SLA breach",
   api_token_expiring: "Token expiring",
 } as const satisfies Record<NotificationKind, string>
@@ -21,6 +22,7 @@ export const KIND_ORDER: NotificationKind[] = [
   "waiver_expired",
   "waiver_expiring",
   "waiver_request",
+  "below_target",
   "sla_breach",
   "api_token_expiring",
 ]
@@ -33,6 +35,7 @@ export const KIND_HINT: Record<NotificationKind, string> = {
   waiver_expired: "Check waivers that expired (admins)",
   waiver_expiring: "Check waivers in their last week (admins)",
   waiver_request: "Members asking for a check waiver (admins)",
+  below_target: "The latest score is under the org's target score",
   sla_breach: "Dependabot alerts past their remediation SLA",
   api_token_expiring: "API tokens close to expiring (admins)",
 }
