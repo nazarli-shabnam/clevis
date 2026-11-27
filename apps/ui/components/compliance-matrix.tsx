@@ -3,13 +3,15 @@
 import { useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table"
-import type { RepoSecurityRow } from "@/lib/api/types"
+import type { ControlMapping, RepoSecurityRow } from "@/lib/api/types"
 
 type Status = "pass" | "fail" | "unknown"
 
 interface Dimension {
   id: string
   label: string
+  /** The scan check this column is the per-repo view of, for the control mapping. */
+  checkId: string
   status: (r: RepoSecurityRow) => Status
   /** What the cell shows. */
   cell: (r: RepoSecurityRow) => React.ReactNode
@@ -23,18 +25,21 @@ const UNKNOWN_TITLE = "unknown — token can't see this"
 const DIMENSIONS: Dimension[] = [
   {
     id: "branch_protection",
+    checkId: "repository_default_branch_protection_enabled",
     label: "Branch",
     status: (r) => (unknown(r, "branch_protection") ? "unknown" : r.branch_protection ? "pass" : "fail"),
     cell: (r) => (unknown(r, "branch_protection") ? "?" : r.branch_protection ? "✓" : "—"),
   },
   {
     id: "secret_scanning",
+    checkId: "repository_secret_scanning_enabled",
     label: "Secrets",
     status: (r) => (unknown(r, "secret_scanning") ? "unknown" : r.secret_scanning ? "pass" : "fail"),
     cell: (r) => (unknown(r, "secret_scanning") ? "?" : r.secret_scanning ? "✓" : "—"),
   },
   {
     id: "dependabot",
+    checkId: "repository_dependabot_alerts_clear",
     label: "Dependabot",
     status: (r) =>
       unknown(r, "dependabot") ? "unknown" : r.dependabot_critical_count + r.dependabot_high_count > 0 ? "fail" : "pass",
@@ -49,12 +54,14 @@ const DIMENSIONS: Dimension[] = [
   },
   {
     id: "code_scanning",
+    checkId: "repository_code_scanning_alerts_clear",
     label: "Code scan",
     status: (r) => (unknown(r, "code_scanning") ? "unknown" : r.code_scanning ? "pass" : "fail"),
     cell: (r) => (unknown(r, "code_scanning") ? "?" : r.code_scanning ? "✓" : "—"),
   },
   {
     id: "force_push",
+    checkId: "repository_default_branch_no_force_push",
     label: "Force-push",
     status: (r) => (unknown(r, "force_push") ? "unknown" : r.force_push_allowed ? "fail" : "pass"),
     cell: (r) => (unknown(r, "force_push") ? "?" : r.force_push_allowed ? "✗" : "✓"),
@@ -70,6 +77,19 @@ function needsAttention(r: RepoSecurityRow, dimension: string): boolean {
   return dims.some((d) => d.status(r) !== "pass")
 }
 
+/** The controls of the chosen framework that a repo's failing or unknown checks put at risk (each once, in the
+ * order the columns list them). Unknown counts: an unverifiable check is no evidence for its controls either. */
+function controlsAtRisk(r: RepoSecurityRow, controls: ControlMapping, framework: string) {
+  const seen = new Map<string, string>()
+  for (const d of DIMENSIONS) {
+    if (d.status(r) === "pass") continue
+    for (const c of controls.checks[d.checkId] ?? []) {
+      if (c.framework === framework && !seen.has(c.id)) seen.set(c.id, c.name)
+    }
+  }
+  return [...seen].map(([id, name]) => ({ id, name }))
+}
+
 /** The compliance matrix: sortable per check and by score, filterable to the repos that fail (or can't be
  * evaluated for) a check, exportable as CSV, and able to hand the filtered repos to the bulk fixer. */
 export function ComplianceMatrix({
@@ -78,6 +98,7 @@ export function ComplianceMatrix({
   selectedRepo,
   onSelectRepo,
   onUseInBulkFix,
+  controls,
 }: {
   owner: string
   repos: RepoSecurityRow[]
@@ -85,9 +106,12 @@ export function ComplianceMatrix({
   onSelectRepo: (repo: string) => void
   /** Set when the caller can run bulk fixes: shows a button handing the filtered repos over. */
   onUseInBulkFix?: (repos: string[], viaKeyboard: boolean) => void
+  /** The check-to-control table; when set, a column shows the controls each repo's failing checks put at risk. */
+  controls?: ControlMapping
 }) {
   const [dimension, setDimension] = useState("all")
   const [attentionOnly, setAttentionOnly] = useState(false)
+  const [framework, setFramework] = useState("soc2")
   const shown = useMemo(
     () => (attentionOnly ? repos.filter((r) => needsAttention(r, dimension)) : repos),
     [repos, attentionOnly, dimension],
@@ -124,6 +148,26 @@ export function ComplianceMatrix({
         csvValue: (r) => d.status(r),
       }),
     ),
+    ...(controls
+      ? [
+          {
+            key: "controls",
+            header: "Controls at risk",
+            headerClassName: "text-left px-2",
+            cellClassName: "px-2 py-2 text-muted-foreground",
+            sortValue: (r: RepoSecurityRow) => -controlsAtRisk(r, controls, framework).length,
+            render: (r: RepoSecurityRow) => {
+              const at = controlsAtRisk(r, controls, framework)
+              return at.length === 0 ? (
+                "—"
+              ) : (
+                <span title={at.map((c) => `${c.id} ${c.name}`).join("\n")}>{at.map((c) => c.id).join(", ")}</span>
+              )
+            },
+            csvValue: (r: RepoSecurityRow) => controlsAtRisk(r, controls, framework).map((c) => c.id).join("; "),
+          } satisfies DataTableColumn<RepoSecurityRow>,
+        ]
+      : []),
     {
       key: "score",
       header: "Score",
@@ -152,6 +196,21 @@ export function ComplianceMatrix({
             ))}
           </select>
         </label>
+        {controls && (
+          <label className="flex items-center gap-1.5 text-muted-foreground">
+            Controls
+            <select
+              aria-label="Framework for the controls column"
+              value={framework}
+              onChange={(e) => setFramework(e.target.value)}
+              className="card text-muted-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
+            >
+              {controls.frameworks.map((f) => (
+                <option key={f.id} value={f.id}>{`${f.name} (${f.version})`}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="flex items-center gap-1.5 text-muted-foreground">
           <input type="checkbox" checked={attentionOnly} onChange={(e) => setAttentionOnly(e.target.checked)} />
           Failing or unknown only

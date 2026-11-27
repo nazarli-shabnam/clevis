@@ -221,6 +221,14 @@ export default function SecurityPage() {
     },
   })
 
+  // Static table; a failed load just leaves the matrix without its controls column.
+  const controlsQuery = useQuery({
+    queryKey: ["compliance.controls"],
+    queryFn: () => api.compliance.controls(),
+    staleTime: Infinity,
+    retry: false,
+  })
+
   const historyQuery = useQuery({
     queryKey: ["analytics.history", lookupOwner],
     queryFn: () => api.analytics.history(lookupOwner),
@@ -705,6 +713,7 @@ export default function SecurityPage() {
                 repos={matrixMutation.data?.repos ?? []}
                 selectedRepo={selectedRepo}
                 onSelectRepo={setSelectedRepo}
+                controls={controlsQuery.data}
                 onUseInBulkFix={
                   matrixMutation.data && !isOrgMemberOnly(memberships, matrixMutation.data.owner)
                     ? (names, viaKeyboard) => {

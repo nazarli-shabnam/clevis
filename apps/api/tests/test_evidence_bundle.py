@@ -91,8 +91,8 @@ def test_admin_downloads_a_zip_with_every_section_and_a_manifest(db, world):
     assert "clevis-evidence-acme-ev-" in resp.headers["content-disposition"]
     z, manifest = _bundle(resp)
     assert sorted(z.namelist()) == [
-        "audit_log.csv", "failed_checks.csv", "manifest.json", "members.csv", "outside_collaborators.csv", "scan_history.csv",
-        "waivers.csv",
+        "audit_log.csv", "control_mapping.csv", "failed_checks.csv", "manifest.json", "members.csv",
+        "outside_collaborators.csv", "scan_history.csv", "waivers.csv",
     ]
     assert manifest["org"] == "acme-ev" and manifest["generated_by"] == "ev-admin@e.com"
     assert manifest["clevis_version"] and manifest["truncated"] is False
@@ -101,6 +101,12 @@ def test_admin_downloads_a_zip_with_every_section_and_a_manifest(db, world):
     assert [r["score"] for r in _rows(z, "scan_history.csv")] == ["50", "90"]  # newest first
     failed = _rows(z, "failed_checks.csv")
     assert {(r["check_id"], r["repos"]) for r in failed} == {("repository_default_branch_protection_enabled", "api; web")}
+    assert {r["controls"] for r in failed} == {"SOC 2 CC8.1; CIS Controls 16.1; ISO/IEC 27001 A.8.32; ISO/IEC 27001 A.8.4"}
+    mapping = _rows(z, "control_mapping.csv")
+    assert {"check_id": "repository_secret_scanning_enabled", "framework": "ISO/IEC 27001", "control_id": "A.5.17",
+            "control_name": "Authentication information"} in mapping
+    assert not [r for r in mapping if r["check_id"] == "repository_license_present"]  # unmapped checks are not listed
+    assert manifest["files"]["control_mapping.csv"] == {"rows": len(mapping), "truncated": False} and mapping
     members = {r["login"]: r for r in _rows(z, "members.csv")}
     assert members["alice"]["two_factor_enabled"] == "true" and members["bob"]["two_factor_enabled"] == ""
     assert [r["login"] for r in _rows(z, "outside_collaborators.csv")] == ["contractor"]

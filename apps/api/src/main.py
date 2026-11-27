@@ -24,6 +24,7 @@ from src.routers import (
     collab,
     config,
     dependabot_triage,
+    compliance,
     evidence,
     github,
     github_auth,
@@ -170,6 +171,7 @@ app.include_router(digest.router, tags=["digest"])
 app.include_router(automation_schedules.router, tags=["automation"])
 app.include_router(waivers.router, tags=["waivers"])
 app.include_router(evidence.router, tags=["audit"])
+app.include_router(compliance.router, tags=["compliance"])
 app.include_router(tokens.router, prefix="/tokens", tags=["tokens"])
 app.include_router(config.router, prefix="/config", tags=["config"])
 app.include_router(webhooks.router, tags=["webhooks"])

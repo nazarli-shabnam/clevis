@@ -100,4 +100,54 @@ describe("ComplianceMatrix", () => {
     fireEvent.click(screen.getByRole("button", { name: "noisy" }))
     expect(onSelect).toHaveBeenCalledWith("noisy")
   })
+
+  describe("controls column (#1277)", () => {
+    const control = (framework: string, id: string, name: string) => ({ framework, id, name })
+    const CONTROLS = {
+      frameworks: [
+        { id: "soc2", name: "SOC 2", version: "2017" },
+        { id: "cis", name: "CIS Controls", version: "v8" },
+      ],
+      checks: {
+        repository_default_branch_protection_enabled: [control("soc2", "CC8.1", "Change management"), control("cis", "16.1", "Secure development")],
+        repository_dependabot_alerts_clear: [control("soc2", "CC7.1", "Vulnerability detection"), control("soc2", "CC8.1", "Change management")],
+      },
+    }
+    const cells = () => screen.getAllByRole("row").slice(1).map((r) => {
+      const c = within(r).getAllByRole("cell")
+      return [c[0].textContent, c[c.length - 2].textContent]
+    })
+
+    it("shows no column or selector without a mapping", () => {
+      renderMatrix()
+      expect(screen.queryByText("Controls at risk")).not.toBeInTheDocument()
+      expect(screen.queryByLabelText("Framework for the controls column")).not.toBeInTheDocument()
+    })
+
+    it("lists each repo's at-risk controls once, counting unknown checks, and a dash when none", () => {
+      renderMatrix({ controls: CONTROLS, repos: [...REPOS, row("both", { branch_protection: false, dependabot_high_count: 1 })] })
+
+      expect(cells()).toEqual([["good", "—"], ["no-branch", "CC8.1"], ["blind", "CC8.1"], ["noisy", "CC7.1, CC8.1"], ["both", "CC8.1, CC7.1"]])
+      expect(screen.getByText("CC7.1, CC8.1")).toHaveAttribute("title", "CC7.1 Vulnerability detection\nCC8.1 Change management")
+    })
+
+    it("switches the framework and exports the chosen ids", () => {
+      renderMatrix({ controls: CONTROLS })
+
+      fireEvent.change(screen.getByLabelText("Framework for the controls column"), { target: { value: "cis" } })
+      expect(cells()).toEqual([["good", "—"], ["no-branch", "16.1"], ["blind", "16.1"], ["noisy", "—"]])
+
+      fireEvent.click(screen.getByRole("button", { name: /export csv/i }))
+      const csv = String(downloadMock.mock.calls[0][1])
+      expect(csv).toContain("Controls at risk")
+      expect(csv.split(/\r?\n/).find((l) => l.startsWith("no-branch"))).toContain("16.1")
+    })
+
+    it("sorts the repos with the most controls at risk first", () => {
+      renderMatrix({ controls: CONTROLS, repos: [...REPOS, row("both", { branch_protection: false, dependabot_high_count: 1 })] })
+
+      fireEvent.click(screen.getByRole("button", { name: /Controls at risk/ }))
+      expect(repoOrder().slice(0, 2).sort()).toEqual(["both", "noisy"])
+    })
+  })
 })

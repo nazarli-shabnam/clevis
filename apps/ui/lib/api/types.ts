@@ -47,6 +47,24 @@ export interface ScoringExclusions {
   patterns: string[]
 }
 
+export interface ComplianceFramework {
+  id: string
+  name: string
+  version: string
+}
+
+export interface ComplianceControl {
+  framework: string
+  id: string
+  name: string
+}
+
+/** GET /compliance/controls: which framework controls each check gives evidence for (empty = no clear counterpart). */
+export interface ControlMapping {
+  frameworks: ComplianceFramework[]
+  checks: Record<string, ComplianceControl[]>
+}
+
 export interface HygieneScoringSettings {
   /** The org's own setting; null = follows the instance-wide one. */
   enabled: boolean | null
