@@ -11,6 +11,7 @@ const NOUN: Record<NotificationItem["kind"], [string, string]> = {
   permission_drift: ["permission notice", "permission notices"],
   waiver_expired: ["expired waiver", "expired waivers"],
   waiver_expiring: ["expiring waiver", "expiring waivers"],
+  waiver_request: ["waiver request", "waiver requests"],
   sla_breach: ["SLA breach", "SLA breaches"],
   api_token_expiring: ["expiring API token", "expiring API tokens"],
 }

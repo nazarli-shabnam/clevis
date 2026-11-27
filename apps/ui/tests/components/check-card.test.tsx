@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 const createIssueMock = vi.fn();
 const remediateMock = vi.fn();
 const waiverCreateMock = vi.fn();
+const waiverRequestMock = vi.fn();
 const catalog = [
   { id: "organization_members_mfa_required", title: "Organization requires 2FA/MFA", org_wide_only: true },
   { id: "repository_default_branch_protection_enabled", title: "Default branch has protection rules", org_wide_only: false },
@@ -15,6 +16,7 @@ const catalog = [
 vi.mock("@/lib/api/client", () => ({
   api: {
     waivers: { checks: () => Promise.resolve(catalog), create: (...a: unknown[]) => waiverCreateMock(...a) },
+    waiverRequests: { create: (...a: unknown[]) => waiverRequestMock(...a) },
     issues: { create: (...a: unknown[]) => createIssueMock(...a) },
     security: { remediate: (...a: unknown[]) => remediateMock(...a) },
   },
@@ -129,6 +131,28 @@ describe("CheckCard", () => {
     expect(waiverCoverage(["api"], failing)).toEqual({ covers: false, missing: ["web"] });
     expect(waiverCoverage(["api", "web"], { ...failing, truncated: true }).covers).toBe(false);
     expect(waiverCoverage(["api"], { names: [], truncated: false }).covers).toBe(false); // nothing named: the API skips it
+  });
+
+  it("lets a member of the org ask for a waiver instead of waiving (#1274)", async () => {
+    waiverCreateMock.mockClear();
+    waiverRequestMock.mockResolvedValue({});
+    renderWithClient(<CheckCard check={failingWithRepos(["api"])} requestWaiverOrg="acme" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Request waiver…" }));
+    expect(screen.queryByLabelText("Owner")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "legacy" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+
+    expect(await screen.findByText(/Request sent/)).toBeInTheDocument();
+    expect(waiverRequestMock).toHaveBeenCalledWith("acme", expect.objectContaining({ reason: "legacy", repos: ["api"] }));
+    expect(waiverCreateMock).not.toHaveBeenCalled();
+  });
+
+  it("offers an admin the direct waiver, not the request", async () => {
+    renderWithClient(<CheckCard check={failingWithRepos(["api"])} waiveOrg="acme" requestWaiverOrg="acme" />);
+
+    expect(await screen.findByRole("button", { name: "Waive…" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Request waiver…" })).not.toBeInTheDocument();
   });
 
   it("offers no waiver for a check the API does not list as waivable", async () => {

@@ -76,10 +76,12 @@ interface WaiverFormProps {
    * repo-scoped waiver would not take effect. */
   failing?: FailingRepos
   onCancel?: () => void
+  /** A member asking an admin for the waiver (no owner field, sent as a request); admins add the waiver directly. */
+  asRequest?: boolean
 }
 
 /** Add a waiver, or renew/edit one: a failing check is kept out of the score until it expires. */
-export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, compact, onSaved, failing, onCancel }: WaiverFormProps) {
+export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, compact, onSaved, failing, onCancel, asRequest }: WaiverFormProps) {
   const queryClient = useQueryClient()
   const { checks, loaded, isError, isOrgWideOnly } = useWaivableChecks(orgLogin)
   // The admin's pick, else the waiver being edited / the fixed check, else the first check that can be
@@ -98,26 +100,23 @@ export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, comp
   // The variable is the coverage at submit time: the repo box stays editable while the save is pending, so
   // reading `coverage` when it settles could report on repos that were never submitted.
   const save = useMutation({
-    mutationFn: (_covers: boolean | undefined) => {
-      const body = {
-        check_id: checkId,
-        repos: enteredRepos,
-        reason,
-        owner,
-        // End of the chosen day, local time.
-        expires_at: new Date(`${until}T23:59:59`).toISOString(),
-      }
+    mutationFn: async (_covers: boolean | undefined): Promise<unknown> => {
+      // End of the chosen day, local time.
+      const expires_at = new Date(`${until}T23:59:59`).toISOString()
+      if (asRequest) return api.waiverRequests.create(orgLogin, { check_id: checkId, repos: enteredRepos, reason, expires_at })
+      const body = { check_id: checkId, repos: enteredRepos, reason, owner, expires_at }
       return editing ? api.waivers.update(orgLogin, editing.id, body) : api.waivers.create(orgLogin, body)
     },
     onSuccess: async (_data, covers) => {
       setReason("")
       setRepos("")
       await invalidateWaivers(queryClient, orgLogin)
+      if (asRequest) await queryClient.invalidateQueries({ queryKey: ["waiver-requests", orgLogin] })
       onSaved?.(covers)
     },
   })
 
-  const canSubmit = loaded && checkId !== "" && reason.trim() !== "" && owner.trim() !== "" && until !== "" && !save.isPending
+  const canSubmit = loaded && checkId !== "" && reason.trim() !== "" && (asRequest || owner.trim() !== "") && until !== "" && !save.isPending
   const idPrefix = `waiver-${editing?.id ?? fixedCheckId ?? "new"}`
 
   return (
@@ -169,17 +168,29 @@ export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, comp
         <label htmlFor={`${idPrefix}-reason`} className="text-xs font-medium block mb-1.5">Reason</label>
         <Input id={`${idPrefix}-reason`} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
       </div>
-      <div>
-        <label htmlFor={`${idPrefix}-owner`} className="text-xs font-medium block mb-1.5">Owner</label>
-        <Input id={`${idPrefix}-owner`} placeholder="person or team accountable" maxLength={100} value={owner} onChange={(e) => setOwner(e.target.value)} />
-      </div>
+      {!asRequest && (
+        <div>
+          <label htmlFor={`${idPrefix}-owner`} className="text-xs font-medium block mb-1.5">Owner</label>
+          <Input id={`${idPrefix}-owner`} placeholder="person or team accountable" maxLength={100} value={owner} onChange={(e) => setOwner(e.target.value)} />
+        </div>
+      )}
       <div>
         <label htmlFor={`${idPrefix}-until`} className="text-xs font-medium block mb-1.5">Expires</label>
         <Input id={`${idPrefix}-until`} type="date" min={dayInput(1)} max={latestExpiryDay()} value={until} onChange={(e) => setUntil(e.target.value)} />
       </div>
       <div className="flex items-end gap-2">
         <Button type="submit" disabled={!canSubmit}>
-          {save.isPending ? (editing ? "Saving…" : "Adding…") : editing ? "Save waiver" : "Add waiver"}
+          {asRequest
+            ? save.isPending
+              ? "Sending…"
+              : "Send request"
+            : save.isPending
+              ? editing
+                ? "Saving…"
+                : "Adding…"
+              : editing
+                ? "Save waiver"
+                : "Add waiver"}
         </Button>
         {onCancel && (
           <Button type="button" variant="outline" onClick={onCancel}>
@@ -194,7 +205,7 @@ export function WaiverForm({ orgLogin, editing, fixedCheckId, initialRepos, comp
       )}
       {save.isError && (
         <p role="alert" className={compact ? "text-xs text-destructive" : "sm:col-span-2 text-xs text-destructive"}>
-          Couldn&apos;t {editing ? "save" : "add"} the waiver: {save.error.message}
+          Couldn&apos;t {asRequest ? "send the request" : editing ? "save the waiver" : "add the waiver"}: {save.error.message}
         </p>
       )}
     </form>
