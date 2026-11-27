@@ -164,7 +164,7 @@ describe("SettingsPage", () => {
     expect(screen.getAllByRole("button", { name: "Retry" }).length).toBeGreaterThanOrEqual(1);
 
     await waitFor(() => {
-      expect(screen.getByText("Instance configuration")).toBeInTheDocument();
+      expect(screen.getByText("Instance configuration", { selector: "span.section-label" })).toBeInTheDocument();
     });
     expect(screen.getByRole("button", { name: "Save Worker Poll Interval" })).toBeInTheDocument();
   });
@@ -211,6 +211,7 @@ describe("SettingsPage", () => {
     expect(screen.queryByText("Workspace admin access required")).not.toBeInTheDocument();
     expect(tokensListMock).not.toHaveBeenCalled();
     expect(screen.queryByText("Instance configuration")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Instance configuration" })).not.toBeInTheDocument();
   });
 
   it("shows the password and email forms to an account with a password, and a note instead to a GitHub-only one (#1163)", async () => {
@@ -315,7 +316,7 @@ describe("SettingsPage", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByText("Instance configuration")).toBeInTheDocument();
+      expect(screen.getByText("Instance configuration", { selector: "span.section-label" })).toBeInTheDocument();
     });
 
     fireEvent.change(await screen.findByLabelText("Worker Poll Interval"), { target: { value: "7" } });
@@ -470,6 +471,66 @@ describe("SettingsPage", () => {
       expect(screen.queryByText("Enter a whole number.")).not.toBeInTheDocument();
       expect(screen.queryByText("Unsaved change")).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Save Activity Gap-Heal Interval" })).toBeDisabled();
+    });
+  });
+
+  describe("section navigation (#1283)", () => {
+    function arrange(admin: boolean) {
+      orgsMineMock.mockResolvedValue([]);
+      installationsListMock.mockResolvedValue([]);
+      configGetAllMock.mockResolvedValue({ worker_poll_seconds: "5", registration_enabled: "true" });
+      tokensListMock.mockResolvedValue([]);
+      if (!admin) {
+        const payload = b64url({ sub: "2", email: "member@example.com", name: "Member", is_workspace_admin: false, exp: Math.floor(Date.now() / 1000) + 3600 });
+        localStorage.setItem(TOKEN_KEY, `${b64url({ alg: "none", typ: "JWT" })}.${payload}.`);
+        fetchMock.mockResolvedValue(
+          new Response(JSON.stringify({ id: 2, email: "member@example.com", name: "Member", is_workspace_admin: false }), { status: 200 }),
+        );
+      }
+      renderPage();
+    }
+
+    const navLinks = () => within(screen.getByRole("navigation", { name: "Settings sections" })).getAllByRole("link").map((a) => [a.textContent, a.getAttribute("href")]);
+
+    it("links to every section of an admin's page, each anchor present", async () => {
+      arrange(true);
+
+      await screen.findByLabelText("Worker Poll Interval");
+      expect(navLinks()).toEqual([
+        ["Profile", "#profile"],
+        ["Password and email", "#password-email"],
+        ["Sessions", "#sessions"],
+        ["Appearance", "#appearance"],
+        ["Organizations", "#organizations"],
+        ["GitHub App", "#github-app"],
+        ["Connected accounts", "#connected"],
+        ["Saved tokens", "#tokens"],
+        ["Instance configuration", "#instance"],
+        ["Delete account", "#delete-account"],
+      ]);
+      for (const [, href] of navLinks()) expect(document.getElementById(String(href).slice(1))).not.toBeNull();
+      expect(screen.getByRole("region", { name: "Instance configuration" })).toContainElement(screen.getByLabelText("Worker Poll Interval"));
+    });
+
+    it("leaves out the admin-only sections, links and anchors for anyone else", async () => {
+      arrange(false);
+
+      await screen.findByRole("button", { name: "Save profile" });
+      const names = navLinks().map(([name]) => name);
+      expect(names).toEqual(["Profile", "Password and email", "Sessions", "Appearance", "Organizations", "Connected accounts", "Delete account"]);
+      for (const id of ["github-app", "tokens", "instance"]) expect(document.getElementById(id)).toBeNull();
+    });
+
+    it("scrolls to the section named in the address once the page is up", async () => {
+      const scrollIntoView = vi.fn();
+      Element.prototype.scrollIntoView = scrollIntoView;
+      window.location.hash = "#sessions";
+      arrange(true);
+
+      await screen.findByRole("button", { name: "Save profile" });
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      expect(scrollIntoView.mock.contexts[0]).toBe(document.getElementById("sessions"));
+      window.location.hash = "";
     });
   });
 
