@@ -80,6 +80,10 @@ export function BranchProtectionCard({ org, token, repos, initialSelected = [] }
       api.branchProtection.bulk(org, { repos: repoList(), preset: preset(), dry_run: true, token }),
   })
 
+  // The selection+knobs the current preview was run for. Cleared after a successful apply so the same
+  // preview can't authorise a second bulk write (double click, second visit): re-preview first.
+  const [previewedSig, setPreviewedSig] = useState<string | null>(null)
+
   const apply = useMutation({
     mutationFn: () =>
       api.branchProtection.bulk(org, {
@@ -92,6 +96,7 @@ export function BranchProtectionCard({ org, token, repos, initialSelected = [] }
     // The saved preset changed on the server; a stale cached copy would re-hydrate the form with old values
     // the next time the card mounts.
     onSuccess: () => {
+      setPreviewedSig(null)
       if (savePreset) queryClient.invalidateQueries({ queryKey: ["branchProtection.savedPreset", org.trim()] })
     },
   })
@@ -99,7 +104,6 @@ export function BranchProtectionCard({ org, token, repos, initialSelected = [] }
   // Apply is blocked until selection/knobs match the preview, so a bulk rewrite can't hit
   // repos the admin never saw a diff for.
   const previewSig = `${org.trim()}|` + [...selected].sort().join(",") + `|${reviewCount}|${enforceAdmins}|${blockForcePush}|${blockDeletion}`
-  const [previewedSig, setPreviewedSig] = useState<string | null>(null)
   const previewStale = !preview.isSuccess || previewedSig !== previewSig
 
   const errText = (e: unknown) => (e instanceof Error ? e.message : null)

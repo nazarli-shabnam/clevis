@@ -766,6 +766,11 @@ export default function SecurityPage() {
               <ShieldWarning className="size-3 shrink-0" />
               Secret values are never shown here — metadata only.
             </p>
+            {secretScanning.data?.truncated && (
+              <p className="px-4 pt-2 text-[0.6875rem] text-muted-foreground">
+                Showing the newest {secretScanning.data.alerts.length} alerts; this repo has more.
+              </p>
+            )}
             {secretScanning.isLoading ? (
               <div className="p-4"><Skeleton className="h-16 w-full" /></div>
             ) : secretScanning.isError ? (

@@ -38,6 +38,10 @@ const KIND_LABELS: Record<DestinationKind, string> = {
 
 const splitRecipients = (text: string) => text.split(/[,\s]+/).filter(Boolean)
 
+// The API rejects more than 10 recipients with a 422.
+const MAX_RECIPIENTS = 10
+const TOO_MANY_RECIPIENTS = `At most ${MAX_RECIPIENTS} recipients.`
+
 /**
  * Edits a destination in place with the existing partial PATCH. The webhook URL and signing secret are
  * write-only (the API never returns them), so leaving them blank keeps the stored value. Only changed
@@ -58,6 +62,7 @@ function EditForm({
   const [recipients, setRecipients] = useState((dest.recipients ?? []).join(", "))
   const [url, setUrl] = useState("")
   const [secret, setSecret] = useState("")
+  const [removeSecret, setRemoveSecret] = useState(false)
   const [error, setError] = useState("")
   const [saving, setSaving] = useState(false)
 
@@ -70,9 +75,10 @@ function EditForm({
     if (recipientList.join(",") !== (dest.recipients ?? []).join(",")) body.recipients = recipientList
   } else {
     if (url.trim()) body.url = url.trim()
-    if (dest.kind === "generic" && secret) body.secret = secret
+    if (dest.kind === "generic" && secret && !removeSecret) body.secret = secret
+    if (dest.kind === "generic" && dest.signed && removeSecret) body.remove_secret = true
   }
-  const valid = name.trim() !== "" && dropValid && (!isEmail || recipientList.length > 0)
+  const valid = name.trim() !== "" && dropValid && (!isEmail || (recipientList.length > 0 && recipientList.length <= MAX_RECIPIENTS))
   const canSave = valid && Object.keys(body).length > 0 && !saving
 
   async function save(e: React.FormEvent) {
@@ -110,6 +116,7 @@ function EditForm({
             value={recipients}
             onChange={(e) => setRecipients(e.target.value)}
           />
+          {recipientList.length > MAX_RECIPIENTS && <p role="alert" className="text-destructive mt-1">{TOO_MANY_RECIPIENTS}</p>}
         </div>
       ) : (
         <>
@@ -133,8 +140,15 @@ function EditForm({
                 autoComplete="off"
                 placeholder={dest.signed ? "Leave blank to keep the current secret" : "Leave blank to stay unsigned"}
                 value={secret}
+                disabled={removeSecret}
                 onChange={(e) => setSecret(e.target.value)}
               />
+              {dest.signed && (
+                <label className="flex items-center gap-1.5 mt-1.5">
+                  <input type="checkbox" checked={removeSecret} onChange={(e) => setRemoveSecret(e.target.checked)} />
+                  Remove the signing secret (send unsigned)
+                </label>
+              )}
             </div>
           )}
         </>
@@ -290,6 +304,14 @@ export function NotificationDestinationsCard({ orgLogin }: { orgLogin: string })
   const [minDrop, setMinDrop] = useState("10")
   const [events, setEvents] = useState<AlertEvent[]>(["score_drop"])
 
+  // Offered once, right after the first destination that listens for new critical alerts is added: alerts that
+  // were already open before it existed were never announced (the sweep marks them handled with no destination).
+  const [offerAnnounce, setOfferAnnounce] = useState(false)
+  const announce = useMutation({
+    mutationFn: () => api.notificationDestinations.announceOpenAlerts(orgLogin),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["audit"] }),
+  })
+
   const create = useMutation({
     mutationFn: () =>
       api.notificationDestinations.create(orgLogin, {
@@ -298,10 +320,14 @@ export function NotificationDestinationsCard({ orgLogin }: { orgLogin: string })
         events,
         min_score_drop: Number(minDrop),
         ...(kind === "email"
-          ? { recipients: recipients.split(/[,\s]+/).filter(Boolean) }
+          ? { recipients: splitRecipients(recipients) }
           : { url: url.trim(), ...(kind === "generic" && secret ? { secret } : {}) }),
       }),
     onSuccess: () => {
+      if (query.isSuccess && query.data.length === 0 && events.includes("new_critical_alert")) {
+        announce.reset()
+        setOfferAnnounce(true)
+      }
       // The URL and secret are credentials: drop them from the form as soon as they are stored.
       setName("")
       setUrl("")
@@ -314,9 +340,10 @@ export function NotificationDestinationsCard({ orgLogin }: { orgLogin: string })
     onError: () => queryClient.invalidateQueries({ queryKey }),
   })
 
-  const hasTarget = kind === "email" ? recipients.split(/[,\s]+/).filter(Boolean).length > 0 : url.trim() !== ""
+  const recipientCount = splitRecipients(recipients).length
+  const hasTarget = kind === "email" ? recipientCount > 0 && recipientCount <= MAX_RECIPIENTS : url.trim() !== ""
   const dropValid = Number.isInteger(Number(minDrop)) && Number(minDrop) >= 1 && Number(minDrop) <= 100
-  const canSubmit = name.trim() !== "" && hasTarget && dropValid && !create.isPending
+  const canSubmit = name.trim() !== "" && hasTarget && dropValid && events.length > 0 && !create.isPending
 
   return (
     <div className="card mt-4">
@@ -372,6 +399,35 @@ export function NotificationDestinationsCard({ orgLogin }: { orgLogin: string })
         </>
       )}
 
+      {offerAnnounce && (
+        <div role="status" className="border-t border-border px-4 py-3 text-xs flex flex-wrap items-center gap-3">
+          {announce.isSuccess ? (
+            <>
+              <span>
+                {announce.data.announced === 0
+                  ? "No critical or high alerts are open right now."
+                  : `Sent ${announce.data.announced} open alert${announce.data.announced === 1 ? "" : "s"}${announce.data.truncated ? " (the oldest; more are open)" : ""}.`}
+              </span>
+              <Button type="button" variant="outline" size="sm" onClick={() => setOfferAnnounce(false)}>Done</Button>
+            </>
+          ) : (
+            <>
+              <span className="text-muted-foreground">
+                Alerts that were already open before this destination existed were never announced. Send the currently
+                open critical/high alerts once now?
+              </span>
+              <Button type="button" size="sm" disabled={announce.isPending} onClick={() => announce.mutate()}>
+                {announce.isPending ? "Sending…" : "Announce open alerts"}
+              </Button>
+              <Button type="button" variant="outline" size="sm" disabled={announce.isPending} onClick={() => setOfferAnnounce(false)}>
+                No thanks
+              </Button>
+              {announce.isError && <span role="alert" className="text-destructive">Couldn&apos;t send: {announce.error.message}</span>}
+            </>
+          )}
+        </div>
+      )}
+
       <form
         className="border-t border-border p-4 grid gap-3 sm:grid-cols-2"
         onSubmit={(e) => {
@@ -405,6 +461,7 @@ export function NotificationDestinationsCard({ orgLogin }: { orgLogin: string })
               value={recipients}
               onChange={(e) => setRecipients(e.target.value)}
             />
+            {recipientCount > MAX_RECIPIENTS && <p role="alert" className="text-xs text-destructive mt-1">{TOO_MANY_RECIPIENTS}</p>}
           </div>
         ) : (
           <>
