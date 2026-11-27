@@ -24,7 +24,8 @@ class DestinationCreate(BaseModel):
     recipients: list[EmailStr] | None = Field(default=None, max_length=10)
     # HMAC-SHA256 signing secret; only meaningful for `generic`.
     secret: SecretStr | None = None
-    events: list[EventName] = ["score_drop"]
+    # At least one: a destination with no events is "Active" yet never fires.
+    events: list[EventName] = Field(default=["score_drop"], min_length=1)
     min_score_drop: int = Field(default=10, ge=1, le=100)
 
     @model_validator(mode="after")
@@ -53,6 +54,9 @@ class DestinationUpdate(BaseModel):
     url: SecretStr | None = None
     recipients: list[EmailStr] | None = Field(default=None, min_length=1, max_length=10)
     secret: SecretStr | None = None
+    # Explicit clear for a generic webhook's signing secret: `null` here means "not provided", so a
+    # secret can't be removed by sending one.
+    remove_secret: bool | None = None
 
 
 class DestinationOut(BaseModel):
@@ -80,3 +84,9 @@ class DestinationOut(BaseModel):
 class TestSendResult(BaseModel):
     ok: bool
     detail: str
+
+
+class AnnounceOpenAlertsResult(BaseModel):
+    announced: int
+    # More than the per-announcement cap are open; only the oldest `announced` were listed.
+    truncated: bool = False

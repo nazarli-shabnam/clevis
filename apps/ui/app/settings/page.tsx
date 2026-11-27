@@ -99,6 +99,7 @@ function ProfileSection() {
           <FieldLabel>Display name</FieldLabel>
           <Input
             placeholder="Your name"
+            maxLength={100}
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
@@ -464,6 +465,7 @@ function ConnectedOrgsSection() {
                         variant="destructive"
                         size="sm"
                         disabled={disconnect.isPending}
+                        aria-label={`Disconnect ${row.account_login}`}
                         onClick={() => setConfirmRow(row)}
                       >
                         {isThisRowMutating ? (
