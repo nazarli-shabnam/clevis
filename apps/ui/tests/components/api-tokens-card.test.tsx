@@ -174,6 +174,36 @@ describe("ApiTokensCard", () => {
     expect(screen.queryByText("clv_secret_value")).not.toBeInTheDocument()
   })
 
+  it("says why Create and Rotate are off while the secret is on screen, and stops once it is dismissed (#1284)", async () => {
+    listMock.mockResolvedValue([token({ name: "ci-gate" })])
+    createMock.mockResolvedValue({ ...token({ id: 9, name: "deploy" }), token: "clv_secret_value" })
+    renderCard()
+    await screen.findByRole("button", { name: "Rotate token ci-gate" })
+    // Nothing to explain yet: both are usable (Create waits only for a name).
+    expect(screen.queryByText(/to create or rotate another/)).not.toBeInTheDocument()
+    expect(screen.queryByText("Save the new token first")).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "deploy" } })
+    fireEvent.click(screen.getByRole("button", { name: "Create token" }))
+    await screen.findByText("clv_secret_value")
+
+    const hint = screen.getByText(/Copy the new token and click "I've saved it" to create or rotate another\./)
+    expect(screen.getByRole("button", { name: "Create token" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Create token" })).toHaveAttribute("aria-describedby", hint.id)
+    const rotate = screen.getByRole("button", { name: "Rotate token ci-gate" })
+    expect(rotate).toBeDisabled()
+    expect(rotate).toHaveAttribute("aria-describedby", hint.id)
+    // A disabled button shows no tooltip, so the reason is also written next to it.
+    expect(screen.getByText("Save the new token first")).toBeInTheDocument()
+    expect(hint).toHaveAttribute("role", "status")
+
+    fireEvent.click(screen.getByRole("button", { name: "I've saved it" }))
+    expect(screen.queryByText(/to create or rotate another/)).not.toBeInTheDocument()
+    expect(screen.queryByText("Save the new token first")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Rotate token ci-gate" })).toBeEnabled()
+    expect(screen.getByRole("button", { name: "Rotate token ci-gate" })).not.toHaveAttribute("aria-describedby")
+  })
+
   it("revokes only after confirming, and a failure is shown on that row alone", async () => {
     listMock.mockResolvedValue([token(), token({ id: 2, name: "other" })])
     revokeMock.mockRejectedValue(new Error("boom"))
