@@ -9,7 +9,67 @@ import { Button } from "@/components/ui/button"
 import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { api } from "@/lib/api/client"
+import { useOptionalAuth } from "@/lib/auth-context"
 import { CheckCircle, Warning, CircleNotch } from "@phosphor-icons/react"
+
+/** What to do when the link cannot be used (expired after 24 h, already used, or missing its token): a signed-in user
+ * can ask for a new email right here; anyone else has to sign in first, since the new link goes to the account's
+ * own address. */
+function LinkProblem({ message }: { message: string }) {
+  const auth = useOptionalAuth()
+  const signedIn = !!auth?.user
+  // Until the session has been restored the user looks signed out: offer neither next step yet.
+  const unknown = !!auth?.isLoading
+  const resend = useMutation({ mutationFn: api.auth.resendVerification })
+  return (
+    <>
+      <p role="alert" className="text-sm text-destructive flex items-center gap-1.5">
+        <Warning className="size-3.5 shrink-0" /> {message}
+      </p>
+      {unknown ? null : signedIn ? (
+        resend.isSuccess ? (
+          <p role="status" className="text-sm text-primary">
+            {resend.data.already_verified
+              ? "Your email is already verified."
+              : "A new verification link is on its way. Check your inbox; it works for 24 hours."}
+          </p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <p className="text-sm text-muted-foreground">
+              Links stop working after 24 hours. Send a new one to <span className="font-mono">{auth?.user?.email}</span>.
+            </p>
+            <div>
+              <Button onClick={() => resend.mutate()} disabled={resend.isPending}>
+                {resend.isPending ? "Sending…" : "Resend verification email"}
+              </Button>
+            </div>
+            {resend.isError && (
+              <p role="alert" className="text-xs text-destructive">
+                {resend.error.message}
+              </p>
+            )}
+          </div>
+        )
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Links stop working after 24 hours.{" "}
+          <Link href="/login" className="text-primary hover:underline">
+            Sign in
+          </Link>{" "}
+          to get a new one.
+        </p>
+      )}
+      <Link href="/" className="text-sm text-primary hover:underline">
+        Back to Clevis
+      </Link>
+    </>
+  )
+}
+
+/** The server turned the link itself down: the 400 "Invalid or expired verification link". Everything else (a
+ * password it refuses, 422; the rate limit, 429; a dropped connection or a 5xx) is something the user can retry
+ * with the link they have, so the form and its inline message stay. */
+const isLinkRejection = (e: unknown) => (e as { status?: unknown } | null)?.status === 400
 
 export default function VerifyEmailPage() {
   const token = useSearchParams().get("token")
@@ -37,14 +97,9 @@ export default function VerifyEmailPage() {
       <div className="card">
         <div className="p-4 flex flex-col gap-3">
           {!token ? (
-            <>
-              <p role="alert" className="text-sm text-destructive flex items-center gap-1.5">
-                <Warning className="size-3.5" /> This verification link is missing its token.
-              </p>
-              <Link href="/" className="text-sm text-primary hover:underline">
-                Back to Clevis
-              </Link>
-            </>
+            <LinkProblem message="This verification link is missing its token." />
+          ) : verify.isError && isLinkRejection(verify.error) ? (
+            <LinkProblem message={verify.error.message} />
           ) : verify.isSuccess ? (
             <>
               <p role="status" className="text-sm text-primary flex items-center gap-1.5">
