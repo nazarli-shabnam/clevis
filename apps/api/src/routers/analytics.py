@@ -42,6 +42,7 @@ from src.schemas.analytics import (
     HygieneScoringSettings,
     HygieneScoringUpdate,
     ScoringExclusions,
+    TargetScore,
     AtRiskRepo,
     CockpitResponse,
     IssueSummary,
@@ -361,6 +362,35 @@ def set_scoring_exclusions(
         )
         db.commit()
     return ScoringExclusions(patterns=body.patterns)
+
+
+@router.get("/orgs/{org_login}/target-score", response_model=TargetScore)
+def get_target_score(ctx: OrgContext = Depends(require_org_role(min_role="member"))):
+    # Any member reads it: the Security page shows the banner and the chart line to everyone.
+    return TargetScore(target=ctx.org.target_score)
+
+
+@router.put("/orgs/{org_login}/target-score", response_model=TargetScore)
+def set_target_score(
+    body: TargetScore,
+    ctx: OrgContext = Depends(require_org_role(min_role="admin")),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    previous = ctx.org.target_score
+    if previous != body.target:
+        ctx.org.target_score = body.target
+        audit_repo.write(
+            db,
+            actor=user.email,
+            action="target_score.updated",
+            target=ctx.org.github_login,
+            payload={"target": body.target, "previous": previous},
+            tenant_id=ctx.org.tenant_id,
+            commit=False,
+        )
+        db.commit()
+    return TargetScore(target=body.target)
 
 
 @router.post("/orgs/{org_login}/analytics/overview", response_model=AnalyticsResponse)

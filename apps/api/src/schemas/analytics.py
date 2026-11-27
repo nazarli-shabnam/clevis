@@ -92,6 +92,12 @@ class ScoringExclusions(BaseModel):
         return out
 
 
+class TargetScore(BaseModel):
+    """The org's target score; ``target`` None = no target."""
+
+    target: int | None = Field(default=None, ge=1, le=100)
+
+
 class ScheduledScanUpdate(BaseModel):
     # None clears the org's override so it follows the instance-wide cadence again.
     enabled: bool | None

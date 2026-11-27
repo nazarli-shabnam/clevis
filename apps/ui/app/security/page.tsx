@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { SectionError } from "@/components/section-error"
 import { ScoringExclusionsNote } from "@/components/scoring-exclusions-note"
+import { TargetScoreBanner } from "@/components/target-score-banner"
 import { Warning, Key, ShieldWarning, DownloadSimple } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { toCsv } from "@/lib/csv"
@@ -228,6 +229,16 @@ export default function SecurityPage() {
     staleTime: Infinity,
     retry: false,
   })
+
+  // The org's target score, for the banner and the trend line. Only members of the org can read it, so a login
+  // the caller is not in (or a failed read) simply has none.
+  const targetQuery = useQuery({
+    queryKey: ["target-score", lookupOwner],
+    queryFn: () => api.orgs.targetScore(lookupOwner),
+    enabled: hasOrgLogin(lookupOwner) && memberships.some((m) => m.org_login.toLowerCase() === lookupOwner.toLowerCase()),
+    retry: false,
+  })
+  const target = targetQuery.data?.target ?? undefined
 
   const historyQuery = useQuery({
     queryKey: ["analytics.history", lookupOwner],
@@ -559,6 +570,9 @@ export default function SecurityPage() {
 
             {shown && memberships.some((m) => m.org_login.toLowerCase() === shown.owner.toLowerCase()) && (
               <div className="px-4 pt-3">
+                {shown.owner.toLowerCase() === lookupOwner.toLowerCase() && (
+                  <TargetScoreBanner score={shown.score} target={target} />
+                )}
                 <ScoringExclusionsNote orgLogin={shown.owner} matched={"excluded_repos" in shown ? shown.excluded_repos : undefined} />
               </div>
             )}
@@ -588,6 +602,7 @@ export default function SecurityPage() {
                   label="score"
                   height={140}
                   onPointClick={(i) => selectScans(trendData[i].id, null)}
+                  target={target}
                 />
               </div>
             )}

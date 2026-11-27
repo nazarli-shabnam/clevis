@@ -12,6 +12,7 @@ const analyticsChangesMock = vi.fn();
 const analyticsLatestScanMock = vi.fn();
 const downloadTextFileMock = vi.fn();
 const complianceControlsMock = vi.fn();
+const targetScoreMock = vi.fn();
 
 vi.mock("@/lib/download", () => ({
   downloadTextFile: (...args: unknown[]) => downloadTextFileMock(...args),
@@ -51,7 +52,6 @@ vi.mock("@/lib/auth-context", () => ({
 
 vi.mock("@/lib/api/client", () => ({
   api: {
-    orgs: { mine: (...args: unknown[]) => orgsMineMock(...args) },
     tokens: {
       resolve: (...args: unknown[]) => tokensResolveMock(...args),
       upsert: (...args: unknown[]) => tokensUpsertMock(...args),
@@ -63,6 +63,7 @@ vi.mock("@/lib/api/client", () => ({
       changes: (...args: unknown[]) => analyticsChangesMock(...args),
       latestScan: (...args: unknown[]) => analyticsLatestScanMock(...args),
     },
+    orgs: { mine: (...args: unknown[]) => orgsMineMock(...args), targetScore: (...args: unknown[]) => targetScoreMock(...args) },
     compliance: { controls: (...args: unknown[]) => complianceControlsMock(...args) },
     security: {
       matrix: (...args: unknown[]) => securityMatrixMock(...args),
@@ -129,6 +130,7 @@ describe("SecurityPage", () => {
     tokensUpsertMock.mockReset();
     analyticsOverviewMock.mockReset();
     complianceControlsMock.mockReset();
+    targetScoreMock.mockReset();
     analyticsHistoryMock.mockReset();
     securityMatrixMock.mockReset();
     secretScanningMock.mockReset();
@@ -296,6 +298,34 @@ describe("SecurityPage", () => {
 
     await screen.findByText(/Results — acme/);
     expect(screen.queryByText(/exclusions-note/)).not.toBeInTheDocument();
+  });
+
+  it("shows a banner when a member's org score is under its target (#1278)", async () => {
+    orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "member" }]);
+    targetScoreMock.mockResolvedValue({ target: 85 });
+    analyticsOverviewMock.mockResolvedValue({ owner: "acme", score: 72, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [] });
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+
+    expect(await screen.findByText(/Score 72 is 13 points below the organization/)).toBeInTheDocument();
+    expect(targetScoreMock).toHaveBeenCalledWith("acme");
+  });
+
+  it("does not read the target for an org the caller is not in", async () => {
+    orgsMineMock.mockResolvedValue([]);
+    analyticsOverviewMock.mockResolvedValue({ owner: "acme", score: 72, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [] });
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+
+    await screen.findByText(/Results — acme/);
+    expect(targetScoreMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("allows running a scan with no token entered (GitHub App fallback)", async () => {

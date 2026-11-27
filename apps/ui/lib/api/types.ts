@@ -65,6 +65,11 @@ export interface ControlMapping {
   checks: Record<string, ComplianceControl[]>
 }
 
+/** The score an org wants to stay at or above (GET/PUT /orgs/{org}/target-score); null = no target. */
+export interface TargetScore {
+  target: number | null
+}
+
 export interface HygieneScoringSettings {
   /** The org's own setting; null = follows the instance-wide one. */
   enabled: boolean | null
@@ -1109,6 +1114,7 @@ export type NotificationKind =
   | "waiver_expired"
   | "waiver_expiring"
   | "waiver_request"
+  | "below_target"
   | "sla_breach"
   | "api_token_expiring"
 

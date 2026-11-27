@@ -426,6 +426,9 @@ class Org(Base):
     # Migration 0096: repository names or `*`/`?` globs left out of this org's scans, so they affect neither the
     # checks nor the score. NULL = none.
     scoring_excluded_repos: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    # Migration 0097: the score this org wants to stay at or above (1-100); NULL = no target. Drives the banner,
+    # the chart line and the standing `below_target` notification while the latest score is under it.
+    target_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Per-org override of the instance-wide `scheduled_scan_cadence`: True = scan on a schedule, False = never,
     # NULL = follow the instance setting.
     scheduled_scans: Mapped[bool | None] = mapped_column(Boolean, nullable=True)

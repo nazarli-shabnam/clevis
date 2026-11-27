@@ -4,7 +4,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 NotificationKind = Literal[
-    "critical_alert", "score_drop", "job_failed", "permission_drift", "waiver_expired", "waiver_expiring", "waiver_request", "sla_breach",
+    "critical_alert", "score_drop", "job_failed", "permission_drift", "waiver_expired", "waiver_expiring", "waiver_request", "below_target", "sla_breach",
     "api_token_expiring",
 ]
 

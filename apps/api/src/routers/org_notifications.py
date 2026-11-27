@@ -47,7 +47,7 @@ MAX_LIMIT = 200
 _PER_SOURCE = 40
 # The stable ids the feed hands out: a kind plus the source row's integer id.
 _MAX_SCANS_IN_WINDOW = 1000
-_ITEM_ID = re.compile(r"^(critical_alert|score_drop|job_failed|permission_drift|waiver_expired|waiver_expiring|waiver_request|sla_breach|api_token_expiring):[0-9]{1,18}$")
+_ITEM_ID = re.compile(r"^(critical_alert|score_drop|job_failed|permission_drift|waiver_expired|waiver_expiring|waiver_request|below_target|sla_breach|api_token_expiring):[0-9]{1,18}$")
 
 
 def _aware(value: datetime) -> datetime:
@@ -284,6 +284,37 @@ def _waiver_request_items(db: Session, org_login: str, tenant_id: int) -> list[d
     ]
 
 
+def _below_target_items(db: Session, org_login: str, org, tenant_id: int) -> list[dict]:
+    """A standing item while the org's newest scored scan is under its target score. Keyed by that scan, so
+    dismissing it holds until a newer scan is still under the target (then it is a fresh, unread item); gone the
+    moment a scan reaches the target or the target is cleared or lowered."""
+    target = org.target_score
+    if target is None:
+        return []
+    scan = _latest_scored_scan(db, org_login, tenant_id)
+    if scan is None or scan.score >= target:
+        return []
+    return [
+        {
+            "id": f"below_target:{scan.id}",
+            "kind": "below_target",
+            "at": _aware(scan.created_at),
+            "title": f"Security score {scan.score} is below the target of {target}",
+            "detail": f"{target - scan.score} point{'s' if target - scan.score != 1 else ''} to go.",
+            "href": "/security",
+        }
+    ]
+
+
+def _latest_scored_scan(db: Session, org_login: str, tenant_id: int):
+    return (
+        db.query(ScanResult.id, ScanResult.score, ScanResult.created_at)
+        .filter(func.lower(ScanResult.owner) == org_login.lower(), ScanResult.tenant_id == tenant_id, ScanResult.score.isnot(None))
+        .order_by(ScanResult.created_at.desc(), ScanResult.id.desc())
+        .first()
+    )
+
+
 def _api_token_expiring_items(db: Session, org_login: str, tenant_id: int) -> list[dict]:
     """Active API tokens that expire within the warning window. Dated by the moment each entered the
     window (expiry minus WINDOW_DAYS), so marking the feed read clears it and it does not reappear;
@@ -485,6 +516,8 @@ def get_notifications(
         raw += _waiver_request_items(db, org_login, tenant_id)
     if is_admin and "api_token_expiring" not in muted:
         raw += _api_token_expiring_items(db, org_login, tenant_id)
+    if "below_target" not in muted:
+        raw += _below_target_items(db, org_login, ctx.org, tenant_id)
     if "sla_breach" not in muted:
         raw += _sla_breach_items(db, tenant_id, since, per_source, cursor)
 
@@ -563,6 +596,10 @@ def _item_exists(db: Session, ctx: OrgContext, org_login: str, kind: str, row_id
             SecurityAlert.tenant_id == tenant_id,
             SecurityAlert.kind.in_(dependabot_burndown.KINDS),
         ).first() is not None
+    elif kind == "below_target":  # shown to every member; the item is keyed by the newest scored scan
+        scan = _latest_scored_scan(db, org_login, tenant_id)
+        target = ctx.org.target_score
+        return scan is not None and scan.id == row_id and target is not None and scan.score < target
     elif not is_admin:
         return False
     elif kind == "job_failed":
