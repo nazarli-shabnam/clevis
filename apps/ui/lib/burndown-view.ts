@@ -3,6 +3,7 @@ import type { DependabotBurndown } from "@/lib/api/types"
 export const BURNDOWN_WINDOWS = [30, 60, 90] as const
 export type BurndownSeverity = "all" | "critical" | "high"
 export type BurndownSort = "age" | "breaches"
+export type BurndownKind = "dependabot" | "code_scanning" | "all"
 
 /** The burn-down page's controls, kept in the query string so a retro view can be shared. `repo` is the
  * deep link a notification uses: it narrows the list to one "owner/name" repository. */
@@ -11,9 +12,10 @@ export interface BurndownView {
   severity: BurndownSeverity
   sort: BurndownSort
   repo: string
+  kind: BurndownKind
 }
 
-export const DEFAULT_BURNDOWN_VIEW: BurndownView = { days: 30, severity: "all", sort: "age", repo: "" }
+export const DEFAULT_BURNDOWN_VIEW: BurndownView = { days: 30, severity: "all", sort: "age", repo: "", kind: "dependabot" }
 
 export function burndownViewToParams(view: BurndownView): URLSearchParams {
   const params = new URLSearchParams()
@@ -21,6 +23,7 @@ export function burndownViewToParams(view: BurndownView): URLSearchParams {
   if (view.severity !== "all") params.set("severity", view.severity)
   if (view.sort !== DEFAULT_BURNDOWN_VIEW.sort) params.set("sort", view.sort)
   if (view.repo) params.set("repo", view.repo)
+  if (view.kind !== DEFAULT_BURNDOWN_VIEW.kind) params.set("kind", view.kind)
   return params
 }
 
@@ -28,11 +31,13 @@ export function burndownViewFromParams(params: URLSearchParams): BurndownView {
   const days = Number(params.get("days"))
   const severity = params.get("severity")
   const sort = params.get("sort")
+  const kind = params.get("kind")
   return {
     days: (BURNDOWN_WINDOWS as readonly number[]).includes(days) ? days : DEFAULT_BURNDOWN_VIEW.days,
     severity: severity === "critical" || severity === "high" ? severity : "all",
     sort: sort === "breaches" ? "breaches" : "age",
     repo: params.get("repo") ?? "",
+    kind: kind === "code_scanning" || kind === "all" ? kind : "dependabot",
   }
 }
 

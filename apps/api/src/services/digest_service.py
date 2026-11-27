@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from src.core.db import ScanResult, SecurityAlert
 from src.repositories import scan_results_repo
 from src.services import dependabot_burndown
-from src.services.sla_breach_sweep import breached_filter
+from src.services.sla_breach_sweep import breached_condition
 
 logger = logging.getLogger(__name__)
 
@@ -94,9 +94,8 @@ def build_digest(db: Session, *, tenant_id: int, org_login: str, period_label: s
     now = datetime.now(timezone.utc)
     breach_filter = (
         SecurityAlert.tenant_id == tenant_id,
-        SecurityAlert.kind == "dependabot",
         SecurityAlert.state == "open",
-        breached_filter(now, dependabot_burndown.sla_days()),
+        breached_condition(now),
     )
     breach_total = db.query(SecurityAlert).filter(*breach_filter).count()
     breach_rows = (
@@ -114,7 +113,10 @@ def build_digest(db: Session, *, tenant_id: int, org_login: str, period_label: s
         push_events_7d=int(push_count or 0),
         sla_breach_total=breach_total,
         sla_breaches=[
-            f"{r.repo} #{r.number} ({r.severity}, open {(now - r.created_at).days} days)" for r in breach_rows
+            f"{r.repo} #{r.number} ({r.severity}, "
+            f"{'' if r.kind == 'dependabot' else dependabot_burndown.KIND_LABELS[r.kind].lower() + ', '}"
+            f"open {(now - r.created_at).days} days)"
+            for r in breach_rows
         ],
     )
 
@@ -151,7 +153,7 @@ def render_text(content: DigestContent) -> str:
         lines.append("Open risk items: none in the latest scan.")
 
     if content.sla_breach_total:
-        lines += ["", f"Dependabot alerts past their SLA ({content.sla_breach_total}):"]
+        lines += ["", f"Security alerts past their SLA ({content.sla_breach_total}):"]
         lines.extend(f"  - {item}" for item in content.sla_breaches)
         if content.sla_breach_total > len(content.sla_breaches):
             lines.append(f"  … and {content.sla_breach_total - len(content.sla_breaches)} more")
