@@ -132,6 +132,7 @@ _EXPECTED_FORCE_RLS_TABLES = {
     "security_alert_syncs",
     "repo_move_edges",
     "cache_size_points",
+    "waiver_requests",
 }
 
 

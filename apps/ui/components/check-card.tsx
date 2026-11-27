@@ -27,6 +27,8 @@ interface CheckCardProps {
   onRemediated?: () => void
   // When set (the caller is an admin of this Clevis org), a failing check offers "Waive…" for that org.
   waiveOrg?: string
+  /** An org the viewer belongs to but does not administer: the card offers "Request waiver" instead of "Waive". */
+  requestWaiverOrg?: string
 }
 
 // The checks package caps the repos it records per check; keep in sync with github_checks.MAX_AFFECTED_REPOS.
@@ -244,7 +246,7 @@ function FileAsIssue({ check, owner, token }: { check: CheckResult; owner: strin
   )
 }
 
-function WaiveThis({ check, orgLogin }: { check: CheckResult; orgLogin: string }) {
+function WaiveThis({ check, orgLogin, asRequest }: { check: CheckResult; orgLogin: string; asRequest?: boolean }) {
   const { isWaivable, isOrgWideOnly } = useWaivableChecks(orgLogin)
   // Prefill the repos the card names, but only for checks where a repo-scoped waiver means something.
   const repos = isOrgWideOnly(check.id) ? [] : affectedRepos(check)
@@ -255,6 +257,9 @@ function WaiveThis({ check, orgLogin }: { check: CheckResult; orgLogin: string }
   // Offer a waiver only for a check the API accepts one for (nothing until the catalog has loaded).
   if (!isWaivable(check.id)) return null
 
+  if (saved !== null && asRequest) {
+    return <p className="mt-2 text-xs text-accent">Request sent. An org admin will review it.</p>
+  }
   if (saved !== null) {
     return saved === false ? (
       <p className="mt-2 text-xs text-yellow-400">
@@ -272,7 +277,7 @@ function WaiveThis({ check, orgLogin }: { check: CheckResult; orgLogin: string }
         onClick={() => setOpen(true)}
         className="mt-2 ml-3 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
       >
-        Waive…
+        {asRequest ? "Request waiver…" : "Waive…"}
       </button>
     )
   }
@@ -285,6 +290,7 @@ function WaiveThis({ check, orgLogin }: { check: CheckResult; orgLogin: string }
         initialRepos={failing.truncated ? [] : repos}
         failing={failing}
         compact
+        asRequest={asRequest}
         onSaved={(covered) => setSaved(covered)}
         onCancel={() => setOpen(false)}
       />
@@ -367,7 +373,7 @@ function FixThisButton({
   )
 }
 
-export function CheckCard({ check, owner, token, onRemediated, waiveOrg }: CheckCardProps) {
+export function CheckCard({ check, owner, token, onRemediated, waiveOrg, requestWaiverOrg }: CheckCardProps) {
   const pass = check.status === "pass"
   const notApplicable = check.status === "not_applicable"
   const fail = check.status === "fail"
@@ -428,6 +434,7 @@ export function CheckCard({ check, owner, token, onRemediated, waiveOrg }: Check
         )}
         {fail && owner && <FileAsIssue check={check} owner={owner} token={token} />}
         {fail && waiveOrg && <WaiveThis check={check} orgLogin={waiveOrg} />}
+        {fail && !waiveOrg && requestWaiverOrg && <WaiveThis check={check} orgLogin={requestWaiverOrg} asRequest />}
       </div>
     </div>
   )
