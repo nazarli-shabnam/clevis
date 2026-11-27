@@ -77,9 +77,13 @@ def test_admin_sets_and_clears_the_target_and_it_is_audited(db, world):
     assert world["org"].target_score is None
 
 
-@pytest.mark.parametrize("target", [0, 101, -5, "high"])
-def test_a_target_outside_1_to_100_is_rejected(db, world, target):
-    assert _client(db, world["users"]["admin"]).put("/orgs/acme-ts/target-score", json={"target": target}).status_code == 422
+@pytest.mark.parametrize("body", [{"target": 0}, {"target": 101}, {"target": -5}, {"target": "high"}, {"target": True}, {}, {"targt": 90}])
+def test_a_bad_or_missing_target_is_rejected_and_never_clears_the_setting(db, world, body):
+    world["org"].target_score = 80
+    db.commit()
+    assert _client(db, world["users"]["admin"]).put("/orgs/acme-ts/target-score", json=body).status_code == 422
+    db.refresh(world["org"])
+    assert world["org"].target_score == 80
 
 
 def test_a_member_reads_but_cannot_change_it_and_an_outsider_cannot_read(db, world):
@@ -135,20 +139,32 @@ def test_a_muted_kind_is_left_out(db, world):
     assert _below(member) == []
 
 
-def test_dismissing_holds_until_a_newer_scan_is_still_under_the_target(db, world):
+def test_one_standing_item_while_the_score_stays_under_and_a_fresh_one_after_a_recovery(db, world):
     org = world["org"]
     org.target_score = 85
     db.commit()
-    first = _scan(db, org, 60, age_hours=3)
+    first = _scan(db, org, 60, age_hours=30)
+    _scan(db, org, 62, age_hours=20)
     member = _client(db, world["users"]["member"])
 
-    assert member.post(f"/orgs/acme-ts/notifications/below_target:{first}/dismiss").status_code == 204
-    assert _below(member)[0]["read"] is True
-    second = _scan(db, org, 61, age_hours=0)
+    # Several scans under the target are one item, dated and keyed by the first of them.
     items = _below(member)
-    assert [i["id"] for i in items] == [f"below_target:{second}"] and items[0]["read"] is False
-    # Only the newest scored scan, and only while it is under the target, is a real item.
+    assert [i["id"] for i in items] == [f"below_target:{first}"] and "62 is below" in items[0]["title"]
+    assert member.post(f"/orgs/acme-ts/notifications/below_target:{first}/dismiss").status_code == 204
+    _scan(db, org, 63, age_hours=10)  # another scan, still under: the dismissal holds
+    items = _below(member)
+    assert [i["id"] for i in items] == [f"below_target:{first}"] and items[0]["read"] is True
+    assert "63 is below" in items[0]["title"]
+
+    # Reaching the target ends it, and a later dip is a new, unread item.
+    _scan(db, org, 90, age_hours=5)
+    assert _below(member) == []
     assert member.post(f"/orgs/acme-ts/notifications/below_target:{first}/dismiss").status_code == 404
+    dip = _scan(db, org, 70, age_hours=0)
+    items = _below(member)
+    assert [i["id"] for i in items] == [f"below_target:{dip}"] and items[0]["read"] is False
+
+    # Only the start of the current stretch, and only while under the target, is a real item.
     org.target_score = 50
     db.commit()
-    assert member.post(f"/orgs/acme-ts/notifications/below_target:{second}/dismiss").status_code == 404
+    assert member.post(f"/orgs/acme-ts/notifications/below_target:{dip}/dismiss").status_code == 404

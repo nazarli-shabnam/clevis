@@ -43,6 +43,7 @@ from src.schemas.analytics import (
     HygieneScoringUpdate,
     ScoringExclusions,
     TargetScore,
+    TargetScoreUpdate,
     AtRiskRepo,
     CockpitResponse,
     IssueSummary,
@@ -372,7 +373,7 @@ def get_target_score(ctx: OrgContext = Depends(require_org_role(min_role="member
 
 @router.put("/orgs/{org_login}/target-score", response_model=TargetScore)
 def set_target_score(
-    body: TargetScore,
+    body: TargetScoreUpdate,
     ctx: OrgContext = Depends(require_org_role(min_role="admin")),
     user: UserOut = Depends(require_auth),
     db: Session = Depends(get_db),

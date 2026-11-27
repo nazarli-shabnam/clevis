@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { CircleNotch } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
+import { notificationsKey } from "@/lib/use-notifications"
 import { SectionError } from "@/components/section-error"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -26,7 +27,12 @@ export function TargetScoreCard({ orgLogin }: { orgLogin: string }) {
   }, [query.data])
   const save = useMutation({
     mutationFn: (target: number | null) => api.orgs.setTargetScore(orgLogin, target),
-    onSuccess: (data) => queryClient.setQueryData(queryKey, data),
+    onSuccess: (data) => {
+      queryClient.setQueryData(queryKey, data)
+      // Every reader of the target (the Security page keys it by the owner as typed) and the bell must see the change.
+      queryClient.invalidateQueries({ queryKey: ["target-score"] })
+      queryClient.invalidateQueries({ queryKey: notificationsKey(orgLogin) })
+    },
   })
   const trimmed = text.trim()
   const parsed = trimmed === "" ? null : Number(trimmed)

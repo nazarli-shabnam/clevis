@@ -284,35 +284,50 @@ def _waiver_request_items(db: Session, org_login: str, tenant_id: int) -> list[d
     ]
 
 
-def _below_target_items(db: Session, org_login: str, org, tenant_id: int) -> list[dict]:
-    """A standing item while the org's newest scored scan is under its target score. Keyed by that scan, so
-    dismissing it holds until a newer scan is still under the target (then it is a fresh, unread item); gone the
-    moment a scan reaches the target or the target is cleared or lowered."""
-    target = org.target_score
-    if target is None:
-        return []
-    scan = _latest_scored_scan(db, org_login, tenant_id)
-    if scan is None or scan.score >= target:
-        return []
-    return [
-        {
-            "id": f"below_target:{scan.id}",
-            "kind": "below_target",
-            "at": _aware(scan.created_at),
-            "title": f"Security score {scan.score} is below the target of {target}",
-            "detail": f"{target - scan.score} point{'s' if target - scan.score != 1 else ''} to go.",
-            "href": "/security",
-        }
-    ]
-
-
-def _latest_scored_scan(db: Session, org_login: str, tenant_id: int):
-    return (
+def _below_target_run(db: Session, org_login: str, tenant_id: int, target: int):
+    """``(latest, start)`` of the current stretch of scored scans under ``target``, or None when the newest scored
+    scan has reached it (or there is none). ``start`` is the oldest scan of that stretch: it dates and keys the
+    item, so daily scans that stay under the target are one standing item, not a new unread one each day."""
+    rows = (
         db.query(ScanResult.id, ScanResult.score, ScanResult.created_at)
         .filter(func.lower(ScanResult.owner) == org_login.lower(), ScanResult.tenant_id == tenant_id, ScanResult.score.isnot(None))
         .order_by(ScanResult.created_at.desc(), ScanResult.id.desc())
-        .first()
+        .limit(_MAX_SCANS_IN_WINDOW)
+        .all()
     )
+    if not rows or rows[0].score >= target:
+        return None
+    start = rows[0]
+    for row in rows:
+        if row.score >= target:
+            break
+        start = row
+    return rows[0], start
+
+
+def _below_target_items(db: Session, org_login: str, org, tenant_id: int) -> list[dict]:
+    """A standing item while the org's newest scored scan is under its target score. Dated and keyed by the first
+    scan of the current stretch under the target, so dismissing it holds for as long as the score stays under;
+    it is gone the moment a scan reaches the target (or the target is cleared or lowered), and a later dip is a
+    fresh, unread item."""
+    target = org.target_score
+    if target is None:
+        return []
+    run = _below_target_run(db, org_login, tenant_id, target)
+    if run is None:
+        return []
+    latest, start = run
+    gap = target - latest.score
+    return [
+        {
+            "id": f"below_target:{start.id}",
+            "kind": "below_target",
+            "at": _aware(start.created_at),
+            "title": f"Security score {latest.score} is below the target of {target}",
+            "detail": f"{gap} point{'s' if gap != 1 else ''} to go.",
+            "href": "/security",
+        }
+    ]
 
 
 def _api_token_expiring_items(db: Session, org_login: str, tenant_id: int) -> list[dict]:
@@ -597,9 +612,9 @@ def _item_exists(db: Session, ctx: OrgContext, org_login: str, kind: str, row_id
             SecurityAlert.kind.in_(dependabot_burndown.KINDS),
         ).first() is not None
     elif kind == "below_target":  # shown to every member; the item is keyed by the newest scored scan
-        scan = _latest_scored_scan(db, org_login, tenant_id)
         target = ctx.org.target_score
-        return scan is not None and scan.id == row_id and target is not None and scan.score < target
+        run = None if target is None else _below_target_run(db, org_login, tenant_id, target)
+        return run is not None and run[1].id == row_id
     elif not is_admin:
         return False
     elif kind == "job_failed":

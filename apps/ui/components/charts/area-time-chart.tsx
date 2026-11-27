@@ -21,7 +21,7 @@ interface AreaTimeChartProps {
   height?: number
   /** Makes the points clickable; called with the index into `data` of the point under the click. */
   onPointClick?: (index: number) => void
-  /** A horizontal goal line (e.g. an org's target score); the y axis then spans 0-100 so the line is always in view. */
+  /** A horizontal goal line (e.g. an org's target score); the y axis is widened to include it. */
   target?: number
 }
 
@@ -61,7 +61,7 @@ export function AreaTimeChart({
         </defs>
         <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} />
         <XAxis dataKey="week" stroke={CHART_COLORS.axis} fontSize={11} tickLine={false} />
-        <YAxis stroke={CHART_COLORS.axis} fontSize={11} tickLine={false} width={36} domain={target === undefined ? undefined : [0, 100]} />
+        <YAxis stroke={CHART_COLORS.axis} fontSize={11} tickLine={false} width={36} domain={target === undefined ? undefined : [(min: number) => Math.min(min, target), (max: number) => Math.max(max, target)]} />
         <Tooltip
           contentStyle={CHART_TOOLTIP_STYLE}
           labelStyle={{ color: CHART_COLORS.axis }}
@@ -70,7 +70,7 @@ export function AreaTimeChart({
         {target !== undefined && (
           <ReferenceLine
             y={target}
-            stroke={CHART_COLORS.series[1]}
+            stroke={CHART_COLORS.axis}
             strokeDasharray="4 4"
             label={{ value: `Target ${target}`, position: "insideTopRight", fill: CHART_COLORS.axis, fontSize: 11 }}
           />
