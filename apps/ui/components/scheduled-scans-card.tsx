@@ -62,7 +62,7 @@ export function ScheduledScansCard({ orgLogin }: { orgLogin: string }) {
               : "Not scanned automatically: scores only change when someone runs a scan."}{" "}
             Needs the GitHub App installed; a pasted token is never used for scheduled scans.
           </p>
-          {update.isError && <p className="text-xs text-destructive">{update.error.message}</p>}
+          {update.isError && <p role="alert" className="text-xs text-destructive">{update.error.message}</p>}
         </div>
       )}
     </div>

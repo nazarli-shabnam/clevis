@@ -553,7 +553,14 @@ const BULK_STATUS_LABEL: Record<InvitationBulkItem["status"], string> = {
   failed: "couldn't be invited, try again",
 }
 
+// Keyed by org: a client-side org switch reuses the page, and org A's filters, tab and invite form must not
+// carry over to org B.
 export default function OrgMembersPage() {
+  const params = useParams<{ login: string }>()
+  return <OrgMembersPageForOrg key={params.login} />
+}
+
+function OrgMembersPageForOrg() {
   const params = useParams<{ login: string }>()
   const orgLogin = params.login
   const queryClient = useQueryClient()

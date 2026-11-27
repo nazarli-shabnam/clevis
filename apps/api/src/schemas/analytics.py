@@ -3,9 +3,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, SecretStr
 
+from src.core.path_params import Owner
+
 
 class AnalyticsInput(BaseModel):
-    owner: str
+    owner: Owner
     # Optional: falls back to a GitHub App installation token when one is connected
     # for this owner (see src.services.token_resolution).
     token: SecretStr | None = None
@@ -175,6 +177,8 @@ class MilestoneSummary(BaseModel):
 class PrCycleTimeWeek(BaseModel):
     week: str
     avg_days: float
+    # True when the week had more merged PRs than the 30 the average is taken over (the newest 30).
+    partial: bool = False
 
 
 class CockpitResponse(BaseModel):
@@ -264,6 +268,8 @@ class MyPrListResponse(BaseModel):
     page: int = 1
     per_page: int = 25
     identity_unresolved: bool = False
+    # GitHub search reaches only the first 1000 results; True when there are more than that.
+    truncated: bool = False
 
 
 class MyIssueListResponse(BaseModel):
@@ -272,6 +278,8 @@ class MyIssueListResponse(BaseModel):
     page: int = 1
     per_page: int = 25
     identity_unresolved: bool = False
+    # GitHub search reaches only the first 1000 results; True when there are more than that.
+    truncated: bool = False
 
 
 class ActionsUsageResponse(BaseModel):

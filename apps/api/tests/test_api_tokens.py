@@ -309,6 +309,14 @@ def test_badge_is_opt_in_and_shows_only_the_score(db, acme):
     assert _client(db).get("/badges/acme/score.svg").status_code == 404
 
 
+def test_badge_setting_can_be_read_by_an_admin_but_not_a_member(db, acme):
+    admin = _client(db, acme["admin"])
+    assert admin.get("/orgs/acme/badge").json() == {"enabled": False}
+    admin.put("/orgs/acme/badge", json={"enabled": True})
+    assert admin.get("/orgs/acme/badge").json() == {"enabled": True}
+    assert _client(db, acme["member"]).get("/orgs/acme/badge").status_code == 403
+
+
 def test_badge_reads_are_cached_and_opting_out_takes_effect_at_once(db, acme):
     _scan(db, acme["org"], score=95)
     admin = _client(db, acme["admin"])

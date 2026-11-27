@@ -32,9 +32,9 @@ export function ChangePasswordCard() {
   function submit(e: React.FormEvent) {
     e.preventDefault()
     setError("")
+    change.reset() // before validating, so a previous success doesn't show next to a new error
     if (next.length < 12) return setError("New password must be at least 12 characters.")
     if (next !== confirm) return setError("The new passwords do not match.")
-    change.reset()
     change.mutate()
   }
 

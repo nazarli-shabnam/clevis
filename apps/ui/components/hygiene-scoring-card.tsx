@@ -60,7 +60,7 @@ export function HygieneScoringCard({ orgLogin }: { orgLogin: string }) {
             CODEOWNERS, SECURITY.md, license, stale branches and unpinned Actions. Currently{" "}
             {query.data.effective ? "counted in" : "left out of"} this organization&rsquo;s score; the change applies to the next scan.
           </p>
-          {update.isError && <p className="text-xs text-destructive">{update.error.message}</p>}
+          {update.isError && <p role="alert" className="text-xs text-destructive">{update.error.message}</p>}
         </div>
       )}
     </div>
