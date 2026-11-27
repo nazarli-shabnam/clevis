@@ -11,6 +11,7 @@ vi.mock("next/navigation", () => ({
 const verifyEmailMock = vi.fn();
 const resendMock = vi.fn();
 let signedIn = false;
+let authLoading = false;
 
 vi.mock("@/lib/api/client", () => ({
   api: {
@@ -21,7 +22,7 @@ vi.mock("@/lib/api/client", () => ({
   },
 }));
 vi.mock("@/lib/auth-context", () => ({
-  useOptionalAuth: () => (signedIn ? { user: { id: 1, email: "a@b.c" } } : null),
+  useOptionalAuth: () => (signedIn ? { user: { id: 1, email: "a@b.c" }, isLoading: authLoading } : null),
 }));
 
 // What the API client throws for a rejected request: an Error that carries the HTTP status.
@@ -49,6 +50,7 @@ describe("VerifyEmailPage", () => {
     verifyEmailMock.mockReset();
     resendMock.mockReset();
     signedIn = false;
+    authLoading = false;
     mockSearchParams = new URLSearchParams({ token: "good-token" });
   });
 
@@ -150,18 +152,40 @@ describe("VerifyEmailPage", () => {
       expect(screen.getByRole("button", { name: "Resend verification email" })).toBeInTheDocument();
     });
 
-    it("keeps the form for a failure the user can retry (no status, or a server error)", async () => {
-      verifyEmailMock.mockRejectedValueOnce(new Error("Failed to fetch")).mockRejectedValueOnce(rejected("Internal error", 500));
+    it("keeps the form for a failure the user can retry with the same link", async () => {
+      verifyEmailMock
+        .mockRejectedValueOnce(new Error("Failed to fetch"))
+        .mockRejectedValueOnce(rejected("Internal error", 500))
+        .mockRejectedValueOnce(rejected("Password must be at most 72 bytes", 422))
+        .mockRejectedValueOnce(rejected("Too many requests", 429));
       renderPage();
 
-      fill("a-long-enough-password");
-      await screen.findByText("Failed to fetch");
-      expect(screen.getByPlaceholderText("Repeat password")).toBeInTheDocument();
+      for (const message of ["Failed to fetch", "Internal error", "Password must be at most 72 bytes", "Too many requests"]) {
+        fill("a-long-enough-password");
+        await screen.findByText(message);
+        expect(screen.getByPlaceholderText("Repeat password")).toBeInTheDocument();
+        expect(screen.queryByRole("link", { name: "Sign in" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Resend verification email" })).not.toBeInTheDocument();
+      }
+    });
 
-      fill("a-long-enough-password");
-      await screen.findByText("Internal error");
-      expect(screen.getByPlaceholderText("Repeat password")).toBeInTheDocument();
+    it("offers neither next step while the session is still being restored", () => {
+      signedIn = true;
+      authLoading = true;
+      mockSearchParams = new URLSearchParams();
+      renderPage();
+
+      expect(screen.getByText(/missing its token/i)).toBeInTheDocument();
       expect(screen.queryByRole("link", { name: "Sign in" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Resend verification email" })).not.toBeInTheDocument();
+    });
+
+    it("names the account the new link goes to", async () => {
+      signedIn = true;
+      mockSearchParams = new URLSearchParams();
+      renderPage();
+
+      expect(screen.getByText("a@b.c")).toBeInTheDocument();
     });
   });
 });

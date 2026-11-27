@@ -16,14 +16,17 @@ import { CheckCircle, Warning, CircleNotch } from "@phosphor-icons/react"
  * can ask for a new email right here; anyone else has to sign in first, since the new link goes to the account's
  * own address. */
 function LinkProblem({ message }: { message: string }) {
-  const signedIn = !!useOptionalAuth()?.user
+  const auth = useOptionalAuth()
+  const signedIn = !!auth?.user
+  // Until the session has been restored the user looks signed out: offer neither next step yet.
+  const unknown = !!auth?.isLoading
   const resend = useMutation({ mutationFn: api.auth.resendVerification })
   return (
     <>
       <p role="alert" className="text-sm text-destructive flex items-center gap-1.5">
         <Warning className="size-3.5 shrink-0" /> {message}
       </p>
-      {signedIn ? (
+      {unknown ? null : signedIn ? (
         resend.isSuccess ? (
           <p role="status" className="text-sm text-primary">
             {resend.data.already_verified
@@ -32,7 +35,9 @@ function LinkProblem({ message }: { message: string }) {
           </p>
         ) : (
           <div className="flex flex-col gap-2">
-            <p className="text-sm text-muted-foreground">Links stop working after 24 hours. Send yourself a new one.</p>
+            <p className="text-sm text-muted-foreground">
+              Links stop working after 24 hours. Send a new one to <span className="font-mono">{auth?.user?.email}</span>.
+            </p>
             <div>
               <Button onClick={() => resend.mutate()} disabled={resend.isPending}>
                 {resend.isPending ? "Sending…" : "Resend verification email"}
@@ -61,11 +66,10 @@ function LinkProblem({ message }: { message: string }) {
   )
 }
 
-/** The server turned the link down (a 4xx), as opposed to a dropped connection or a 5xx the user can just retry. */
-const isLinkRejection = (e: unknown) => {
-  const status = (e as { status?: unknown } | null)?.status
-  return typeof status === "number" && status >= 400 && status < 500
-}
+/** The server turned the link itself down: the 400 "Invalid or expired verification link". Everything else (a
+ * password it refuses, 422; the rate limit, 429; a dropped connection or a 5xx) is something the user can retry
+ * with the link they have, so the form and its inline message stay. */
+const isLinkRejection = (e: unknown) => (e as { status?: unknown } | null)?.status === 400
 
 export default function VerifyEmailPage() {
   const token = useSearchParams().get("token")
