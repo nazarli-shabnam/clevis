@@ -24,8 +24,10 @@ describe("config field table", () => {
     expect(CONFIG_LIMITS.retention_webhook_deliveries_days.min).toBe(30)
     expect(CONFIG_LIMITS.retention_jobs_days.min).toBe(8)
     expect(CONFIG_LIMITS.retention_repo_events_days.min).toBe(100)
-    // The row descriptions state the same minimums.
-    expect(field("retention_jobs_days").description).toMatch(/minimum 8/)
+    // The rule is stated once (the range line under the field), not also in the prose.
+    for (const key of ["retention_webhook_deliveries_days", "retention_jobs_days", "retention_repo_events_days"]) {
+      expect(field(key).description).not.toMatch(/minimum|keeps? (them|events) forever/)
+    }
   })
 })
 

@@ -359,7 +359,7 @@ describe("SettingsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save Worker Poll Interval" }));
     const alert = await screen.findByText("Must be between 1 and 30");
     expect(alert).toHaveAttribute("role", "alert");
-    expect(input).toHaveAttribute("aria-describedby", alert.id);
+    expect(input.getAttribute("aria-describedby")!.split(" ")).toContain(alert.id);
   });
 
   describe("instance configuration form (#1282)", () => {
@@ -451,6 +451,14 @@ describe("SettingsPage", () => {
       fireEvent.change(input, { target: { value: "" } });
       expect(screen.getByText("Enter a whole number.")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Save Worker Poll Interval" })).toBeDisabled();
+    });
+
+    it("ties the field's description, with its allowed range, to the input for screen readers", async () => {
+      arrange();
+      const input = await screen.findByLabelText("Keep Finished Jobs (days)");
+
+      const descId = input.getAttribute("aria-describedby")!.split(" ").pop()!;
+      expect(document.getElementById(descId)).toHaveTextContent(/Allowed: 0 \(keep forever\) or 8 to 3650/);
     });
 
     it("does not complain about a number field nobody has touched that the server has never stored", async () => {

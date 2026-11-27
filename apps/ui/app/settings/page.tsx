@@ -789,7 +789,8 @@ function InstanceConfigSection() {
     const problem = edited ? rule : null
     const range = field.type === "number" ? limitsText(field.key) : null
     const serverError = errors[field.key]
-    const describedBy = [serverError ? errorId : null, problem ? hintId : null].filter(Boolean).join(" ") || undefined
+    const descId = `${fieldId}-desc`
+    const describedBy = [serverError ? errorId : null, problem ? hintId : null, descId].filter(Boolean).join(" ")
 
     return (
       <div key={field.key} className="p-4 max-w-lg">
@@ -848,7 +849,7 @@ function InstanceConfigSection() {
         {serverError && (
           <p id={errorId} role="alert" className="text-xs text-destructive mt-1">{serverError}</p>
         )}
-        <p className="text-xs text-muted-foreground mt-1">
+        <p id={descId} className="text-xs text-muted-foreground mt-1">
           {field.description}
           {range && <> Allowed: {range}.</>}
         </p>

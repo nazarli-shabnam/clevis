@@ -98,9 +98,9 @@ export const CONFIG_FIELDS: ConfigField[] = [
   { key: "membership_reconcile_poll_seconds", label: "Membership Reconcile Interval", description: "Seconds between org-membership reconciliation sweeps.", type: "number" },
   { key: "membership_reconcile_stale_hours", label: "Membership Stale After", description: "Hours since the last membership sync before it's reconciled again.", type: "number" },
   { key: "webhook_requeue_poll_seconds", label: "Webhook Re-queue Interval", description: "Seconds between retries of webhook deliveries that failed to queue.", type: "number" },
-  { key: "retention_webhook_deliveries_days", label: "Keep Webhook Deliveries (days)", description: "Days to keep webhook payloads once they are processed or given up on (default 30, minimum 30 when set). 0 keeps them forever. Deliveries still waiting to be queued are never deleted.", type: "number", defaultValue: "30" },
-  { key: "retention_jobs_days", label: "Keep Finished Jobs (days)", description: "Days to keep finished (done or failed) background jobs (default 30, minimum 8 when set). 0 keeps them forever.", type: "number", defaultValue: "30" },
-  { key: "retention_repo_events_days", label: "Keep Activity Events (days)", description: "Days to keep stored GitHub activity events (default 180, minimum 100 when set). Daily activity counts, security alerts, the audit log and scan history are always kept. 0 keeps events forever.", type: "number", defaultValue: "180" },
+  { key: "retention_webhook_deliveries_days", label: "Keep Webhook Deliveries (days)", description: "Days to keep webhook payloads once they are processed or given up on (default 30). Deliveries still waiting to be queued are never deleted.", type: "number", defaultValue: "30" },
+  { key: "retention_jobs_days", label: "Keep Finished Jobs (days)", description: "Days to keep finished (done or failed) background jobs (default 30).", type: "number", defaultValue: "30" },
+  { key: "retention_repo_events_days", label: "Keep Activity Events (days)", description: "Days to keep stored GitHub activity events (default 180). Daily activity counts, security alerts, the audit log and scan history are always kept.", type: "number", defaultValue: "180" },
 ]
 
 export interface ConfigLimits {
@@ -115,6 +115,12 @@ const SECONDS_SLOW = { min: 300, max: 86_400 }
 const HOURS = { min: 1, max: 168 }
 const SLA_DAYS = { min: 1, max: 3650 }
 
+// Each range mirrors a constant on the server; if one of those moves, move it here too:
+//   *_poll_seconds  -> the `_MIN_POLL_SECONDS` / `_MAX_POLL_SECONDS` of apps/api/src/services/<name>_loop.py
+//   *_stale_hours   -> `max(1, min(168, ...))` in gap_heal_sweep.py and membership_reconcile_sweep.py
+//   pr_nudge_stale_days -> `configured_stale_days` in pr_nudge.py
+//   *_sla_*_days    -> `sla_days` in dependabot_burndown.py (and the 3650 cap in routers/config.py)
+//   retention_*     -> the `min_days` of each policy in retention_sweep.py
 export const CONFIG_LIMITS: Record<string, ConfigLimits> = {
   worker_poll_seconds: { min: 1, max: 30 },
   gap_heal_poll_seconds: SECONDS_FAST,
