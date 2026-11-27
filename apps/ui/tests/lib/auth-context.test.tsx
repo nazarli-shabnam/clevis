@@ -816,6 +816,30 @@ describe("AuthProvider per-user browser state", () => {
     expectPerUserStateCleared();
   });
 
+  it("keeps the signed-in user's scope and activity marker when setSession refreshes the same user (password change)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/auth/me")) return Promise.resolve(new Response(null, { status: 401 }));
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    act(() => {
+      result.current.setSession(makeJwt(2, "password@example.com"), passwordUser, []);
+    });
+    seedPerUserState();
+
+    act(() => {
+      result.current.setSession(makeJwt(2, "password@example.com"), passwordUser, []);
+    });
+
+    expect(localStorage.getItem("active_scope")).not.toBeNull();
+    expect(localStorage.getItem("activity_last_seen_at")).not.toBeNull();
+    expect(localStorage.getItem("clevis:first-run-checklist-dismissed")).not.toBeNull();
+  });
+
   it("clears the previous user's scope and activity marker on login", async () => {
     vi.stubGlobal(
       "fetch",

@@ -11,6 +11,7 @@ import { HygieneScoringCard } from "@/components/hygiene-scoring-card"
 import { ScheduledScansCard } from "@/components/scheduled-scans-card"
 import { DigestCard } from "@/components/digest-card"
 import { AutomationSchedulesCard } from "@/components/automation-schedules-card"
+import { WaiverRequestsCard } from "@/components/waiver-requests-card"
 import { WaiversCard } from "@/components/waivers-card"
 import { ClevisMembersCard } from "@/components/clevis-members-card"
 import { IngestionHealthCard } from "@/components/ingestion-health-card"
@@ -106,6 +107,7 @@ export default function OrgSettingsPage() {
             <AutomationSchedulesCard orgLogin={orgLogin} />
           </Section>
           <Section id="waivers" label="Waivers">
+            <WaiverRequestsCard orgLogin={orgLogin} />
             <WaiversCard orgLogin={orgLogin} />
           </Section>
           <Section id="health" label="Health and evidence">
