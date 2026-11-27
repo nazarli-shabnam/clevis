@@ -189,3 +189,35 @@ def test_endpoint_rejects_non_members(db, acme):
     db.add(User(id=outsider.id, email=outsider.email, name=None, password_hash=None, is_workspace_admin=False))
     db.commit()
     assert _client(db, outsider).get("/orgs/acme/security/dependabot-burndown").status_code in (403, 404)
+
+
+def test_endpoint_kind_filter_and_per_kind_sla(db, acme):
+    _alert(db, acme, 1, age=10)  # Dependabot critical, 7-day window: breached
+    db.add(
+        SecurityAlert(
+            tenant_id=acme.tenant_id, repo="acme/api", kind="code_scanning", number=2, state="open",
+            severity="critical", created_at=datetime.now(timezone.utc) - timedelta(days=10),
+            updated_at=datetime.now(timezone.utc) - timedelta(days=10),
+        )
+    )
+    db.commit()
+    db.execute(text(f"SET app.tenant_id = {int(acme.tenant_id)}"))
+    client = _client(db)
+
+    def critical(query, values=None):
+        with patch("src.services.dependabot_burndown.get_config", side_effect=lambda k, d: (values or {}).get(k, d)):
+            body = client.get(f"/orgs/acme/security/dependabot-burndown{query}").json()
+        return next(s for s in body["severities"] if s["severity"] == "critical")
+
+    assert critical("")["open"] == 1  # default stays Dependabot only
+    assert critical("?kind=code_scanning")["open"] == 1
+    both = critical("?kind=all")
+    assert both["open"] == 2 and both["breaches"] == 2 and both["sla_days"] == 7
+    # Different windows per kind: each alert is judged against its own, and no single window is shown.
+    mixed = critical("?kind=all", {"code_scanning_sla_critical_days": "14"})
+    assert mixed["open"] == 2 and mixed["breaches"] == 1 and mixed["sla_days"] is None
+    assert critical("?kind=code_scanning", {"code_scanning_sla_critical_days": "14"})["sla_days"] == 14
+
+
+def test_endpoint_rejects_an_unknown_kind(db, acme):
+    assert _client(db).get("/orgs/acme/security/dependabot-burndown?kind=secret_scanning").status_code == 422

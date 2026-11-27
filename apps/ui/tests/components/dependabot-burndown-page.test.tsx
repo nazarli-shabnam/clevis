@@ -64,7 +64,7 @@ describe("DependabotBurndownPage", () => {
     renderPage()
 
     await waitFor(() => expect(screen.getByText("1 SLA breach")).toBeInTheDocument())
-    expect(burndownMock).toHaveBeenCalledWith("acme", 30)
+    expect(burndownMock).toHaveBeenCalledWith("acme", 30, "dependabot")
     expect(screen.getByTestId("chart")).toHaveTextContent("2 points")
     expect(screen.getByRole("link", { name: "acme/api" })).toHaveAttribute("href", "/repos/acme~api?tab=security")
     expect(screen.getByRole("link", { name: "Open the oldest alert of acme/api on GitHub" })).toHaveAttribute(
@@ -120,8 +120,20 @@ describe("DependabotBurndownPage", () => {
 
     fireEvent.change(screen.getByLabelText("Window"), { target: { value: "90" } })
 
-    await waitFor(() => expect(burndownMock).toHaveBeenLastCalledWith("acme", 90))
+    await waitFor(() => expect(burndownMock).toHaveBeenLastCalledWith("acme", 90, "dependabot"))
     expect(window.location.search).toBe("?days=90")
+  })
+
+  it("switches to code scanning alerts and keeps the kind in the URL", async () => {
+    burndownMock.mockResolvedValue(DATA)
+    renderPage()
+    await screen.findByText("1 SLA breach")
+
+    fireEvent.change(screen.getByLabelText("Alerts"), { target: { value: "code_scanning" } })
+
+    await waitFor(() => expect(burndownMock).toHaveBeenLastCalledWith("acme", 30, "code_scanning"))
+    expect(window.location.search).toBe("?kind=code_scanning")
+    expect(await screen.findByRole("heading", { name: "Code scanning burn-down" })).toBeInTheDocument()
   })
 
   it("restores the view from the URL and narrows to a deep-linked repo", async () => {
@@ -136,7 +148,7 @@ describe("DependabotBurndownPage", () => {
     renderPage()
 
     expect(await screen.findByRole("link", { name: "acme/web" })).toBeInTheDocument()
-    expect(burndownMock).toHaveBeenCalledWith("acme", 60)
+    expect(burndownMock).toHaveBeenCalledWith("acme", 60, "dependabot")
     expect(screen.queryByRole("link", { name: "acme/api" })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByTitle("Show all repositories"))
