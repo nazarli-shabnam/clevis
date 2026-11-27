@@ -5,9 +5,9 @@ take vulnerability reports seriously and will respond promptly.
 
 ## Supported versions
 
-Clevis is self-hosted and shipped as a rolling `main` branch rather than versioned releases.
-Only the latest commit on `main` is supported with security fixes — if you're running an older
-checkout, update before reporting an issue that may already be fixed.
+Clevis is self-hosted. Security fixes go to the latest commit on `main` and to the latest `v*`
+release tag (the `:latest` images; `:latest` follows the newest stable `vX.Y.Z` tag only). Older tags and older checkouts are not supported — update
+before reporting an issue that may already be fixed.
 
 ## Reporting a vulnerability
 

@@ -117,6 +117,19 @@ describe("ChangePasswordCard", () => {
     expect(screen.getByLabelText("Current password")).toHaveValue("")
   })
 
+  it("clears the success message when a later attempt fails validation", async () => {
+    const user = { id: 1, email: "a@b.com", name: null, is_workspace_admin: false }
+    changeMock.mockResolvedValue({ access_token: "new.jwt.tok", user, pending_invitations: [] })
+    wrap(<ChangePasswordCard />)
+    fill("old-password-123", "a-brand-new-password", "a-brand-new-password")
+    expect(await screen.findByRole("status")).toHaveTextContent("Password changed")
+
+    fill("a-brand-new-password", "another-new-password", "different-password-1")
+
+    expect(screen.getByRole("alert")).toHaveTextContent("do not match")
+    expect(screen.queryByRole("status")).not.toBeInTheDocument()
+  })
+
   it("validates locally and shows the server's refusal", async () => {
     changeMock.mockRejectedValue(new Error("Current password is incorrect"))
     wrap(<ChangePasswordCard />)

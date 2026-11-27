@@ -262,8 +262,9 @@ export default function OrgActivityPage() {
         </div>
       ) : (
         <>
-          <AuditCard orgLogin={orgLogin} />
-          <JobsCard orgLogin={orgLogin} />
+          {/* keyed by org: a client-side org switch reuses this page, and org A's filters must not apply to org B */}
+          <AuditCard key={`audit-${orgLogin}`} orgLogin={orgLogin} />
+          <JobsCard key={`jobs-${orgLogin}`} orgLogin={orgLogin} />
         </>
       )}
     </>

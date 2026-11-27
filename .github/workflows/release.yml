@@ -29,6 +29,7 @@ jobs:
       # Gate: a manual dispatch may only publish from main, and only a commit whose CI run
       # passed -- so `:latest` can't be pushed from an arbitrary branch or an untested commit.
       - name: Gate on branch and CI
+        id: gate
         # Context values go through env, never interpolated into the script (a ref name is
         # attacker-influenced text).
         env:
@@ -44,6 +45,14 @@ jobs:
             echo "::error::CI has not passed for $GITHUB_SHA (conclusion: '${conclusion:-none}')."
             exit 1
           fi
+          # `:latest` moves only for the newest stable vX.Y.Z tag, so re-tagging an older release or
+          # pushing a prerelease cannot roll it back. Older tags still publish their versioned images.
+          latest=false
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            newest=$(git ls-remote --tags --refs origin 'v*' | sed 's|.*refs/tags/||' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+            [ "$GITHUB_REF_NAME" = "$newest" ] && latest=true
+          fi
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -60,7 +69,7 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository }}-api:${{ github.ref_name }}
-            ${{ github.ref_type == 'tag' && format('ghcr.io/{0}-api:latest', github.repository) || '' }}
+            ${{ steps.gate.outputs.latest == 'true' && format('ghcr.io/{0}-api:latest', github.repository) || '' }}
 
       - name: Build + Push Worker
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -70,7 +79,7 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository }}-worker:${{ github.ref_name }}
-            ${{ github.ref_type == 'tag' && format('ghcr.io/{0}-worker:latest', github.repository) || '' }}
+            ${{ steps.gate.outputs.latest == 'true' && format('ghcr.io/{0}-worker:latest', github.repository) || '' }}
 
       - name: Build + Push UI
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -85,4 +94,58 @@ jobs:
             NEXT_PUBLIC_GITHUB_WEB_BASE=${{ vars.NEXT_PUBLIC_GITHUB_WEB_BASE || 'https://github.com' }}
           tags: |
             ghcr.io/${{ github.repository }}-ui:${{ github.ref_name }}
-            ${{ github.ref_type == 'tag' && format('ghcr.io/{0}-ui:latest', github.repository) || '' }}
+            ${{ steps.gate.outputs.latest == 'true' && format('ghcr.io/{0}-ui:latest', github.repository) || '' }}
+
+  # The release gate above only checks that CI passed for the commit; nothing ran the images that were just
+  # published. Start the whole stack from those exact tags and wait for every healthcheck, as an operator
+  # following docs/self-hosting.md would.
+  smoke:
+    name: Smoke-test published images
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Dummy credentials: this stack is thrown away at the end of the job. JOB_SECRET_KEY and AUTH_SECRET stay
+      # empty so the init-secrets path the Quickstart relies on is the one exercised.
+      - name: Create .env from .env.example
+        run: |
+          cp .env.example .env
+          sed -i             -e 's|^DB_USER=.*|DB_USER=clevis|'             -e 's|^DB_PASSWORD=.*|DB_PASSWORD=clevis|'             -e 's|^DB_NAME=.*|DB_NAME=clevis|'             -e 's|^REDIS_PASSWORD=.*|REDIS_PASSWORD=release-smoke-redis-password-not-for-production|'             .env
+
+      # An override that names the published tags; --no-build makes Compose pull them instead of building the
+      # checkout, so what runs is what was pushed.
+      - name: Point the stack at the published tags
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cat > docker-compose.release-smoke.yml <<EOF
+          services:
+            api:
+              image: ghcr.io/${REPO}-api:${TAG}
+            worker:
+              image: ghcr.io/${REPO}-worker:${TAG}
+            ui:
+              image: ghcr.io/${REPO}-ui:${TAG}
+          EOF
+
+      - name: Start the published images and wait for healthy
+        run: docker compose -f docker-compose.yml -f docker-compose.release-smoke.yml up -d --no-build --pull always --wait
+
+      - name: Stack logs (on failure)
+        if: failure()
+        run: docker compose -f docker-compose.yml -f docker-compose.release-smoke.yml logs
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.release-smoke.yml down -v

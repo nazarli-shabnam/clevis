@@ -7,6 +7,7 @@ const createMock = vi.fn()
 const updateMock = vi.fn()
 const removeMock = vi.fn()
 const testMock = vi.fn()
+const announceMock = vi.fn()
 
 vi.mock("@/lib/api/client", () => ({
   api: {
@@ -16,6 +17,7 @@ vi.mock("@/lib/api/client", () => ({
       update: (...a: unknown[]) => updateMock(...a),
       remove: (...a: unknown[]) => removeMock(...a),
       test: (...a: unknown[]) => testMock(...a),
+      announceOpenAlerts: (...a: unknown[]) => announceMock(...a),
     },
   },
 }))
@@ -45,7 +47,7 @@ function renderCard() {
 }
 
 beforeEach(() => {
-  for (const m of [listMock, createMock, updateMock, removeMock, testMock]) m.mockReset()
+  for (const m of [listMock, createMock, updateMock, removeMock, testMock, announceMock]) m.mockReset()
 })
 afterEach(cleanup)
 
@@ -97,6 +99,123 @@ describe("NotificationDestinationsCard", () => {
       min_score_drop: 10,
     })
     await waitFor(() => expect(screen.getByLabelText("Webhook URL")).toHaveValue(""))
+  })
+
+  it("offers to announce the open critical alerts after the first destination that listens for them", async () => {
+    listMock.mockResolvedValue([])
+    createMock.mockResolvedValue(dest())
+    announceMock.mockResolvedValue({ announced: 3, truncated: false })
+    renderCard()
+    await screen.findByText(/No destinations yet/)
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "#sec" } })
+    fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: "https://hooks.slack.com/x" } })
+    fireEvent.click(screen.getByLabelText("New critical/high alert"))
+    fireEvent.click(screen.getByRole("button", { name: "Add destination" }))
+
+    fireEvent.click(await screen.findByRole("button", { name: "Announce open alerts" }))
+
+    await waitFor(() => expect(announceMock).toHaveBeenCalledWith("acme"))
+    expect(await screen.findByText("Sent 3 open alerts.")).toBeInTheDocument()
+  })
+
+  it("words the announce result for one alert and for a truncated batch, and for none", async () => {
+    const addFirst = async () => {
+      listMock.mockResolvedValue([])
+      createMock.mockResolvedValue(dest())
+      renderCard()
+      await screen.findByText(/No destinations yet/)
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "#sec" } })
+      fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: "https://hooks.slack.com/x" } })
+      fireEvent.click(screen.getByLabelText("New critical/high alert"))
+      fireEvent.click(screen.getByRole("button", { name: "Add destination" }))
+      fireEvent.click(await screen.findByRole("button", { name: "Announce open alerts" }))
+    }
+    announceMock.mockResolvedValue({ announced: 1, truncated: true })
+    await addFirst()
+    expect(await screen.findByText("Sent 1 open alert (the oldest; more are open).")).toBeInTheDocument()
+    cleanup()
+    announceMock.mockResolvedValue({ announced: 0, truncated: false })
+    await addFirst()
+    expect(await screen.findByText("No critical or high alerts are open right now.")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Done" }))
+    expect(screen.queryByRole("status")).not.toBeInTheDocument()
+  })
+
+  it("shows why the announce failed and lets the offer be dismissed", async () => {
+    listMock.mockResolvedValue([])
+    createMock.mockResolvedValue(dest())
+    announceMock.mockRejectedValue(new Error("GitHub API error: 403"))
+    renderCard()
+    await screen.findByText(/No destinations yet/)
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "#sec" } })
+    fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: "https://hooks.slack.com/x" } })
+    fireEvent.click(screen.getByLabelText("New critical/high alert"))
+    fireEvent.click(screen.getByRole("button", { name: "Add destination" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Announce open alerts" }))
+    expect(await screen.findByText(/Couldn.t send: GitHub API error: 403/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "No thanks" }))
+    expect(screen.queryByRole("button", { name: "Announce open alerts" })).not.toBeInTheDocument()
+  })
+
+  it("does not offer it while the destination list has not loaded, since existing ones are unknown", async () => {
+    listMock.mockReturnValue(new Promise(() => {}))
+    createMock.mockResolvedValue(dest())
+    renderCard()
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "#sec" } })
+    fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: "https://hooks.slack.com/x" } })
+    fireEvent.click(screen.getByLabelText("New critical/high alert"))
+    fireEvent.click(screen.getByRole("button", { name: "Add destination" }))
+    await waitFor(() => expect(createMock).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByLabelText("Webhook URL")).toHaveValue(""))
+    expect(screen.queryByRole("button", { name: "Announce open alerts" })).not.toBeInTheDocument()
+  })
+
+  it("does not offer it when the destination ignores new critical alerts, or is not the first", async () => {
+    listMock.mockResolvedValue([])
+    createMock.mockResolvedValue(dest())
+    renderCard()
+    await screen.findByText(/No destinations yet/)
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "#sec" } })
+    fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: "https://hooks.slack.com/x" } })
+    fireEvent.click(screen.getByRole("button", { name: "Add destination" }))
+    await waitFor(() => expect(createMock).toHaveBeenCalled())
+    expect(screen.queryByRole("button", { name: "Announce open alerts" })).not.toBeInTheDocument()
+    cleanup()
+
+    listMock.mockResolvedValue([dest()])
+    renderCard()
+    await screen.findByText("#alerts")
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "#second" } })
+    fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: "https://hooks.slack.com/y" } })
+    fireEvent.click(within(screen.getByLabelText("Name").closest("form")!).getByLabelText("New critical/high alert"))
+    fireEvent.click(screen.getByRole("button", { name: "Add destination" }))
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole("button", { name: "Announce open alerts" })).not.toBeInTheDocument()
+  })
+
+  it("won't add a destination with no events selected", async () => {
+    listMock.mockResolvedValue([])
+    renderCard()
+    await screen.findByText(/No destinations yet/)
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "#sec" } })
+    fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: "https://hooks.slack.com/x" } })
+    expect(screen.getByRole("button", { name: "Add destination" })).toBeEnabled()
+    fireEvent.click(screen.getByLabelText("Security score drops"))
+    expect(screen.getByRole("button", { name: "Add destination" })).toBeDisabled()
+  })
+
+  it("blocks an email destination with more than 10 recipients", async () => {
+    listMock.mockResolvedValue([])
+    renderCard()
+    await screen.findByText(/No destinations yet/)
+    fireEvent.change(screen.getByLabelText("Type"), { target: { value: "email" } })
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "mail" } })
+    const many = (n: number) => Array.from({ length: n }, (_, i) => `u${i}@e.com`).join(", ")
+    fireEvent.change(screen.getByLabelText("Recipients"), { target: { value: many(10) } })
+    expect(screen.getByRole("button", { name: "Add destination" })).toBeEnabled()
+    fireEvent.change(screen.getByLabelText("Recipients"), { target: { value: many(11) } })
+    expect(screen.getByRole("button", { name: "Add destination" })).toBeDisabled()
+    expect(screen.getByRole("alert")).toHaveTextContent("At most 10 recipients")
   })
 
   it("sends recipients for an email destination and shows the API's validation message", async () => {
@@ -283,6 +402,21 @@ describe("NotificationDestinationsCard", () => {
       )
     })
 
+    it("removes a webhook's signing secret only through the explicit checkbox", async () => {
+      updateMock.mockResolvedValue(dest())
+      const form = await openEdit({ kind: "generic", signed: true })
+      expect(within(form).getByRole("button", { name: "Save changes" })).toBeDisabled()
+      fireEvent.click(within(form).getByLabelText("Remove the signing secret (send unsigned)"))
+      expect(within(form).getByLabelText("New signing secret")).toBeDisabled()
+      fireEvent.click(within(form).getByRole("button", { name: "Save changes" }))
+      await waitFor(() => expect(updateMock).toHaveBeenCalledWith("acme", 1, { remove_secret: true }))
+    })
+
+    it("offers no remove-secret option for an unsigned webhook", async () => {
+      const form = await openEdit({ kind: "generic", signed: false })
+      expect(within(form).queryByLabelText("Remove the signing secret (send unsigned)")).not.toBeInTheDocument()
+    })
+
     it("edits an email destination's recipients and rejects an empty list", async () => {
       updateMock.mockResolvedValue(dest())
       const form = await openEdit({ kind: "email", recipients: ["a@e.com", "b@e.com"] })
@@ -294,6 +428,14 @@ describe("NotificationDestinationsCard", () => {
       fireEvent.change(recipients, { target: { value: "a@e.com c@e.com" } })
       fireEvent.click(within(form).getByRole("button", { name: "Save changes" }))
       await waitFor(() => expect(updateMock).toHaveBeenCalledWith("acme", 1, { recipients: ["a@e.com", "c@e.com"] }))
+    })
+
+    it("blocks saving an email destination with more than 10 recipients", async () => {
+      const form = await openEdit({ kind: "email", recipients: ["a@e.com"] })
+      const many = Array.from({ length: 11 }, (_, i) => `u${i}@e.com`).join(", ")
+      fireEvent.change(within(form).getByLabelText("Recipients"), { target: { value: many } })
+      expect(within(form).getByRole("button", { name: "Save changes" })).toBeDisabled()
+      expect(within(form).getByRole("alert")).toHaveTextContent("At most 10 recipients")
     })
 
     it("blocks an out-of-range threshold or empty name", async () => {

@@ -873,6 +873,12 @@ export const api = {
         `/orgs/${encodeURIComponent(orgLogin)}/notification-destinations/${id}/test`,
         {},
       ),
+    // Sends the currently open critical/high alerts once; stamps nothing.
+    announceOpenAlerts: (orgLogin: string) =>
+      post<{ announced: number; truncated: boolean }>(
+        `/orgs/${encodeURIComponent(orgLogin)}/notification-destinations/announce-open-alerts`,
+        {},
+      ),
   },
   apiTokens: {
     list: (orgLogin: string) => get<ApiToken[]>(`/orgs/${encodeURIComponent(orgLogin)}/api-tokens`),
