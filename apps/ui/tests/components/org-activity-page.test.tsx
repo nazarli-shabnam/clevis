@@ -10,8 +10,9 @@ const downloadBlobMock = vi.fn();
 const exportMock = vi.fn();
 
 let searchParams = new URLSearchParams();
+let orgLoginParam = "acme";
 vi.mock("next/navigation", () => ({
-  useParams: () => ({ login: "acme" }),
+  useParams: () => ({ login: orgLoginParam }),
   useSearchParams: () => searchParams,
 }));
 
@@ -65,6 +66,7 @@ describe("toAuditFilters", () => {
 describe("OrgActivityPage", () => {
   beforeEach(() => {
     searchParams = new URLSearchParams();
+    orgLoginParam = "acme";
     auditMock.mockReset();
     jobsMock.mockReset();
     mineMock.mockReset();
@@ -147,6 +149,32 @@ describe("OrgActivityPage", () => {
     const [name, csv] = downloadMock.mock.calls[0];
     expect(name).toMatch(/^clevis-activity-acme-/);
     expect(csv).toContain("job.enqueued");
+  });
+
+  it("does not carry one org's filters over to another org on a client-side org switch (#1549)", async () => {
+    mineMock.mockResolvedValue([
+      { org_login: "acme", role: "admin" },
+      { org_login: "globex", role: "admin" },
+    ]);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    // A new element each time: re-rendering the same element object would be skipped by React.
+    const tree = () => (
+      <QueryClientProvider client={queryClient}>
+        <OrgActivityPage />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(tree());
+    await screen.findByText("job.enqueued");
+    fireEvent.change(screen.getByLabelText("Actor"), { target: { value: "a@e.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+    await waitFor(() => expect(auditMock).toHaveBeenLastCalledWith("acme", expect.objectContaining({ actor: "a@e.com" })));
+
+    orgLoginParam = "globex";
+    rerender(tree());
+
+    await waitFor(() => expect(auditMock.mock.lastCall?.[0]).toBe("globex"));
+    expect(auditMock.mock.lastCall?.[1]).not.toHaveProperty("actor");
+    expect(screen.getByLabelText("Actor")).toHaveValue("");
   });
 
   it("exports every matching event from the server with the applied filters (#952)", async () => {
