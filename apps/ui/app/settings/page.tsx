@@ -23,6 +23,7 @@ import Link from "next/link"
 import { api } from "@/lib/api/client"
 import { initialConfigValues, mergeSavedConfigValue } from "@/lib/config-values"
 import { CONFIG_FIELDS, CONFIG_GROUPS, limitsText, validateConfigValue, type ConfigField } from "@/lib/config-fields"
+import { SectionAnchor, SectionNav } from "@/components/section-nav"
 import { useAuth } from "@/lib/auth-context"
 import { THEMES, useTheme } from "@/lib/theme"
 import type { InstallationMeta, MyOrgMembership, SavedTokenMeta } from "@/lib/api/types"
@@ -915,8 +916,24 @@ function InstanceConfigSection() {
 }
 
 
+// The page's sections, in order; the admin-only ones are only there (and only linked) for a workspace admin.
+const SECTIONS = [
+  { id: "profile", label: "Profile" },
+  { id: "password-email", label: "Password and email" },
+  { id: "sessions", label: "Sessions" },
+  { id: "appearance", label: "Appearance" },
+  { id: "organizations", label: "Organizations" },
+  { id: "github-app", label: "GitHub App", adminOnly: true },
+  { id: "connected", label: "Connected accounts" },
+  { id: "tokens", label: "Saved tokens", adminOnly: true },
+  { id: "instance", label: "Instance configuration", adminOnly: true },
+  { id: "delete-account", label: "Delete account" },
+] as const
+
 export default function SettingsPage() {
   const { user } = useAuth()
+  const admin = !!user?.is_workspace_admin
+  const sections = SECTIONS.filter((s) => admin || !("adminOnly" in s))
   const router = useRouter()
   const searchParams = useSearchParams()
   const queryClient = useQueryClient()
@@ -961,32 +978,59 @@ export default function SettingsPage() {
           {linkResult.text}
         </div>
       )}
-      <div className="flex flex-col gap-4">
-        <ProfileSection />
-        {user?.has_password === false ? (
-          <div className="card">
-            <div className="px-4 py-3 border-b border-border">
-              <span className="section-title">Password and email</span>
+      <SectionNav sections={sections} />
+      <div className="flex flex-col gap-6">
+        <SectionAnchor id="profile">
+          <ProfileSection />
+        </SectionAnchor>
+        <SectionAnchor id="password-email">
+          {user?.has_password === false ? (
+            <div className="card">
+              <div className="px-4 py-3 border-b border-border">
+                <span className="section-title">Password and email</span>
+              </div>
+              <p className="p-4 text-sm text-muted-foreground">
+                You sign in with GitHub; your email and password are managed there.
+              </p>
             </div>
-            <p className="p-4 text-sm text-muted-foreground">
-              You sign in with GitHub; your email and password are managed there.
-            </p>
-          </div>
-        ) : (
-          <>
-            <ChangePasswordCard />
-            <ChangeEmailCard />
-          </>
+          ) : (
+            <>
+              <ChangePasswordCard />
+              <ChangeEmailCard />
+            </>
+          )}
+        </SectionAnchor>
+        <SectionAnchor id="sessions">
+          <SessionsCard />
+        </SectionAnchor>
+        <SectionAnchor id="appearance">
+          <AppearanceSection />
+        </SectionAnchor>
+        <SectionAnchor id="organizations">
+          <OrgMembershipsSection />
+          <PendingInstallationsCard />
+        </SectionAnchor>
+        {admin && (
+          <SectionAnchor id="github-app">
+            <GithubAppSetupCard />
+          </SectionAnchor>
         )}
-        <SessionsCard />
-        <AppearanceSection />
-        <OrgMembershipsSection />
-        <PendingInstallationsCard />
-        {user?.is_workspace_admin && <GithubAppSetupCard />}
-        <ConnectedOrgsSection />
-        {user?.is_workspace_admin && <SavedTokensSection />}
-        {user?.is_workspace_admin && <InstanceConfigSection />}
-        <DeleteAccountCard />
+        <SectionAnchor id="connected">
+          <ConnectedOrgsSection />
+        </SectionAnchor>
+        {admin && (
+          <SectionAnchor id="tokens">
+            <SavedTokensSection />
+          </SectionAnchor>
+        )}
+        {admin && (
+          <SectionAnchor id="instance">
+            <InstanceConfigSection />
+          </SectionAnchor>
+        )}
+        <SectionAnchor id="delete-account">
+          <DeleteAccountCard />
+        </SectionAnchor>
       </div>
     </>
   )

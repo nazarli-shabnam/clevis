@@ -10,6 +10,7 @@ import { orgRoleFor } from "@/lib/members-href"
 import { HygieneScoringCard } from "@/components/hygiene-scoring-card"
 import { ScoringExclusionsCard } from "@/components/scoring-exclusions-card"
 import { TargetScoreCard } from "@/components/target-score-card"
+import { SectionNav } from "@/components/section-nav"
 import { ScheduledScansCard } from "@/components/scheduled-scans-card"
 import { DigestCard } from "@/components/digest-card"
 import { AutomationSchedulesCard } from "@/components/automation-schedules-card"
@@ -74,17 +75,7 @@ export default function OrgSettingsPage() {
         </div>
       ) : (
         <>
-          <nav aria-label="Settings sections" className="sticky top-0 z-10 -mx-1 mb-4 flex flex-wrap gap-1.5 bg-background/90 px-1 py-2 backdrop-blur">
-            {SECTIONS.map((s) => (
-              <a
-                key={s.id}
-                href={`#${s.id}`}
-                className="text-xs font-medium px-2.5 py-1 rounded-md border border-transparent text-muted-foreground hover:bg-elevated hover:text-foreground transition-colors"
-              >
-                {s.label}
-              </a>
-            ))}
-          </nav>
+          <SectionNav sections={SECTIONS} />
           <Section id="access" label="Members and access">
             <ClevisMembersCard orgLogin={orgLogin} />
             <ApiTokensCard orgLogin={orgLogin} />
