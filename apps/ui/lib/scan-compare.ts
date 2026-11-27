@@ -75,3 +75,77 @@ export function diffScans(older: readonly StoredCheck[], newer: readonly StoredC
   }
   return diff
 }
+
+/** The scan stores at most this many names per check (packages/checks MAX_AFFECTED_REPOS): a full list means
+ * the repo may simply not have fit. */
+const AFFECTED_REPOS_CAP = 25
+
+export type RepoCheckState = "fail" | "pass" | "unknown"
+
+/**
+ * How one scan saw one repository for one check, from the repos the check named when it failed. `null` when the
+ * check is not per-repository (org-wide MFA, text values), so it has no place on a repo's timeline.
+ * "unknown" when the scan cannot say: the check errored or did not apply, or it failed without naming repos
+ * (older scans), with a list that hit the storage cap and does not include this repo, or when the scan could not
+ * read some repositories at all (they are counted in `unknown`, never named), so "not named" is not "passing".
+ */
+export function repoCheckState(check: StoredCheck, repo: string): RepoCheckState | null {
+  const value = check.value
+  if (value?.type !== "ratio" && value?.type !== "severity_counts") return null
+  if (check.status === "error" || check.status === "not_applicable" || !check.status) return "unknown"
+  const named = (value.repos ?? []).map((r) => r.toLowerCase())
+  if (check.status === "fail" && named.includes(repo.toLowerCase())) return "fail"
+  if (value.type === "ratio" && (value.unknown ?? 0) > 0) return "unknown"
+  if (check.status === "pass") return "pass"
+  return named.length > 0 && named.length < AFFECTED_REPOS_CAP ? "pass" : "unknown"
+}
+
+export interface RepoHistoryPoint {
+  scanId: number
+  at: string
+  state: RepoCheckState
+}
+
+export interface RepoCheckHistory {
+  id: string
+  title: string
+  /** Oldest first. */
+  points: RepoHistoryPoint[]
+  /** The newest scan's state for this repo, and when that state began (the first scan of the current run). */
+  current: RepoCheckState
+  since: string
+  /** True when the run reaches back to the oldest scan in the window, so it may have begun earlier. */
+  sinceAtLeast: boolean
+}
+
+interface HistoryScan {
+  id: number
+  created_at: string
+  checks: readonly StoredCheck[]
+}
+
+/** One timeline per per-repository check that ever showed this repo as failing, built from stored scans. Checks
+ * the repo always passed are left out: the timeline exists to show when something started and which scan did it. */
+export function repoCheckHistory(scans: readonly HistoryScan[], repo: string): RepoCheckHistory[] {
+  const ordered = [...scans].sort((a, b) => a.created_at.localeCompare(b.created_at))
+  const byCheck = new Map<string, { title: string; points: RepoHistoryPoint[] }>()
+  for (const scan of ordered) {
+    for (const check of scan.checks) {
+      if (!check.id) continue
+      const state = repoCheckState(check, repo)
+      if (state === null) continue
+      const entry = byCheck.get(check.id) ?? { title: check.title ?? check.id, points: [] }
+      entry.points.push({ scanId: scan.id, at: scan.created_at, state })
+      byCheck.set(check.id, entry)
+    }
+  }
+  const out: RepoCheckHistory[] = []
+  for (const [id, { title, points }] of byCheck) {
+    if (!points.some((p) => p.state === "fail")) continue
+    const current = points[points.length - 1].state
+    let start = points.length - 1
+    while (start > 0 && points[start - 1].state === current) start--
+    out.push({ id, title, points, current, since: points[start].at, sinceAtLeast: start === 0 })
+  }
+  return out.sort((a, b) => Number(b.current === "fail") - Number(a.current === "fail") || a.title.localeCompare(b.title))
+}

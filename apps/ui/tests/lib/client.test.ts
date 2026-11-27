@@ -621,6 +621,18 @@ describe("api.analytics value normalization", () => {
     expect(result.checks[0].value).toEqual({ type: "ratio", numerator: 2, denominator: 2, unknown: 1 });
   });
 
+  it("carries the unknown repo count of a branch-protection value too (#1275)", async () => {
+    stubJobResult({
+      owner: "acme", score: 50, total_checks: 1, failed_checks: 1, repo_count: 4,
+      checks: [{
+        id: "repository_default_branch_protection_enabled", title: "Branch protection", severity: "high",
+        remediation: "n/a", status: "fail", value: { checked: 4, protected: 2, unknown: 1, repos: ["api"] },
+      }],
+    });
+    const result = await runOverview("acme", "ghp_test");
+    expect(result.checks[0].value).toEqual({ type: "ratio", numerator: 2, denominator: 4, unknown: 1, repos: ["api"] });
+  });
+
   it("carries the repos a check names through its ratio value, and omits them when there are none (#832)", async () => {
     stubJobResult({
       owner: "acme", score: 50, total_checks: 2, failed_checks: 1, repo_count: 4,

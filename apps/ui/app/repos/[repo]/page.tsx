@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { Time } from "@/components/time"
+import { RepoCheckHistoryCard } from "@/components/repo-check-history"
 import { useParams } from "next/navigation"
 import Link from "next/link"
 import { useQuery } from "@tanstack/react-query"
@@ -571,6 +572,7 @@ export default function RepoDetailPage() {
               <MatrixRows row={securityRowQuery.data} owner={owner} repo={repo} waivers={waiversQuery.data} personalOwner={personalOwner} />
             </div>
           ) : null}
+          <RepoCheckHistoryCard owner={owner} repo={repo} enabled={tab === "security"} />
         </div>
       </div>
     </>
