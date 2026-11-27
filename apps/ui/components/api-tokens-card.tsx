@@ -48,6 +48,11 @@ function lifetimeDays(t: ApiToken): number | undefined {
   return Math.max(1, Math.round((new Date(t.expires_at).getTime() - new Date(t.created_at).getTime()) / DAY_MS))
 }
 
+// Create and Rotate wait while a one-time secret is on screen; this is the text that says so, shared so the buttons
+// can point to it.
+const SECRET_ON_SCREEN_HINT_ID = "api-token-secret-on-screen-hint"
+const SECRET_ON_SCREEN_HINT = "Copy the token above and click \"I've saved it\" to create or rotate another."
+
 /** One row owns its revoke mutation, so a slow or failing revoke never disables or flags another token. */
 function TokenRow({
   orgLogin,
@@ -55,6 +60,7 @@ function TokenRow({
   linked,
   rotating,
   rotateDisabled,
+  secretOnScreen,
   selected,
   onToggle,
   onRotate,
@@ -65,6 +71,8 @@ function TokenRow({
   linked: boolean
   rotating: boolean
   rotateDisabled: boolean
+  /** A one-time secret is showing: say that is why Rotate is off. */
+  secretOnScreen: boolean
   selected: boolean
   onToggle: () => void
   onRotate: () => void
@@ -127,6 +135,8 @@ function TokenRow({
             variant="outline"
             size="sm"
             disabled={rotateDisabled || rotating}
+            title={secretOnScreen ? SECRET_ON_SCREEN_HINT : undefined}
+            aria-describedby={secretOnScreen ? SECRET_ON_SCREEN_HINT_ID : undefined}
             onClick={onRotate}
             aria-label={`Rotate token ${token.name}`}
           >
@@ -395,6 +405,7 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
               linked={t.id === linkedToken}
               // Rotating while a secret is on screen would replace it before it was copied.
               rotateDisabled={created !== null || rotate.isPending || create.isPending}
+              secretOnScreen={created !== null}
               rotating={rotate.isPending && rotate.variables?.id === t.id}
               selected={selection.isSelected(t.id)}
               onToggle={() => selection.toggle(t.id)}
@@ -437,10 +448,15 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
           </select>
         </div>
         <div className="flex items-end">
-          <Button type="submit" disabled={!canSubmit}>
+          <Button type="submit" disabled={!canSubmit} aria-describedby={created ? SECRET_ON_SCREEN_HINT_ID : undefined}>
             {create.isPending ? "Creating…" : "Create token"}
           </Button>
         </div>
+        {created && (
+          <p id={SECRET_ON_SCREEN_HINT_ID} className="sm:col-span-3 text-xs text-muted-foreground">
+            {SECRET_ON_SCREEN_HINT}
+          </p>
+        )}
         {create.isError && (
           <p role="alert" className="sm:col-span-3 text-xs text-destructive">
             Couldn&apos;t create the token: {create.error.message}
