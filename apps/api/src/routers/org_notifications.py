@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from src.core._sanitize import sanitize_error
 from src.core.auth import UserOut, require_auth
-from src.core.db import ApiToken, CheckWaiver, Job, ScanResult, SecurityAlert, get_db
+from src.core.db import ApiToken, CheckWaiver, Job, ScanResult, SecurityAlert, WaiverRequest, get_db
 from src.core.rbac import OrgContext, require_org_role
 from src.repositories import (
     api_token_repo,
@@ -29,6 +29,7 @@ from src.repositories import (
     notification_read_repo,
     scan_results_repo,
     waiver_repo,
+    waiver_request_repo,
 )
 from src.schemas.notification_feed import NotificationFeed, NotificationItem, NotificationKind, NotificationPreferences
 from src.services import app_permissions, dependabot_burndown
@@ -46,7 +47,7 @@ MAX_LIMIT = 200
 _PER_SOURCE = 40
 # The stable ids the feed hands out: a kind plus the source row's integer id.
 _MAX_SCANS_IN_WINDOW = 1000
-_ITEM_ID = re.compile(r"^(critical_alert|score_drop|job_failed|permission_drift|waiver_expired|waiver_expiring|sla_breach|api_token_expiring):[0-9]{1,18}$")
+_ITEM_ID = re.compile(r"^(critical_alert|score_drop|job_failed|permission_drift|waiver_expired|waiver_expiring|waiver_request|sla_breach|api_token_expiring):[0-9]{1,18}$")
 
 
 def _aware(value: datetime) -> datetime:
@@ -78,7 +79,7 @@ def _after_cursor(at_col, id_col, kind: str, cursor: Cursor | None) -> list:
 def _critical_alert_filters(tenant_id: int, since: datetime) -> list:
     return [
         SecurityAlert.tenant_id == tenant_id,
-        SecurityAlert.kind == "dependabot",
+        SecurityAlert.kind.in_(dependabot_burndown.KINDS),
         SecurityAlert.severity == "critical",
         SecurityAlert.state == "open",
         SecurityAlert.ingested_at >= since,
@@ -89,10 +90,19 @@ def _failed_job_filters(tenant_id: int, since: datetime) -> list:
     return [Job.tenant_id == tenant_id, Job.status == "failed", Job.updated_at >= since]
 
 
+def _alert_detail(row) -> str:
+    """One line on what the alert is. The worker stores GitHub's advisory under ``security_advisory`` for
+    Dependabot and the rule under ``rule`` for code scanning (event_consumer._normalize_security_alert)."""
+    details = row.details or {}
+    if row.kind == "code_scanning":
+        return str((details.get("rule") or {}).get("description") or "")
+    return str((details.get("security_advisory") or {}).get("summary") or "")
+
+
 def _critical_alert_items(
     db: Session, tenant_id: int, since: datetime, per_source: int, cursor: Cursor | None = None
 ) -> list[dict]:
-    """New critical Dependabot alerts after the cursor, newest first."""
+    """New critical Dependabot and code-scanning alerts after the cursor, newest first."""
     q = db.query(SecurityAlert).filter(
         *_critical_alert_filters(tenant_id, since),
         *_after_cursor(SecurityAlert.ingested_at, SecurityAlert.id, "critical_alert", cursor),
@@ -103,9 +113,8 @@ def _critical_alert_items(
             "id": f"critical_alert:{r.id}",
             "kind": "critical_alert",
             "at": r.ingested_at,
-            "title": f"New critical Dependabot alert in {r.repo}",
-            # The worker stores GitHub's advisory under ``security_advisory`` (event_consumer._normalize_security_alert).
-            "detail": str(((r.details or {}).get("security_advisory") or {}).get("summary") or ""),
+            "title": f"New critical {dependabot_burndown.KIND_LABELS[r.kind]} alert in {r.repo}",
+            "detail": _alert_detail(r),
             "href": f"/security/burndown?repo={quote(r.repo, safe='')}",
         }
         for r in rows
@@ -259,6 +268,22 @@ def _waiver_expiring_items(db: Session, org_login: str, tenant_id: int) -> list[
     return items
 
 
+def _waiver_request_items(db: Session, org_login: str, tenant_id: int) -> list[dict]:
+    """Waiver requests still waiting for an admin. A standing item (not cut by the feed's ``days``), dated by when it
+    was made; it disappears once approved or denied."""
+    return [
+        {
+            "id": f"waiver_request:{r.id}",
+            "kind": "waiver_request",
+            "at": _aware(r.created_at),
+            "title": f"{r.requested_by} asked to waive {r.check_id}",
+            "detail": r.reason[:140],
+            "href": f"/settings/org/{quote(org_login, safe='')}/settings?waiver_request={r.id}",
+        }
+        for r in waiver_request_repo.list_for_tenant(db, tenant_id, status="pending")
+    ]
+
+
 def _api_token_expiring_items(db: Session, org_login: str, tenant_id: int) -> list[dict]:
     """Active API tokens that expire within the warning window. Dated by the moment each entered the
     window (expiry minus WINDOW_DAYS), so marking the feed read clears it and it does not reappear;
@@ -288,22 +313,30 @@ def _api_token_expiring_items(db: Session, org_login: str, tenant_id: int) -> li
     return items
 
 
+def _sla_windows() -> list[tuple[str, str, int]]:
+    """(kind, severity, days) for every SLA window that is set, across the SLA-tracked alert kinds."""
+    return [
+        (kind, severity, days)
+        for kind, windows in dependabot_burndown.sla_by_kind().items()
+        for severity, days in windows.items()
+        if days is not None
+    ]
+
+
 def _sla_breach_items(
     db: Session, tenant_id: int, since: datetime, per_source: int, cursor: Cursor | None = None
 ) -> list[dict]:
-    """Open Dependabot alerts that passed their SLA window inside the feed window, dated by the breach
-    moment (opened + window), so each is one item that appears when it crosses the line."""
+    """Open Dependabot and code-scanning alerts that passed their SLA window inside the feed window, dated by
+    the breach moment (opened + window), so each is one item that appears when it crosses the line."""
     now = datetime.now(timezone.utc)
     items: list[dict] = []
-    for severity, days in dependabot_burndown.sla_days().items():
-        if days is None:
-            continue
+    for kind, severity, days in _sla_windows():
         window = timedelta(days=days)
         rows = (
             db.query(SecurityAlert)
             .filter(
                 SecurityAlert.tenant_id == tenant_id,
-                SecurityAlert.kind == "dependabot",
+                SecurityAlert.kind == kind,
                 SecurityAlert.state == "open",
                 SecurityAlert.severity == severity,
                 SecurityAlert.created_at >= since - window,
@@ -320,7 +353,7 @@ def _sla_breach_items(
                 "id": f"sla_breach:{r.id}",
                 "kind": "sla_breach",
                 "at": _aware(r.created_at) + window,
-                "title": f"{severity.capitalize()} Dependabot alert past its {days}-day SLA in {r.repo}",
+                "title": f"{severity.capitalize()} {dependabot_burndown.KIND_LABELS[kind]} alert past its {days}-day SLA in {r.repo}",
                 "detail": f"Alert #{r.number}",
                 "href": f"/security/burndown?repo={quote(r.repo, safe='')}",
             }
@@ -340,13 +373,11 @@ def _sla_unread_beyond_limit(db: Session, tenant_id: int, since: datetime, last_
             dismissed_at[row_id] = max(at, dismissed_at.get(row_id, at))
     dismissed_ids = list(dismissed_at)
     total = 0
-    for severity, days in dependabot_burndown.sla_days().items():
-        if days is None:
-            continue
+    for kind, severity, days in _sla_windows():
         window = timedelta(days=days)
         q = db.query(func.count()).select_from(SecurityAlert).filter(
             SecurityAlert.tenant_id == tenant_id,
-            SecurityAlert.kind == "dependabot",
+            SecurityAlert.kind == kind,
             SecurityAlert.state == "open",
             SecurityAlert.severity == severity,
             SecurityAlert.created_at >= since - window,
@@ -357,7 +388,7 @@ def _sla_unread_beyond_limit(db: Session, tenant_id: int, since: datetime, last_
             read_ids = [
                 row_id
                 for row_id, created_at in db.query(SecurityAlert.id, SecurityAlert.created_at).filter(
-                    SecurityAlert.id.in_(dismissed_ids), SecurityAlert.severity == severity
+                    SecurityAlert.id.in_(dismissed_ids), SecurityAlert.kind == kind, SecurityAlert.severity == severity
                 )
                 if _aware(dismissed_at[row_id]) >= _aware(created_at) + window
             ]
@@ -450,6 +481,8 @@ def get_notifications(
         raw += _waiver_expired_items(db, org_login, tenant_id, since)
     if is_admin and "waiver_expiring" not in muted:
         raw += _waiver_expiring_items(db, org_login, tenant_id)
+    if is_admin and "waiver_request" not in muted:
+        raw += _waiver_request_items(db, org_login, tenant_id)
     if is_admin and "api_token_expiring" not in muted:
         raw += _api_token_expiring_items(db, org_login, tenant_id)
     if "sla_breach" not in muted:
@@ -524,9 +557,11 @@ def _item_exists(db: Session, ctx: OrgContext, org_login: str, kind: str, row_id
         model = SecurityAlert
     elif kind == "score_drop":
         model = ScanResult
-    elif kind == "sla_breach":  # shown to every member; the feed only builds these from Dependabot alerts
+    elif kind == "sla_breach":  # shown to every member; the feed only builds these from SLA-tracked alert kinds
         return db.query(SecurityAlert.id).filter(
-            SecurityAlert.id == row_id, SecurityAlert.tenant_id == tenant_id, SecurityAlert.kind == "dependabot"
+            SecurityAlert.id == row_id,
+            SecurityAlert.tenant_id == tenant_id,
+            SecurityAlert.kind.in_(dependabot_burndown.KINDS),
         ).first() is not None
     elif not is_admin:
         return False
@@ -537,6 +572,10 @@ def _item_exists(db: Session, ctx: OrgContext, org_login: str, kind: str, row_id
         return install is not None and install.id == row_id
     elif kind == "api_token_expiring":
         model = ApiToken
+    elif kind == "waiver_request":
+        return db.query(WaiverRequest.id).filter(
+            WaiverRequest.id == row_id, WaiverRequest.tenant_id == tenant_id, WaiverRequest.status == "pending"
+        ).first() is not None
     else:  # waiver_expired, waiver_expiring: the only kinds left, both admin-only
         model = CheckWaiver
     return db.query(model.id).filter(model.id == row_id, model.tenant_id == tenant_id).first() is not None

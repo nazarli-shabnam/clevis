@@ -25,6 +25,11 @@ import {
 import type { DependabotBurndown } from "@/lib/api/types"
 
 const days = (value: number | null) => (value == null ? "—" : `${value}d`)
+const BURNDOWN_KIND_LABELS: Record<BurndownView["kind"], string> = {
+  dependabot: "Dependabot",
+  code_scanning: "Code scanning",
+  all: "Dependabot and code scanning",
+}
 
 export default function DependabotBurndownPage() {
   const { scope } = useActiveScope()
@@ -53,8 +58,8 @@ export default function DependabotBurndownPage() {
   const update = (patch: Partial<BurndownView>) => setView((v) => ({ ...v, ...patch }))
 
   const query = useQuery<DependabotBurndown>({
-    queryKey: ["dependabot-burndown", org, view.days],
-    queryFn: () => api.security.dependabotBurndown(org, view.days),
+    queryKey: ["dependabot-burndown", org, view.days, view.kind],
+    queryFn: () => api.security.dependabotBurndown(org, view.days, view.kind),
     enabled: !!org && restored,
     retry: false,
   })
@@ -73,14 +78,15 @@ export default function DependabotBurndownPage() {
       { header: "oldest_alert_number", value: (r) => r.oldest_alert_number },
     ])
     const stamp = new Date().toISOString().slice(0, 10)
-    downloadTextFile(`clevis-dependabot-burndown-${org}-${view.days}d-${stamp}.csv`, csv, "text/csv")
+    downloadTextFile(`clevis-${view.kind.replace("_", "-")}-burndown-${org}-${view.days}d-${stamp}.csv`, csv, "text/csv")
   }
+  const alertNoun = BURNDOWN_KIND_LABELS[view.kind]
   const totalBreaches = (data?.severities ?? []).reduce((sum, s) => sum + s.breaches, 0)
 
   return (
     <>
       <PageHeader
-        title="Dependabot burn-down"
+        title={view.kind === "dependabot" ? "Dependabot burn-down" : `${alertNoun} burn-down`}
         description="How long critical and high alerts stay open, against your SLA."
         actions={
           <Link href="/security" className="text-xs text-primary hover:underline">
@@ -103,6 +109,18 @@ export default function DependabotBurndownPage() {
                   {d} days
                 </option>
               ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-muted-foreground">
+            Alerts
+            <select
+              value={view.kind}
+              onChange={(e) => update({ kind: e.target.value as BurndownView["kind"] })}
+              className="bg-background border border-border px-2 py-1 text-foreground"
+            >
+              <option value="dependabot">Dependabot</option>
+              <option value="code_scanning">Code scanning</option>
+              <option value="all">Both</option>
             </select>
           </label>
           <label className="flex items-center gap-2 text-muted-foreground">
@@ -196,7 +214,7 @@ export default function DependabotBurndownPage() {
               )}
             </div>
             {data.repos.length === 0 ? (
-              <p className="px-4 py-4 text-sm text-muted-foreground">No open Dependabot alerts.</p>
+              <p className="px-4 py-4 text-sm text-muted-foreground">No open {alertNoun} alerts.</p>
             ) : repos.length === 0 ? (
               <p className="px-4 py-4 text-sm text-muted-foreground">No repositories match these filters.</p>
             ) : (
