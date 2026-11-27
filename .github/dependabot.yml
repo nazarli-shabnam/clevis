@@ -31,3 +31,15 @@ updates:
     schedule: { interval: weekly }
     groups:
       docker: { patterns: ["*"] }
+
+  # The images in docker-compose.yml (postgres, redis, busybox) are pinned by digest; the docker ecosystem
+  # above only reads Dockerfiles, so without this nothing would ever propose a newer one.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule: { interval: weekly }
+    # A PostgreSQL major bump cannot start on existing data; do it as a planned migration.
+    ignore:
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]
+    groups:
+      compose-images: { patterns: ["*"] }

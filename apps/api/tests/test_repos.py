@@ -392,6 +392,46 @@ def test_repo_stats_second_call_is_served_from_cache(repos_client):
     assert mock_client.return_value.request.call_count == 5
 
 
+def test_repo_stats_does_not_cache_a_not_ready_202_response(repos_client):
+    body = {"token": "ghp_testtoken123456789012345678901234"}
+    with patch("src.routers.repos.GitHubClient") as mock_client:
+        mock_client.return_value.request.side_effect = _stats_side_effect(
+            repo_meta=_REPO_META, release_error=_not_found()
+        )
+        first = repos_client.post("/orgs/acme/repos/acme/demo/stats", json=body)
+        assert first.json()["commit_activity"] == []
+
+        mock_client.return_value.request.side_effect = _stats_side_effect(
+            repo_meta=_REPO_META,
+            commit_activity=[{"week": 1, "total": 5}],
+            participation={"all": [1], "owner": [1]},
+            contributors=[],
+            release_error=_not_found(),
+        )
+        second = repos_client.post("/orgs/acme/repos/acme/demo/stats", json=body)
+    assert second.json()["commit_activity"] == [{"week": 1, "total": 5}]
+    assert first.json()["stats_ready"] is False and second.json()["stats_ready"] is True
+
+
+def test_repo_stats_pending_contributors_is_not_ready_and_not_cached_but_empty_list_is(repos_client):
+    body = {"token": "ghp_testtoken123456789012345678901234"}
+    ready = dict(
+        repo_meta=_REPO_META,
+        commit_activity=[{"week": 1, "total": 5}],
+        participation={"all": [1], "owner": [1]},
+        release_error=_not_found(),
+    )
+    with patch("src.routers.repos.GitHubClient") as mock_client:
+        # 202 + empty body reaches the router as {}; the other stats being ready must not hide it.
+        mock_client.return_value.request.side_effect = _stats_side_effect(**ready, contributors={})
+        pending = repos_client.post("/orgs/acme/repos/acme/demo/stats", json=body)
+        mock_client.return_value.request.side_effect = _stats_side_effect(**ready, contributors=[])
+        done = repos_client.post("/orgs/acme/repos/acme/demo/stats", json=body)
+        cached = repos_client.post("/orgs/acme/repos/acme/demo/stats", json=body)
+    assert pending.json()["stats_ready"] is False
+    assert done.json()["stats_ready"] is True and cached.json()["stats_ready"] is True
+
+
 def test_repo_stats_evicts_expired_entries_from_the_cache(repos_client):
     # Installation tokens rotate hourly, so a cache miss must sweep expired entries or they accumulate forever.
     import time as time_module

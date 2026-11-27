@@ -376,7 +376,7 @@ def test_secret_scanning_never_includes_secret_value(client):
         "secret": "ghp_thisShouldNeverAppear1234567890",
     }
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request.return_value = [raw_alert]
+        mock_client.return_value.request_paginated.return_value = [raw_alert]
         resp = client.get("/me/repos/acme/demo/secret-scanning", headers={"X-GitHub-Token": "ghp_test"})
 
     assert resp.status_code == 200
@@ -399,7 +399,7 @@ def test_secret_scanning_reads_live_even_when_a_webhook_alert_is_stored(connecte
         for n, st in ((1, "open"), (2, "resolved"), (6, "open"))
     ]
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request.return_value = live
+        mock_client.return_value.request_paginated.return_value = live
         resp = connected_client.get("/me/repos/acme/api/secret-scanning", headers={"X-GitHub-Token": "ghp_test"})
 
     assert resp.status_code == 200
@@ -407,9 +407,25 @@ def test_secret_scanning_reads_live_even_when_a_webhook_alert_is_stored(connecte
     assert body["source"] == "github" and [a["number"] for a in body["alerts"]] == [1, 2, 6]
 
 
+def test_secret_scanning_pages_through_every_alert_and_flags_truncation(client):
+    def alert(n):
+        return {"number": n, "state": "open", "secret_type": "x", "created_at": "2026-07-01T00:00:00Z"}
+
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.return_value = [alert(n) for n in range(1, 61)]
+        resp = client.get("/me/repos/acme/demo/secret-scanning", headers={"X-GitHub-Token": "ghp_test"})
+    assert resp.status_code == 200
+    assert len(resp.json()["alerts"]) == 60 and resp.json()["truncated"] is False
+
+    with patch("src.routers.security.GitHubClient") as mock_client:
+        mock_client.return_value.request_paginated.return_value = [alert(n) for n in range(1, 502)]
+        resp = client.get("/me/repos/acme/demo/secret-scanning", headers={"X-GitHub-Token": "ghp_test"})
+    assert len(resp.json()["alerts"]) == 500 and resp.json()["truncated"] is True
+
+
 def test_secret_scanning_skips_malformed_entries(client):
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request.return_value = [{"state": "open"}]  # missing number/created_at
+        mock_client.return_value.request_paginated.return_value = [{"state": "open"}]  # missing number/created_at
         resp = client.get("/me/repos/acme/demo/secret-scanning", headers={"X-GitHub-Token": "ghp_test"})
 
     assert resp.status_code == 200
@@ -422,7 +438,7 @@ def test_secret_scanning_github_error_maps_to_400(client):
         response=httpx.Response(404, request=httpx.Request("GET", "https://api.github.com/x")),
     )
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request.side_effect = error
+        mock_client.return_value.request_paginated.side_effect = error
         resp = client.get("/me/repos/acme/demo/secret-scanning", headers={"X-GitHub-Token": "ghp_test"})
 
     assert resp.status_code == 400
@@ -757,11 +773,11 @@ def test_security_matrix_unconnected_org_still_uses_live_github(client, db):
 def test_secret_scanning_falls_back_to_live_when_aggregate_has_no_rows(connected_client, db, acme_org_with_installation):
     # security_alerts is webhook-only (no sync cursor), so an empty aggregate isn't authoritative.
     with patch("src.routers.security.GitHubClient") as mock_client:
-        mock_client.return_value.request.return_value = [
+        mock_client.return_value.request_paginated.return_value = [
             {"number": 7, "state": "open", "secret_type": "aws_access_key_id", "created_at": "2026-08-01T00:00:00Z"},
         ]
         resp = connected_client.get("/me/repos/acme/demo/secret-scanning", headers={"X-GitHub-Token": "ghp_test"})
-        mock_client.return_value.request.assert_called_once()
+        mock_client.return_value.request_paginated.assert_called_once()
 
     assert resp.status_code == 200
     body = resp.json()
