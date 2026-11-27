@@ -27,6 +27,7 @@ CONTROL_NAMES: dict[str, dict[str, str]] = {
     },
     "cis": {
         "6.3": "Require MFA for externally-exposed applications",
+        "6.5": "Require MFA for administrative access",
         "6.8": "Define and maintain role-based access control",
         "7.7": "Remediate detected vulnerabilities",
         "16.1": "Establish a secure application development process",
@@ -49,8 +50,8 @@ CONTROL_NAMES: dict[str, dict[str, str]] = {
 
 # check id -> framework id -> control ids
 CHECK_CONTROLS: dict[str, dict[str, list[str]]] = {
-    "organization_members_mfa_required": {"soc2": ["CC6.1"], "cis": ["6.3"], "iso27001": ["A.8.5"]},
-    "organization_members_2fa_enabled": {"soc2": ["CC6.1"], "cis": ["6.3"], "iso27001": ["A.8.5"]},
+    "organization_members_mfa_required": {"soc2": ["CC6.1"], "cis": ["6.3", "6.5"], "iso27001": ["A.8.5"]},
+    "organization_members_2fa_enabled": {"soc2": ["CC6.1"], "cis": ["6.3", "6.5"], "iso27001": ["A.8.5"]},
     "repository_default_branch_protection_enabled": {
         "soc2": ["CC8.1"], "cis": ["16.1"], "iso27001": ["A.8.32", "A.8.4"],
     },

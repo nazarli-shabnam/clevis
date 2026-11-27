@@ -78,10 +78,10 @@ function needsAttention(r: RepoSecurityRow, dimension: string): boolean {
 }
 
 /** The controls of the chosen framework that a repo's failing or unknown checks put at risk (each once, in the
- * order the columns list them). Unknown counts: an unverifiable check is no evidence for its controls either. */
-function controlsAtRisk(r: RepoSecurityRow, controls: ControlMapping, framework: string) {
+ * order the columns list them; only the filtered check's when the table is filtered to one). Unknown counts: an unverifiable check is no evidence for its controls either. */
+function controlsAtRisk(r: RepoSecurityRow, controls: ControlMapping, framework: string, dimension = "all") {
   const seen = new Map<string, string>()
-  for (const d of DIMENSIONS) {
+  for (const d of dimension === "all" ? DIMENSIONS : DIMENSIONS.filter((x) => x.id === dimension)) {
     if (d.status(r) === "pass") continue
     for (const c of controls.checks[d.checkId] ?? []) {
       if (c.framework === framework && !seen.has(c.id)) seen.set(c.id, c.name)
@@ -111,11 +111,17 @@ export function ComplianceMatrix({
 }) {
   const [dimension, setDimension] = useState("all")
   const [attentionOnly, setAttentionOnly] = useState(false)
-  const [framework, setFramework] = useState("soc2")
+  const [chosenFramework, setFramework] = useState("soc2")
+  const framework = controls?.frameworks.some((f) => f.id === chosenFramework) ? chosenFramework : (controls?.frameworks[0]?.id ?? chosenFramework)
   const shown = useMemo(
     () => (attentionOnly ? repos.filter((r) => needsAttention(r, dimension)) : repos),
     [repos, attentionOnly, dimension],
   )
+
+  // The controls column sorts by values that depend on the framework and the check filter, which DataTable's
+  // sort memo cannot see; a new array when they change makes it sort again.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const sortable = useMemo(() => [...shown], [shown, framework, dimension])
 
   const columns: DataTableColumn<RepoSecurityRow>[] = [
     {
@@ -155,16 +161,16 @@ export function ComplianceMatrix({
             header: "Controls at risk",
             headerClassName: "text-left px-2",
             cellClassName: "px-2 py-2 text-muted-foreground",
-            sortValue: (r: RepoSecurityRow) => -controlsAtRisk(r, controls, framework).length,
+            sortValue: (r: RepoSecurityRow) => -controlsAtRisk(r, controls, framework, dimension).length,
             render: (r: RepoSecurityRow) => {
-              const at = controlsAtRisk(r, controls, framework)
+              const at = controlsAtRisk(r, controls, framework, dimension)
               return at.length === 0 ? (
                 "—"
               ) : (
                 <span title={at.map((c) => `${c.id} ${c.name}`).join("\n")}>{at.map((c) => c.id).join(", ")}</span>
               )
             },
-            csvValue: (r: RepoSecurityRow) => controlsAtRisk(r, controls, framework).map((c) => c.id).join("; "),
+            csvValue: (r: RepoSecurityRow) => controlsAtRisk(r, controls, framework, dimension).map((c) => c.id).join("; "),
           } satisfies DataTableColumn<RepoSecurityRow>,
         ]
       : []),
@@ -226,7 +232,7 @@ export function ComplianceMatrix({
       </div>
       <DataTable
         columns={columns}
-        data={shown}
+        data={sortable}
         getRowKey={(r) => r.repo}
         rowClassName={(r) => `hover:bg-elevated transition-colors ${selectedRepo === r.repo ? "bg-elevated" : ""}`}
         exportCsv={{ name: `security-matrix-${owner}${attentionOnly ? "-filtered" : ""}` }}

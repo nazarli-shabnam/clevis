@@ -143,6 +143,36 @@ describe("ComplianceMatrix", () => {
       expect(csv.split(/\r?\n/).find((l) => l.startsWith("no-branch"))).toContain("16.1")
     })
 
+    it("re-sorts when the framework changes while sorted by the controls column", () => {
+      const controls = {
+        frameworks: CONTROLS.frameworks,
+        checks: {
+          // "a" has more SOC 2 controls at risk, "b" more CIS ones.
+          repository_default_branch_protection_enabled: [control("soc2", "CC8.1", "x"), control("soc2", "CC8.2", "x"), control("cis", "16.1", "x")],
+          repository_secret_scanning_enabled: [control("cis", "16.12", "x"), control("cis", "16.13", "x")],
+        },
+      }
+      renderMatrix({ controls, repos: [row("a", { branch_protection: false }), row("b", { secret_scanning: false })] })
+
+      fireEvent.click(screen.getByRole("button", { name: /Controls at risk/ }))
+      expect(repoOrder()).toEqual(["a", "b"])
+      fireEvent.change(screen.getByLabelText("Framework for the controls column"), { target: { value: "cis" } })
+      expect(repoOrder()).toEqual(["b", "a"])
+    })
+
+    it("lists only the filtered check's controls, and falls back to the first framework when the chosen one is gone", () => {
+      renderMatrix({ controls: CONTROLS, repos: [row("both", { branch_protection: false, dependabot_high_count: 1 })] })
+      fireEvent.change(screen.getByLabelText("Check to filter by"), { target: { value: "dependabot" } })
+      expect(cells()).toEqual([["both", "CC7.1, CC8.1"]])
+      fireEvent.change(screen.getByLabelText("Check to filter by"), { target: { value: "branch_protection" } })
+      expect(cells()).toEqual([["both", "CC8.1"]])
+
+      cleanup()
+      renderMatrix({ controls: { ...CONTROLS, frameworks: [{ id: "cis", name: "CIS Controls", version: "v8" }] }, repos: [row("no-branch", { branch_protection: false })] })
+      expect(screen.getByLabelText("Framework for the controls column")).toHaveValue("cis")
+      expect(cells()).toEqual([["no-branch", "16.1"]])
+    })
+
     it("sorts the repos with the most controls at risk first", () => {
       renderMatrix({ controls: CONTROLS, repos: [...REPOS, row("both", { branch_protection: false, dependabot_high_count: 1 })] })
 

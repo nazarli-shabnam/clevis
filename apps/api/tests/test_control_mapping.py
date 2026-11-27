@@ -1,14 +1,10 @@
 """The check-to-control table (#1277) stays complete and well-formed as checks are added."""
 
-from checks.github_checks import (
-    BranchProtectionEnabled,
-    CodeScanningCheck,
-    DefaultBranchNoForcePushCheck,
-    DependabotAlertsCheck,
-    OrgMFARequired,
-    SecretScanningEnabled,
-)
-from checks.hygiene_checks import HYGIENE_CHECKS
+import inspect
+
+import checks.github_checks  # noqa: F401  (imported so its Check subclasses are registered)
+import checks.hygiene_checks  # noqa: F401
+from checks.base import Check
 from checks.identity_checks import identity_checks
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -18,10 +14,23 @@ from src.routers.compliance import router
 from src.services import control_mapping
 
 
+def _all_subclasses(cls):
+    for sub in cls.__subclasses__():
+        yield sub
+        yield from _all_subclasses(sub)
+
+
 def _registered_check_ids() -> set[str]:
-    cls = [OrgMFARequired, BranchProtectionEnabled, SecretScanningEnabled, DependabotAlertsCheck, CodeScanningCheck,
-           DefaultBranchNoForcePushCheck, *HYGIENE_CHECKS]
-    return {c().metadata.check_id for c in cls} | {c.metadata.check_id for c in identity_checks({})}
+    """Every Check subclass in the package (so a new core check is found without editing this list): the ones
+    constructed without arguments, plus the identity checks, which take the stored org data."""
+    ids = {c.metadata.check_id for c in identity_checks({})}
+    for cls in _all_subclasses(Check):
+        if any(p.default is p.empty for p in inspect.signature(cls).parameters.values()):
+            continue  # needs arguments: the identity checks, covered above
+        metadata = getattr(cls(), "metadata", None)  # shared bases (e.g. per-repo helpers) define none
+        if metadata is not None:
+            ids.add(metadata.check_id)
+    return ids
 
 
 def test_every_check_has_an_explicit_row_and_every_row_is_a_real_check():
