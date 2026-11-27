@@ -48,10 +48,11 @@ function lifetimeDays(t: ApiToken): number | undefined {
   return Math.max(1, Math.round((new Date(t.expires_at).getTime() - new Date(t.created_at).getTime()) / DAY_MS))
 }
 
-// Create and Rotate wait while a one-time secret is on screen; this is the text that says so, shared so the buttons
-// can point to it.
+// Create and Rotate wait while a one-time secret is on screen. The full explanation sits under the Create button
+// (and is what the disabled buttons are described by); each Rotate button also says it in a few words right beside
+// itself, because a disabled button shows no tooltip and the form may be far down a long list.
 const SECRET_ON_SCREEN_HINT_ID = "api-token-secret-on-screen-hint"
-const SECRET_ON_SCREEN_HINT = "Copy the token above and click \"I've saved it\" to create or rotate another."
+const SECRET_ON_SCREEN_HINT = "Copy the new token and click \"I've saved it\" to create or rotate another."
 
 /** One row owns its revoke mutation, so a slow or failing revoke never disables or flags another token. */
 function TokenRow({
@@ -131,11 +132,11 @@ function TokenRow({
       </div>
       {status === "active" && (
         <div className="flex items-center gap-2 shrink-0">
+          {secretOnScreen && <span className="text-[0.6875rem] text-muted-foreground">Save the new token first</span>}
           <Button
             variant="outline"
             size="sm"
             disabled={rotateDisabled || rotating}
-            title={secretOnScreen ? SECRET_ON_SCREEN_HINT : undefined}
             aria-describedby={secretOnScreen ? SECRET_ON_SCREEN_HINT_ID : undefined}
             onClick={onRotate}
             aria-label={`Rotate token ${token.name}`}
@@ -453,7 +454,7 @@ export function ApiTokensCard({ orgLogin }: { orgLogin: string }) {
           </Button>
         </div>
         {created && (
-          <p id={SECRET_ON_SCREEN_HINT_ID} className="sm:col-span-3 text-xs text-muted-foreground">
+          <p id={SECRET_ON_SCREEN_HINT_ID} role="status" className="sm:col-span-3 text-xs text-muted-foreground">
             {SECRET_ON_SCREEN_HINT}
           </p>
         )}

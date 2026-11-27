@@ -181,22 +181,25 @@ describe("ApiTokensCard", () => {
     await screen.findByRole("button", { name: "Rotate token ci-gate" })
     // Nothing to explain yet: both are usable (Create waits only for a name).
     expect(screen.queryByText(/to create or rotate another/)).not.toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Rotate token ci-gate" })).not.toHaveAttribute("title")
+    expect(screen.queryByText("Save the new token first")).not.toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "deploy" } })
     fireEvent.click(screen.getByRole("button", { name: "Create token" }))
     await screen.findByText("clv_secret_value")
 
-    const hint = screen.getByText(/Copy the token above and click "I've saved it" to create or rotate another\./)
+    const hint = screen.getByText(/Copy the new token and click "I've saved it" to create or rotate another\./)
     expect(screen.getByRole("button", { name: "Create token" })).toBeDisabled()
     expect(screen.getByRole("button", { name: "Create token" })).toHaveAttribute("aria-describedby", hint.id)
     const rotate = screen.getByRole("button", { name: "Rotate token ci-gate" })
     expect(rotate).toBeDisabled()
     expect(rotate).toHaveAttribute("aria-describedby", hint.id)
-    expect(rotate).toHaveAttribute("title", hint.textContent!)
+    // A disabled button shows no tooltip, so the reason is also written next to it.
+    expect(screen.getByText("Save the new token first")).toBeInTheDocument()
+    expect(hint).toHaveAttribute("role", "status")
 
     fireEvent.click(screen.getByRole("button", { name: "I've saved it" }))
     expect(screen.queryByText(/to create or rotate another/)).not.toBeInTheDocument()
+    expect(screen.queryByText("Save the new token first")).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Rotate token ci-gate" })).toBeEnabled()
     expect(screen.getByRole("button", { name: "Rotate token ci-gate" })).not.toHaveAttribute("aria-describedby")
   })
