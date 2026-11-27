@@ -174,7 +174,7 @@ def _fetch_stats(owner: str, repo: str, token: str, db: Session, tenant_id: int,
         contributors = contributors_f.result()
         latest_release = latest_release_f.result()
 
-    return {
+    stats: RepoStatsResponse = {
         "repository": f"{owner}/{repo}",
         "commit_activity": commit_activity,
         "commit_activity_source": commit_activity_source,
@@ -187,6 +187,16 @@ def _fetch_stats(owner: str, repo: str, token: str, db: Session, tenant_id: int,
         "default_branch": repo_meta.get("default_branch", ""),
         "latest_release": latest_release,
     }
+    # A pending /stats/contributors (202, empty body) comes back as {}; a finished empty one is [].
+    stats["stats_ready"] = not _stats_not_ready(stats) and isinstance(contributors, list)
+    return stats
+
+
+def _stats_not_ready(stats: RepoStatsResponse) -> bool:
+    # GitHub answers 202 + empty body while it computes these stats; _fetch_stats maps that to
+    # [] / {}. commit_activity from our own aggregate is legitimately empty-able, so only the
+    # GitHub-sourced one counts.
+    return not stats["participation"] or (stats["commit_activity_source"] == "github" and not stats["commit_activity"])
 
 
 def _evict_expired_stats(now: float) -> None:
@@ -209,7 +219,9 @@ def _cached_stats(owner: str, repo: str, token: str, db: Session, tenant_id: int
     if cached and now - cached[0] < _STATS_CACHE_TTL_SECONDS:
         return cached[1]
     stats = _fetch_stats(owner, repo, token, db, tenant_id, connected)
-    _stats_cache[key] = (now, stats)
+    # Don't cache "GitHub is still computing": the next refresh should ask GitHub again.
+    if stats["stats_ready"]:
+        _stats_cache[key] = (now, stats)
     _evict_expired_stats(now)
     return stats
 

@@ -130,6 +130,7 @@ export default function MyWorkPage() {
           perPage={PER_PAGE}
           onPageChange={setPage}
           identityUnresolved={itemsQuery.data?.identity_unresolved}
+          truncated={itemsQuery.data?.truncated}
         />
       )}
     </>

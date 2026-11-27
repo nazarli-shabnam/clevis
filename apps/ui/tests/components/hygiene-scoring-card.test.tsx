@@ -64,7 +64,7 @@ describe("HygieneScoringCard", () => {
 
     fireEvent.change(await screen.findByLabelText(/Count repo hygiene checks/), { target: { value: "on" } })
 
-    expect(await screen.findByText("Forbidden")).toBeInTheDocument()
+    expect(await screen.findByRole("alert")).toHaveTextContent("Forbidden")
   })
 
   it("shows a load error with retry instead of the control", async () => {

@@ -77,6 +77,15 @@ describe("VerifyEmailPage", () => {
     expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/login");
   });
 
+  it("shows Verifying… and disables the button while the request is in flight", async () => {
+    verifyEmailMock.mockReturnValue(new Promise(() => {}));
+    renderPage();
+
+    fill("a-long-enough-password");
+
+    expect(await screen.findByRole("button", { name: /Verifying…/ })).toBeDisabled();
+  });
+
   it("rejects a short or mismatched password without calling the API", async () => {
     renderPage();
 

@@ -99,6 +99,25 @@ describe("BranchProtectionCard", () => {
     expect(mockBulk).toHaveBeenLastCalledWith("acme", expect.objectContaining({ dry_run: false }))
   })
 
+  it("disables Apply once it succeeded, so the same preview can't repeat the bulk write", async () => {
+    mockBulk
+      .mockResolvedValueOnce(DRY_RUN_RESP)
+      .mockResolvedValueOnce({ dry_run: false, results: [{ repo: "api", applied: true, error: null }] })
+      .mockResolvedValueOnce(DRY_RUN_RESP)
+    renderCard()
+    fireEvent.click(screen.getByLabelText("api"))
+    fireEvent.click(screen.getByRole("button", { name: /Preview changes \(1\)/ }))
+    fireEvent.click(await screen.findByRole("button", { name: "Apply to 1 repo" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Click again to confirm" }))
+    await screen.findByText(/Applied branch protection to 1 repository\./)
+
+    expect(screen.getByRole("button", { name: "Apply to 1 repo" })).toBeDisabled()
+
+    // A fresh preview re-arms it.
+    fireEvent.click(screen.getByRole("button", { name: /Preview changes \(1\)/ }))
+    await waitFor(() => expect(screen.getByRole("button", { name: "Apply to 1 repo" })).toBeEnabled())
+  })
+
   it("disables Apply after the selection changes until a fresh preview runs", async () => {
     mockBulk.mockResolvedValue(DRY_RUN_RESP)
     renderCard()
