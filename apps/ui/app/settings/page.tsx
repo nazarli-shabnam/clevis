@@ -22,6 +22,7 @@ import { toast } from "@/components/ui/toast"
 import Link from "next/link"
 import { api } from "@/lib/api/client"
 import { initialConfigValues, mergeSavedConfigValue } from "@/lib/config-values"
+import { CONFIG_FIELDS, CONFIG_GROUPS, limitsText, validateConfigValue, type ConfigField } from "@/lib/config-fields"
 import { useAuth } from "@/lib/auth-context"
 import { THEMES, useTheme } from "@/lib/theme"
 import type { InstallationMeta, MyOrgMembership, SavedTokenMeta } from "@/lib/api/types"
@@ -715,101 +716,8 @@ function SavedTokensSection() {
 }
 
 
-const CONFIG_FIELDS: {
-  key: string
-  label: string
-  description: string
-  type?: string
-  options?: { value: string; label: string }[]
-  // What the server uses while the key is unset; shown (and saved) for a key that isn't persisted yet.
-  defaultValue?: string
-}[] = [
-  { key: "worker_poll_seconds", label: "Worker Poll Interval",    description: "Seconds to wait before polling again when the job queue is empty (queued jobs are picked up back to back).", type: "number" },
-  { key: "dependabot_sla_critical_days", label: "Critical Alert SLA", description: "Days a critical Dependabot alert may stay open before it counts as an SLA breach (default 7).", type: "number" },
-  { key: "dependabot_sla_high_days", label: "High Alert SLA", description: "Days a high-severity Dependabot alert may stay open before it counts as an SLA breach (default 30).", type: "number" },
-  { key: "code_scanning_sla_critical_days", label: "Critical Code Scanning SLA", description: "Days a critical code-scanning alert may stay open before it counts as an SLA breach (default 7).", type: "number" },
-  { key: "code_scanning_sla_high_days", label: "High Code Scanning SLA", description: "Days a high-severity code-scanning alert may stay open before it counts as an SLA breach (default 30).", type: "number" },
-  { key: "score_hygiene_checks", label: "Score Hygiene Checks (default)", description: "Default for organizations that haven't chosen for themselves: count CODEOWNERS, SECURITY.md, license, stale-branch and unpinned-Action checks toward the security score (off: these checks are not run). Org admins can override it per organization.", type: "boolean", defaultValue: "false" },
-  { key: "registration_enabled", label: "Self-Registration",     description: "Allow anyone to create an account via /register.", type: "boolean", defaultValue: "true" },
-  {
-    key: "digest_cadence",
-    label: "Leadership Digest",
-    description: "Email org admins a periodic security-score + risk summary. Requires SMTP to be configured.",
-    type: "select",
-    options: [
-      { value: "off", label: "Off" },
-      { value: "weekly", label: "Weekly" },
-      { value: "monthly", label: "Monthly" },
-    ],
-  },
-  {
-    key: "scheduled_scan_cadence",
-    label: "Scheduled Security Scans",
-    description: "Re-scan every connected organization automatically so scores, alerts and \"changed since last scan\" stay current without anyone clicking Scan. Uses each org's GitHub App installation, never a pasted token. Org admins can switch it on or off per organization. Off by default.",
-    type: "select",
-    options: [
-      { value: "off", label: "Off" },
-      { value: "daily", label: "Daily" },
-      { value: "weekly", label: "Weekly" },
-    ],
-  },
-  { key: "scheduled_scan_poll_seconds", label: "Scheduled Scan Check Interval", description: "Seconds between checks for an org whose scan is due (default 3600).", type: "number" },
-  {
-    key: "pr_nudge_cadence",
-    label: "Scheduled Stale-PR Nudges",
-    description: "Run the stale-PR nudge automatically on every repository an org admin enabled it for, using the org's GitHub App installation (never a pasted token). Uses the nudge mode and stale days below; org admins can switch it per organization. Off by default.",
-    type: "select",
-    options: [
-      { value: "off", label: "Off" },
-      { value: "daily", label: "Daily" },
-      { value: "weekly", label: "Weekly" },
-    ],
-  },
-  {
-    key: "dependabot_triage_cadence",
-    label: "Scheduled Dependabot Triage",
-    description: "Run Dependabot auto-triage automatically on every repository an org admin enabled it for, using the org's GitHub App installation (never a pasted token). Org admins can switch it per organization. Off by default.",
-    type: "select",
-    options: [
-      { value: "off", label: "Off" },
-      { value: "daily", label: "Daily" },
-      { value: "weekly", label: "Weekly" },
-    ],
-  },
-  {
-    key: "stale_cache_clear_cadence",
-    label: "Scheduled Stale-Cache Clear",
-    description: "Delete GitHub Actions caches that nobody has used for the number of days an org admin set, on every repository they enabled it for, using the org's GitHub App installation (never a pasted token). Org admins can switch it per organization. Off by default.",
-    type: "select",
-    options: [
-      { value: "off", label: "Off" },
-      { value: "daily", label: "Daily" },
-      { value: "weekly", label: "Weekly" },
-    ],
-  },
-  { key: "automation_poll_seconds", label: "Scheduled Automation Check Interval", description: "Seconds between checks for a due scheduled nudge or triage run (default 3600).", type: "number" },
-  { key: "digest_poll_seconds", label: "Digest Check Interval", description: "Seconds between checks for a due leadership digest.", type: "number" },
-  {
-    key: "pr_nudge_mode",
-    label: "Stale-PR Nudge Mode",
-    description: "What \"Nudge stale PRs\" does on the Pull Requests page.",
-    type: "select",
-    options: [
-      { value: "comment", label: "Comment" },
-      { value: "label", label: "Add needs-review label" },
-      { value: "off", label: "Off" },
-    ],
-  },
-  { key: "pr_nudge_stale_days", label: "Stale-PR Threshold", description: "Days without review activity before a PR counts as stale.", type: "number" },
-  { key: "gap_heal_poll_seconds", label: "Activity Gap-Heal Interval", description: "Seconds between sweeps that re-backfill stale activity (default 900).", type: "number" },
-  { key: "gap_heal_stale_hours", label: "Activity Stale After", description: "Hours since the last activity sync before a backfill is re-queued (default 6).", type: "number" },
-  { key: "membership_reconcile_poll_seconds", label: "Membership Reconcile Interval", description: "Seconds between org-membership reconciliation sweeps.", type: "number" },
-  { key: "membership_reconcile_stale_hours", label: "Membership Stale After", description: "Hours since the last membership sync before it's reconciled again.", type: "number" },
-  { key: "webhook_requeue_poll_seconds", label: "Webhook Re-queue Interval", description: "Seconds between retries of webhook deliveries that failed to queue.", type: "number" },
-  { key: "retention_webhook_deliveries_days", label: "Keep Webhook Deliveries (days)", description: "Days to keep webhook payloads once they are processed or given up on (default 30, minimum 30 when set). 0 keeps them forever. Deliveries still waiting to be queued are never deleted.", type: "number", defaultValue: "30" },
-  { key: "retention_jobs_days", label: "Keep Finished Jobs (days)", description: "Days to keep finished (done or failed) background jobs (default 30, minimum 8 when set). 0 keeps them forever.", type: "number", defaultValue: "30" },
-  { key: "retention_repo_events_days", label: "Keep Activity Events (days)", description: "Days to keep stored GitHub activity events (default 180, minimum 100 when set). Daily activity counts, security alerts, the audit log and scan history are always kept. 0 keeps events forever.", type: "number", defaultValue: "180" },
-]
+const withoutKey = <T,>(record: Record<string, T>, key: string): Record<string, T> =>
+  Object.fromEntries(Object.entries(record).filter(([k]) => k !== key))
 
 function InstanceConfigSection() {
   const { data: config, isLoading, isError, error, isFetching, refetch } = useQuery<Record<string, string>>({
@@ -820,8 +728,8 @@ function InstanceConfigSection() {
   const [saving, setSaving] = useState<string | null>(null)
   const [values, setValues] = useState<Record<string, string>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
-  // The key whose last save succeeded and has not been edited since ("Saved" beside its button).
-  const [justSaved, setJustSaved] = useState<string | null>(null)
+  // Keys whose last save succeeded and that have not been edited since ("Saved" beside each one's button).
+  const [justSaved, setJustSaved] = useState<Record<string, true>>({})
 
   useEffect(() => {
     if (config) setValues((prev) => initialConfigValues(prev, config))
@@ -829,13 +737,13 @@ function InstanceConfigSection() {
 
   // The value the field currently shows: the loaded/edited value, else the key's documented default.
   // Display and Save both use it, so what Save writes is always what the admin sees.
-  function visibleValue(field: (typeof CONFIG_FIELDS)[number]): string {
+  function visibleValue(field: ConfigField): string {
     return values[field.key] ?? field.defaultValue ?? field.options?.[0]?.value ?? ""
   }
 
   // What the server has stored for the key, if anything. Save is only useful when the shown value differs from
   // it; a key never stored stays savable so an admin can pin the default it displays.
-  function isUnchanged(field: (typeof CONFIG_FIELDS)[number], shown: string): boolean {
+  function isUnchanged(field: ConfigField, shown: string): boolean {
     const stored = config?.[field.key]
     return stored !== undefined && stored === shown
   }
@@ -843,12 +751,12 @@ function InstanceConfigSection() {
   function edit(key: string, value: string) {
     setValues((v) => ({ ...v, [key]: value }))
     setErrors((e) => Object.fromEntries(Object.entries(e).filter(([k]) => k !== key)))
-    setJustSaved((k) => (k === key ? null : k))
+    setJustSaved((saved) => withoutKey(saved, key))
   }
 
   async function saveKey(key: string, value: string) {
     setSaving(key)
-    setJustSaved(null)
+    setJustSaved((saved) => withoutKey(saved, key))
     setErrors((prev) => ({ ...prev, [key]: "" }))
     try {
       // PUT answers with the fresh map; use it (and refresh the cache) rather than refetching, because
@@ -858,12 +766,94 @@ function InstanceConfigSection() {
       // slower, older response would revert a key another save has since changed.
       qc.setQueryData<Record<string, string>>(["config"], (cached) => mergeSavedConfigValue(cached ?? updated, updated, key))
       setValues((prev) => mergeSavedConfigValue(prev, updated, key))
-      setJustSaved(key)
+      setJustSaved((saved) => ({ ...saved, [key]: true }))
     } catch (err) {
       setErrors((prev) => ({ ...prev, [key]: err instanceof Error ? err.message : "Save failed" }))
     } finally {
       setSaving(null)
     }
+  }
+
+  function renderField(field: ConfigField) {
+    const isSavingField = saving === field.key
+    const saveContent: React.ReactNode = isSavingField ? <CircleNotch className="size-3 animate-spin" aria-hidden="true" /> : "Save"
+    const fieldId = `cfg-${field.key}`
+    const shown = visibleValue(field)
+    const errorId = `${fieldId}-error`
+    const hintId = `${fieldId}-hint`
+    const unchanged = isUnchanged(field, shown)
+    // Edited since the page loaded and different from what the server holds: only then is there anything unsaved,
+    // and only then is a rule worth shouting about. A field nobody touched may be empty (a key never stored).
+    const edited = values[field.key] !== undefined && values[field.key] !== config?.[field.key]
+    const rule = unchanged ? null : validateConfigValue(field, shown)
+    const problem = edited ? rule : null
+    const range = field.type === "number" ? limitsText(field.key) : null
+    const serverError = errors[field.key]
+    const describedBy = [serverError ? errorId : null, problem ? hintId : null].filter(Boolean).join(" ") || undefined
+
+    return (
+      <div key={field.key} className="p-4 max-w-lg">
+        <label htmlFor={fieldId} className="text-xs font-medium text-foreground block mb-1">{field.label}</label>
+        <div className="flex items-center gap-2">
+          {field.type === "boolean" ? (
+            <select
+              id={fieldId}
+              value={shown}
+              onChange={(e) => edit(field.key, e.target.value)}
+              aria-describedby={describedBy}
+              className="h-8 border border-border bg-transparent px-2 font-mono text-xs"
+            >
+              <option value="true">Enabled</option>
+              <option value="false">Disabled</option>
+            </select>
+          ) : field.type === "select" ? (
+            <select
+              id={fieldId}
+              value={shown}
+              onChange={(e) => edit(field.key, e.target.value)}
+              aria-describedby={describedBy}
+              className="h-8 border border-border bg-transparent px-2 font-mono text-xs"
+            >
+              {field.options?.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          ) : (
+            <Input
+              id={fieldId}
+              value={shown}
+              onChange={(e) => edit(field.key, e.target.value)}
+              aria-describedby={describedBy}
+              aria-invalid={problem ? true : undefined}
+              type={field.type === "number" ? "number" : "text"}
+              className="font-mono text-xs"
+            />
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => saveKey(field.key, shown)}
+            disabled={isSavingField || unchanged || rule !== null}
+            aria-label={`Save ${field.label}`}
+          >
+            {saveContent}
+          </Button>
+          {justSaved[field.key] ? (
+            <span role="status" className="text-xs text-primary">Saved</span>
+          ) : (
+            edited && !isSavingField && <span className="text-xs text-muted-foreground">Unsaved change</span>
+          )}
+        </div>
+        {problem && <p id={hintId} className="text-xs text-destructive mt-1">{problem}</p>}
+        {serverError && (
+          <p id={errorId} role="alert" className="text-xs text-destructive mt-1">{serverError}</p>
+        )}
+        <p className="text-xs text-muted-foreground mt-1">
+          {field.description}
+          {range && <> Allowed: {range}.</>}
+        </p>
+      </div>
+    )
   }
 
   if (isLoading) {
@@ -906,73 +896,17 @@ function InstanceConfigSection() {
           retrying={isFetching}
         />
       )}
-      <div className="divide-y divide-border">
-        {CONFIG_FIELDS.map((field) => {
-          const isSavingField = saving === field.key
-          const saveContent: React.ReactNode = isSavingField ? <CircleNotch className="size-3 animate-spin" aria-hidden="true" /> : "Save"
-          const fieldId = `cfg-${field.key}`
-          const shown = visibleValue(field)
-          const errorId = `${fieldId}-error`
-          const describedBy = errors[field.key] ? errorId : undefined
-
-          return (
-          <div key={field.key} className="p-4 max-w-lg">
-            <label htmlFor={fieldId} className="text-xs font-medium text-foreground block mb-1">{field.label}</label>
-            <div className="flex items-center gap-2">
-              {field.type === "boolean" ? (
-                <select
-                  id={fieldId}
-                  value={shown}
-                  onChange={(e) => edit(field.key, e.target.value)}
-                  aria-describedby={describedBy}
-                  className="h-8 border border-border bg-transparent px-2 font-mono text-xs"
-                >
-                  <option value="true">Enabled</option>
-                  <option value="false">Disabled</option>
-                </select>
-              ) : field.type === "select" ? (
-                <select
-                  id={fieldId}
-                  value={shown}
-                  onChange={(e) => edit(field.key, e.target.value)}
-                  aria-describedby={describedBy}
-                  className="h-8 border border-border bg-transparent px-2 font-mono text-xs"
-                >
-                  {field.options?.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              ) : (
-                <Input
-                  id={fieldId}
-                  value={shown}
-                  onChange={(e) => edit(field.key, e.target.value)}
-                  aria-describedby={describedBy}
-                  type={field.type === "number" ? "number" : "text"}
-                  className="font-mono text-xs"
-                />
-              )}
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => saveKey(field.key, shown)}
-                disabled={isSavingField || isUnchanged(field, shown)}
-                aria-label={`Save ${field.label}`}
-              >
-                {saveContent}
-              </Button>
-              {justSaved === field.key && (
-                <span role="status" className="text-xs text-primary">Saved</span>
-              )}
-            </div>
-            {errors[field.key] && (
-              <p id={errorId} role="alert" className="text-xs text-destructive mt-1">{errors[field.key]}</p>
-            )}
-            <p className="text-xs text-muted-foreground mt-1">{field.description}</p>
-          </div>
-          )
-        })}
-      </div>
+      {CONFIG_GROUPS.map((group) => {
+        const fields = group.keys.flatMap((key) => CONFIG_FIELDS.filter((f) => f.key === key))
+        return (
+          <section key={group.id} aria-labelledby={`cfg-group-${group.id}`}>
+            <h3 id={`cfg-group-${group.id}`} className="section-label px-4 pt-4 pb-1">
+              {group.label}
+            </h3>
+            <div className="divide-y divide-border">{fields.map(renderField)}</div>
+          </section>
+        )
+      })}
     </div>
   )
 }

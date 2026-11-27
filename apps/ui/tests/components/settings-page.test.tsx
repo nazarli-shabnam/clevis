@@ -362,6 +362,109 @@ describe("SettingsPage", () => {
     expect(input).toHaveAttribute("aria-describedby", alert.id);
   });
 
+  describe("instance configuration form (#1282)", () => {
+    function arrange(config: Record<string, string> = { worker_poll_seconds: "5", registration_enabled: "true" }) {
+      orgsMineMock.mockResolvedValue([]);
+      installationsListMock.mockResolvedValue([]);
+      tokensListMock.mockResolvedValue([]);
+      configGetAllMock.mockResolvedValue(config);
+      renderPage();
+    }
+
+    it("groups the fields under headings", async () => {
+      arrange();
+
+      await screen.findByLabelText("Worker Poll Interval");
+      const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+      expect(headings).toEqual(["Access and scoring", "Alert SLAs", "Schedules", "Automation", "Background sync", "Retention"]);
+      const retention = screen.getByRole("region", { name: "Retention" });
+      expect(within(retention).getByLabelText("Keep Finished Jobs (days)")).toBeInTheDocument();
+      expect(within(retention).queryByLabelText("Worker Poll Interval")).not.toBeInTheDocument();
+    });
+
+    it("marks an edited field as an unsaved change until it is saved or put back", async () => {
+      arrange();
+      const input = await screen.findByLabelText("Worker Poll Interval");
+      expect(screen.queryByText("Unsaved change")).not.toBeInTheDocument();
+
+      fireEvent.change(input, { target: { value: "9" } });
+      expect(screen.getByText("Unsaved change")).toBeInTheDocument();
+
+      fireEvent.change(input, { target: { value: "5" } });
+      expect(screen.queryByText("Unsaved change")).not.toBeInTheDocument();
+    });
+
+    it("keeps a Saved note on each row that was saved, not just the last one", async () => {
+      arrange({ worker_poll_seconds: "5", registration_enabled: "true", pr_nudge_stale_days: "3" });
+      configUpdateMock
+        .mockResolvedValueOnce({ worker_poll_seconds: "9", registration_enabled: "true", pr_nudge_stale_days: "3" })
+        .mockResolvedValueOnce({ worker_poll_seconds: "9", registration_enabled: "true", pr_nudge_stale_days: "7" });
+
+      fireEvent.change(await screen.findByLabelText("Worker Poll Interval"), { target: { value: "9" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save Worker Poll Interval" }));
+      await waitFor(() => expect(screen.getAllByText("Saved")).toHaveLength(1));
+      fireEvent.change(screen.getByLabelText("Stale-PR Threshold"), { target: { value: "7" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save Stale-PR Threshold" }));
+
+      await waitFor(() => expect(screen.getAllByText("Saved")).toHaveLength(2));
+    });
+
+    it.each([
+      ["retention_jobs_days", "Keep Finished Jobs (days)", "7", /0 \(keep forever\) or 8 to 3650/],
+      ["retention_webhook_deliveries_days", "Keep Webhook Deliveries (days)", "29", /0 \(keep forever\) or 30 to 3650/],
+      ["retention_repo_events_days", "Keep Activity Events (days)", "99", /0 \(keep forever\) or 100 to 3650/],
+      ["worker_poll_seconds", "Worker Poll Interval", "31", /Use 1 to 30/],
+      ["gap_heal_poll_seconds", "Activity Gap-Heal Interval", "59", /Use 60 to 3600/],
+      ["automation_poll_seconds", "Scheduled Automation Check Interval", "299", /Use 300 to 86400/],
+      ["pr_nudge_stale_days", "Stale-PR Threshold", "400", /Use 1 to 365/],
+    ])("refuses a %s value the server would silently change", async (_key, label, value, message) => {
+      arrange({ worker_poll_seconds: "5", registration_enabled: "true" });
+      const input = await screen.findByLabelText(label);
+
+      fireEvent.change(input, { target: { value } });
+
+      expect(screen.getByText(message, { selector: "p.text-destructive" })).toBeInTheDocument();
+      expect(input).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByRole("button", { name: `Save ${label}` })).toBeDisabled();
+      expect(configUpdateMock).not.toHaveBeenCalled();
+    });
+
+    it("accepts 0 (keep forever) and the minimum for a retention window, and shows the allowed range", async () => {
+      arrange();
+      configUpdateMock.mockResolvedValue({ retention_jobs_days: "0" });
+      const input = await screen.findByLabelText("Keep Finished Jobs (days)");
+      expect(screen.getByText(/Allowed: 0 \(keep forever\) or 8 to 3650\./)).toBeInTheDocument();
+
+      fireEvent.change(input, { target: { value: "8" } });
+      expect(screen.getByRole("button", { name: "Save Keep Finished Jobs (days)" })).toBeEnabled();
+      fireEvent.change(input, { target: { value: "0" } });
+      expect(screen.getByRole("button", { name: "Save Keep Finished Jobs (days)" })).toBeEnabled();
+      fireEvent.click(screen.getByRole("button", { name: "Save Keep Finished Jobs (days)" }));
+
+      await waitFor(() => expect(configUpdateMock).toHaveBeenCalledWith("retention_jobs_days", "0"));
+    });
+
+    it("asks for a whole number when the field is empty or not an integer", async () => {
+      arrange();
+      const input = await screen.findByLabelText("Worker Poll Interval");
+
+      fireEvent.change(input, { target: { value: "" } });
+      expect(screen.getByText("Enter a whole number.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Save Worker Poll Interval" })).toBeDisabled();
+    });
+
+    it("does not complain about a number field nobody has touched that the server has never stored", async () => {
+      arrange(); // gap_heal_poll_seconds is not in the stored config, so it shows empty
+      const input = await screen.findByLabelText("Activity Gap-Heal Interval");
+
+      expect(input).toHaveValue(null);
+      expect(input).not.toHaveAttribute("aria-invalid");
+      expect(screen.queryByText("Enter a whole number.")).not.toBeInTheDocument();
+      expect(screen.queryByText("Unsaved change")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Save Activity Gap-Heal Interval" })).toBeDisabled();
+    });
+  });
+
   it("saves a chosen leadership-digest cadence", async () => {
     orgsMineMock.mockResolvedValue([]);
     installationsListMock.mockResolvedValue([]);
@@ -375,7 +478,7 @@ describe("SettingsPage", () => {
 
     renderPage();
 
-    const cadence = (await screen.findAllByDisplayValue("Off"))[0]; // Leadership Digest is listed before Scheduled Scans
+    const cadence = await screen.findByLabelText("Leadership Digest");
     fireEvent.change(cadence, { target: { value: "weekly" } });
 
     const row = cadence.closest("div")!.parentElement!;
@@ -394,7 +497,7 @@ describe("SettingsPage", () => {
 
     renderPage();
 
-    const cadence = (await screen.findAllByDisplayValue("Off"))[0] as HTMLSelectElement;
+    const cadence = (await screen.findByLabelText("Leadership Digest")) as HTMLSelectElement;
     fireEvent.change(cadence, { target: { value: "weekly" } });
     const row = cadence.closest("div")!.parentElement!;
     fireEvent.click(within(row).getByRole("button", { name: /^Save / }));
@@ -415,7 +518,7 @@ describe("SettingsPage", () => {
 
     renderPage();
 
-    const cadence = (await screen.findAllByDisplayValue("Off"))[0]; // Leadership Digest is listed before Scheduled Scans
+    const cadence = await screen.findByLabelText("Leadership Digest");
     const row = cadence.closest("div")!.parentElement!;
     fireEvent.click(within(row).getByRole("button", { name: /^Save / }));
 
