@@ -95,25 +95,44 @@ describe("EmptyStateNoAccount for an account with no linked GitHub identity (#12
     expect(screen.queryByRole("link", { name: "Connect a GitHub account" })).not.toBeInTheDocument();
   });
 
-  it("keeps the plain button for a linked account, and while the lookup loads or fails", async () => {
-    renderEmpty(<EmptyStateNoAccount />);
-    expect(await screen.findByRole("link", { name: "Connect a GitHub account" })).toBeInTheDocument();
-    expect(screen.queryByText("Link your GitHub account first")).not.toBeInTheDocument();
-    cleanup();
+  // The plain button renders at once, so each case waits for the lookup to have been answered before it checks
+  // that the steps did not appear.
+  const settled = () => new Promise((resolve) => setTimeout(resolve, 20));
 
-    meMock.mockReturnValue(new Promise(() => {}));
+  it.each([
+    ["a linked account", () => meMock.mockResolvedValue({ id: 1, email: "a@b.c", github_login: "octocat" })],
+    ["a response without the field", () => meMock.mockResolvedValue({ id: 1, email: "a@b.c" })],
+    ["a failed lookup", () => meMock.mockRejectedValue(new Error("boom"))],
+  ])("keeps the plain button for %s", async (_name, arrange) => {
+    arrange();
     renderEmpty(<EmptyStateNoAccount />);
+
+    await settled();
+    expect(meMock).toHaveBeenCalled();
     expect(screen.getByRole("link", { name: "Connect a GitHub account" })).toBeInTheDocument();
-    cleanup();
-
-    meMock.mockRejectedValue(new Error("boom"));
-    renderEmpty(<EmptyStateNoAccount />);
-    expect(await screen.findByRole("link", { name: "Connect a GitHub account" })).toBeInTheDocument();
+    expect(screen.queryByText("Link your GitHub account first")).not.toBeInTheDocument();
   });
 
-  it("does not change the org-only variant", async () => {
+  it("keeps the plain button while the lookup is still loading", () => {
+    meMock.mockReturnValue(new Promise(() => {}));
+    renderEmpty(<EmptyStateNoAccount />);
+
+    expect(screen.getByRole("link", { name: "Connect a GitHub account" })).toBeInTheDocument();
+  });
+
+  it("still offers a personal access token in the two-step state", async () => {
+    meMock.mockResolvedValue({ id: 1, email: "a@b.c", github_login: null });
+    renderEmpty(<EmptyStateNoAccount />);
+
+    expect(await screen.findByRole("link", { name: "Add one in Settings" })).toHaveAttribute("href", "/settings");
+  });
+
+  it("does not change the org-only variant, and does not even ask who the user is", async () => {
     meMock.mockResolvedValue({ id: 1, email: "a@b.c", github_login: null });
     renderEmpty(<EmptyStateNoAccount orgOnly message="needs an org" />);
+
+    await settled();
+    expect(meMock).not.toHaveBeenCalled();
 
     expect(screen.getByRole("link", { name: "Install the GitHub App on an organization" })).toBeInTheDocument();
     expect(screen.queryByText("Link your GitHub account first")).not.toBeInTheDocument();
