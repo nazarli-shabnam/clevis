@@ -70,9 +70,10 @@ export function ScoringExclusionsCard({ orgLogin }: { orgLogin: string }) {
             className="text-xs font-mono card text-foreground px-2 py-1.5 max-w-96 focus:outline-none focus:ring-1 focus:ring-ring"
           />
           <p className="text-xs text-muted-foreground">
-            <code>*</code> matches any run of characters and <code>?</code> one, ignoring case. Matching repositories
-            are not checked and do not count toward the score from the next scan on; the Security page lists them.
-            Archived repositories are always left out. To hide a failure only for a while, use a waiver instead.
+            <code>*</code> matches any run of characters and <code>?</code> one, ignoring case. From the next scan on,
+            matching repositories are not checked by the security scan and do not count toward its score; the Security
+            page lists the ones it skipped. Other views (the matrix, bulk fixes) still list them. Archived repositories
+            are always left out. To hide a failure only for a while, use a waiver instead.
           </p>
           <div className="flex items-center gap-2">
             <Button type="submit" size="sm" disabled={!dirty || save.isPending}>

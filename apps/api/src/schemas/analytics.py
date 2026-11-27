@@ -85,6 +85,8 @@ class ScoringExclusions(BaseModel):
                 raise ValueError(
                     f"'{raw.strip()[:40]}' is not a repository name or pattern (letters, digits, . _ - and the wildcards * ?)"
                 )
+            if not p.strip("*?"):
+                raise ValueError("a pattern needs at least one letter, digit or . _ - (a bare * would leave out every repository)")
             if p not in out:
                 out.append(p)
         return out

@@ -70,6 +70,15 @@ def _run_checks(
     owner: str, token: str, base_url: str, account_type: str, include_hygiene: bool,
     stored_identity: dict | None = None, exclude_repos: list[str] | None = None,
 ) -> dict:
+    if stored_identity is not None and exclude_repos:
+        # Collaborator rows name "owner/repo": an excluded repository's outside admins must not fail the score either.
+        stored_identity = {
+            **stored_identity,
+            "collaborators": [
+                c for c in stored_identity.get("collaborators", [])
+                if not is_excluded(str(c.get("repo", "")).rsplit("/", 1)[-1], exclude_repos or [])
+            ],
+        }
     checks = [
         OrgMFARequired(),
         BranchProtectionEnabled(),

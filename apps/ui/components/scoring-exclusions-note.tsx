@@ -17,7 +17,7 @@ export function ScoringExclusionsNote({ orgLogin, matched }: { orgLogin: string;
   if (patterns.length === 0) return null
   return (
     <p className="mb-4 text-xs text-muted-foreground" role="note">
-      Left out of this score by the organization: <span className="font-mono">{patterns.join(", ")}</span>
+      The organization currently leaves these out of scoring: <span className="font-mono">{patterns.join(", ")}</span>
       {matched && matched.length > 0 && (
         <>
           {" "}

@@ -197,3 +197,29 @@ def test_is_excluded_matches_names_and_globs_case_insensitively():
 
     assert is_excluded("Sandbox-9", ["sandbox-*"]) and is_excluded("api", ["API"]) and is_excluded("a1", ["a?"])
     assert not is_excluded("api-gateway", ["api"]) and not is_excluded("api", [])
+
+
+def test_an_excluded_repos_outside_collaborators_do_not_reach_the_identity_check():
+    from checks.runner import _run_checks
+
+    seen = {}
+
+    def fake_identity(stored):
+        seen.update(stored)
+        return []
+
+    stored = {
+        "members": [],
+        "collaborators": [
+            {"repo": "acme/Sandbox-1", "login": "x", "permission": "admin", "is_outside_collaborator": True},
+            {"repo": "acme/api", "login": "y", "permission": "admin", "is_outside_collaborator": True},
+        ],
+    }
+    with (
+        patch("checks.runner._get_all_pages", return_value=FAKE_REPOS),
+        patch("checks.github_checks._get", return_value=FAKE_ORG),
+        patch("checks.runner.identity_checks", side_effect=fake_identity),
+    ):
+        _run_checks("acme", "tok", "https://api.github.com", "Organization", False, stored, ["sandbox-*"])
+
+    assert [c["login"] for c in seen["collaborators"]] == ["y"]

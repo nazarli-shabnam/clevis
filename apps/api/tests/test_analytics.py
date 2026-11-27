@@ -541,7 +541,9 @@ def test_admin_sets_exclusions_normalised_and_audited_and_a_member_can_read_them
     assert org.scoring_excluded_repos is None
 
 
-@pytest.mark.parametrize("patterns", [["owner/repo"], ["has space"], [""], ["x" * 101], [f"r{i}" for i in range(51)]])
+@pytest.mark.parametrize(
+    "patterns", [["owner/repo"], ["has space"], [""], ["x" * 101], [f"r{i}" for i in range(51)], ["*"], ["?*"], ["ok", "**"]]
+)
 def test_invalid_exclusion_patterns_are_rejected(http, db, mock_user, patterns):
     _org_with_role(db, mock_user, "admin")
     assert http.put("/orgs/acme/scoring-exclusions", json={"patterns": patterns}).status_code == 422
