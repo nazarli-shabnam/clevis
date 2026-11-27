@@ -274,6 +274,19 @@ def _hygiene_setting_for_member(db: Session, user: UserOut, owner: str) -> bool 
     return org_scores_hygiene(org)
 
 
+def _exclusions_for_member(db: Session, user: UserOut, owner: str) -> list[str]:
+    """The org's scoring exclusions when `owner` is a Clevis org the user belongs to (same condition as
+    _hygiene_setting_for_member: their scan is stored under the org, so it is scored the way the org's own scans
+    are); none for any other login."""
+    org = org_repo.get_by_login_ci(db, owner)
+    if org is None:
+        return []
+    org = org_repo.ensure_tenant_linked(db, org)
+    if tenant_repo.get_membership(db, org.tenant_id, user.id) is None:
+        return []
+    return org_scoring_exclusions(org)
+
+
 def _stored_identity_for_member(db: Session, user: UserOut, owner: str) -> dict | None:
     """The org's stored member/collaborator data when `owner` is a Clevis org the user belongs to (the same
     condition as _hygiene_setting_for_member: their scan is stored under the org); None for any other login,
@@ -440,6 +453,7 @@ async def personal_analytics_overview(
         raise HTTPException(status_code=400, detail=str(exc))
     score_hygiene = await anyio.to_thread.run_sync(lambda: _hygiene_setting_for_member(db, user, payload.owner))
     stored_identity = await anyio.to_thread.run_sync(lambda: _stored_identity_for_member(db, user, payload.owner))
+    exclude_repos = await anyio.to_thread.run_sync(lambda: _exclusions_for_member(db, user, payload.owner))
     member_tenant_id = await anyio.to_thread.run_sync(lambda: _member_org_tenant_id(db, user, payload.owner))
     slot_key = f"org:{member_tenant_id}" if member_tenant_id is not None else f"user:{user.id}"
     # No DB connection is held across the GitHub calls below (see release_connection).
@@ -453,7 +467,8 @@ async def personal_analytics_overview(
         def work(session: Session) -> dict:
             with scan_limiter.scan_slot(slot_key):
                 result = _overview_blocking(
-                    owner, token, account_type=account_type, score_hygiene=score_hygiene, stored_identity=stored_identity
+                    owner, token, account_type=account_type, score_hygiene=score_hygiene,
+                    stored_identity=stored_identity, exclude_repos=exclude_repos,
                 )
             _persist_personal_scan(session, user, result)
             return result
@@ -469,7 +484,8 @@ async def personal_analytics_overview(
         )
     with scan_limiter.scan_slot(slot_key):
         result = await _run_overview(
-            payload.owner, token, account_type=account_type, score_hygiene=score_hygiene, stored_identity=stored_identity
+            payload.owner, token, account_type=account_type, score_hygiene=score_hygiene,
+            stored_identity=stored_identity, exclude_repos=exclude_repos,
         )
     set_session_user(db, user.id)
     # owner can be any account the user has a token for (BYO-token); where the scan is stored depends

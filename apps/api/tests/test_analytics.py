@@ -187,7 +187,7 @@ def test_personal_overview_runs_checks_for_user_account(http):
         )
     assert resp.status_code == 200
     mock_account_type.assert_called_once()
-    mock_overview.assert_called_once_with(owner="octocat", token="ghp_test", account_type="User", score_hygiene=None, stored_identity=None, exclude_repos=None)
+    mock_overview.assert_called_once_with(owner="octocat", token="ghp_test", account_type="User", score_hygiene=None, stored_identity=None, exclude_repos=[])
 
 
 def test_personal_overview_account_type_http_error_returns_400(http):
@@ -551,6 +551,21 @@ def test_a_member_reads_but_cannot_change_exclusions(http, db, mock_user):
     _org_with_role(db, mock_user, "member")
     assert http.get("/orgs/acme/scoring-exclusions").status_code == 200
     assert http.put("/orgs/acme/scoring-exclusions", json={"patterns": ["x"]}).status_code == 403
+
+
+def test_a_members_ui_scan_through_the_personal_route_uses_the_orgs_exclusions(http, db, mock_user):
+    org = _org_with_role(db, mock_user, "admin")  # a pasted token in a PAT-only org needs admin; members use the App
+    org.scoring_excluded_repos = ["sandbox-*"]
+    db.flush()
+    with (
+        patch("src.routers.analytics.get_account_type", return_value="Organization"),
+        patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW) as overview,
+    ):
+        http.post("/me/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
+        assert overview.call_args.kwargs["exclude_repos"] == ["sandbox-*"]
+        # Another login, or an org the caller is not in, is scored with none of this org's settings.
+        http.post("/me/analytics/overview", json={"owner": "octocat", "token": "ghp_test"})
+        assert overview.call_args.kwargs["exclude_repos"] == []
 
 
 def test_org_scan_passes_the_orgs_exclusions_to_the_scan(http, db, mock_user):
