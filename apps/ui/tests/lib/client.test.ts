@@ -1260,8 +1260,14 @@ describe("api.security.dependabotBurndown", () => {
     await api.security.dependabotBurndown("ac me");
     await api.security.dependabotBurndown("acme", 90);
     const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls;
-    expect(String(calls[0][0])).toContain("/orgs/ac%20me/security/dependabot-burndown?days=30");
-    expect(String(calls[1][0])).toContain("/orgs/acme/security/dependabot-burndown?days=90");
+    expect(String(calls[0][0])).toContain("/orgs/ac%20me/security/dependabot-burndown?days=30&kind=dependabot");
+    expect(String(calls[1][0])).toContain("/orgs/acme/security/dependabot-burndown?days=90&kind=dependabot");
+  });
+
+  it("passes the alert kind", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("{}", { status: 200 }))));
+    await api.security.dependabotBurndown("acme", 30, "code_scanning");
+    expect(String((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0])).toContain("days=30&kind=code_scanning");
   });
 });
 

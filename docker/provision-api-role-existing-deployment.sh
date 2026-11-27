@@ -253,6 +253,18 @@ BEGIN
 END
 $do$;
 
+-- waiver_requests (migration 0095): members' pending requests for a waiver, read and written by the API
+-- (DELETE because account deletion clears every tenant table). Serial id, so the sequence grant too; same
+-- existence guard as above.
+DO $do$
+BEGIN
+  IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'waiver_requests') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON waiver_requests TO clevis_api;
+    GRANT USAGE, SELECT ON waiver_requests_id_seq TO clevis_api;
+  END IF;
+END
+$do$;
+
 -- notification_preferences (migration 0066): per-user muted notification kinds, read and upserted by
 -- the API. Composite primary key, so no sequence; same reasoning as notification_reads above.
 DO $do$

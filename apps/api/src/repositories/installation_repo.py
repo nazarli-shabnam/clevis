@@ -245,6 +245,18 @@ def purge_tenant_github_data_if_disconnected(db: Session, tenant_id: int) -> Non
     # Check-then-delete runs under the tenant lock upsert() also takes, in one transaction.
     _lock_tenant_installs(db, tenant_id)
     if db.query(GitHubInstallation).filter(GitHubInstallation.tenant_id == tenant_id).first() is None:
+        # Deliveries still waiting (consumer backlog, or queue_failed rows for the sweep) would otherwise be
+        # processed after the purge and re-create alerts, events and collaborators for the disconnected tenant
+        # (#1324). 'dropped' makes the consumer skip them and the requeue sweep ignore them. This runs before the
+        # purge so its row locks come first: the consumer locks the delivery row before writing, so a write in
+        # flight commits before the purge deletes it, and a later one sees 'dropped'.
+        db.execute(
+            text(
+                "UPDATE webhook_deliveries SET status = 'dropped' "
+                "WHERE tenant_id = :t AND status IN ('queued', 'queue_failed')"
+            ),
+            {"t": tenant_id},
+        )
         db.execute(text("SELECT purge_tenant_github_data(:t)"), {"t": tenant_id})
     db.commit()  # also releases the lock
 
