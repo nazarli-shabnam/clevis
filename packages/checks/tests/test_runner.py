@@ -167,3 +167,33 @@ def test_run_all_checks_skips_hygiene_checks_when_excluded():
     assert hygiene_ids <= {c["id"] for c in with_hygiene["checks"]}
     assert not hygiene_ids & {c["id"] for c in without["checks"]}
     assert len(without["checks"]) == 6
+
+
+def test_excluded_repos_are_dropped_before_any_check_and_named_in_the_result():
+    repos = FAKE_REPOS + [
+        {"name": "Sandbox-1", "default_branch": "main", "security_and_analysis": {}},
+        {"name": "legacy", "default_branch": "main", "security_and_analysis": {}},
+        {"name": "old", "default_branch": "main", "archived": True, "security_and_analysis": {}},
+    ]
+    seen = []
+
+    def fake_get(url, token):
+        seen.append(url)
+        return FAKE_ORG if "/repos/" not in url else (FAKE_BRANCH if "/branches/" in url else [])
+
+    with (
+        patch("checks.runner._get_all_pages", return_value=repos),
+        patch("checks.github_checks._get", side_effect=fake_get),
+    ):
+        result = run_all_checks(owner="acme", token="tok", exclude_repos=["sandbox-*", "LEGACY"])
+
+    assert result["repo_count"] == 2
+    assert result["excluded_repos"] == ["Sandbox-1", "legacy"]  # archived ones are not "excluded": they never counted
+    assert not any("/sandbox" in u.lower() or "/legacy" in u for u in seen)
+
+
+def test_is_excluded_matches_names_and_globs_case_insensitively():
+    from checks.runner import is_excluded
+
+    assert is_excluded("Sandbox-9", ["sandbox-*"]) and is_excluded("api", ["API"]) and is_excluded("a1", ["a?"])
+    assert not is_excluded("api-gateway", ["api"]) and not is_excluded("api", [])

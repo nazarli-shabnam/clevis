@@ -423,6 +423,9 @@ class Org(Base):
     revoke_tokens_on_creator_leave: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     # Per-org override of the instance-wide `score_hygiene_checks` setting; NULL = follow the instance.
     score_hygiene_checks: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Migration 0096: repository names or `*`/`?` globs left out of this org's scans, so they affect neither the
+    # checks nor the score. NULL = none.
+    scoring_excluded_repos: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
     # Per-org override of the instance-wide `scheduled_scan_cadence`: True = scan on a schedule, False = never,
     # NULL = follow the instance setting.
     scheduled_scans: Mapped[bool | None] = mapped_column(Boolean, nullable=True)

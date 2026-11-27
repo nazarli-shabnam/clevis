@@ -84,6 +84,13 @@ vi.mock("@/components/charts/area-time-chart", () => ({
     ) : null,
 }));
 
+// The note has its own tests; here only whether the page mounts it, and with what the scan skipped, matters.
+vi.mock("@/components/scoring-exclusions-note", () => ({
+  ScoringExclusionsNote: ({ orgLogin, matched }: { orgLogin: string; matched?: string[] }) => (
+    <p>{`exclusions-note ${orgLogin} ${(matched ?? []).join(",")}`}</p>
+  ),
+}));
+
 // Keeps the real panel and adds a button that fires its onApplied hook, so the page's reaction to a
 // finished bulk fix can be checked without driving the panel's whole preview/apply flow.
 vi.mock("@/components/bulk-fix-panel", async (importOriginal) => {
@@ -258,6 +265,34 @@ describe("SecurityPage", () => {
     expect(await screen.findByLabelText("Security score: not available")).toBeInTheDocument();
     expect(screen.getByText("n/a")).toBeInTheDocument();
     expect(screen.getByText("No checks were scored")).toBeInTheDocument();
+  });
+
+  it("tells a member of the org which repositories the scan left out of scoring (#1276)", async () => {
+    orgsMineMock.mockResolvedValue([{ org_login: "acme", role: "member" }]);
+    analyticsOverviewMock.mockResolvedValue({
+      owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, excluded_repos: ["sandbox-1"],
+      checks: [],
+    });
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+
+    expect(await screen.findByText("exclusions-note acme sandbox-1")).toBeInTheDocument();
+  });
+
+  it("does not show the exclusions note for a login the caller is not a member of", async () => {
+    orgsMineMock.mockResolvedValue([]);
+    analyticsOverviewMock.mockResolvedValue({ owner: "acme", score: 100, total_checks: 0, failed_checks: 0, repo_count: 0, checks: [] });
+    renderPage();
+    fireEvent.change(screen.getByPlaceholderText("e.g. octocat"), { target: { value: "acme" } });
+    const scanButton = screen.getByRole("button", { name: /run scan/i });
+    await waitFor(() => expect(scanButton).not.toBeDisabled());
+    fireEvent.click(scanButton);
+
+    await screen.findByText(/Results — acme/);
+    expect(screen.queryByText(/exclusions-note/)).not.toBeInTheDocument();
   });
 
   it("allows running a scan with no token entered (GitHub App fallback)", async () => {

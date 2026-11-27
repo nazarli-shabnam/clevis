@@ -1,4 +1,5 @@
 """Tests for the analytics router."""
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -186,7 +187,7 @@ def test_personal_overview_runs_checks_for_user_account(http):
         )
     assert resp.status_code == 200
     mock_account_type.assert_called_once()
-    mock_overview.assert_called_once_with(owner="octocat", token="ghp_test", account_type="User", score_hygiene=None, stored_identity=None)
+    mock_overview.assert_called_once_with(owner="octocat", token="ghp_test", account_type="User", score_hygiene=None, stored_identity=None, exclude_repos=None)
 
 
 def test_personal_overview_account_type_http_error_returns_400(http):
@@ -515,3 +516,47 @@ def test_personal_scan_of_a_members_org_uses_the_orgs_setting_and_other_owners_u
         assert overview.call_args.kwargs["score_hygiene"] is True
         http.post("/me/analytics/overview", json={"owner": "octocat", "token": "ghp_test"})
         assert overview.call_args.kwargs["score_hygiene"] is None
+
+
+# ── scoring exclusions (#1276) ───────────────────────────────────────────────
+
+def test_admin_sets_exclusions_normalised_and_audited_and_a_member_can_read_them(http, db, mock_user):
+    from src.core.db import AuditLog
+
+    org = _org_with_role(db, mock_user, "admin")
+    assert http.get("/orgs/acme/scoring-exclusions").json() == {"patterns": []}
+
+    resp = http.put("/orgs/acme/scoring-exclusions", json={"patterns": [" Sandbox-* ", "legacy", "legacy"]})
+
+    assert resp.status_code == 200 and resp.json() == {"patterns": ["sandbox-*", "legacy"]}
+    db.refresh(org)
+    assert org.scoring_excluded_repos == ["sandbox-*", "legacy"]
+    audit = db.query(AuditLog).filter(AuditLog.action == "scoring_exclusions.updated").one()
+    assert json.loads(audit.payload) == {"patterns": ["sandbox-*", "legacy"], "previous": []}
+    # Saving the same list again writes nothing; an empty list clears the column.
+    http.put("/orgs/acme/scoring-exclusions", json={"patterns": ["sandbox-*", "legacy"]})
+    assert db.query(AuditLog).filter(AuditLog.action == "scoring_exclusions.updated").count() == 1
+    http.put("/orgs/acme/scoring-exclusions", json={"patterns": []})
+    db.refresh(org)
+    assert org.scoring_excluded_repos is None
+
+
+@pytest.mark.parametrize("patterns", [["owner/repo"], ["has space"], [""], ["x" * 101], [f"r{i}" for i in range(51)]])
+def test_invalid_exclusion_patterns_are_rejected(http, db, mock_user, patterns):
+    _org_with_role(db, mock_user, "admin")
+    assert http.put("/orgs/acme/scoring-exclusions", json={"patterns": patterns}).status_code == 422
+
+
+def test_a_member_reads_but_cannot_change_exclusions(http, db, mock_user):
+    _org_with_role(db, mock_user, "member")
+    assert http.get("/orgs/acme/scoring-exclusions").status_code == 200
+    assert http.put("/orgs/acme/scoring-exclusions", json={"patterns": ["x"]}).status_code == 403
+
+
+def test_org_scan_passes_the_orgs_exclusions_to_the_scan(http, db, mock_user):
+    org = _org_with_role(db, mock_user, "admin")
+    org.scoring_excluded_repos = ["sandbox-*"]
+    db.flush()
+    with patch("src.routers.analytics.get_overview", return_value=MOCK_OVERVIEW) as overview:
+        http.post("/orgs/acme/analytics/overview", json={"owner": "acme", "token": "ghp_test"})
+    assert overview.call_args.kwargs["exclude_repos"] == ["sandbox-*"]

@@ -46,6 +46,11 @@ def org_scores_hygiene(org) -> bool:
     return override if override is not None else instance_scores_hygiene()
 
 
+def org_scoring_exclusions(org) -> list[str]:
+    """The repository names/globs an org leaves out of scoring; none for an org that never set any."""
+    return list(getattr(org, "scoring_excluded_repos", None) or [])
+
+
 def tally(checks: list[dict]) -> tuple[int, int, int | None]:
     """(scored checks, failed checks, score) for checks already stamped with ``scored``.
 
@@ -64,6 +69,7 @@ def get_overview(
     account_type: str = "Organization",
     score_hygiene: bool | None = None,
     stored_identity: dict | None = None,
+    exclude_repos: list[str] | None = None,
 ) -> dict:
     """`score_hygiene` None = the instance-wide setting; callers scanning a Clevis org pass the org's.
 
@@ -80,6 +86,7 @@ def get_overview(
         account_type=account_type,
         include_hygiene=score_hygiene,
         stored_identity=stored_identity,
+        exclude_repos=exclude_repos,
     )
     checks = report["checks"]
     # Stamp the policy onto each check: it is persisted with the scan, so later readers (the digest)
@@ -93,5 +100,6 @@ def get_overview(
         "total_checks": total,
         "failed_checks": failed,
         "repo_count": report["repo_count"],
+        "excluded_repos": report.get("excluded_repos", []),
         "checks": checks,
     }

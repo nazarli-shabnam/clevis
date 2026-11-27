@@ -1,7 +1,8 @@
+import re
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 
 class AnalyticsInput(BaseModel):
@@ -49,6 +50,8 @@ class AnalyticsResponse(BaseModel):
     total_checks: int
     failed_checks: int
     repo_count: int
+    # Repositories this org leaves out of scoring that the scan found (see ScoringExclusions); not in repo_count.
+    excluded_repos: list[str] = []
     checks: list[CheckResult]
 
 
@@ -61,6 +64,30 @@ class HygieneScoringSettings(BaseModel):
     enabled: bool | None  # the org's override; None = follows the instance
     effective: bool  # what the next scan will actually do
     instance_default: bool
+
+
+_EXCLUSION_PATTERN = re.compile(r"^[a-z0-9._*?-]{1,100}$")
+
+
+class ScoringExclusions(BaseModel):
+    """Repository names or ``*``/``?`` globs left out of an org's scans. Stored lower-case, de-duplicated, in the
+    order given (GitHub repository names are case-insensitive)."""
+
+    patterns: list[str] = Field(default_factory=list, max_length=50)
+
+    @field_validator("patterns")
+    @classmethod
+    def _clean(cls, v: list[str]) -> list[str]:
+        out: list[str] = []
+        for raw in v:
+            p = raw.strip().lower()
+            if not _EXCLUSION_PATTERN.match(p):
+                raise ValueError(
+                    f"'{raw.strip()[:40]}' is not a repository name or pattern (letters, digits, . _ - and the wildcards * ?)"
+                )
+            if p not in out:
+                out.append(p)
+        return out
 
 
 class ScheduledScanUpdate(BaseModel):

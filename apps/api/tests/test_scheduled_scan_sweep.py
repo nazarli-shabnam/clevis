@@ -83,6 +83,14 @@ def test_effective_cadence(override, instance, expected):
 # --- sweep ------------------------------------------------------------------------------------------
 
 
+def test_a_scheduled_scan_leaves_out_the_orgs_excluded_repos(db):
+    org = _org(db, "ss-excl")
+    org.scoring_excluded_repos = ["sandbox-*"]
+    db.commit()
+    get_overview, _ = _run(db)
+    assert get_overview.call_args.kwargs["exclude_repos"] == ["sandbox-*"]
+
+
 def test_off_scans_nothing(db):
     org = _org(db, "ss-off")
     get_overview, _ = _run(db, cadence="off")

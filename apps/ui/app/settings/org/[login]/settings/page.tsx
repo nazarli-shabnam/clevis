@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/page-header"
 import { api } from "@/lib/api/client"
 import { orgRoleFor } from "@/lib/members-href"
 import { HygieneScoringCard } from "@/components/hygiene-scoring-card"
+import { ScoringExclusionsCard } from "@/components/scoring-exclusions-card"
 import { ScheduledScansCard } from "@/components/scheduled-scans-card"
 import { DigestCard } from "@/components/digest-card"
 import { AutomationSchedulesCard } from "@/components/automation-schedules-card"
@@ -96,6 +97,7 @@ export default function OrgSettingsPage() {
           </Section>
           <Section id="scanning" label="Scanning">
             <HygieneScoringCard orgLogin={orgLogin} />
+            <ScoringExclusionsCard orgLogin={orgLogin} />
             <ScheduledScansCard orgLogin={orgLogin} />
             <BadgeSettingsCard orgLogin={orgLogin} />
           </Section>

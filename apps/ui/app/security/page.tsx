@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { SectionError } from "@/components/section-error"
+import { ScoringExclusionsNote } from "@/components/scoring-exclusions-note"
 import { Warning, Key, ShieldWarning, DownloadSimple } from "@phosphor-icons/react"
 import { api } from "@/lib/api/client"
 import { toCsv } from "@/lib/csv"
@@ -545,6 +546,12 @@ export default function SecurityPage() {
                     {scan.isPending ? "Rescanning… " : ""}Last scanned <Time iso={shownScannedAt} />
                   </span>
                 )}
+              </div>
+            )}
+
+            {shown && memberships.some((m) => m.org_login.toLowerCase() === shown.owner.toLowerCase()) && (
+              <div className="px-4 pt-3">
+                <ScoringExclusionsNote orgLogin={shown.owner} matched={"excluded_repos" in shown ? shown.excluded_repos : undefined} />
               </div>
             )}
 

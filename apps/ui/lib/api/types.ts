@@ -42,6 +42,11 @@ export interface TextCheckValue {
 
 export type CheckValue = MFACheckValue | RatioCheckValue | SeverityCountsValue | TextCheckValue | null
 
+/** Repository names or `*`/`?` globs an org leaves out of scoring (GET/PUT /orgs/{org}/scoring-exclusions). */
+export interface ScoringExclusions {
+  patterns: string[]
+}
+
 export interface HygieneScoringSettings {
   /** The org's own setting; null = follows the instance-wide one. */
   enabled: boolean | null
@@ -235,6 +240,8 @@ export interface AnalyticsOverviewResponse {
   total_checks: number
   failed_checks: number
   repo_count: number
+  /** Repositories the org leaves out of scoring that this scan found; not part of repo_count. */
+  excluded_repos?: string[]
   checks: CheckResult[]
 }
 

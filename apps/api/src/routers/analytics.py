@@ -41,6 +41,7 @@ from src.schemas.analytics import (
     CacheSizePointOut,
     HygieneScoringSettings,
     HygieneScoringUpdate,
+    ScoringExclusions,
     AtRiskRepo,
     CockpitResponse,
     IssueSummary,
@@ -64,6 +65,7 @@ from src.services.analytics_service import (
     get_token_login,
     instance_scores_hygiene,
     org_scores_hygiene,
+    org_scoring_exclusions,
 )
 from src.services.github_client import GitHubClient, github_error as _github_error, list_owner_repos
 from src.services.token_resolution import (
@@ -99,13 +101,14 @@ def _overview_blocking(
     account_type: str = "Organization",
     score_hygiene: bool | None = None,
     stored_identity: dict | None = None,
+    exclude_repos: list[str] | None = None,
 ) -> AnalyticsResponse:
     """The scan itself (hundreds of GitHub calls), with GitHub failures mapped to HTTP errors. Blocking:
     callers run it on a worker thread, either the request's or an async job's."""
     try:
         return get_overview(
             owner=owner, token=token, account_type=account_type, score_hygiene=score_hygiene,
-            stored_identity=stored_identity,
+            stored_identity=stored_identity, exclude_repos=exclude_repos,
         )
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=400, detail=f"GitHub API error: {exc.response.status_code}")
@@ -122,9 +125,10 @@ async def _run_overview(
     account_type: str = "Organization",
     score_hygiene: bool | None = None,
     stored_identity: dict | None = None,
+    exclude_repos: list[str] | None = None,
 ) -> AnalyticsResponse:
     return await anyio.to_thread.run_sync(
-        lambda: _overview_blocking(owner, token, account_type, score_hygiene, stored_identity)
+        lambda: _overview_blocking(owner, token, account_type, score_hygiene, stored_identity, exclude_repos)
     )
 
 
@@ -317,6 +321,35 @@ def set_hygiene_scoring(
     )
 
 
+@router.get("/orgs/{org_login}/scoring-exclusions", response_model=ScoringExclusions)
+def get_scoring_exclusions(ctx: OrgContext = Depends(require_org_role(min_role="member"))):
+    # Readable by any member: the Security page says which repositories its score leaves out.
+    return ScoringExclusions(patterns=org_scoring_exclusions(ctx.org))
+
+
+@router.put("/orgs/{org_login}/scoring-exclusions", response_model=ScoringExclusions)
+def set_scoring_exclusions(
+    body: ScoringExclusions,
+    ctx: OrgContext = Depends(require_org_role(min_role="admin")),
+    user: UserOut = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    previous = org_scoring_exclusions(ctx.org)
+    if previous != body.patterns:
+        ctx.org.scoring_excluded_repos = body.patterns or None
+        audit_repo.write(
+            db,
+            actor=user.email,
+            action="scoring_exclusions.updated",
+            target=ctx.org.github_login,
+            payload={"patterns": body.patterns, "previous": previous},
+            tenant_id=ctx.org.tenant_id,
+            commit=False,
+        )
+        db.commit()
+    return ScoringExclusions(patterns=body.patterns)
+
+
 @router.post("/orgs/{org_login}/analytics/overview", response_model=AnalyticsResponse)
 async def org_analytics_overview(
     payload: AnalyticsInput,
@@ -345,6 +378,7 @@ async def org_analytics_overview(
     except NoGitHubTokenAvailable as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     score_hygiene = org_scores_hygiene(ctx.org)
+    exclude_repos = org_scoring_exclusions(ctx.org)
     # Read before the scan (and before the connection is released): the scan runs on other threads.
     stored_identity = await anyio.to_thread.run_sync(lambda: load_stored_identity(db, ctx.org.tenant_id))
     if run_async:
@@ -353,7 +387,9 @@ async def org_analytics_overview(
 
         def work(session: Session) -> dict:
             with scan_limiter.scan_slot(f"org:{tenant_id}"):
-                result = _overview_blocking(owner, token, score_hygiene=score_hygiene, stored_identity=stored_identity)
+                result = _overview_blocking(
+                    owner, token, score_hygiene=score_hygiene, stored_identity=stored_identity, exclude_repos=exclude_repos
+                )
             org = org_repo.get_by_id(session, org_id)
             scan_service.persist_scan_and_alert(session, org, result, tenant_id)
             return result
@@ -371,7 +407,9 @@ async def org_analytics_overview(
     tenant_id, user_id = ctx.org.tenant_id, ctx.membership.user_id
     release_connection(db)
     with scan_limiter.scan_slot(f"org:{tenant_id}"):
-        result = await _run_overview(payload.owner, token, score_hygiene=score_hygiene, stored_identity=stored_identity)
+        result = await _run_overview(
+            payload.owner, token, score_hygiene=score_hygiene, stored_identity=stored_identity, exclude_repos=exclude_repos
+        )
     set_tenant_session_context(db, tenant_id, user_id)
     await anyio.to_thread.run_sync(lambda: scan_service.persist_scan_and_alert(db, ctx.org, result, tenant_id))
     return result

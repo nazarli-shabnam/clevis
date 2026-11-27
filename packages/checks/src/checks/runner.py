@@ -1,3 +1,4 @@
+import fnmatch
 import logging
 
 import httpx
@@ -35,6 +36,13 @@ def _fetch_repos(base_url: str, owner: str, token: str, account_type: str) -> li
         raise
 
 
+def is_excluded(name: str, patterns: list[str] | tuple[str, ...]) -> bool:
+    """Whether a repository name matches an org's scoring exclusions: exact names or ``*``/``?`` globs, compared
+    case-insensitively (GitHub repository names are)."""
+    lowered = name.lower()
+    return any(fnmatch.fnmatchcase(lowered, p.lower()) for p in patterns)
+
+
 def run_all_checks(
     owner: str,
     token: str,
@@ -42,8 +50,12 @@ def run_all_checks(
     account_type: str = "Organization",
     include_hygiene: bool = True,
     stored_identity: dict | None = None,
+    exclude_repos: list[str] | None = None,
 ) -> dict:
     """Run every check and return the per-check results.
+
+    ``exclude_repos`` (names or globs, see ``is_excluded``) drops matching repositories before any check sees the
+    list, so they affect neither results nor score; the response names the ones dropped (``excluded_repos``).
 
     `include_hygiene=False` skips the repo-hygiene checks entirely: they are the expensive ones
     (a tree, branch and file lookups per repo), so callers that wouldn't score them shouldn't pay.
@@ -51,11 +63,12 @@ def run_all_checks(
     ``stored_identity`` (``{"members": [...], "collaborators": [...]}``, read from Clevis's own tables by the caller)
     adds the identity checks, which make no GitHub calls; omit it for an account Clevis holds no such data for."""
     with shared_client():
-        return _run_checks(owner, token, base_url, account_type, include_hygiene, stored_identity)
+        return _run_checks(owner, token, base_url, account_type, include_hygiene, stored_identity, exclude_repos or [])
 
 
 def _run_checks(
-    owner: str, token: str, base_url: str, account_type: str, include_hygiene: bool, stored_identity: dict | None = None
+    owner: str, token: str, base_url: str, account_type: str, include_hygiene: bool,
+    stored_identity: dict | None = None, exclude_repos: list[str] | None = None,
 ) -> dict:
     checks = [
         OrgMFARequired(),
@@ -72,6 +85,7 @@ def _run_checks(
     # but a check that doesn't read the repo list (org MFA) still runs on its own: a transient
     # failure here must not also fail a check that never needed it.
     repos: list = []
+    excluded: list[str] = []
     prefetch_failed = False
     try:
         fetched = _fetch_repos(base_url, owner, token, account_type)
@@ -82,6 +96,9 @@ def _run_checks(
         # Archived repos are read-only: nothing "Fix this" can change, so they don't count against
         # the score. (Empty repos are handled per check: their default branch doesn't exist.)
         repos = [r for r in fetched if not r.get("archived")]
+        if exclude_repos:
+            excluded = sorted(r["name"] for r in repos if is_excluded(r["name"], exclude_repos))
+            repos = [r for r in repos if not is_excluded(r["name"], exclude_repos)]
 
     results = []
     for check in checks:
@@ -105,4 +122,4 @@ def _run_checks(
             "status": output["status"],
             "value": output["value"],
         })
-    return {"checks": results, "repo_count": len(repos)}
+    return {"checks": results, "repo_count": len(repos), "excluded_repos": excluded}
