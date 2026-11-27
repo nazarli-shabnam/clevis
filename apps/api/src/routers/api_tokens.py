@@ -36,7 +36,7 @@ from src.schemas.api_token import (
     ScoreCheck,
     ScoreOut,
 )
-from src.services.analytics_service import org_scores_hygiene
+from src.services.analytics_service import org_scores_hygiene, org_scoring_exclusions
 from src.services.stored_identity import load_stored_identity
 from src.services.token_resolution import NoGitHubTokenAvailable, resolve_org_token
 
@@ -246,9 +246,13 @@ async def _scan_and_record(token: ResolvedToken, db: Session) -> ScoreOut:
     org = await anyio.to_thread.run_sync(lambda: org_repo.get_by_id(db, token.org_id))
     stored_identity = await anyio.to_thread.run_sync(lambda: load_stored_identity(db, token.tenant_id))
     score_hygiene = org_scores_hygiene(org)
+    exclude_repos = org_scoring_exclusions(org)
     # No DB connection is held across the GitHub calls (hundreds of them); see release_connection.
     release_connection(db)
-    result = await _run_overview(token.org_login, github_token, score_hygiene=score_hygiene, stored_identity=stored_identity)
+    result = await _run_overview(
+        token.org_login, github_token, score_hygiene=score_hygiene, stored_identity=stored_identity,
+        exclude_repos=exclude_repos,
+    )
     set_session_tenant(db, token.tenant_id)
 
     # Attributes the scan, and any alert it triggers, to this token rather than to "system".

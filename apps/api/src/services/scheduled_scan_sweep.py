@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from src.core.db import Org, set_session_tenant
 from src.repositories import audit_repo, scan_results_repo
 from src.services import scan_service
-from src.services.analytics_service import get_overview, org_scores_hygiene
+from src.services.analytics_service import get_overview, org_scores_hygiene, org_scoring_exclusions
 from src.services.stored_identity import load_stored_identity
 from src.services.scan_schedule import CADENCE_INTERVAL, effective_cadence, instance_cadence
 from src.services.sweep_lock import try_acquire_sweep_slot
@@ -114,6 +114,7 @@ def _scan_one(db: Session, org_id: int, tenant_id: int, org_login: str, cadence:
     # idle (pinning the vacuum horizon, killable by idle_in_transaction_session_timeout) for the whole scan.
     try:
         score_hygiene = org_scores_hygiene(org)
+        exclude_repos = org_scoring_exclusions(org)
         stored_identity = load_stored_identity(db, tenant_id)
     except Exception as exc:
         return _record_failure(db, tenant_id, org_login, exc)
@@ -126,6 +127,7 @@ def _scan_one(db: Session, org_id: int, tenant_id: int, org_login: str, cadence:
             account_type="Organization",
             score_hygiene=score_hygiene,
             stored_identity=stored_identity,
+            exclude_repos=exclude_repos,
         )
         scored = [c for c in result["checks"] if c.get("scored")]
         if scored and all(c["status"] == "error" for c in scored):

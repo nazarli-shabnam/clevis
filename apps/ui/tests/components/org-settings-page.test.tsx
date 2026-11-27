@@ -17,6 +17,7 @@ const { card } = vi.hoisted(() => ({
   card: (name: string) => () => <div data-testid={name} />,
 }));
 vi.mock("@/components/hygiene-scoring-card", () => ({ HygieneScoringCard: card("hygiene") }));
+vi.mock("@/components/scoring-exclusions-card", () => ({ ScoringExclusionsCard: card("scoring-exclusions") }));
 vi.mock("@/components/scheduled-scans-card", () => ({ ScheduledScansCard: card("scheduled-scans") }));
 vi.mock("@/components/digest-card", () => ({ DigestCard: card("digest") }));
 vi.mock("@/components/automation-schedules-card", () => ({ AutomationSchedulesCard: card("automation") }));

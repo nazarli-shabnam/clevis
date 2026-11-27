@@ -59,6 +59,7 @@ import type {
   InvitationPreview,
   JobOut,
   HygieneScoringSettings,
+  ScoringExclusions,
   MyOrgMembership,
   MyIssueListResponse,
   MyPrListResponse,
@@ -897,6 +898,10 @@ export const api = {
     // enabled: null clears the org's override so it follows the instance setting again.
     setHygieneScoring: (orgLogin: string, enabled: boolean | null) =>
       put<HygieneScoringSettings>(`/orgs/${encodeURIComponent(orgLogin)}/hygiene-scoring`, { enabled }),
+    scoringExclusions: (orgLogin: string) =>
+      get<ScoringExclusions>(`/orgs/${encodeURIComponent(orgLogin)}/scoring-exclusions`),
+    setScoringExclusions: (orgLogin: string, patterns: string[]) =>
+      put<ScoringExclusions>(`/orgs/${encodeURIComponent(orgLogin)}/scoring-exclusions`, { patterns }),
     scheduledScans: (orgLogin: string) =>
       get<ScheduledScanSettings>(`/orgs/${encodeURIComponent(orgLogin)}/scheduled-scans`),
     // enabled: null clears the org's override so it follows the instance cadence again.
