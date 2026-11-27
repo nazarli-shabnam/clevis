@@ -658,6 +658,32 @@ class CheckWaiver(Base):
     expiry_warning_stage: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="0")
 
 
+class WaiverRequest(Base):
+    """A member's request for a check waiver (#1274). Pending until an org admin approves it (which creates the
+    ``check_waivers`` row it points at) or denies it; the decision is kept for the record."""
+
+    __tablename__ = "waiver_requests"
+    __table_args__ = (Index("ix_waiver_requests_tenant_id_status", "tenant_id", "status"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    check_id: Mapped[str] = mapped_column(Text, nullable=False)
+    # NULL = the whole org; otherwise only these repositories (same meaning as CheckWaiver.repos).
+    repos: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    requested_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    requested_by: Mapped[str] = mapped_column(Text, nullable=False)
+    requested_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # pending | approved | denied
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    decided_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The waiver an approval created; cleared if that waiver is later revoked.
+    waiver_id: Mapped[int | None] = mapped_column(ForeignKey("check_waivers.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class PendingInstallation(Base):
     """A GitHub App installation Clevis heard about (``installation.created``) that nobody has connected yet.
     A notice board only: it grants nothing and creates no org. Not tenant data (none exists until the org is

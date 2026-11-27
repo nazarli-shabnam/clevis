@@ -45,7 +45,7 @@ const _LOGOUT_WARNING =
   "Logged out locally, but the server session may still be active. Avoid shared devices until you can retry."
 
 // Per-user browser state that must not survive an identity change on this tab. Cleared on
-// logout AND login/setSession, since /register calls setSession() without going through logout().
+// logout AND login/setSession (when the user id changes), since /register calls setSession() without going through logout().
 function clearPerUserBrowserState(): void {
   clearActiveScope()
   clearTrackedJobs()
@@ -275,11 +275,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser((prev) => (prev ? { ...prev, ...patch } : prev))
   }, [])
 
+  // Read inside setSession so it can tell a new identity from a fresh token for the same user.
+  const userIdRef = useRef<number | null>(null)
+  userIdRef.current = user?.id ?? null
+
   const setSession = useCallback(
     (jwtToken: string, authUser: AuthUser, invitations: PendingInvitationSummary[] = []) => {
       bumpSessionEpoch()
       clearLogoutWarning()
-      clearPerUserBrowserState()
+      // A password change hands this tab a new token for the same user (#1342): keep that user's scope,
+      // dismissals and activity stamps. Register/setup run signed out or as someone else, so they still clear.
+      if (userIdRef.current !== authUser.id) clearPerUserBrowserState()
       safeStorage.setItem(_TOKEN_KEY, jwtToken)
       setToken(jwtToken)
       setUser(authUser)

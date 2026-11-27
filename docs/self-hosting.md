@@ -253,7 +253,16 @@ docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\du
 
 ### What `AUTH_SECRET` and `JOB_SECRET_KEY` protect
 
-Clevis has two long-lived secrets in `.env`. Neither can be recovered from the database, so keep a copy of both somewhere other than the server (a password manager or your secrets store).
+Clevis has two long-lived secrets. Neither can be recovered from the database, so keep a copy of both somewhere other than the server (a password manager or your secrets store).
+
+**Where they live.** If `JOB_SECRET_KEY` and `AUTH_SECRET` are set in `.env`, that value wins. In the default `docker compose` install they are left empty in `.env`, and the one-shot `init-secrets` service generates each once onto the `job-secret` and `auth-secret` named volumes (Compose project `clevis`, so `clevis_job-secret` and `clevis_auth-secret`); the API and worker read them from there at startup. So with empty variables the secrets are **not in `.env`**: they are in those two volumes, which have to be backed up and restored with the database (see "Backup and restore"). To read a value (to store it in a password manager, or to copy it into `.env`):
+
+```bash
+docker compose exec api cat /run/clevis/job/job_secret    # JOB_SECRET_KEY
+docker compose exec api cat /run/clevis/auth/auth_secret  # AUTH_SECRET
+```
+
+Multi-replica or multi-host deployments cannot use the per-host volumes and must set one shared value in `.env`.
 
 | Secret | Protects | If you change or lose it |
 |--------|----------|--------------------------|
@@ -280,14 +289,17 @@ If you rotate by accident or lose the new value, putting the previous `JOB_SECRE
 
 ### Backup and restore
 
-Back up two things together: the Postgres database and your `.env` (at minimum `JOB_SECRET_KEY`, `AUTH_SECRET` and the GitHub App values). A database backup without `JOB_SECRET_KEY` restores fine but leaves the encrypted values unreadable, as above. Redis holds only the webhook queue (every delivery is also stored in `webhook_deliveries`, and the re-enqueue sweep recovers rows that missed the queue), so it does not need a backup.
+Back up three things together: the Postgres database, your `.env` (the `DB_*` values, the GitHub App values, and `JOB_SECRET_KEY` / `AUTH_SECRET` if you set them there), and, if those two are empty in `.env`, the `clevis_job-secret` and `clevis_auth-secret` volumes. A database backup without `JOB_SECRET_KEY` restores fine but leaves the encrypted values unreadable, as above, and a fresh host generates new keys rather than reusing the old ones. Redis holds only the webhook queue (every delivery is also stored in `webhook_deliveries`, and the re-enqueue sweep recovers rows that missed the queue), so it does not need a backup.
 
 ```bash
 # Backup (run on the host; writes a plain-SQL dump)
 docker compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > clevis-$(date +%F).sql
+
+# Backup of the generated secrets (skip if both are set in .env). The archive holds both secrets: store it like a password.
+docker run --rm -v clevis_job-secret:/job:ro -v clevis_auth-secret:/auth:ro -v "$PWD":/backup busybox   tar czf /backup/clevis-secrets-$(date +%F).tgz -C / job auth
 ```
 
-To restore onto a fresh volume: set the same `.env` (the same `DB_*`, `API_DB_PASSWORD` / `WORKER_DB_PASSWORD` and both secrets), start only the database (`docker compose up -d db`; on a new volume this runs the role-creation scripts, which the dump's `GRANT`s need to exist), load the dump (`docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" "$POSTGRES_DB"' < clevis-YYYY-MM-DD.sql`), then `docker compose up -d`. Test a restore before you need one.
+To restore onto a fresh volume: set the same `.env` (the same `DB_*`, `API_DB_PASSWORD` / `WORKER_DB_PASSWORD` and both secrets), and if the secrets were on the volumes, put them back **before the first start** so `init-secrets` finds them instead of generating new ones (`docker volume create clevis_job-secret; docker volume create clevis_auth-secret; docker run --rm -v clevis_job-secret:/job -v clevis_auth-secret:/auth -v "$PWD":/backup busybox tar xzf /backup/clevis-secrets-YYYY-MM-DD.tgz -C /`; the files keep their app-uid ownership). Then start only the database (`docker compose up -d db`; on a new volume this runs the role-creation scripts, which the dump's `GRANT`s need to exist), load the dump (`docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" "$POSTGRES_DB"' < clevis-YYYY-MM-DD.sql`), then `docker compose up -d`. Test a restore before you need one.
 
 ### Upgrading
 
