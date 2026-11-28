@@ -1,5 +1,5 @@
 # Keep the Bun version in sync with `bun-version` in .github/workflows/ci.yml.
-FROM oven/bun:1.4.4-alpine AS builder
+FROM oven/bun:1.4.5-alpine AS builder
 WORKDIR /app
 
 COPY package.json bun.lock ./
